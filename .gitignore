@@ -67,6 +67,9 @@
 # the rain-org-health dashboard fetches it at runtime from the raw URL — no site redeploy:
 !/human-queue.json
 !/refresh-human-queue.sh
+# The design lane's FSM doctor (#241): daily pass routing every noQuestion ai:design PR back
+# to ai:needs-work; a flake runner like the refresher, on its own cron line:
+!/design-doctor.sh
 # Append-only per-state inventory history ({ts, counts} per changed refresh) + its one-time
 # backfill; the dashboard fetches the jsonl at runtime for the Theory-of-Constraints panel:
 !/human-queue-history.jsonl

@@ -764,6 +764,62 @@ order, in one call — the same act a rejection is (#219). So every ruling retir
 its own row, which is why the page caps at 3 for `next_ready`'s reason with more
 force: a page is stale past its head by construction.
 
+#### `design-doctor` — the machine exit for the `noQuestion` bucket (#241)
+
+A `noQuestion` row — the label on the PR with no trusted comment raising a
+question behind it — is a state no actor consumes: `next_design` withholds it
+(there is no claim to present), the producer and vetter both skip it
+(`ai:design` parks the PR by design), and no other command lists it, so the row
+sits for ever. The withholding is right; what was missing is any transition OUT.
+`design-doctor [--dry-run]` is that transition, ruled in
+[#241](https://github.com/rainlanguage/issue-pr-cron/issues/241): the daily pass
+routes **every** `noQuestion` row back to `ai:needs-work`, automatically.
+
+- **Detection is `next_design`'s own classifier** — the same search, the same
+  archived-repo withholding, the same author-scoped question read. One
+  enumeration, one classifier, no second detector: the doctor acts on exactly
+  the bucket `counts.noQuestion` states, so the dashboard's defect bucket and
+  the pass that drains it can never disagree about the population.
+- **The send-back is a VERDICT, because the sender is a machine.** The doctor
+  writes what the vetter's own automated send-back (`draft_send_back_plan`)
+  writes: a `🤖 ai:vetter` `Reviewed <head>: needs-work` comment carrying the
+  note and a stated lens, then the one-state label edit. Two things follow that
+  a `Rework note` could not give it — the comment is the **currency stamp**, so
+  the next vetter run does not re-vet the PR and strip the `ai:needs-work` this
+  pass just wrote; and a machine decision does not wear the **human's marker**,
+  which the producer's prompt teaches as "what the human/assistant leaves".
+- **The comment goes first here**, inverting the draft send-back's order by that
+  order's own reasoning. There the label is what removes the PR from the leak
+  population; here it is what **keeps** the row in this pass's population, so a
+  failed label edit after a posted verdict is re-planned by the next tick (the
+  verdict dedups), while a failed comment after a label edit would strand a
+  needs-work with nothing trusted behind it and outside the doctor's own search.
+- **Both exits it offers are transitions the producer can perform**: push the
+  rework the PR was parked mid-way through, or re-raise the question with
+  `flag-design` — its own transition, which returns the row to the human's queue
+  with a claim behind it. "Proceed under the normal lanes" is deliberately not
+  offered: `next_action` gives a needs-work PR the rework exit, and
+  campaign-prompt.txt forbids the no-op push that faking one would need.
+- **What it never touches**, each re-established at write time against a fresh
+  fetch rather than trusted from the search index: a live question (whoever
+  raised it), a human decision (a `👤 human` ruling at head **or a native
+  review**), a PR carrying a co-resident modeled state the one-state strip would
+  destroy (`ai:close-candidate`, `ai:blocked-on` —
+  `draft_send_back_strips_no_state`'s rule), a draft, a PR outside the fleet
+  (`$PR_ASSIGNEE` — both actors that consume `ai:needs-work` enumerate by
+  author, so routing a third party's PR would move it into a state nobody
+  reads), a PR written to inside the settling window (both writers that raise a
+  question label first and comment last, so a still-moving PR may have one
+  mid-write), archived-repo rows, and anything it could not read.
+- **A withheld row is NAMED, and the ones the pass can never drain name their
+  consumer** — a human decision, a non-fleet PR and an anchorless PR each print
+  the move that does drain them, because an `Ok` line the pass repeats daily
+  about a stuck row is not a queue. Idempotent: a route strips `ai:design`, so a
+  second run finds zero rows. The routes run **serially**: they are
+  content-creating writes through an unretried `gh`, and
+  `retire_blocked_infra_mode`, the only comparable bulk-write pass, is serial
+  for the same reason.
+
 ### Vetting is a pure function, and `vetted_at_head` is its cache key
 
 A verdict is the value of one function — **the PR at its current head** — and
@@ -3032,6 +3088,16 @@ recording it provides.
 
   ```cron
   0 0 * * * PATH=$HOME/.nix-profile/bin:/usr/bin:/bin nix run git+file://<install-dir>#pr-review-report -- gc <work-dir> <install-dir> >> <install-dir>/gc.log 2>&1
+  ```
+
+  The **design doctor** (#241) runs daily at 04:00 UTC — a run-free slot, and
+  just ahead of the 05:00 producer tick that consumes what it routes. It is a
+  flake package like the runners (its closure pins `gh` and the binary), and it
+  writes GitHub state, so it is deliberately NOT folded into the data-only
+  `refresh-human-queue` tick:
+
+  ```cron
+  0 4 * * * PATH=$HOME/.nix-profile/bin:/usr/bin:/bin CRON_DIR=<install-dir> nix run git+file://<install-dir>#design-doctor >> <install-dir>/design-doctor.log 2>&1
   ```
 - **Pause:** `touch DISABLED` · **Resume:** `rm DISABLED`
 - **Watch:** `tail -f campaign.log` · **Run now:**

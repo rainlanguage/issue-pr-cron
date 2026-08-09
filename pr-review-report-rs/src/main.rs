@@ -2397,24 +2397,159 @@ mod parallel_queue_tests {
     use super::*;
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Mutex;
+    use std::sync::{Condvar, Mutex};
     use std::time::Duration;
 
-    /// How long a test waits for another worker to make progress before giving up. Generous
-    /// enough that a loaded box does not fail it, bounded so a pool that cannot run two things at
-    /// once FAILS the assertion instead of hanging the suite.
-    const INVERSION_TIMEOUT: Duration = Duration::from_secs(5);
-
-    /// Block until `ready` says another worker got there first, or [`INVERSION_TIMEOUT`] elapses.
+    /// The rendezvous' DEADLOCK GUARD — not its schedule.
     ///
-    /// `pub(crate)` because the same inversion is what pins every CALL SITE of [`map_bounded`], not
-    /// just the pool: each state-load's test drives a fetch that finishes out of order and then
-    /// asserts the emitted lists came back in candidate order anyway. One timeout and one wait
-    /// loop, named once — three copies of a five-second bound is three places it can drift.
-    pub(crate) fn await_another_worker(ready: impl Fn() -> bool) {
-        let deadline = std::time::Instant::now() + INVERSION_TIMEOUT;
-        while !ready() && std::time::Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(1));
+    /// [`WorkerInversion`] blocks on the arrival of another WORKER, so a passing run leaves each
+    /// wait the instant its counterpart shows up and never observes this bound at all. It exists
+    /// for the one case where the counterpart can never show up — a fan-out that runs the items
+    /// ONE AT A TIME — where a bare `Condvar` would hang the suite for ever. Expiry is therefore
+    /// a failure this reports, never a step a green run takes, which is why it is generous:
+    /// raising it cannot slow a passing run down, and lowering it cannot make a failing one more
+    /// correct.
+    const RENDEZVOUS_DEADLOCK_GUARD: Duration = Duration::from_secs(60);
+
+    /// The two facts a fan-out test needs true of a run before its assertions mean anything.
+    #[derive(Default)]
+    struct InversionState {
+        /// The `last` worker is INSIDE the fan-out and waiting. Until this is true, no other
+        /// worker may finish — which is what makes the two of them provably concurrent.
+        last_in_flight: bool,
+        /// Some worker other than `last` has recorded its completion. Until this is true, `last`
+        /// may not record — which is what makes completion order differ from input order.
+        another_recorded: bool,
+    }
+
+    /// A two-phase rendezvous between the ONE worker a test needs to finish LAST and whichever
+    /// other worker gets there first.
+    ///
+    /// Every fan-out test in this crate asserts two things that are only true of a run that
+    /// actually fanned out: that the reads OVERLAPPED, and that the emitted lists came back in
+    /// input order anyway even though completion order did not. Both are properties of the
+    /// interleaving, so both are arranged here rather than hoped for:
+    ///
+    /// 1. every other worker waits for `last` to be in flight before it may record, so two
+    ///    workers are inside the fan-out at the same instant and the peak is provably at least
+    ///    two; then
+    /// 2. `last` waits for one of them to have recorded before it may record, so completion order
+    ///    provably differs from input order.
+    ///
+    /// One phase alone is not the property. Ordering alone is satisfied by a worker that enters
+    /// after another has already finished and LEFT — the completions are still inverted, nothing
+    /// ever overlapped, and the parallelism assertion fails on a run that did nothing wrong.
+    ///
+    /// It waits on the arrivals, never on the clock: a worker that parks is precisely what frees
+    /// the core its counterpart needs, and a stalled box — a throttled CI container advances
+    /// `Instant::now()` while running nothing — makes both parties late together rather than
+    /// making one of them give up.
+    ///
+    /// `pub(crate)` because the same inversion pins every CALL SITE of [`map_bounded`], not just
+    /// the pool: each state-load's test drives a fetch that finishes out of order and then asserts
+    /// the emitted lists came back in candidate order anyway. One protocol, named once.
+    pub(crate) struct WorkerInversion {
+        /// The STATE, not the notifications: a wake-up that arrives before its waiter parks
+        /// cannot be lost, because every wait re-reads this rather than trusting it was signalled.
+        state: Mutex<InversionState>,
+        wake: Condvar,
+    }
+
+    impl WorkerInversion {
+        /// Build the rendezvous for a [`map_bounded`] over `items` entries, REFUSING up front the
+        /// input on which it could never happen.
+        ///
+        /// [`map_bounded`] spawns `QUEUE_FETCH_CONCURRENCY.min(items)` workers, so two workers
+        /// exist BY CONSTRUCTION whenever there are two items — that is what makes a real
+        /// rendezvous possible, on any core count. Below two there is no second worker to meet and
+        /// every assertion the rendezvous protects would be vacuous, so a test that cannot be
+        /// non-vacuous says so HERE, by name, instead of proceeding to a downstream failure about
+        /// something else.
+        pub(crate) fn over(items: usize) -> Self {
+            let workers = QUEUE_FETCH_CONCURRENCY.min(items);
+            assert!(
+                workers >= 2,
+                "this test cannot be non-vacuous: map_bounded spawns \
+                 QUEUE_FETCH_CONCURRENCY.min({items}) = {workers} worker(s) for {items} item(s), \
+                 so there is no OTHER worker to meet and the overlap and inversion its assertions \
+                 rest on are impossible — hand the fan-out at least two items"
+            );
+            Self {
+                state: Mutex::new(InversionState::default()),
+                wake: Condvar::new(),
+            }
+        }
+
+        /// Record this worker's completion, at the point in the interleaving the rendezvous
+        /// demands.
+        ///
+        /// `last` marks the ONE worker the test needs to finish after the others. Both halves of
+        /// the protocol live behind this one call so a call site cannot implement one and forget
+        /// the other — a waiter with no counterpart is the deadlock, and a counterpart with no
+        /// waiter is a run that proves nothing.
+        ///
+        /// The two waits cannot deadlock against each other: `last` publishes its own arrival
+        /// BEFORE it waits, and [`map_bounded`] hands out index 0 first, so the worker the others
+        /// are waiting for is never itself one of the workers waiting.
+        pub(crate) fn record<T>(&self, last: bool, record: impl FnOnce() -> T) -> T {
+            if last {
+                self.announce_and_await_another();
+                return record();
+            }
+            self.await_the_last();
+            let out = record();
+            self.set(|s| s.another_recorded = true);
+            out
+        }
+
+        /// Publish that the `last` worker is in flight, then block until another has recorded.
+        fn announce_and_await_another(&self) {
+            self.set(|s| s.last_in_flight = true);
+            self.await_state(
+                |s| s.another_recorded,
+                "the inversion never happened: no other worker recorded a completion while this \
+                 one held its item open waiting for one",
+            );
+        }
+
+        /// Block until the `last` worker is in flight, so this worker's completion is recorded
+        /// while that one is still holding its own item open — the overlap the peak measures.
+        fn await_the_last(&self) {
+            self.await_state(
+                |s| s.last_in_flight,
+                "the overlap never happened: the worker this rendezvous is built around never \
+                 entered the fan-out while this one held its item open alongside it",
+            );
+        }
+
+        /// Mutate the shared state and wake everyone waiting on it.
+        ///
+        /// `notify_all` rather than `notify_one`: the two phases have different waiters, and a
+        /// notification aimed at whichever one happens to be parked would strand the other.
+        fn set(&self, mutate: impl FnOnce(&mut InversionState)) {
+            mutate(&mut self.state.lock().expect("rendezvous mutex poisoned"));
+            self.wake.notify_all();
+        }
+
+        /// Block until `reached`, and FAIL LOUDLY with `unreached` rather than hanging or carrying
+        /// on as if the rendezvous had happened.
+        fn await_state(&self, reached: impl Fn(&InversionState) -> bool, unreached: &str) {
+            let guard = self.state.lock().expect("rendezvous mutex poisoned");
+            let (guard, _) = self
+                .wake
+                .wait_timeout_while(guard, RENDEZVOUS_DEADLOCK_GUARD, |s| !reached(s))
+                .expect("rendezvous mutex poisoned");
+            let arrived = reached(&guard);
+            // Dropped before the assert: panicking with the guard held poisons the mutex, every
+            // other worker then dies on its own `expect`, and this message — the one that says
+            // what actually went wrong — is buried under theirs.
+            drop(guard);
+            assert!(
+                arrived,
+                "{unreached}, and {RENDEZVOUS_DEADLOCK_GUARD:?} went by. The wait is on the other \
+                 WORKER, not on a clock, so this is not a slow box — it is a fan-out that ran the \
+                 items ONE AT A TIME, which is the serial queue #235 is about"
+            );
         }
     }
 
@@ -2428,11 +2563,9 @@ mod parallel_queue_tests {
     fn map_bounded_returns_input_order_not_completion_order() {
         let items: Vec<usize> = (0..16).collect();
         let completion: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+        let inversion = WorkerInversion::over(items.len());
         let out = map_bounded(&items, |i| {
-            if *i == 0 {
-                await_another_worker(|| !completion.lock().unwrap().is_empty());
-            }
-            completion.lock().unwrap().push(*i);
+            inversion.record(*i == 0, || completion.lock().unwrap().push(*i));
             *i * 10
         });
         assert_ne!(
@@ -2794,11 +2927,11 @@ mod parallel_queue_tests {
             ("cyclofinance".to_string(), 12u64),
         ];
         let completion: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        let inversion = WorkerInversion::over(candidates.len());
         let outcomes = map_bounded(&candidates, |(owner, num)| {
-            if owner == "rainlanguage" {
-                await_another_worker(|| !completion.lock().unwrap().is_empty());
-            }
-            completion.lock().unwrap().push(owner.clone());
+            inversion.record(owner == "rainlanguage", || {
+                completion.lock().unwrap().push(owner.clone())
+            });
             CandidateOutcome::Present(Box::new(present_pr(40, owner, "erc4626", *num)))
         });
         assert_eq!(
@@ -25433,7 +25566,7 @@ mod next_close_candidate_tests {
     // fetch fails the test rather than passing it slowly.
     #[test]
     fn the_flag_reads_fan_out_and_every_list_stays_in_hit_order() {
-        use crate::parallel_queue_tests::await_another_worker;
+        use crate::parallel_queue_tests::WorkerInversion;
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Mutex;
 
@@ -25443,13 +25576,11 @@ mod next_close_candidate_tests {
         let peak = AtomicUsize::new(0);
         let in_flight = AtomicUsize::new(0);
         let archived = ArchivedRepos::from_slugs([] as [&str; 0]);
+        let inversion = WorkerInversion::over(hits.len());
         let q = ncc_classify(&hits, &archived, |_slug, num| {
             let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
             peak.fetch_max(now, Ordering::SeqCst);
-            if num == 0 {
-                await_another_worker(|| !completion.lock().unwrap().is_empty());
-            }
-            completion.lock().unwrap().push(num);
+            inversion.record(num == 0, || completion.lock().unwrap().push(num));
             in_flight.fetch_sub(1, Ordering::SeqCst);
             match num % 3 {
                 0 => Some(upheld("2026-07-20T09:00:00Z")),
@@ -27248,7 +27379,7 @@ mod next_leak_tests {
     // the discriminating test for the fan-out rather than a restatement of the fail-safe above.
     #[test]
     fn the_leak_reads_fan_out_and_the_unknowns_stay_in_candidate_order() {
-        use crate::parallel_queue_tests::await_another_worker;
+        use crate::parallel_queue_tests::WorkerInversion;
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Mutex;
 
@@ -27260,13 +27391,11 @@ mod next_leak_tests {
         let completion: Mutex<Vec<u64>> = Mutex::new(Vec::new());
         let peak = AtomicUsize::new(0);
         let in_flight = AtomicUsize::new(0);
+        let inversion = WorkerInversion::over(candidates.len());
         let scan = leak_scan_with(&candidates, |s| {
             let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
             peak.fetch_max(now, Ordering::SeqCst);
-            if s.number == 0 {
-                await_another_worker(|| !completion.lock().unwrap().is_empty());
-            }
-            completion.lock().unwrap().push(s.number);
+            inversion.record(s.number == 0, || completion.lock().unwrap().push(s.number));
             in_flight.fetch_sub(1, Ordering::SeqCst);
             // Evens read and leak, odds fail: the two outcomes interleave through the whole run.
             (s.number % 2 == 0).then(|| producer_comments("🤖 ai:producer rework pushed"))
@@ -28187,6 +28316,11 @@ struct DesignQueue {
     counts: DesignQueueCounts,
     withheld: Vec<Value>,
     errors: Vec<Value>,
+    /// The `noQuestion` bucket as ADDRESSES — the same rows `counts.no_question` counts and the
+    /// withheld list names, carried typed so the design doctor (#241) acts on the classifier's own
+    /// bucket rather than re-deriving it by parsing a listed string (classification by message is
+    /// the defect class the typed [`NdOutcome`] exists to prevent). In candidate order.
+    no_question: Vec<(String, u64)>,
 }
 
 /// PURE given `fetch`: the whole per-hit phase of the design queue — the search-JSON classification
@@ -28231,7 +28365,14 @@ fn nd_classify(
     let outcomes = map_bounded(&candidates, |(slug, num)| {
         nd_outcome(slug, *num, fetch(slug, *num))
     });
-    for out in outcomes {
+    // [`map_bounded`] returns one outcome per candidate IN CANDIDATE ORDER, so zipping is the
+    // typed route back from an outcome to the address it was computed for — the doctor's bucket
+    // is captured here, beside the fold, rather than re-parsed out of the withheld list's prose.
+    let mut no_question: Vec<(String, u64)> = Vec::new();
+    for ((slug, num), out) in candidates.iter().zip(outcomes) {
+        if matches!(out, NdOutcome::NoQuestion { .. }) {
+            no_question.push((slug.clone(), *num));
+        }
         nd_apply_outcome(out, &mut designs, &mut counts, &mut withheld, &mut errors);
     }
     DesignQueue {
@@ -28239,6 +28380,7 @@ fn nd_classify(
         counts,
         withheld,
         errors,
+        no_question,
     }
 }
 
@@ -28269,6 +28411,9 @@ fn next_design_fetch(limit: usize) -> Result<Value, String> {
         counts,
         withheld,
         errors,
+        // The doctor's bucket. This READ presents it through `counts.noQuestion` + the withheld
+        // list; acting on it is `design_doctor_mode`'s (#241).
+        no_question: _,
     } = nd_classify(&arr, frozen.len(), nd_pr_detail);
     rank_designs(&mut designs);
     let rows: Vec<Value> = next_design_page(&designs, limit)
@@ -28294,6 +28439,1267 @@ fn next_design_fetch(limit: usize) -> Result<Value, String> {
             more_errors,
         },
     ))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// design-doctor — the FSM pass that routes every noQuestion `ai:design` row
+// back to `ai:needs-work` (#241).
+//
+// An `ai:design` label with no trusted comment raising a question is a state no
+// actor consumes: `next_design` withholds it (there is no claim to present),
+// the producer and vetter both skip it (`ai:design` parks the PR outside every
+// AI actor's queue by design), and no other command lists it — so the row sits
+// for ever. Ruling (thedavidmeister, 2026-08-09, #241): the FSM-conformance
+// pass moves ALL such rows to `ai:needs-work`, automatically. The work the
+// send-back carries is well-defined, and both of its exits are transitions the
+// PRODUCER can actually perform: push the rework the PR was parked mid-way
+// through, or re-raise the question with `flag-design`. The ruling's third
+// phrasing — "otherwise proceed with the PR" — is deliberately NOT offered as
+// an exit of its own, because no producer transition implements it: a
+// needs-work PR gets `NextAction::ReworkNeedsWork`, and campaign-prompt.txt
+// names the two exits as rework and close while forbidding the token push
+// ("a whitespace push is neither"). "Proceed" IS the rework exit, said plainly.
+//
+// Detection is `next_design`'s OWN classification — [`nd_classify`], the one
+// classifier, over the one enumeration [`design_open_prs_args`] spells — and
+// the transition is the MACHINE send-back [`draft_send_back_plan`] already
+// spells: a `🤖 ai:vetter` needs-work VERDICT at the head (the currency stamp)
+// plus the ONE-STATE label move. No second detector, no hand-rolled label
+// write, and no human marker on a machine's decision.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The state the doctor routes INTO — THE needs-work state every send-back lands (#133/#219).
+const DESIGN_DOCTOR_TARGET: &str = "ai:needs-work";
+
+/// The send-back note, carried by the doctor's `🤖 ai:vetter` verdict comment.
+///
+/// A MACHINE send-back is a VERDICT, not a work order — [`draft_send_back_plan`] is the sibling and
+/// this follows it exactly. Two properties come with the shape, and both were missing while this
+/// was a `Rework note`:
+///
+/// - It is the CURRENCY STAMP: [`verdict_comment`] pins `Reviewed <head>: needs-work`, so
+///   [`vetted_at_head`] is true and the next vetter run does not re-vet the PR and strip the very
+///   `ai:needs-work` this pass just wrote (its `labels_to_remove` would).
+/// - It does not IMPERSONATE a human. `Rework note` is the marker the human's own send-back writes
+///   and the producer's prompt teaches as "what the human/assistant leaves"; a machine pass writing
+///   one makes a machine routing decision indistinguishable from a person's instruction. The
+///   verdict spelling is read by [`needs_work_instruction`] just the same, so the row still lands
+///   `WorkOrder` rather than `Parked`.
+///
+/// The text names WHY the row was routed and both exits, and both exits are transitions the
+/// producer can actually perform (#241 review finding 5): push the rework the PR was parked
+/// mid-way through, or — where there is nothing to push — re-raise the question with `flag-design`,
+/// which is the producer's own transition and returns the row to the human's queue WITH a claim
+/// behind it. "Proceed under the normal lanes" is deliberately NOT offered: `next_action` gives a
+/// needs-work PR exactly the rework exit, and campaign-prompt.txt forbids the whitespace push that
+/// faking one would need.
+const DESIGN_DOCTOR_NOTE: &str = "ROUTING FIX, not a code defect (design doctor, \
+https://github.com/rainlanguage/issue-pr-cron/issues/241): this PR carried ai:design with NO \
+trusted comment raising a design question at its head, which is a state no actor consumes — the \
+human's queue withholds it (there is no claim to present) and every AI actor skips it. It is \
+routed here so it has an owner again. Two moves, both yours: if the PR still needs work, push it \
+— the question was superseded or never recorded, and the push IS the transition. If a genuine \
+design question remains, re-raise it with `pr-review-report flag-design <owner/repo> <pr> \
+\"<the question>\"`, which puts the row back in the human's queue with a claim behind it. Do not \
+push a no-op commit to clear this.";
+
+/// The `lens` stamp the doctor's verdict carries — [`DRAFT_SEND_BACK_LENS`]'s role, and its reason
+/// verbatim: an ABSENT stamp already means something else (a verdict written before the lens was
+/// checkable), so a verdict formed without reading source must SAY that rather than omit it. No
+/// source is read here because the routing is decided by the label's provenance, not by the diff.
+const DESIGN_DOCTOR_LENS: &str =
+    "no source read — the ai:design label's provenance decides this routing, not the diff";
+
+/// How long a PR must have been QUIET before the doctor will act on its missing question.
+///
+/// Absence of a raising comment is the doctor's whole licence to write, and both writers that RAISE
+/// a question add the label BEFORE they post the comment ([`record_verdict_apply`],
+/// [`flag_state_mode`]) — so a fetch landing between the two reads "no question raised" about a
+/// question being raised right now, strips the label, and the human never sees it. The vetter's own
+/// run window overlaps the doctor's cron slot, so this is a live race, not a theoretical one.
+///
+/// The guard is #147's rule applied to a different absent thing: an absence must not be licence
+/// until it is EVIDENCE. A label add and a comment post each bump `updatedAt`, so a PR untouched
+/// for this long has no write in flight, and one that is still moving is withheld and re-examined
+/// on the next tick — the fail-safe direction, since withholding costs a day and writing costs the
+/// question.
+const DESIGN_DOCTOR_SETTLE_SECS: i64 = 3600;
+
+/// The `gh pr view --json` fields [`design_doctor_plan`] reads — named for [`PR_RULE_FIELDS`]'s
+/// reason: a field the plan reads but the fetch omits is a guard that silently stops firing. Pinned
+/// field-by-field by `the_issue_transition_fetches_what_its_guards_need`, which is what makes that
+/// sentence true rather than merely stated:
+///
+/// - `state` — the terminal check; `labels` — the label and co-resident-state guards;
+/// - `comments` — [`last_design_question`] and the ruling half of [`pr_human_sacred`];
+/// - `reviewDecision` — the NATIVE-review half of [`pr_human_sacred`] (the only fields list in the
+///   crate that carries it; trimming it makes that guard read an absent key and return false);
+/// - `headRefOid` — the anchor the verdict pins to;
+/// - `isDraft` — the draft re-check, because the search index this row came from lags real state;
+/// - `author` — the FLEET check ([`pr_assignee`]), since the actors that consume `ai:needs-work`
+///   enumerate by author and a row outside the fleet would be routed where nobody looks;
+/// - `updatedAt` — [`DESIGN_DOCTOR_SETTLE_SECS`]'s settling condition.
+const DESIGN_DOCTOR_ROUTE_FIELDS: &str =
+    "state,headRefOid,labels,comments,reviewDecision,isDraft,author,updatedAt";
+
+/// PURE: may the doctor route this PR, and what does the send-back change? Computed from a FRESH
+/// `gh pr view` at write time — the guard-before-write shape every transition here has
+/// ([`producer_state_plan`], [`human_pr_rule_plan`]) — so a row that moved between the enumeration
+/// and the write is re-judged, not written over. The actionability rule is #241's, re-checked with
+/// the CLASSIFIER'S OWN functions: label present ([`label_names`]), no live trusted question
+/// ([`last_design_question`] — the author-scoped read, so a spoofed marker still counts for
+/// nothing), no human override ([`pr_human_sacred`]).
+#[derive(Debug, PartialEq)]
+enum DesignDoctorPlan {
+    /// Merged or closed since the enumeration: the state a route would move it out of is terminal.
+    Moot,
+    /// `ai:design` is no longer on the PR — some other transition already consumed the row. This
+    /// is also the second run's answer for every row the first run routed, which is what makes
+    /// the pass idempotent even when the enumeration races the write.
+    LeftDesign,
+    /// A trusted comment raises a live design question after all (raised since the enumeration,
+    /// or the classifier read a stale snapshot): the row is the human's, and the doctor's writing
+    /// over it would erase a real claim.
+    QuestionLive,
+    /// A human decision is present ([`pr_human_sacred`]): a native review, or a `👤 human` ruling
+    /// pinned to this head. The `human:*` namespace dominates every machine move, this one
+    /// included.
+    ///
+    /// A NATIVE review is a property of the PR, not of a head — it survives every push — so this
+    /// row is one the doctor can never drain, and it is reported as its own named class for that
+    /// reason ([`DesignDoctorPlan::consuming_move`]): a success line is not a queue.
+    HumanSacred,
+    /// The strip this route performs would DESTROY a co-resident modeled state — the send-back
+    /// leaves exactly one `ai:*` label, and `ai:close-candidate` / `ai:blocked-on` are each a
+    /// queue enumerated BY LABEL that somebody owes a move on.
+    ///
+    /// [`draft_send_back_strips_no_state`] is the sibling and the reasoning transfers whole: the
+    /// question is asked about the WRITE, of [`classify_lane`], per label, so a state added later
+    /// cannot silently fall into being eaten.
+    CoResidentState { states: Vec<String> },
+    /// The PR is a DRAFT at write time. The enumeration's own draft check reads `isDraft` off the
+    /// `gh search prs` index, which lags real state, so it is re-established here like every other
+    /// classification the plan re-checks.
+    Draft,
+    /// The PR is not the fleet's ([`pr_assignee`] — how every other subcommand defines "ours").
+    ///
+    /// Both actors that consume `ai:needs-work` enumerate `--author $PR_ASSIGNEE`, so routing a
+    /// third party's PR into that state would move it OUT of the one surface that named it
+    /// (`counts.noQuestion`) and into a state nobody enumerates — the deadlock #241 exists to
+    /// remove, recreated, with a machine-authored instruction on someone else's PR as the only
+    /// trace. Withheld and NAMED instead: the row keeps `ai:design`, so the human's own read still
+    /// counts it, and the report says which rows they are.
+    NotOurFleet { author: String },
+    /// The PR was written to within [`DESIGN_DOCTOR_SETTLE_SECS`]. Both writers that raise a
+    /// question label FIRST and comment LAST, so "no question raised" about a still-moving PR may
+    /// be a question mid-write. Withheld until it settles.
+    TooFresh { updated_at: String },
+    /// No head sha — nothing to pin the verdict to, the same refusal every ruling makes rather
+    /// than recording one bound to nothing. NOT an error: nothing is wrong with the run, and a
+    /// class the pass cannot drain must not red the cron every day for ever (it is named in the
+    /// report instead).
+    NoAnchor,
+    /// Route it: the standard needs-work send-back.
+    Route {
+        /// The head the verdict pins to.
+        head: String,
+        /// Every `ai:*` label except the target — [`labels_to_remove`], the ONE-STATE rule.
+        clears: Vec<String>,
+        /// `ai:needs-work` already present (a retry finishing a half-written route).
+        has_target: bool,
+        /// This exact verdict is already recorded at this head ([`should_skip_comment`], the
+        /// vetter's own dedup) — a retry posts no duplicate.
+        note_deduped: bool,
+    },
+}
+
+impl DesignDoctorPlan {
+    /// The one-line class name a report row carries — a typed discriminant, never a message
+    /// substring, so a reader (and the tick's own summary) groups rows by what they ARE.
+    fn class(&self) -> &'static str {
+        match self {
+            DesignDoctorPlan::Moot => "moot",
+            DesignDoctorPlan::LeftDesign => "left-design",
+            DesignDoctorPlan::QuestionLive => "question-live",
+            DesignDoctorPlan::HumanSacred => "human-decided",
+            DesignDoctorPlan::CoResidentState { .. } => "co-resident-state",
+            DesignDoctorPlan::Draft => "draft",
+            DesignDoctorPlan::NotOurFleet { .. } => "not-our-fleet",
+            DesignDoctorPlan::TooFresh { .. } => "unsettled",
+            DesignDoctorPlan::NoAnchor => "no-anchor",
+            DesignDoctorPlan::Route { .. } => "routed",
+        }
+    }
+
+    /// WHO drains this row, for the classes the doctor withholds — CLAUDE.md's "every state needs a
+    /// consuming transition", answered per class rather than left implied by an `Ok` line.
+    ///
+    /// `None` for the classes that need no consumer: the row either left the state already
+    /// (`Moot`, `LeftDesign`), is in the state it belongs in (`QuestionLive` — the human's queue
+    /// presents it), was just routed, or is withheld only until the next tick (`TooFresh`,
+    /// `Draft` — a draft's exit is its own author clearing the flag, which the vetter's draft
+    /// send-back already asks for). `Some` for the three the doctor can never drain by itself, so
+    /// the report NAMES the move a person has to make.
+    fn consuming_move(&self) -> Option<&'static str> {
+        match self {
+            DesignDoctorPlan::HumanSacred => Some(
+                "a human decision stands on this PR — the consuming transition is the human's own \
+                 `human-rule <owner/repo> <pr> needs-work|design \"…\" --rework \"…\"`, which \
+                 retires ai:design in the same call",
+            ),
+            DesignDoctorPlan::NotOurFleet { .. } => Some(
+                "outside the fleet ($PR_ASSIGNEE): no AI actor enumerates it, so the consuming \
+                 transition is a human's — rule on it (`human-rule …`) or drop the label by hand",
+            ),
+            DesignDoctorPlan::NoAnchor => Some(
+                "no head sha to pin a verdict to (a deleted fork head reads this way): the \
+                 consuming transition is closing the PR, or the author restoring the branch",
+            ),
+            _ => None,
+        }
+    }
+}
+
+/// PURE: would this route's strip destroy a modeled state OTHER than the one it is retiring?
+///
+/// [`draft_send_back_strips_no_state`]'s rule, with the one licensed exception this pass IS:
+/// `ai:design` is the state #241 rules the doctor may retire, so it is excluded from the question
+/// and every OTHER removed label must name no state. Asked of [`classify_lane`], per label, for the
+/// sibling's own reason — a hand list drifts SILENTLY into eating a state added later.
+fn design_doctor_strips_no_other_state(labels: &[String]) -> Vec<String> {
+    labels_to_remove(labels, DESIGN_DOCTOR_TARGET)
+        .into_iter()
+        .filter(|l| l != "ai:design")
+        .filter(|l| {
+            classify_lane(std::slice::from_ref(l), Some(false), false).1 != STATE_UN_VETTED.key
+        })
+        .collect()
+}
+
+fn design_doctor_plan(pr_json: &Value, now_unix_secs: i64) -> DesignDoctorPlan {
+    if pr_json
+        .get("state")
+        .and_then(|s| s.as_str())
+        .is_some_and(|s| s != "OPEN")
+    {
+        return DesignDoctorPlan::Moot;
+    }
+    let labels = label_names(pr_json);
+    if !labels.iter().any(|l| l == "ai:design") {
+        return DesignDoctorPlan::LeftDesign;
+    }
+    if last_design_question(pr_json).is_some() {
+        return DesignDoctorPlan::QuestionLive;
+    }
+    let head = pr_json
+        .get("headRefOid")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    // The human check comes BEFORE every other withholding: a person's decision dominates this
+    // FSM whatever else is true of the PR, and it is sacred whether or not the API handed back a
+    // head to pin anything to.
+    if pr_human_sacred(pr_json, head) {
+        return DesignDoctorPlan::HumanSacred;
+    }
+    let states = design_doctor_strips_no_other_state(&labels);
+    if !states.is_empty() {
+        return DesignDoctorPlan::CoResidentState { states };
+    }
+    if pr_json
+        .get("isDraft")
+        .and_then(|d| d.as_bool())
+        .unwrap_or(false)
+    {
+        return DesignDoctorPlan::Draft;
+    }
+    let author = pr_json
+        .get("author")
+        .and_then(|a| a.get("login"))
+        .and_then(|l| l.as_str())
+        .unwrap_or("");
+    // Fail CLOSED on an author the fetch could not read: an empty login is not the fleet's name,
+    // so an unreadable author withholds rather than routes.
+    if author != pr_assignee() {
+        return DesignDoctorPlan::NotOurFleet {
+            author: author.to_string(),
+        };
+    }
+    let updated_at = pr_json
+        .get("updatedAt")
+        .and_then(|u| u.as_str())
+        .unwrap_or("");
+    // Fail CLOSED on an unreadable timestamp, for the reason the settling guard exists:
+    // "we could not tell whether a write is in flight" is not "no write is in flight".
+    let settled_before = epoch_to_iso(now_unix_secs - DESIGN_DOCTOR_SETTLE_SECS);
+    if !landed_after_filed(&settled_before, updated_at).unwrap_or(false) {
+        return DesignDoctorPlan::TooFresh {
+            updated_at: updated_at.to_string(),
+        };
+    }
+    if head.is_empty() {
+        return DesignDoctorPlan::NoAnchor;
+    }
+    DesignDoctorPlan::Route {
+        head: head.to_string(),
+        clears: labels_to_remove(&labels, DESIGN_DOCTOR_TARGET),
+        has_target: labels.iter().any(|l| l == DESIGN_DOCTOR_TARGET),
+        // The VETTER's own dedup, over the vetter's own comment — the same predicate
+        // `record_verdict` uses, so a re-run cannot post a second identical verdict.
+        note_deduped: should_skip_comment(
+            last_vetter_comment(pr_json).as_deref(),
+            head,
+            "needs-work",
+        ),
+    }
+}
+
+/// PURE: the `gh` calls that route ONE row, in the order they must run — [`draft_send_back_plan`]'s
+/// shape, because this is the same act: a MACHINE send-back into `ai:needs-work` carrying a verdict.
+/// It is deliberately NOT the human ruling's [`human_rule_steps`] machinery any more. That machinery
+/// pairs a `Rework note` with a ruling comment, and a doctor that emitted the note alone produced
+/// exactly the half-state [`RuleStep::ReworkNote`]'s own doc forbids — a work order with no ruling
+/// behind it — while dressing a machine decision in the human's marker.
+///
+/// **THE ORDER IS THE GUARD**, and here it is the mirror of the draft send-back's, by that guard's
+/// own reasoning rather than against it. There, the label is what removes the PR from the leak
+/// population, so a comment written first could strand a PR nothing re-derives. Here the label is
+/// what KEEPS the row in this pass's population: the doctor enumerates `ai:design`, so a failed
+/// label edit after a posted verdict leaves the row exactly where the next tick will find it again
+/// (and the verdict dedups). Post the label first and a failed comment leaves `ai:needs-work` with
+/// nothing trusted behind it AND out of the doctor's own enumeration — [`NeedsWorkState::Parked`]
+/// that no later run re-derives, which is the stranding both orders exist to prevent.
+///
+/// Both label halves ride in ONE `gh pr edit`, so the PR is never momentarily wearing two AI
+/// verdicts; the edit is skipped entirely when the labels are already right, so a retry costs one
+/// call rather than two.
+fn design_doctor_plan_argv(
+    slug: &str,
+    num: u64,
+    head: &str,
+    clears: &[String],
+    has_target: bool,
+    note_deduped: bool,
+) -> Vec<Vec<String>> {
+    let n = num.to_string();
+    let mut plan: Vec<Vec<String>> = Vec::new();
+    if !note_deduped {
+        let body = verdict_comment(
+            head,
+            "needs-work",
+            DESIGN_DOCTOR_NOTE,
+            None,
+            "",
+            Some(DESIGN_DOCTOR_LENS),
+        );
+        plan.push(
+            ["pr", "comment", &n, "-R", slug, "--body", &body]
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect(),
+        );
+    }
+    if !has_target || !clears.is_empty() {
+        let mut edit: Vec<String> = ["pr", "edit", &n, "-R", slug]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        if !has_target {
+            edit.extend(["--add-label".to_string(), DESIGN_DOCTOR_TARGET.to_string()]);
+        }
+        for r in clears {
+            edit.extend(["--remove-label".to_string(), r.clone()]);
+        }
+        plan.push(edit);
+    }
+    plan
+}
+
+/// PURE: the report line ONE planned row prints — the class it landed in, why, and (for a class the
+/// doctor can never drain) the move that DOES drain it. Pure so the report is a tested value rather
+/// than prose only a live run can see.
+fn design_doctor_line(slug: &str, num: u64, plan: &DesignDoctorPlan, dry_run: bool) -> String {
+    let pr = format!("{slug}#{num}");
+    let why = match plan {
+        DesignDoctorPlan::Moot => "no longer open — the state a route would move it out of is terminal".to_string(),
+        DesignDoctorPlan::LeftDesign => "ai:design is no longer present — already consumed by another transition".to_string(),
+        DesignDoctorPlan::QuestionLive => "a trusted comment raises a live design question — the row is the human's".to_string(),
+        DesignDoctorPlan::HumanSacred => "a human decision stands on this PR — not overriding".to_string(),
+        DesignDoctorPlan::CoResidentState { states } => format!(
+            "the send-back's one-state strip would destroy {} — a queue somebody owes a move on",
+            states.join(",")
+        ),
+        DesignDoctorPlan::Draft => "a DRAFT at write time (the search index lagged) — the code it is about is still moving".to_string(),
+        DesignDoctorPlan::NotOurFleet { author } => format!(
+            "authored by {} — outside the fleet ({}), and every actor that consumes {DESIGN_DOCTOR_TARGET} enumerates by author",
+            if author.is_empty() { "(unreadable)" } else { author },
+            pr_assignee()
+        ),
+        DesignDoctorPlan::TooFresh { updated_at } => format!(
+            "written to at {updated_at}, inside the {DESIGN_DOCTOR_SETTLE_SECS}s settling window — a question may be mid-write"
+        ),
+        DesignDoctorPlan::NoAnchor => "no head sha — there is nothing to pin a verdict to".to_string(),
+        DesignDoctorPlan::Route {
+            head,
+            clears,
+            note_deduped,
+            ..
+        } => format!(
+            "-> {DESIGN_DOCTOR_TARGET} @ {head}; clears {}; verdict {}",
+            if clears.is_empty() { "(none)".to_string() } else { clears.join(",") },
+            if *note_deduped { "already recorded at this head" } else { "posted" }
+        ),
+    };
+    let prefix = match (plan, dry_run) {
+        (DesignDoctorPlan::Route { .. }, true) => "[dry-run] ",
+        _ => "",
+    };
+    format!(
+        "{prefix}{pr} [{}]: {why}{}",
+        plan.class(),
+        match plan.consuming_move() {
+            // The class NAMES its consumer, because an Ok line the pass prints every day about a
+            // row nothing drains is not a queue — it is a state with no consuming transition,
+            // which is the defect this whole pass exists to remove.
+            Some(m) => format!("\n    drained by: {m}"),
+            None => String::new(),
+        }
+    )
+}
+
+/// One row's route: fetch fresh, plan, and — outside `--dry-run` — perform the plan's `gh` calls in
+/// order, stopping at the first failure ([`run_draft_send_back`], the machine send-back's shared
+/// runner). Every non-`Route` plan is an `Ok` carrying its named class: the doctor's contract is
+/// convergence, and a row it may not write is a CLASSIFICATION, never a failed run — a class the
+/// pass can never drain must not red the cron daily for ever, it must be named so a person can act.
+fn design_doctor_route(slug: &str, num: u64, dry_run: bool) -> Result<String, (i32, String)> {
+    let n = num.to_string();
+    let Some(prj) = gh_json(&[
+        "pr",
+        "view",
+        &n,
+        "-R",
+        slug,
+        "--json",
+        DESIGN_DOCTOR_ROUTE_FIELDS,
+    ]) else {
+        return Err((
+            1,
+            format!("error: `gh pr view {slug}#{num}` failed — not writing on incomplete data"),
+        ));
+    };
+    design_doctor_route_from(slug, num, &prj, now_unix(), dry_run, |plan| {
+        run_draft_send_back(plan, gh_run)
+    })
+}
+
+/// PURE given `write`: the whole of one row's route once its snapshot is in hand — the seam
+/// [`nd_classify`]'s `fetch` parameter is, and for the same reason. Which classes WRITE, which are
+/// reported, and which red the tick are decisions a unit test must be able to make the pass make;
+/// behind a live `gh` they are behaviour nothing asserts, which is how "a classification reds the
+/// cron every day" survives a green suite.
+///
+/// EVERY class but `Route` returns `Ok`. That is the rule, not an accident of which arms happen to
+/// be listed: a row the doctor may not write is a CLASSIFICATION, and the pass's only failures are
+/// a read it could not make and a write it could not finish.
+fn design_doctor_route_from(
+    slug: &str,
+    num: u64,
+    prj: &Value,
+    now_unix_secs: i64,
+    dry_run: bool,
+    write: impl Fn(&[Vec<String>]) -> bool,
+) -> Result<String, (i32, String)> {
+    let plan = design_doctor_plan(prj, now_unix_secs);
+    let line = design_doctor_line(slug, num, &plan, dry_run);
+    let DesignDoctorPlan::Route {
+        head,
+        clears,
+        has_target,
+        note_deduped,
+    } = &plan
+    else {
+        return Ok(line);
+    };
+    if dry_run {
+        return Ok(line);
+    }
+    let argv = design_doctor_plan_argv(slug, num, head, clears, *has_target, *note_deduped);
+    if !write(&argv) {
+        return Err((
+            1,
+            format!(
+                "error: routing {slug}#{num} FAILED part-way — the verdict comment is posted first, \
+                 so the row still carries ai:design and the next tick re-plans it (the verdict \
+                 dedups). Nothing is half-labelled."
+            ),
+        ));
+    }
+    Ok(line)
+}
+
+/// `design-doctor [--dry-run]`: the whole pass — enumerate the `ai:design` population ONCE (the
+/// same search, archived-repo withholding and classifier `next_design` runs), then route every
+/// row the classifier bucketed `noQuestion` back to `ai:needs-work`.
+///
+/// THE ROUTES RUN SERIALLY, and that is a deliberate difference from the classifying READS above
+/// them. [`QUEUE_FETCH_CONCURRENCY`] is documented as a bound on read fan-out — its whole argument
+/// is that the work is blocking `gh` subprocesses idle on the network — while a route is up to two
+/// CONTENT-CREATING calls through [`gh_run`], which has no [`retrying_rate_limit`] wrapper and
+/// collapses a secondary-rate-limit refusal into a bare `false`. [`retire_blocked_infra_mode`], the
+/// only comparable bulk-write pass, is serial for the same reason, and this follows it.
+///
+/// Idempotent: a route strips `ai:design`, so a second run's enumeration finds zero rows; a row
+/// re-found mid-write (a half-finished retry) re-plans against fresh state and the verdict dedups.
+/// A failed enumeration writes nothing and exits non-zero — routing over a falsely-empty or
+/// half-read population is the lie every enumeration here refuses to act on.
+fn design_doctor_mode(dry_run: bool) -> i32 {
+    let args = design_open_prs_args();
+    let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+    let Some(val) = gh_json(&argref) else {
+        eprintln!("error: `gh search prs --label ai:design` failed (transient API error / auth?) — not routing on incomplete data");
+        return 1;
+    };
+    let Some(arr) = val.as_array() else {
+        eprintln!("error: `gh search prs` returned non-array JSON — aborting");
+        return 1;
+    };
+    let archived_set = match archived_repos() {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("{}", archived_read_error(e));
+            return 1;
+        }
+    };
+    let (live, frozen) = nd_population(arr.clone(), &archived_set);
+    let q = nd_classify(&live, frozen.len(), nd_pr_detail);
+    let c = &q.counts;
+    println!(
+        "design-doctor: aiDesign={} presentable={} noQuestion={} draft={} unaddressable={} fetchErrors={} archivedRepo={}",
+        c.raw, c.presentable, c.no_question, c.draft, c.unaddressable, c.fetch_errors, c.archived_repo
+    );
+    // A row that could not be read was not classified, so this run cannot say it conforms: name
+    // each one and fail the tick, so the miss is a red cron line rather than a silent shrink.
+    for e in &q.errors {
+        eprintln!(
+            "  unread: {} — {}",
+            e["pr"].as_str().unwrap_or_default(),
+            e["why"].as_str().unwrap_or_default()
+        );
+    }
+    if q.no_question.is_empty() {
+        println!("design-doctor: no noQuestion rows — nothing to route");
+        return if c.fetch_errors > 0 { 1 } else { 0 };
+    }
+    let mut failed = c.fetch_errors > 0;
+    for (slug, num) in &q.no_question {
+        match design_doctor_route(slug, *num, dry_run) {
+            Ok(line) => println!("{line}"),
+            Err((_, msg)) => {
+                eprintln!("{msg}");
+                failed = true;
+            }
+        }
+    }
+    if failed {
+        1
+    } else {
+        0
+    }
+}
+
+#[cfg(test)]
+mod design_doctor_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Fixtures through the REAL writers ([`verdict_comment`], [`state_comment`],
+    /// [`human_rule_comment`], [`rework_note_comment`]), so they drift with none of them.
+    fn trusted(body: String) -> Value {
+        json!({
+            "author": {"login": TRUSTED_AUTHOR},
+            "body": body,
+            "createdAt": "2026-08-01T00:00:00Z",
+        })
+    }
+
+    fn labelled(names: &[&str]) -> Vec<Value> {
+        names.iter().map(|n| json!({"name": n})).collect()
+    }
+
+    /// An open `ai:design` PR at `head` with the given trusted-account comments — the doctor's
+    /// ROUTE case unless a comment, a label or an override says otherwise.
+    ///
+    /// Every field a guard reads is set to the routable value, `author` and `updatedAt` included:
+    /// a fixture missing one is withheld by THAT guard before it reaches the arm under test, which
+    /// would make each test below assert about a case it never got to. Tests that are about a
+    /// guard override the one field they are about.
+    fn design_pr(head: &str, labels: &[&str], comments: Vec<Value>) -> Value {
+        json!({
+            "state": "OPEN",
+            "headRefOid": head,
+            "labels": labelled(labels),
+            "comments": comments,
+            "isDraft": false,
+            "author": {"login": pr_assignee()},
+            "updatedAt": LONG_AGO,
+        })
+    }
+
+    // ── the actionable set IS the classifier's bucket ─────────────────────────────────────────
+
+    fn hit(slug: &str, num: u64) -> Value {
+        json!({
+            "url": format!("https://github.com/{slug}/pull/{num}"),
+            "number": num,
+            "repository": {"nameWithOwner": slug},
+            "isDraft": false,
+            "labels": [{"name": "ai:design"}],
+        })
+    }
+
+    // THE PROPERTY #241 NAMES, derived from the classifier rather than restated beside it: for
+    // every row [`nd_classify`] buckets `noQuestion` the doctor holds exactly one address to
+    // send back, and for every other bucket — presentable, draft, unaddressable, fetchErrors,
+    // archivedRepo — it holds none. One enumeration, one classifier, no second detector.
+    #[test]
+    fn the_doctors_targets_are_exactly_the_classifiers_noquestion_bucket() {
+        let raises = json!({"comments": [trusted(state_comment("ai:design", "why", &[]))]});
+        let silent = json!({"comments": []});
+        let mut hits: Vec<Value> = (0..9).map(|i| hit("o/r", i)).collect();
+        let mut draft = hit("o/d", 40);
+        draft["isDraft"] = json!(true);
+        hits.push(draft);
+        hits.push(json!({"title": "a hit carrying no ref"}));
+        let frozen = 2;
+        let q = nd_classify(&hits, frozen, |_slug, num| match num % 3 {
+            0 => Some(raises.clone()),
+            1 => Some(silent.clone()),
+            _ => None,
+        });
+        // The doctor's set is the silent third — by ADDRESS, in candidate order.
+        let want: Vec<(String, u64)> = (0..9)
+            .filter(|i| i % 3 == 1)
+            .map(|i| ("o/r".to_string(), i))
+            .collect();
+        assert_eq!(q.no_question, want);
+        // …and it is the SAME bucket the counts state: one send-back per counted row, none for
+        // any other bucket, or the partition and the doctor would disagree about the population.
+        assert_eq!(q.no_question.len(), q.counts.no_question);
+        assert_eq!(
+            (
+                q.counts.presentable,
+                q.counts.fetch_errors,
+                q.counts.draft,
+                q.counts.unaddressable,
+                q.counts.archived_repo
+            ),
+            (3, 3, 1, 1, frozen)
+        );
+        // An empty lane is zero targets — the idempotence half: after every row is routed, the
+        // label search returns nothing and a second run has nothing to do.
+        assert!(nd_classify(&[], 0, |_, _| None).no_question.is_empty());
+    }
+
+    // ── the write-time plan: every guard re-established against fresh state ───────────────────
+
+    /// The doctor's clock, as a value: `updated_at` sits well outside the settling window unless a
+    /// test moves it, so every fixture below is settled by default and the settling guard is
+    /// asserted where it is the SUBJECT rather than incidentally everywhere.
+    const NOW: i64 = 1_800_000_000;
+    const LONG_AGO: &str = "2020-01-01T00:00:00Z";
+
+    fn plan(pr: &Value) -> DesignDoctorPlan {
+        design_doctor_plan(pr, NOW)
+    }
+
+    #[test]
+    fn a_bare_design_label_routes_and_the_send_back_is_the_one_state_move() {
+        let head = "a".repeat(40);
+        // A trusted comment that raises NOTHING (a vetter ready verdict) alongside the label:
+        // adjacent trusted prose must not read as a question, exactly as `next_design` holds.
+        let pr = design_pr(
+            &head,
+            &["ai:design", "ai:ready", "bug"],
+            vec![trusted(verdict_comment(
+                &head, "ready", "fine", None, "", None,
+            ))],
+        );
+        assert_eq!(
+            plan(&pr),
+            DesignDoctorPlan::Route {
+                head: head.clone(),
+                // EVERY other ai:* comes off, not just ai:design — the one-state rule the
+                // send-back inherits from `labels_to_remove`; human:* and plain labels stay.
+                clears: vec!["ai:design".to_string(), "ai:ready".to_string()],
+                has_target: false,
+                note_deduped: false,
+            }
+        );
+    }
+
+    // THE STRIP MAY NOT EAT A STATE SOMEBODY OWES A MOVE ON (#241 review finding 1).
+    // `draft_send_back_strips_no_state` withholds the vetter's automated send-back in exactly this
+    // situation, and the reasoning transfers: `ai:close-candidate` and `ai:blocked-on` are queues
+    // enumerated BY LABEL, so a one-state strip retracts a request nobody then rules on. The
+    // licensed exception is `ai:design` itself — the state #241 rules this pass may retire.
+    #[test]
+    fn a_co_resident_modeled_state_withholds_the_route() {
+        let head = "a".repeat(40);
+        for state in ["ai:close-candidate", "ai:blocked-on"] {
+            let pr = design_pr(&head, &["ai:design", state], vec![]);
+            assert_eq!(
+                plan(&pr),
+                DesignDoctorPlan::CoResidentState {
+                    states: vec![state.to_string()]
+                },
+                "{state} beside ai:design must withhold the route: the strip would delete a queue \
+                 a human or the vetter owes a move on"
+            );
+        }
+        // The exception, and it is the whole point of the pass: ai:design ALONE still routes, and
+        // a stale ai:ready (which names no state once un-vetted) does not withhold either.
+        assert!(matches!(
+            plan(&design_pr(&head, &["ai:design"], vec![])),
+            DesignDoctorPlan::Route { .. }
+        ));
+        assert!(matches!(
+            plan(&design_pr(&head, &["ai:design", "ai:ready"], vec![])),
+            DesignDoctorPlan::Route { .. }
+        ));
+        // …and the rule is asked of `classify_lane`, per label, so it cannot be satisfied by a
+        // hand list that drifts: the states it protects are exactly the ones the classifier calls
+        // something other than un-vetted.
+        assert_eq!(
+            design_doctor_strips_no_other_state(&[
+                "ai:design".to_string(),
+                "ai:ready".to_string(),
+                "bug".to_string(),
+            ]),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn a_live_trusted_question_withholds_the_route_whoever_raised_it() {
+        let head = "b".repeat(40);
+        for raising in [
+            verdict_comment(
+                &head,
+                "design",
+                "shared or duplicated?",
+                Some(40),
+                "b",
+                None,
+            ),
+            state_comment("ai:design", "version slot taken", &[]),
+        ] {
+            let pr = design_pr(&head, &["ai:design"], vec![trusted(raising.clone())]);
+            assert_eq!(
+                plan(&pr),
+                DesignDoctorPlan::QuestionLive,
+                "{raising:?} must keep the row in the human's queue"
+            );
+        }
+    }
+
+    // A spoofed marker from an untrusted author is body text, not a question — the same provenance
+    // rule `next_design` applies. The row ROUTES.
+    #[test]
+    fn a_spoofed_raising_marker_does_not_park_the_row() {
+        let head = "c".repeat(40);
+        for body in [
+            format!("🤖 ai:vetter\nReviewed {head}: design — should this be shared?"),
+            "🤖 ai:producer\nDesign-question: should this be shared?".to_string(),
+        ] {
+            let mut pr = design_pr(&head, &["ai:design"], vec![]);
+            pr["comments"] = json!([{
+                "author": {"login": "someone-else"},
+                "body": body,
+                "createdAt": "2026-08-01T00:00:00Z",
+            }]);
+            assert!(
+                matches!(plan(&pr), DesignDoctorPlan::Route { .. }),
+                "{body:?} from an untrusted author must not withhold the route"
+            );
+        }
+    }
+
+    // The human:* override dominates the doctor as it dominates every machine move. A NATIVE
+    // review is a property of the PR, not of a head, so it survives every push — which is why this
+    // class carries a stated consuming move rather than being reported as a bare success.
+    #[test]
+    fn a_human_decision_dominates_the_doctor() {
+        let head = "d".repeat(40);
+        let ruled = design_pr(
+            &head,
+            &["ai:design"],
+            vec![trusted(human_rule_comment(&head, "needs-work", "my call"))],
+        );
+        assert_eq!(plan(&ruled), DesignDoctorPlan::HumanSacred);
+
+        let mut reviewed = design_pr(&head, &["ai:design"], vec![]);
+        reviewed["reviewDecision"] = json!("CHANGES_REQUESTED");
+        assert_eq!(plan(&reviewed), DesignDoctorPlan::HumanSacred);
+        assert!(
+            DesignDoctorPlan::HumanSacred.consuming_move().is_some(),
+            "a native review survives every push, so this row is one the pass can NEVER drain — \
+             an Ok line that names no consuming transition is a state with no exit (CLAUDE.md)"
+        );
+
+        // A ruling pinned to a SUPERSEDED head is stale by the rule every actor reads it under.
+        let stale = design_pr(
+            &head,
+            &["ai:design"],
+            vec![trusted(human_rule_comment(
+                &"e".repeat(40),
+                "needs-work",
+                "about an old head",
+            ))],
+        );
+        assert!(matches!(plan(&stale), DesignDoctorPlan::Route { .. }));
+    }
+
+    // The human check runs BEFORE every other withholding: a person's decision dominates whatever
+    // else is true of the PR, including a co-resident state and a missing head.
+    #[test]
+    fn the_human_check_precedes_every_other_withholding() {
+        let mut pr = design_pr("", &["ai:design", "ai:close-candidate"], vec![]);
+        pr["reviewDecision"] = json!("APPROVED");
+        assert_eq!(plan(&pr), DesignDoctorPlan::HumanSacred);
+    }
+
+    #[test]
+    fn a_terminal_or_unlabelled_row_is_never_routed() {
+        let head = "f".repeat(40);
+        let mut merged = design_pr(&head, &["ai:design"], vec![]);
+        merged["state"] = json!("MERGED");
+        assert_eq!(plan(&merged), DesignDoctorPlan::Moot);
+
+        // The post-route state, which is also every row a concurrent transition consumed first.
+        let routed = design_pr(&head, &[DESIGN_DOCTOR_TARGET], vec![]);
+        assert_eq!(plan(&routed), DesignDoctorPlan::LeftDesign);
+    }
+
+    // NO ANCHOR IS A CLASSIFICATION, NOT A FAILURE (#241 review findings 7/15). A deleted fork head
+    // reads this way; as an `Err` it red the cron every day for ever on a row nothing could drain,
+    // making every later genuine failure indistinguishable from the standing one.
+    #[test]
+    fn an_anchorless_row_is_a_named_class_with_a_stated_consumer_not_an_error() {
+        let anchorless = design_pr("", &["ai:design"], vec![]);
+        assert_eq!(plan(&anchorless), DesignDoctorPlan::NoAnchor);
+        assert_eq!(DesignDoctorPlan::NoAnchor.class(), "no-anchor");
+        assert!(
+            DesignDoctorPlan::NoAnchor
+                .consuming_move()
+                .is_some_and(|m| m.contains("closing the PR")),
+            "the class the pass cannot drain must NAME the move that does"
+        );
+        // …and the line the report prints carries that move, so the log is the queue.
+        let line = design_doctor_line("o/r", 1, &DesignDoctorPlan::NoAnchor, false);
+        assert!(line.contains("[no-anchor]"), "{line}");
+        assert!(line.contains("drained by:"), "{line}");
+    }
+
+    // THE DRAFT GUARD IS RE-ESTABLISHED AT WRITE TIME (#241 review finding 14). `nd_hit_class`
+    // reads `isDraft` off the search index, which lags real state by minutes to hours; every other
+    // classification the enumeration makes is re-checked in the plan, and this one must be too.
+    #[test]
+    fn a_pr_that_became_a_draft_after_indexing_is_not_routed() {
+        let head = "a".repeat(40);
+        let mut pr = design_pr(&head, &["ai:design"], vec![]);
+        pr["isDraft"] = json!(true);
+        assert_eq!(plan(&pr), DesignDoctorPlan::Draft);
+        // …and a non-draft is unaffected, by the same field.
+        pr["isDraft"] = json!(false);
+        assert!(matches!(plan(&pr), DesignDoctorPlan::Route { .. }));
+    }
+
+    // THE FLEET GUARD (#241 review finding 3). Both actors that consume ai:needs-work enumerate
+    // `--author $PR_ASSIGNEE`, so routing a third party's PR moves it OUT of the one surface that
+    // named it and into a state nobody reads — the deadlock #241 exists to remove, recreated.
+    // Withheld and NAMED instead: the row keeps ai:design, so the human's own count still holds it.
+    #[test]
+    fn a_pr_outside_the_fleet_is_withheld_and_named_never_routed() {
+        let head = "a".repeat(40);
+        let mut pr = design_pr(&head, &["ai:design"], vec![]);
+        pr["author"] = json!({"login": "some-contributor"});
+        assert_eq!(
+            plan(&pr),
+            DesignDoctorPlan::NotOurFleet {
+                author: "some-contributor".to_string()
+            }
+        );
+        assert!(
+            DesignDoctorPlan::NotOurFleet {
+                author: "x".to_string()
+            }
+            .consuming_move()
+            .is_some(),
+            "no AI actor enumerates it, so the report must name whose move it is"
+        );
+        // Fail CLOSED on an author the fetch could not read: absent is not "ours". This is the
+        // shape a trimmed `author` field would produce, so the guard must not read it as the
+        // fleet's own name.
+        let mut unreadable = design_pr(&head, &["ai:design"], vec![]);
+        unreadable["author"] = Value::Null;
+        assert_eq!(
+            plan(&unreadable),
+            DesignDoctorPlan::NotOurFleet {
+                author: String::new()
+            }
+        );
+        // …and the fleet's own PR routes, by the SAME accessor every other subcommand uses.
+        let mut ours = design_pr(&head, &["ai:design"], vec![]);
+        ours["author"] = json!({"login": pr_assignee()});
+        assert!(matches!(plan(&ours), DesignDoctorPlan::Route { .. }));
+    }
+
+    // THE SETTLING WINDOW (#241 review finding 4). Both writers that RAISE a question add the
+    // label FIRST and post the comment LAST, so a fetch landing between the two reads "no question
+    // raised" about a question being raised right now — and the vetter's run window overlaps this
+    // pass's cron slot. Absence must not be licence until it is evidence.
+    #[test]
+    fn a_pr_written_to_inside_the_settling_window_is_withheld() {
+        let head = "a".repeat(40);
+        let mut pr = design_pr(&head, &["ai:design"], vec![]);
+        pr["author"] = json!({"login": pr_assignee()});
+
+        // One second inside the window: withheld.
+        let fresh = epoch_to_iso(NOW - DESIGN_DOCTOR_SETTLE_SECS + 1);
+        pr["updatedAt"] = json!(fresh);
+        assert_eq!(
+            plan(&pr),
+            DesignDoctorPlan::TooFresh {
+                updated_at: fresh.clone()
+            }
+        );
+
+        // Exactly ON the boundary resolves FAIL-SAFE — withheld, not routed: an equality that
+        // resolves toward the write is the one reading that spends the human's question.
+        pr["updatedAt"] = json!(epoch_to_iso(NOW - DESIGN_DOCTOR_SETTLE_SECS));
+        assert!(matches!(plan(&pr), DesignDoctorPlan::TooFresh { .. }));
+
+        // One second outside: routes.
+        pr["updatedAt"] = json!(epoch_to_iso(NOW - DESIGN_DOCTOR_SETTLE_SECS - 1));
+        assert!(matches!(plan(&pr), DesignDoctorPlan::Route { .. }));
+
+        // An unreadable timestamp fails CLOSED — "we cannot tell whether a write is in flight" is
+        // not "no write is in flight".
+        pr["updatedAt"] = json!("");
+        assert!(matches!(plan(&pr), DesignDoctorPlan::TooFresh { .. }));
+    }
+
+    // ── the transition is the MACHINE send-back's machinery, not the human ruling's ───────────
+
+    // #241 review findings 6 and 8, which are one shape: a machine send-back is a VERDICT.
+    // `draft_send_back_plan` is the sibling — the other automated send-back into ai:needs-work —
+    // and this asserts the doctor writes the same two things it does, in the order this lane's own
+    // re-enumeration requires.
+    #[test]
+    fn the_route_posts_a_vetter_verdict_first_then_the_one_state_label_edit() {
+        let head = "a".repeat(40);
+        let argv =
+            design_doctor_plan_argv("o/r", 7, &head, &["ai:design".to_string()], false, false);
+        assert_eq!(argv.len(), 2, "{argv:?}");
+        // The COMMENT is first: this pass enumerates by ai:design, so a failed label edit after a
+        // posted verdict leaves the row exactly where the next tick finds it again. Label-first
+        // would strand it as a needs-work with nothing trusted behind it AND outside this pass's
+        // own population.
+        assert_eq!(
+            &argv[0][..6],
+            &["pr", "comment", "7", "-R", "o/r", "--body"]
+        );
+        let body = &argv[0][6];
+        // It is the VETTER's verdict, which is what makes `vetted_at_head` true — without it the
+        // next vetter run re-vets the PR and its `labels_to_remove` deletes the ai:needs-work this
+        // pass just wrote, landing the PR in the human's ready queue at a head nobody reworked.
+        assert!(body.starts_with("🤖 ai:vetter"), "{body}");
+        assert!(
+            body.contains(&format!("Reviewed {head}: needs-work")),
+            "{body}"
+        );
+        assert!(
+            !body.contains(REWORK_MARKER) && !body.contains(HUMAN_MARKER),
+            "a machine routing decision must not wear the human's marker: {body}"
+        );
+        // Both label halves ride in ONE edit, so the PR never wears two AI verdicts at once.
+        assert_eq!(
+            argv[1],
+            vec![
+                "pr",
+                "edit",
+                "7",
+                "-R",
+                "o/r",
+                "--add-label",
+                DESIGN_DOCTOR_TARGET,
+                "--remove-label",
+                "ai:design"
+            ]
+        );
+
+        // A retry that already posted the verdict and already carries the label writes NOTHING.
+        assert!(design_doctor_plan_argv("o/r", 7, &head, &[], true, true).is_empty());
+        // …and one that only needs the label edit does only that.
+        let only_edit =
+            design_doctor_plan_argv("o/r", 7, &head, &["ai:design".to_string()], false, true);
+        assert_eq!(only_edit.len(), 1);
+        assert_eq!(only_edit[0][1], "edit");
+    }
+
+    // The verdict the doctor writes is CURRENT by the vetter's own reader, and the row is
+    // ACTIONABLE by the producer's own reader. Both are asserted through those readers rather than
+    // by inspecting the string, because they are what decides whether the routed row has an owner.
+    #[test]
+    fn a_routed_row_reads_as_vetted_at_head_and_carries_a_work_order() {
+        let head = "a".repeat(40);
+        let body = verdict_comment(
+            &head,
+            "needs-work",
+            DESIGN_DOCTOR_NOTE,
+            None,
+            "",
+            Some(DESIGN_DOCTOR_LENS),
+        );
+        let routed = json!({"comments": [trusted(body.clone())]});
+        assert!(
+            vetted_at_head(&routed, &head),
+            "the send-back must stamp currency, or the next vetter run strips the state it wrote"
+        );
+        assert_eq!(
+            needs_work_state(&[DESIGN_DOCTOR_TARGET.to_string()], &routed),
+            NeedsWorkState::WorkOrder,
+            "the producer's own read must find an instruction, or the row lands Parked"
+        );
+        // The trust is the AUTHOR, not the marker: the same body from a third party is neither.
+        let spoofed = json!({"comments": [{
+            "author": {"login": "someone-else"},
+            "body": body,
+            "createdAt": "2026-08-01T00:00:00Z",
+        }]});
+        assert!(!vetted_at_head(&spoofed, &head));
+        assert_eq!(
+            needs_work_state(&[DESIGN_DOCTOR_TARGET.to_string()], &spoofed),
+            NeedsWorkState::Parked
+        );
+    }
+
+    // The note is posted verbatim on every routed row, so its content is a contract: it names the
+    // WHY, and BOTH exits it offers are transitions the producer can actually perform (#241 review
+    // finding 5). "Proceed under the normal lanes" is gone — `next_action` gives a needs-work PR
+    // the rework exit, and campaign-prompt.txt forbids the no-op push that faking one would need.
+    #[test]
+    fn the_note_names_the_why_and_only_exits_the_producer_can_perform() {
+        assert!(
+            DESIGN_DOCTOR_NOTE.contains("NO trusted comment raising a design question at its head"),
+            "the note must state the WHY — the label was there and no trusted comment raised a \
+             question at the head — or the producer reads the route as a code defect"
+        );
+        assert!(
+            DESIGN_DOCTOR_NOTE.contains("ROUTING FIX, not a code defect"),
+            "and say so in as many words"
+        );
+        assert!(
+            DESIGN_DOCTOR_NOTE.contains("push it"),
+            "the rework exit is the producer's own transition and must be named"
+        );
+        assert!(
+            DESIGN_DOCTOR_NOTE.contains("re-raise it with `pr-review-report flag-design"),
+            "the re-raise exit must INSTRUCT the transition, not merely mention its name: \
+             'mention it in a comment' names no transition, which is the defect — an exit that \
+             is prose leaves the row exactly as stuck as before"
+        );
+        assert!(
+            !DESIGN_DOCTOR_NOTE.contains("proceed with the PR under the normal lanes"),
+            "that exit names no transition a producer holding an ai:needs-work can perform — it \
+             leaves fabricating a commit or mis-flagging a healthy PR as the only moves"
+        );
+        assert!(
+            DESIGN_DOCTOR_NOTE.contains("Do not push a no-op commit"),
+            "campaign-prompt.txt forbids the whitespace push; the order must not invite one"
+        );
+        assert!(
+            DESIGN_DOCTOR_NOTE.contains("https://github.com/rainlanguage/issue-pr-cron/issues/241")
+        );
+        // The lens is STATED rather than omitted: an absent stamp already means something else.
+        assert!(DESIGN_DOCTOR_LENS.contains("no source read"));
+    }
+
+    // The dedup that makes a retry idempotent is the VETTER's own predicate, at the SAME head.
+    #[test]
+    fn an_already_recorded_verdict_at_the_same_head_dedups() {
+        let head = "a".repeat(40);
+        let body = verdict_comment(
+            &head,
+            "needs-work",
+            DESIGN_DOCTOR_NOTE,
+            None,
+            "",
+            Some(DESIGN_DOCTOR_LENS),
+        );
+        let mut pr = design_pr(&head, &["ai:design"], vec![trusted(body.clone())]);
+        pr["author"] = json!({"login": pr_assignee()});
+        match plan(&pr) {
+            DesignDoctorPlan::Route { note_deduped, .. } => assert!(note_deduped),
+            other => panic!("expected a route, got {other:?}"),
+        }
+        // A MOVED head is a different verdict: the record no longer describes this code.
+        let mut moved = design_pr(&"b".repeat(40), &["ai:design"], vec![trusted(body)]);
+        moved["author"] = json!({"login": pr_assignee()});
+        match plan(&moved) {
+            DesignDoctorPlan::Route { note_deduped, .. } => assert!(!note_deduped),
+            other => panic!("expected a route, got {other:?}"),
+        }
+    }
+
+    // Every plan class reaches the report with its own name, and only the classes nobody else
+    // drains carry a consuming move — so the log distinguishes "handled" from "stuck", which an
+    // undifferentiated Ok line cannot.
+    #[test]
+    fn every_plan_class_is_named_and_the_undrainable_ones_name_their_consumer() {
+        let all = [
+            DesignDoctorPlan::Moot,
+            DesignDoctorPlan::LeftDesign,
+            DesignDoctorPlan::QuestionLive,
+            DesignDoctorPlan::HumanSacred,
+            DesignDoctorPlan::CoResidentState {
+                states: vec!["ai:close-candidate".to_string()],
+            },
+            DesignDoctorPlan::Draft,
+            DesignDoctorPlan::NotOurFleet {
+                author: "x".to_string(),
+            },
+            DesignDoctorPlan::TooFresh {
+                updated_at: LONG_AGO.to_string(),
+            },
+            DesignDoctorPlan::NoAnchor,
+            DesignDoctorPlan::Route {
+                head: "a".repeat(40),
+                clears: vec!["ai:design".to_string()],
+                has_target: false,
+                note_deduped: false,
+            },
+        ];
+        let mut names: Vec<&str> = all.iter().map(|p| p.class()).collect();
+        let n = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), n, "two classes share a name: {names:?}");
+        for p in &all {
+            let line = design_doctor_line("o/r", 1, p, false);
+            assert!(line.contains(&format!("[{}]", p.class())), "{line}");
+            assert_eq!(
+                line.contains("drained by:"),
+                p.consuming_move().is_some(),
+                "{line}"
+            );
+        }
+        // Exactly the three the pass can never drain by itself carry a consumer.
+        let named: Vec<&str> = all
+            .iter()
+            .filter(|p| p.consuming_move().is_some())
+            .map(|p| p.class())
+            .collect();
+        assert_eq!(named, vec!["human-decided", "not-our-fleet", "no-anchor"]);
+        // A dry-run route is marked as one; a withheld class is not (nothing would be written
+        // either way, so a [dry-run] prefix there would misdescribe the run).
+        assert!(design_doctor_line(
+            "o/r",
+            1,
+            &DesignDoctorPlan::Route {
+                head: "a".repeat(40),
+                clears: vec![],
+                has_target: false,
+                note_deduped: false,
+            },
+            true
+        )
+        .starts_with("[dry-run] "));
+        assert!(
+            !design_doctor_line("o/r", 1, &DesignDoctorPlan::Draft, true).starts_with("[dry-run]")
+        );
+    }
+
+    // A CLASSIFICATION IS NEVER A RUN FAILURE (#241 review findings 7/15). Driven through the
+    // whole route with an injected writer, because "which classes red the tick" is exactly the
+    // decision that hides behind a live `gh` — `NoAnchor` shipped as an `Err` and turned
+    // design-doctor.log into a permanent daily failure, making every later genuine failure
+    // indistinguishable from the standing one.
+    #[test]
+    fn no_withheld_class_fails_the_tick_and_only_a_failed_write_does() {
+        let head = "a".repeat(40);
+        let never_written = |_: &[Vec<String>]| panic!("a withheld class must write NOTHING");
+
+        // One fixture per withheld class, each landing in that class by construction.
+        let mut anchorless = design_pr("", &["ai:design"], vec![]);
+        anchorless["state"] = json!("OPEN");
+        let mut third_party = design_pr(&head, &["ai:design"], vec![]);
+        third_party["author"] = json!({"login": "some-contributor"});
+        let mut fresh = design_pr(&head, &["ai:design"], vec![]);
+        fresh["updatedAt"] = json!(epoch_to_iso(NOW));
+        let mut draft = design_pr(&head, &["ai:design"], vec![]);
+        draft["isDraft"] = json!(true);
+        let mut reviewed = design_pr(&head, &["ai:design"], vec![]);
+        reviewed["reviewDecision"] = json!("APPROVED");
+        let mut merged = design_pr(&head, &["ai:design"], vec![]);
+        merged["state"] = json!("MERGED");
+
+        for (what, pr) in [
+            ("no-anchor", &anchorless),
+            ("not-our-fleet", &third_party),
+            ("unsettled", &fresh),
+            ("draft", &draft),
+            ("human-decided", &reviewed),
+            ("moot", &merged),
+            (
+                "co-resident-state",
+                &design_pr(&head, &["ai:design", "ai:close-candidate"], vec![]),
+            ),
+            ("left-design", &design_pr(&head, &["bug"], vec![])),
+            (
+                "question-live",
+                &design_pr(
+                    &head,
+                    &["ai:design"],
+                    vec![trusted(state_comment("ai:design", "q", &[]))],
+                ),
+            ),
+        ] {
+            let got = design_doctor_route_from("o/r", 1, pr, NOW, false, never_written);
+            let line = got
+                .unwrap_or_else(|(_, e)| panic!("{what} must be reported, not fail the tick: {e}"));
+            assert!(line.contains(&format!("[{what}]")), "{what}: {line}");
+        }
+
+        // A ROUTE writes, and a route the writer refuses IS a failure — that is the one thing
+        // that reds the tick, and it must still do so.
+        let ours = design_pr(&head, &["ai:design"], vec![]);
+        let calls = std::cell::RefCell::new(Vec::new());
+        let ok = design_doctor_route_from("o/r", 1, &ours, NOW, false, |p| {
+            calls.borrow_mut().push(p.len());
+            true
+        });
+        assert!(ok.is_ok());
+        assert_eq!(calls.into_inner(), vec![2], "a route runs its whole plan");
+        assert!(design_doctor_route_from("o/r", 1, &ours, NOW, false, |_| false).is_err());
+        // …and --dry-run writes nothing even for a route.
+        assert!(design_doctor_route_from("o/r", 1, &ours, NOW, true, never_written).is_ok());
+    }
+
+    // The CLI surface: the subcommand parses on its kebab-case name with the standard --dry-run,
+    // pinned as `cli_tests` pins every other subcommand's.
+    #[test]
+    fn the_design_doctor_subcommand_parses_with_the_standard_dry_run() {
+        use clap::Parser;
+        let cmd = Cli::try_parse_from(["prr", "design-doctor"])
+            .expect("design-doctor must parse")
+            .command;
+        assert_eq!(cmd, Cmd::DesignDoctor { dry_run: false });
+        let cmd = Cli::try_parse_from(["prr", "design-doctor", "--dry-run"])
+            .expect("design-doctor --dry-run must parse")
+            .command;
+        assert_eq!(cmd, Cmd::DesignDoctor { dry_run: true });
+    }
 }
 
 /// Digits reserved, per numeric field, in the fixed allowances above — [`NR_MAX_DIGITS`]'s role.
@@ -28788,7 +30194,7 @@ mod next_design_tests {
 
     // ── the per-candidate phase: concurrent reads, serial counting ────────────────────────────
 
-    use crate::parallel_queue_tests::await_another_worker;
+    use crate::parallel_queue_tests::WorkerInversion;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
 
@@ -28824,8 +30230,8 @@ mod next_design_tests {
     // The inversion is DELIBERATE rather than hoped for: candidate 0 does not finish until some
     // other candidate has, so completion order provably differs from candidate order and the three
     // ordering assertions below cannot pass by luck. It is also what makes the test discriminate a
-    // serial implementation — with one thread nothing else can finish first, so the wait times out
-    // and the inversion assertion fails.
+    // serial implementation — with one thread nothing else can finish first, so [`WorkerInversion`]
+    // never rendezvouses and fails naming that as the cause.
     #[test]
     fn the_design_reads_fan_out_and_every_list_stays_in_candidate_order() {
         // Twice the cap, so the pool cycles rather than running one wave and the tail past the
@@ -28835,13 +30241,11 @@ mod next_design_tests {
         let completion: Mutex<Vec<u64>> = Mutex::new(Vec::new());
         let peak = AtomicUsize::new(0);
         let in_flight = AtomicUsize::new(0);
+        let inversion = WorkerInversion::over(hits.len());
         let q = nd_classify(&hits, 0, |_slug, num| {
             let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
             peak.fetch_max(now, Ordering::SeqCst);
-            if num == 0 {
-                await_another_worker(|| !completion.lock().unwrap().is_empty());
-            }
-            completion.lock().unwrap().push(num);
+            inversion.record(num == 0, || completion.lock().unwrap().push(num));
             in_flight.fetch_sub(1, Ordering::SeqCst);
             // Thirds, so all three outcomes interleave through the whole run rather than sitting
             // in one block a wave-shaped bug could still order correctly.
@@ -34854,6 +36258,14 @@ enum Cmd {
         #[arg(long)]
         dry_run: bool,
     },
+    /// FSM doctor for the design lane (#241): route every `ai:design` PR with NO live trusted
+    /// design question back to `ai:needs-work`, posting the trusted work order (re-flag or
+    /// proceed) at the current head. Detection is `next_design`'s own classifier; human decisions
+    /// and live questions are left alone. Idempotent — a second run finds zero rows.
+    DesignDoctor {
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// RETIRED (#162): refuses, naming the replacement (`flag-blocked-on --blocked-by <the repo's
     /// migration ref>`). Kept parseable so the refusal can teach — a clap unknown-subcommand error
     /// names neither the why nor the repair. See [`retired_flag_blocked_deploy_refusal`].
@@ -38554,6 +39966,7 @@ fn main() {
         Cmd::InfraDown { reason, root_cause } => infra_down_mode(&reason.join(" "), &root_cause),
         Cmd::RunInfra { record, json } => run_infra_mode(record.as_deref(), json),
         Cmd::RetireBlockedInfra { dry_run } => retire_blocked_infra_mode(dry_run),
+        Cmd::DesignDoctor { dry_run } => design_doctor_mode(dry_run),
         // RETIRED (#162): unconditional refusal — no fetch, no write, `--dry-run` included.
         Cmd::FlagBlockedDeploy { slug, pr, .. } => {
             eprintln!("{}", retired_flag_blocked_deploy_refusal(&slug, &pr));
@@ -43239,11 +44652,11 @@ mod repo_root_tests {
             // The accessor itself.
             "org_owner_args",
             // PURE argv builders. Their live callers — `flagged_open_subjects` and
-            // `sweep_stale_closed_flags` for the first, `next_design_fetch` for the second — do
-            // the withholding, which is why the filter is not visible in the builder. NEITHER
-            // exemption is taken on trust: each is backed by a positive pin below, because an
-            // exemption whose claim nothing checks is how a filter gets deleted from a caller
-            // this scan cannot see.
+            // `sweep_stale_closed_flags` for the first, `next_design_fetch` AND
+            // `design_doctor_mode` (#241) for the second — do the withholding, which is why the
+            // filter is not visible in the builder. NEITHER exemption is taken on trust: each is
+            // backed by a positive pin below, one per CALLER, because an exemption whose claim
+            // nothing checks is how a filter gets deleted from a caller this scan cannot see.
             "flagged_subjects_args",
             "design_open_prs_args",
             // The RETIRED one-shot sweep (#108 item 4). Nothing writes that label any more, its
@@ -43336,6 +44749,33 @@ mod repo_root_tests {
              and does not filter with it is #206 with the read left in place to look like a \
              guard. Filtering items: {filters:?}"
         );
+        // …and the design lane now has a SECOND caller of that builder, which the scan can see no
+        // better than the first: `design_doctor_mode` (#241). It is the one that WRITES — it
+        // strips `ai:design` and posts a verdict — so an archived repo reaching it is worse than a
+        // frozen row in a queue: every write is refused, the row can never drain, and the daily
+        // cron is permanently red. Both halves pinned, exactly as above; deleting either call from
+        // the doctor fails here rather than passing on an unbacked exemption comment.
+        for (caller, set, what) in [
+            (
+                "design_doctor_mode",
+                &reads,
+                "read the archived set (`archived_repos()`)",
+            ),
+            (
+                "design_doctor_mode",
+                &filters,
+                "apply the pure filter (`nd_population`)",
+            ),
+        ] {
+            assert!(
+                set.contains(&caller.to_string()),
+                "`{caller}` must {what}: it reaches the org scope through `design_open_prs_args`, \
+                 so the scan above cannot see it, and without the withholding it routes `ai:design` \
+                 PRs in ARCHIVED repos — where `gh pr comment`/`pr edit` are refused, so every \
+                 route fails and the pass reds for ever on rows nothing can drain (#206/#241). \
+                 Items: {set:?}"
+            );
+        }
     }
 
     /// The SAME property one lane over, and it is the defect #222 shipped with: the leak population
@@ -54684,6 +56124,43 @@ mod human_rule_tests {
         }
         // A PR has no `url` need and no `createdAt` need — the lists are not interchangeable.
         assert!(!has(PR_RULE_FIELDS, "createdAt"));
+
+        // The design doctor's fetch (#241) — the same rule, and the one list in the crate that
+        // carries `reviewDecision`. Every field here feeds a guard that WITHHOLDS a write, so a
+        // trimmed list does not fail loudly: the key is absent, the read falls back to empty, and
+        // the doctor routes a PR it should have left alone.
+        for (field, guard) in [
+            ("state", "the terminal-subject check"),
+            ("headRefOid", "the verdict's anchor"),
+            ("labels", "the ai:design and co-resident-state guards"),
+            (
+                "comments",
+                "the live-question read, the ruling half of pr_human_sacred, and the verdict dedup",
+            ),
+            (
+                "reviewDecision",
+                "the NATIVE-review half of pr_human_sacred — trim it and every PR reads as \
+                 un-reviewed, so a PR carrying a live human review is routed",
+            ),
+            (
+                "isDraft",
+                "the write-time draft re-check (the search index this row came from lags)",
+            ),
+            (
+                "author",
+                "the fleet check — a row outside $PR_ASSIGNEE would be routed into a state no \
+                 actor enumerates",
+            ),
+            ("updatedAt", "the settling window against the raise race"),
+        ] {
+            assert!(
+                has(DESIGN_DOCTOR_ROUTE_FIELDS, field),
+                "the design-doctor fetch drops {field:?}, silently disabling {guard}"
+            );
+        }
+        // …and the human ruling's own list must NOT grow `reviewDecision` by accident: the two
+        // lists are not interchangeable, and this is the field whose absence is invisible.
+        assert!(!has(PR_RULE_FIELDS, "reviewDecision"));
     }
 
     // --- G7 terminal subjects are MOOT, not refused ----------------------------------------------

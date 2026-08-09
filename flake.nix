@@ -148,6 +148,21 @@
           ];
         };
 
+        # The FSM doctor for the design lane (#241): routes every ai:design PR with no live
+        # trusted design question back to ai:needs-work, daily. Writes labels + the trusted work
+        # order via gh, so gh rides in the closure like the other runners'.
+        design-doctor = runner {
+          name = "design-doctor";
+          file = ./design-doctor.sh;
+          runtimeInputs = [
+            pr-review-report
+            pkgs.gh
+            pkgs.coreutils
+            pkgs.util-linux # flock
+            pkgs.getent # resolves HOME when cron starts without it
+          ];
+        };
+
         # One-time history backfill; walks git history of the snapshot.
         backfill-human-queue-history = runner {
           name = "backfill-human-queue-history";
@@ -221,6 +236,7 @@
             campaign-run
             review-run
             refresh-human-queue
+            design-doctor
             backfill-human-queue-history
             review-queue
             ;
@@ -241,6 +257,10 @@
           refresh-human-queue = {
             type = "app";
             program = "${refresh-human-queue}/bin/refresh-human-queue";
+          };
+          design-doctor = {
+            type = "app";
+            program = "${design-doctor}/bin/design-doctor";
           };
         };
 
