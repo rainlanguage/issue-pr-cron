@@ -28155,15 +28155,21 @@ fn next_design_fetch(limit: usize) -> Result<Value, String> {
 // AI actor's queue by design), and no other command lists it — so the row sits
 // for ever. Ruling (thedavidmeister, 2026-08-09, #241): the FSM-conformance
 // pass moves ALL such rows to `ai:needs-work`, automatically. The work the
-// send-back carries is well-defined: re-raise the question with a trusted
-// `flag-design` comment if one still exists, otherwise proceed with the PR.
+// send-back carries is well-defined, and both of its exits are transitions the
+// PRODUCER can actually perform: push the rework the PR was parked mid-way
+// through, or re-raise the question with `flag-design`. The ruling's third
+// phrasing — "otherwise proceed with the PR" — is deliberately NOT offered as
+// an exit of its own, because no producer transition implements it: a
+// needs-work PR gets `NextAction::ReworkNeedsWork`, and campaign-prompt.txt
+// names the two exits as rework and close while forbidding the token push
+// ("a whitespace push is neither"). "Proceed" IS the rework exit, said plainly.
 //
 // Detection is `next_design`'s OWN classification — [`nd_classify`], the one
 // classifier, over the one enumeration [`design_open_prs_args`] spells — and
-// the transition is the standard needs-work send-back: the trusted `Rework
-// note` work order at the current head plus the ONE-STATE label move, performed
-// through the same step machinery every human ruling uses. No second detector,
-// no hand-rolled label write.
+// the transition is the MACHINE send-back [`draft_send_back_plan`] already
+// spells: a `🤖 ai:vetter` needs-work VERDICT at the head (the currency stamp)
+// plus the ONE-STATE label move. No second detector, no hand-rolled label
+// write, and no human marker on a machine's decision.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// The state the doctor routes INTO — THE needs-work state every send-back lands (#133/#219).
@@ -28588,7 +28594,29 @@ fn design_doctor_route(slug: &str, num: u64, dry_run: bool) -> Result<String, (i
             format!("error: `gh pr view {slug}#{num}` failed — not writing on incomplete data"),
         ));
     };
-    let plan = design_doctor_plan(&prj, now_unix());
+    design_doctor_route_from(slug, num, &prj, now_unix(), dry_run, |plan| {
+        run_draft_send_back(plan, gh_run)
+    })
+}
+
+/// PURE given `write`: the whole of one row's route once its snapshot is in hand — the seam
+/// [`nd_classify`]'s `fetch` parameter is, and for the same reason. Which classes WRITE, which are
+/// reported, and which red the tick are decisions a unit test must be able to make the pass make;
+/// behind a live `gh` they are behaviour nothing asserts, which is how "a classification reds the
+/// cron every day" survives a green suite.
+///
+/// EVERY class but `Route` returns `Ok`. That is the rule, not an accident of which arms happen to
+/// be listed: a row the doctor may not write is a CLASSIFICATION, and the pass's only failures are
+/// a read it could not make and a write it could not finish.
+fn design_doctor_route_from(
+    slug: &str,
+    num: u64,
+    prj: &Value,
+    now_unix_secs: i64,
+    dry_run: bool,
+    write: impl Fn(&[Vec<String>]) -> bool,
+) -> Result<String, (i32, String)> {
+    let plan = design_doctor_plan(prj, now_unix_secs);
     let line = design_doctor_line(slug, num, &plan, dry_run);
     let DesignDoctorPlan::Route {
         head,
@@ -28603,7 +28631,7 @@ fn design_doctor_route(slug: &str, num: u64, dry_run: bool) -> Result<String, (i
         return Ok(line);
     }
     let argv = design_doctor_plan_argv(slug, num, head, clears, *has_target, *note_deduped);
-    if !run_draft_send_back(&argv, gh_run) {
+    if !write(&argv) {
         return Err((
             1,
             format!(
@@ -29285,6 +29313,73 @@ mod design_doctor_tests {
         )
         .starts_with("[dry-run] "));
         assert!(!design_doctor_line("o/r", 1, &DesignDoctorPlan::Draft, true).starts_with("[dry-run]"));
+    }
+
+    // A CLASSIFICATION IS NEVER A RUN FAILURE (#241 review findings 7/15). Driven through the
+    // whole route with an injected writer, because "which classes red the tick" is exactly the
+    // decision that hides behind a live `gh` — `NoAnchor` shipped as an `Err` and turned
+    // design-doctor.log into a permanent daily failure, making every later genuine failure
+    // indistinguishable from the standing one.
+    #[test]
+    fn no_withheld_class_fails_the_tick_and_only_a_failed_write_does() {
+        let head = "a".repeat(40);
+        let never_written = |_: &[Vec<String>]| panic!("a withheld class must write NOTHING");
+
+        // One fixture per withheld class, each landing in that class by construction.
+        let mut anchorless = design_pr("", &["ai:design"], vec![]);
+        anchorless["state"] = json!("OPEN");
+        let mut third_party = design_pr(&head, &["ai:design"], vec![]);
+        third_party["author"] = json!({"login": "some-contributor"});
+        let mut fresh = design_pr(&head, &["ai:design"], vec![]);
+        fresh["updatedAt"] = json!(epoch_to_iso(NOW));
+        let mut draft = design_pr(&head, &["ai:design"], vec![]);
+        draft["isDraft"] = json!(true);
+        let mut reviewed = design_pr(&head, &["ai:design"], vec![]);
+        reviewed["reviewDecision"] = json!("APPROVED");
+        let mut merged = design_pr(&head, &["ai:design"], vec![]);
+        merged["state"] = json!("MERGED");
+
+        for (what, pr) in [
+            ("no-anchor", &anchorless),
+            ("not-our-fleet", &third_party),
+            ("unsettled", &fresh),
+            ("draft", &draft),
+            ("human-decided", &reviewed),
+            ("moot", &merged),
+            (
+                "co-resident-state",
+                &design_pr(&head, &["ai:design", "ai:close-candidate"], vec![]),
+            ),
+            ("left-design", &design_pr(&head, &["bug"], vec![])),
+            (
+                "question-live",
+                &design_pr(
+                    &head,
+                    &["ai:design"],
+                    vec![trusted(state_comment("ai:design", "q", &[]))],
+                ),
+            ),
+        ] {
+            let got = design_doctor_route_from("o/r", 1, pr, NOW, false, never_written);
+            let line = got.unwrap_or_else(|(_, e)| {
+                panic!("{what} must be reported, not fail the tick: {e}")
+            });
+            assert!(line.contains(&format!("[{what}]")), "{what}: {line}");
+        }
+
+        // A ROUTE writes, and a route the writer refuses IS a failure — that is the one thing
+        // that reds the tick, and it must still do so.
+        let ours = design_pr(&head, &["ai:design"], vec![]);
+        let calls = std::cell::RefCell::new(Vec::new());
+        let ok = design_doctor_route_from("o/r", 1, &ours, NOW, false, |p| {
+            calls.borrow_mut().push(p.len());
+            true
+        });
+        assert!(ok.is_ok());
+        assert_eq!(calls.into_inner(), vec![2], "a route runs its whole plan");
+        assert!(design_doctor_route_from("o/r", 1, &ours, NOW, false, |_| false).is_err());
+        // …and --dry-run writes nothing even for a route.
+        assert!(design_doctor_route_from("o/r", 1, &ours, NOW, true, never_written).is_ok());
     }
 
     // The CLI surface: the subcommand parses on its kebab-case name with the standard --dry-run,
