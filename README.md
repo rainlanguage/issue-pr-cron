@@ -2415,11 +2415,20 @@ deterministic, and therefore teachable:
 | `cp` with any flag                       |     ~21 | regenerate artifacts in the clone that needs them; plain `cp <src> <dst>` only |
 | `bash` / `sh` / `python3` script or `-c` |      18 | there is no interpreter, by the section above                                  |
 
-`Monitor` needs no allow-list entry: its `command` is checked against the same
-Bash rules (a denial reads "Permission to use Bash with command …"), so a denied
-`Monitor` is always a command to rewrite. A loop INSIDE it is accepted, which
-makes `until <check>; do sleep …; done` the sanctioned wait even though the
-identical loop is refused as a Bash call.
+`Monitor` is not a wait, and the prompt no longer offers one
+([#249](https://github.com/rainlanguage/issue-pr-cron/issues/249)). It arms a
+background watcher and returns immediately, delivering its events as
+notifications on a LATER turn — and a `claude --print` run has no later turn, so
+a run that armed one and returned exited with the watcher dead and its answer
+unread. Run `20260809T145150Z` did exactly that around a backgrounded
+`state-load`: 168 seconds, no `state.json`, no queue ever read, reported as a
+success because it had waited exactly as the prompt then said to.
+
+The sanctioned wait is the BLOCKING COMMAND in a FOREGROUND `Bash` call, whose
+own `timeout` holds the turn open until the command exits — `state-load` for the
+local case, `pr-review-report await` for the GitHub one. A `while`/`until` loop
+is still refused on shape as a Bash call, and a probe per turn is still the
+320-of-788-turns pathology it always was.
 
 #### "The following parts require approval" is not an allow-list failure
 
