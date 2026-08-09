@@ -3073,18 +3073,18 @@ and the first observation run it was built for printed
 A **policy** stop is the pipeline choosing not to spend right now. The human at
 the terminal owns that choice and may make it differently for one run:
 
-| policy stop — yields to `--force` | why the human owns it                                                                                                                             |
-| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| the usage-gate **PAUSE**           | holding budget back from a tick nobody is watching is exactly right, and exactly wrong for a watched one                                            |
-| `DISABLED` / `review-DISABLED`     | the switch stops the **cron**; the human typing `--force` is its own owner overriding their own stop, which is not what the switch protects against |
+| policy stop — yields to `--force` | why the human owns it                                                                                                                               |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| the usage-gate **PAUSE**          | holding budget back from a tick nobody is watching is exactly right, and exactly wrong for a watched one                                            |
+| `DISABLED` / `review-DISABLED`    | the switch stops the **cron**; the human typing `--force` is its own owner overriding their own stop, which is not what the switch protects against |
 
 A **correctness** stop is the run being unable to do its job properly no matter
 who asked. No argument reaches these:
 
-| correctness stop — never yields | why no one owns it                                                                                             |
-| -------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| the flock                        | two runs of a role corrupt each other's clones and GitHub state — not a choice about spending                    |
-| a gate config **refusal**        | any non-zero gate exit that is not 10: the gate could not validate its config, so the tick would run unvalidated |
+| correctness stop — never yields | why no one owns it                                                                                               |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| the flock                       | two runs of a role corrupt each other's clones and GitHub state — not a choice about spending                    |
+| a gate config **refusal**       | any non-zero gate exit that is not 10: the gate could not validate its config, so the tick would run unvalidated |
 
 Every override is recorded. The row a forced run leaves carries, in the same
 shape the skip row uses but **plural**, because one run can walk past both:
