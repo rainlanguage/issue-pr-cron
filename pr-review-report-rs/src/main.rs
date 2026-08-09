@@ -34790,8 +34790,10 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
-    /// Wait — in ONE turn, inside `Monitor` — until every named PR has SETTLED: its checks have all
-    /// reported, and (with `@<sha>`) a push has moved its head off `<sha>`. Replaces the per-turn
+    /// Wait — in ONE turn, in a FOREGROUND `Bash` call — until every named PR has SETTLED: its
+    /// checks have all reported, and (with `@<sha>`) a push has moved its head off `<sha>`. It
+    /// BLOCKS, so it needs nothing wrapped around it: `Monitor` returns immediately, which under
+    /// `claude --print` abandons the wait it was armed for (#249). Replaces the per-turn
     /// `gh pr view --json headRefOid` / `gh pr checks` probing that was 60% of the enumeration
     /// cost #170 measured. Exit 3 = the deadline stopped it; the report still names every subject.
     Await {
@@ -36654,7 +36656,9 @@ fn uncovered_issues_mode(json_out: bool) -> i32 {
 // `until grep -q '<done-marker>' <output-file>` — which needs a LOCAL FILE. There is no local file
 // for "cyclo.site#294's checks have reported", so the rule was unreachable for exactly the wait
 // the runs actually do, and they hand-rolled it one turn at a time instead. That is the gap this
-// closes: `await` is a bounded, in-process poll that a single `Monitor` call can hold.
+// closes: `await` is a bounded, in-process poll that a single FOREGROUND Bash call can hold. It is
+// not wrapped in `Monitor` (#249): `Monitor` arms a watcher and returns immediately, so under
+// `claude --print` — where returning ends the process — the wait is abandoned the moment it starts.
 //
 // Two conditions, because the traces show two waits, usually together: 412 of the probes read
 // `headRefOid` (has the delegate's push landed?) and the rest read the check rollup (has CI
@@ -44139,6 +44143,82 @@ mod settings_tests {
         assert!(
             !one_shot.contains("`gh pr checks` / `gh run watch`"),
             "ONE-SHOT must not still offer the per-probe poll as the way to wait: {one_shot}"
+        );
+    }
+
+    /// #249: the waiting rule was FOLLOWED and the run stranded anyway. `Monitor` does not block —
+    /// it arms a background watcher and RETURNS, delivering its events as notifications on a later
+    /// turn — and ONE-SHOT says there is no later turn. Run 20260809T145150Z backgrounded its
+    /// `state-load`, armed the prompt's own `until grep -q … sleep 10` Monitor idiom on the output
+    /// file, read the file still empty, wrote "monitoring for completion" and returned: 168
+    /// seconds, no `state.json`, no queue read, no work, and a run that reported SUCCESS because
+    /// it had waited exactly as prescribed. So the property is not "the rule is stated" — the old
+    /// rule was stated and was reachable; it is that the mechanism the prompt hands a run BLOCKS.
+    #[test]
+    fn the_waiting_rule_never_prescribes_an_asynchronous_wait() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        // A mechanism is prescribed by the CALL a run can copy, so the invariant is on the call
+        // spelling and not on any sentence about it: no `Monitor` invocation anywhere in the
+        // prompt, neither the local-file idiom nor one wrapped around `await`. Prose warning a run
+        // off a tool while an example next to it shows the tool being used is how #170's rule and
+        // its counter-example coexisted for four months.
+        assert!(
+            !prompt.contains("Monitor {"),
+            "campaign-prompt.txt must show no `Monitor` call to copy: `Monitor` returns \
+             immediately, so every call it spells is a wait that ENDS the run instead of holding \
+             it open"
+        );
+        assert!(
+            !prompt.contains("WAITING IS `Monitor`"),
+            "the waiting rule must not name an asynchronous tool as THE way to block (#249)"
+        );
+        let para = shell_shapes_paragraph(&prompt);
+        // Deleting the broken mechanism is only half of it: a rule that says what NOT to do and
+        // names no replacement leaves the run to improvise, which is the probe-per-turn the
+        // paragraph's last sentences are about.
+        assert!(
+            para.contains("WAITING IS A FOREGROUND `Bash` CALL"),
+            "the paragraph must STATE the blocking mechanism, not merely forbid the async one: \
+             {para}"
+        );
+        // If `Monitor` is named at all it must be named with the two facts that stranded the run.
+        assert!(
+            para.contains("RETURNS IMMEDIATELY") && para.contains("no later turn"),
+            "naming `Monitor` without saying it returns immediately and that returning ends the \
+             run reproduces #249 exactly: {para}"
+        );
+        // `run_in_background` is a TOOL PARAMETER, not shell syntax, so the paragraph's standing
+        // ban on `&`-backgrounding never covered it — which is how the run backgrounded
+        // `state-load` without breaking a single stated rule.
+        assert!(
+            para.contains("run_in_background"),
+            "the ban must name the backgrounding the run actually used, not only the `&` shell \
+             form the old text forbade: {para}"
+        );
+        assert!(
+            para.contains("20260809T145150Z"),
+            "the rule carries its measurement, like every other rule in this prompt: {para}"
+        );
+        // AT THE POINT OF USE. The strand happened in step 2, and a step that repeats none of the
+        // rule is a step a run reads on its own terms — `state-load` is the one command the prompt
+        // itself describes as slow, so it is the one most likely to be handed to the background.
+        let step2 = producer_step(&prompt, "2");
+        assert!(
+            step2.contains("FOREGROUND") && step2.contains("NEVER background it"),
+            "step 2 is where the run stranded: `state-load` must be named a foreground call there \
+             too, not only in the shell-shapes paragraph: {step2}"
+        );
+        // …and ONE-SHOT must not send the wait back through the very asynchrony it forbids
+        // parking on. An armed watcher and a scheduled wakeup abandon the run identically.
+        let one_shot = prompt
+            .split("\n\n")
+            .find(|p| p.contains("ONE-SHOT, NOT A LOOP"))
+            .expect("campaign-prompt.txt must carry the ONE-SHOT paragraph");
+        assert!(
+            one_shot.contains("FOREGROUND") && !one_shot.contains("inside `Monitor`"),
+            "ONE-SHOT's own wait sentence must be the blocking one: {one_shot}"
         );
     }
 
