@@ -3065,11 +3065,11 @@ past, and say nothing about why.
 
 What `--force` does **not** bypass, each deliberately:
 
-| not bypassed             | why                                                                                                                              |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| `DISABLED`               | a deliberate human stop; walking through it makes the one unambiguous off-switch a suggestion                                     |
-| the flock                | two runs of a role collide on the same clones and the same GitHub state — the answer to "I want to watch a run" is to watch that one |
-| a gate config **refusal** | any non-zero gate exit that is not 10 means the gate could not read its config; forcing past it runs on config nobody validated     |
+| not bypassed              | why                                                                                                                                  |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `DISABLED`                | a deliberate human stop; walking through it makes the one unambiguous off-switch a suggestion                                        |
+| the flock                 | two runs of a role collide on the same clones and the same GitHub state — the answer to "I want to watch a run" is to watch that one |
+| a gate config **refusal** | any non-zero gate exit that is not 10 means the gate could not read its config; forcing past it runs on config nobody validated      |
 
 The row a forced run leaves is marked, in the same shape the skip row uses:
 
@@ -3082,9 +3082,9 @@ Both fields are **absent** — not null — on every scheduled row, and `forced`
 declined to run against one it was told to run anyway; `run-metrics` refuses
 both at parse). `metrics/runs.jsonl` is what the dashboard draws its run series
 from, so a forced run that looked like a paced tick would show budget being
-spent on a schedule nobody followed. The marker rides **beside** `outcome`, never
-replacing it — forcing changes what the row says about how the run was started,
-never how the run is judged.
+spent on a schedule nobody followed. The marker rides **beside** `outcome`,
+never replacing it — forcing changes what the row says about how the run was
+started, never how the run is judged.
 
 ## Tooling failures are run failures, not verdict caveats
 

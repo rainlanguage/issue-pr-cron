@@ -25,7 +25,8 @@
 //!
 //! Like `refresh_human_queue.rs`, these return early when the checkout is absent (the nix build
 //! sandbox filters the scripts out of the crate's source); the `rainix-rs-test` gate runs against
-//! a full checkout, which is where they execute.
+//! a full checkout, which is where they execute. Six of them return early on a second condition
+//! too — see [`runner_runtime_available`].
 
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -283,6 +284,28 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
+/// The tools a test needs in order to drive the real script's real behaviour: `flock`
+/// (util-linux) and `timeout` (coreutils).
+///
+/// Both are in the runners' `runtimeInputs`, so in production they always resolve — the CI job
+/// `each runner's closure is self-contained` asserts exactly that. A test, though, runs against the
+/// AMBIENT path, and a bare macOS runner supplies neither. Neither can be stood in for: stub
+/// `flock` and the lock test asserts a coincidence instead of the lock (worse, the script's own
+/// `! flock -n 9` succeeds on a missing binary, so the skip message appears for the wrong reason),
+/// and with no `timeout` the model invocation never runs, so there is no row to assert on. So where
+/// the platform cannot supply the runner's own runtime, these return rather than prove something
+/// else. The Linux job — the platform the crons actually run on — executes every one of them.
+fn runner_runtime_available() -> bool {
+    ["flock", "timeout"].iter().all(|t| {
+        Command::new("sh")
+            .arg("-c")
+            .arg(format!("command -v {t} >/dev/null"))
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    })
+}
+
 fn write_exe(path: &Path, body: &str) {
     std::fs::write(path, body).expect("write stub");
     #[cfg(unix)]
@@ -403,6 +426,9 @@ fn a_refused_vetter_tick_aborts_loudly_and_writes_no_row() {
 /// (there is a `final` row over a non-empty trace, and no skip row), it is marked as forced with
 /// the gate's own line, and it was watched (the trail reached stdout, not only the log).
 fn a_forced_run_past_a_pause_runs_marked_and_streamed(role: &'static Role, name: &str) {
+    if !runner_runtime_available() {
+        return;
+    }
     let Some(f) = Fixture::new(role, name, 10, PAUSE_LINE).map(Fixture::with_model) else {
         return;
     };
@@ -468,6 +494,9 @@ fn a_forced_vetter_run_past_a_pause_runs_marked_and_streamed() {
 /// tick the gate let through is byte-identical to what it always was — no force fields, and not
 /// one byte on stdout, which is what keeps `metrics/runs.jsonl` a record of the SCHEDULE.
 fn an_unforced_run_is_unmarked_and_silent(role: &'static Role, name: &str) {
+    if !runner_runtime_available() {
+        return;
+    }
     let Some(f) = Fixture::new(role, name, 0, OK_LINE).map(Fixture::with_model) else {
         return;
     };
@@ -584,6 +613,9 @@ fn force_does_not_bypass_the_vetter_kill_switch() {
 /// pause, so the absence of a skip row here is proof the force worked, and the lock message is
 /// proof it stopped there.
 fn force_does_not_bypass_the_lock(role: &'static Role, name: &str) {
+    if !runner_runtime_available() {
+        return;
+    }
     let Some(f) = Fixture::new(role, name, 10, PAUSE_LINE).map(Fixture::with_model) else {
         return;
     };
