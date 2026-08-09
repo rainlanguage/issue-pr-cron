@@ -1860,6 +1860,18 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/issue-pr-cron",
+      "number": 239,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/239",
+      "title": "/ndd should relabel obvious close-candidates to ai:close-candidate, not ask a design question"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 238,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/238",
+      "title": "/ndd should rule needs-work itself on misroute and already-answered, not ask"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
       "number": 237,
       "url": "https://github.com/rainlanguage/issue-pr-cron/issues/237",
       "title": "Producer cannot correct false body prose: append-only Summary update block, plus the vetter rule that accepts supersession"
@@ -5566,14 +5578,14 @@
     "leaks": 0,
     "totalProducerPrs": 143,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 611,
-    "openIssues": 771
+    "uncoveredIssues": 613,
+    "openIssues": 773
   },
   "ages": {
     "openIssues": {
-      "meanDays": 315.9,
+      "meanDays": 315.1,
       "medianDays": 102.9,
-      "oldestDays": 1658.4
+      "oldestDays": 1658.5
     }
   }
 }
