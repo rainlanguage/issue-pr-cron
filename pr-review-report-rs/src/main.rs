@@ -17441,15 +17441,41 @@ enum DesignBucket {
 }
 
 impl DesignBucket {
+    /// How many variants there are — the length [`DesignBucket::ALL`] is DECLARED at, so an array
+    /// that stops listing every variant is a length mismatch rather than a shorter array.
+    const COUNT: usize = 5;
+
     /// Every variant, for the emitter that writes each `breakdown` key unconditionally — a key
     /// absent at zero would read as a bucket that does not exist.
-    const ALL: [DesignBucket; 5] = [
+    ///
+    /// A hand-written array cannot notice a variant added beside it, and the consequence is
+    /// quiet: [`design_bucket`] would classify into the new bucket and annotate an entry with it
+    /// while `breakdown` omitted its key, breaking exactly the zero-inclusive contract this enum
+    /// exists to state. So the array is held by the compiler from three directions — add a
+    /// variant and [`DesignBucket::ordinal`]'s match is non-exhaustive; give it an ordinal without
+    /// listing it here and the const block below fails const-eval; raise [`DesignBucket::COUNT`]
+    /// without extending the array and this declaration's own length is wrong.
+    const ALL: [DesignBucket; Self::COUNT] = [
         DesignBucket::Presentable,
         DesignBucket::NoQuestion,
         DesignBucket::Draft,
         DesignBucket::Unaddressable,
         DesignBucket::FetchError,
     ];
+
+    /// PURE: this variant's position. Exists for its EXHAUSTIVENESS — the match is what refuses
+    /// to compile when a variant is added — and the ordinals are what the const block checks
+    /// [`DesignBucket::ALL`] against. Nothing reads it at runtime; it is a statement about the
+    /// enum, addressed to the compiler.
+    const fn ordinal(self) -> usize {
+        match self {
+            DesignBucket::Presentable => 0,
+            DesignBucket::NoQuestion => 1,
+            DesignBucket::Draft => 2,
+            DesignBucket::Unaddressable => 3,
+            DesignBucket::FetchError => 4,
+        }
+    }
 
     /// The one spelling per bucket. `fetchErrors` keeps [`next_design_doc`]'s plural even on a
     /// lone entry so a consumer can filter `prs` by any `breakdown` key with no second mapping.
@@ -17463,6 +17489,33 @@ impl DesignBucket {
         }
     }
 }
+
+/// THE GRIP, as arithmetic the compiler runs: [`DesignBucket::ALL`] lists every ordinal exactly
+/// once. A variant given an ordinal but left out of the array fails HERE, at const-eval, rather
+/// than at the far end of a refresh where its `breakdown` key had quietly stopped being emitted.
+const _: () = {
+    let mut seen = [false; DesignBucket::COUNT];
+    let mut i = 0;
+    while i < DesignBucket::ALL.len() {
+        let o = DesignBucket::ALL[i].ordinal();
+        assert!(
+            o < DesignBucket::COUNT,
+            "a DesignBucket ordinal is outside COUNT — raise COUNT and extend ALL together"
+        );
+        assert!(!seen[o], "a DesignBucket variant is listed twice in ALL");
+        seen[o] = true;
+        i += 1;
+    }
+    let mut j = 0;
+    while j < DesignBucket::COUNT {
+        assert!(
+            seen[j],
+            "a DesignBucket variant has an ordinal but is missing from ALL — its breakdown key \
+             would stop being emitted at zero"
+        );
+        j += 1;
+    }
+};
 
 /// PURE: the design cell's members — the same PRs [`lanes_doc`] puts in the
 /// `vetter-verdicts`.`ai:design` cell, selected by the SAME [`classify_lane`] call on the same
