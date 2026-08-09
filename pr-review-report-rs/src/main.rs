@@ -41957,8 +41957,8 @@ mod startup_split_tests {
 #[cfg(test)]
 mod skip_row_tests {
     use super::{
-        classify_outcome, final_record, ForceStamp, InfraRecord, RunIdentity, RunMetrics,
-        SpendRecord, ToolingReport, TraceOutcome, STAGE_FINAL,
+        classify_outcome, final_record, run_metrics_mode, ForceStamp, InfraRecord, RunIdentity,
+        RunMetrics, SpendRecord, ToolingReport, TraceOutcome, STAGE_FINAL,
     };
 
     /// The gate's real ceiling-pause line, verbatim — em-dash, percent signs and all — because the
@@ -42080,6 +42080,61 @@ mod skip_row_tests {
         );
         assert_eq!(doc["stage"], STAGE_FINAL);
         assert_eq!(doc["runId"], "20260731T090001Z");
+    }
+
+    /// A mismatched pair is REFUSED, not truncated.
+    ///
+    /// The kinds and the reasons are paired by POSITION, so a caller that supplies a different
+    /// number of each has written a row where a stop names another stop's line. Truncating to the
+    /// shorter of the two would produce a well-formed row that is silently wrong, and the only
+    /// place it would ever show up is the dashboard, weeks later.
+    #[test]
+    fn a_positional_pair_of_different_lengths_is_refused() {
+        let trace = std::env::temp_dir().join(format!("force-pair-{}.jsonl", std::process::id()));
+        std::fs::write(&trace, "").expect("write empty trace");
+        let path = trace.to_str().expect("utf-8 temp path");
+        let id = RunIdentity {
+            run_id: None,
+            role: None,
+            model: None,
+        };
+        let kinds = ["disabled".to_string(), "usage-gate".to_string()];
+        let one = [PAUSE_LINE.to_string()];
+        assert_eq!(
+            run_metrics_mode(
+                path,
+                &id,
+                None,
+                &[],
+                None,
+                None,
+                Some(ForceStamp {
+                    kinds: &kinds,
+                    reasons: &one,
+                }),
+            ),
+            2,
+            "two kinds and one reason must abort, not truncate"
+        );
+        // …and the matched pair it was nearly mistaken for still succeeds, so what the guard tests
+        // is the LENGTHS and not merely the presence of more than one override.
+        let two = ["DISABLED flag present".to_string(), PAUSE_LINE.to_string()];
+        assert_eq!(
+            run_metrics_mode(
+                path,
+                &id,
+                None,
+                &[],
+                None,
+                None,
+                Some(ForceStamp {
+                    kinds: &kinds,
+                    reasons: &two,
+                }),
+            ),
+            0
+        );
+        let _ = std::fs::remove_file(&trace);
     }
 
     /// A forced run that ends badly is still judged on the run. The marker rides beside the
@@ -49164,7 +49219,15 @@ mod cli_tests {
                 "PAUSE: x"
             ])
             .is_err(),
-            "--forced without --forced-run must be refused"
+            "--forced and --force-reason without --forced-run must be refused"
+        );
+        // EACH flag carries its own `requires`. Asserted separately because the pair above is
+        // refused as long as EITHER one does — so deleting `forced`'s requirement would leave that
+        // assertion passing while `--forced` alone silently parsed into a row nothing marks.
+        assert!(
+            Cli::try_parse_from(["prr", "run-metrics", "/t.jsonl", "--forced", "usage-gate"])
+                .is_err(),
+            "--forced alone must be refused"
         );
         assert!(
             Cli::try_parse_from([
