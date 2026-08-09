@@ -9201,6 +9201,18 @@ enum TraceOutcome {
     /// a skip: the runners abort loudly on it and write no row, and conflating the two would
     /// dress broken config up as pacing.
     Skipped,
+    /// The run RETURNED with work IT STARTED still in flight — it never reached a final state at
+    /// all (#249). Run 20260809T145150Z backgrounded `state-load`, armed a `Monitor` to wait for
+    /// it, read the still-empty output file and returned after 168 seconds; the queue was never
+    /// read and the row said `ok`.
+    ///
+    /// THE TEST IS "DID THIS RUN FINISH", NOT "DID THIS RUN DO WORK". A run that surveyed the
+    /// queue and correctly found nothing to do HAS finished, and it is legitimately `ok` —
+    /// producing nothing is a final state. Those are different axes, and this variant only ever
+    /// speaks to the second one: it fires on a command the run itself backgrounded whose end
+    /// never reached the trace, and on nothing else. An idle run backgrounds nothing, so there is
+    /// nothing for it to leave unresolved.
+    Unfinished,
 }
 
 impl TraceOutcome {
@@ -9214,6 +9226,7 @@ impl TraceOutcome {
             TraceOutcome::Error => "error",
             TraceOutcome::InfraDown => "infra-down",
             TraceOutcome::Skipped => "skipped",
+            TraceOutcome::Unfinished => "unfinished",
         }
     }
 }
@@ -9258,6 +9271,73 @@ fn result_event_is_quota_limited(ev: &Value) -> bool {
     false
 }
 
+/// Every `tool_use` id the run BACKGROUNDED, and every one the harness later reported the end of.
+///
+/// The pairing key is the `tool_use` id, which is typed at BOTH ends: the assistant's `tool_use`
+/// block carries it as `id`, and the harness's completion notification names that same id back.
+/// So nothing here matches on what a notification SAYS — only on which call it is about.
+///
+/// The id is scanned out of the RAW LINE because the notification reaches the model as message
+/// TEXT (the harness has no typed field for it), and it is only counted inside a
+/// `<task-notification>` block, for the reason the quota rule is scoped to `result` events: the
+/// same characters can appear in a page or a PR body a run happened to read.
+///
+/// READING THE OUTPUT FILE IS NOT AN END. The run this exists for did exactly that — a `Read` of
+/// `…/tasks/<id>.output` while the command was still running, which came back empty — so a `Read`
+/// of that path is evidence of nothing. Only the harness saying the call finished counts, and it
+/// says that once, at a terminal state.
+fn trace_background_calls(trace: &str) -> (Vec<String>, std::collections::HashSet<String>) {
+    const OPEN: &str = "<tool-use-id>";
+    const CLOSE: &str = "</tool-use-id>";
+    let mut started: Vec<String> = Vec::new();
+    let mut ended: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for line in trace.lines() {
+        if line.contains("<task-notification>") {
+            let mut rest = line;
+            while let Some(i) = rest.find(OPEN) {
+                rest = &rest[i + OPEN.len()..];
+                let Some(j) = rest.find(CLOSE) else { break };
+                ended.insert(rest[..j].to_string());
+                rest = &rest[j + CLOSE.len()..];
+            }
+        }
+        let Ok(ev) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let blocks = ev
+            .get("message")
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_array());
+        for b in blocks.into_iter().flatten() {
+            if b.get("type").and_then(|t| t.as_str()) != Some("tool_use")
+                || b.get("name").and_then(|n| n.as_str()) != Some("Bash")
+            {
+                continue;
+            }
+            let backgrounded = b
+                .get("input")
+                .and_then(|i| i.get("run_in_background"))
+                .and_then(|v| v.as_bool())
+                == Some(true);
+            if !backgrounded {
+                continue;
+            }
+            if let Some(id) = b.get("id").and_then(|i| i.as_str()) {
+                started.push(id.to_string());
+            }
+        }
+    }
+    (started, ended)
+}
+
+/// True when the run backgrounded a command and returned without the harness ever reporting that
+/// command's end. Differenced after the whole trace, so it does not depend on the order the
+/// notification and the call happen to sit in.
+fn trace_left_work_in_flight(trace: &str) -> bool {
+    let (started, ended) = trace_background_calls(trace);
+    started.iter().any(|id| !ended.contains(id))
+}
+
 /// Classify a whole trace. `exit_code` is the runner's own observation of the claude process, so a
 /// process that died without ever emitting a `result` event is still an error rather than an "ok".
 fn classify_trace(trace: &str, exit_code: i32) -> TraceOutcome {
@@ -9276,6 +9356,20 @@ fn classify_trace(trace: &str, exit_code: i32) -> TraceOutcome {
     }
     if exit_code != 0 {
         return TraceOutcome::Error;
+    }
+    // LAST, and so only ever over an otherwise-`ok` run — the same placement, for the same reason,
+    // that `classify_outcome` gives the infra fold. Everything above is a WORSE story than "the
+    // run returned early": a quota refusal must still advance model fallback (and an unfinished
+    // run is not quota-limited, so it must never reach that branch), a run blind to its evidence
+    // answered without reading it, and a non-zero exit is the runner's own observation that the
+    // process died — a `timeout(1)` kill leaves background work dangling as a SYMPTOM, and
+    // relabelling that as "unfinished" would hide the kill.
+    //
+    // Which leaves exactly one thing this can displace: `ok`. That is the whole intent — `ok` was
+    // answering "did the run error", and a run that returned with its own command still in flight
+    // never reached a final state to be `ok` about.
+    if trace_left_work_in_flight(trace) {
+        return TraceOutcome::Unfinished;
     }
     TraceOutcome::Ok
 }
@@ -9298,6 +9392,11 @@ fn classify_trace(trace: &str, exit_code: i32) -> TraceOutcome {
 /// story than "it stopped early on purpose", and the headline word must be the worst of them. The
 /// fact is on the record either way — `infraDown` is what a human counts, the word is only what the
 /// dashboard shows first.
+///
+/// `unfinished` (#249) is inside that same "otherwise-`ok`" test rather than beside it, so a run
+/// that stopped on infra AND left its own command in flight reads as `unfinished`. That is the
+/// intended reading: stopping on infra is a run REACHING a final state on purpose, and a run with
+/// work still in flight reached none. `infraDown` stays on the row either way.
 fn classify_outcome(
     trace: &str,
     exit_code: i32,
@@ -49596,6 +49695,188 @@ mod cli_tests {
             "\n{\"truncated\": ",
         );
         assert_eq!(classify_trace(t, 1), TraceOutcome::QuotaLimited);
+    }
+
+    // ---- unfinished runs (#249) ------------------------------------------------------------
+    //
+    // Reconstructed from the sequence run 20260809T145150Z's trace records: it backgrounded
+    // `state-load`, armed a `Monitor` on the backgrounded command's output file, Read that file
+    // while it was still empty, said it was "monitoring for completion", and returned. 168
+    // seconds, no `state.json`, no queue read — and `classify_trace` called it `ok`, because
+    // every question it asked ("did the API refuse it", "was it blind", "did it exit non-zero")
+    // was about whether the run ERRORED, and none about whether it FINISHED.
+
+    /// The harness's completion notification for a backgrounded call, as it reaches the model —
+    /// message text, naming the ORIGINATING `tool_use` id. That id is the pairing key; the words
+    /// around it are here only so a reader can see the classifier does not depend on them.
+    fn bg_done(tool_use_id: &str) -> String {
+        serde_json::json!({
+            "type": "user",
+            "message": {"content": [{"type": "text", "text": format!(
+                "<task-notification>\n<task-id>bq0prixom</task-id>\n\
+                 <tool-use-id>{tool_use_id}</tool-use-id>\n<status>completed</status>\n\
+                 </task-notification>"
+            )}]}
+        })
+        .to_string()
+    }
+
+    /// The events of the stranded run, minus the completion that never came.
+    fn stranded_trace() -> String {
+        [
+            tu(
+                "b1",
+                "Bash",
+                serde_json::json!({
+                    "command": "pr-review-report state-load --json > /w/scratch/state.json",
+                    "run_in_background": true
+                }),
+            ),
+            tr(
+                "b1",
+                "Command running in background with ID: bq0prixom. Output is being written to: \
+                 /tmp/claude-1000/x/tasks/bq0prixom.output",
+                false,
+            ),
+            tu("m1", "Monitor", serde_json::json!({
+                "command": "until grep -q 'exit=' /tmp/claude-1000/x/tasks/bq0prixom.output; do sleep 10; done",
+                "timeout_ms": 900000, "description": "state-load", "persistent": false
+            })),
+            tr("m1", "Monitor started", false),
+            tu("r1", "Read", serde_json::json!({"file_path": "/tmp/claude-1000/x/tasks/bq0prixom.output"})),
+            tr("r1", "", false),
+            r#"{"type":"result","subtype":"success","num_turns":6,"result":"State-load is running (large org-wide read); monitoring for completion."}"#.to_string(),
+        ]
+        .join("\n")
+    }
+
+    #[test]
+    fn a_run_that_returns_with_its_own_command_in_flight_is_unfinished() {
+        assert_eq!(
+            classify_trace(&stranded_trace(), 0),
+            TraceOutcome::Unfinished,
+            "the run started a command, never saw it end, and returned — it reached no final \
+             state, and `ok` says it reached a good one"
+        );
+        assert_eq!(TraceOutcome::Unfinished.as_str(), "unfinished");
+    }
+
+    /// The other half of the discriminant, and the one that makes the variant safe: the SAME
+    /// trace, plus the completion the stranded run never got. Backgrounding is not the defect —
+    /// returning without the answer is.
+    #[test]
+    fn a_backgrounded_command_whose_end_is_reported_is_finished() {
+        let t = format!("{}\n{}", stranded_trace(), bg_done("b1"));
+        assert_eq!(classify_trace(&t, 0), TraceOutcome::Ok);
+        // …and the pairing is by ID. A notification about some OTHER call resolves nothing, which
+        // is what stops one completed background task covering for a dozen abandoned ones.
+        let t = format!("{}\n{}", stranded_trace(), bg_done("b2"));
+        assert_eq!(classify_trace(&t, 0), TraceOutcome::Unfinished);
+    }
+
+    /// THE VARIANT MUST NOT WIDEN INTO "DID NOTHING". A producer run that read the queue and
+    /// correctly found no work FINISHED, and it stays `ok` — "produced nothing" is a final state,
+    /// and this classifier has no opinion about it. An idle run backgrounds nothing, so there is
+    /// nothing for it to leave unresolved, and a later edit that made this fire on output rather
+    /// than on in-flight work would have to break one of these.
+    #[test]
+    fn a_finished_run_that_did_nothing_is_still_ok() {
+        let idle = [
+            tu(
+                "s1",
+                "Bash",
+                serde_json::json!({"command": "pr-review-report state-load --json"}),
+            ),
+            tr("s1", r#"{"fleet":{"actionable":[]},"backlog":{"general":0}}"#, false),
+            r#"{"type":"result","subtype":"success","num_turns":3,"result":"No actionable work this run."}"#.to_string(),
+        ]
+        .join("\n");
+        assert_eq!(classify_trace(&idle, 0), TraceOutcome::Ok);
+        // The degenerate ends of the same rule: no events at all, and a run that only ever read.
+        assert_eq!(classify_trace("", 0), TraceOutcome::Ok);
+        assert_eq!(
+            classify_trace(
+                &[
+                    tu("r1", "Read", serde_json::json!({"file_path": "/w/x.md"})),
+                    tr("r1", "hello", false),
+                    r#"{"type":"result","subtype":"success"}"#.to_string(),
+                ]
+                .join("\n"),
+                0
+            ),
+            TraceOutcome::Ok
+        );
+    }
+
+    /// A FOREGROUND Bash call is not in flight when it returns — that is the whole property the
+    /// prompt fix relies on. Only `run_in_background` starts something that outlives the turn.
+    #[test]
+    fn a_foreground_bash_call_is_never_in_flight() {
+        let t = [
+            tu(
+                "b1",
+                "Bash",
+                serde_json::json!({
+                    "command": "pr-review-report state-load --json",
+                    "run_in_background": false
+                }),
+            ),
+            tr("b1", "{\"fleet\":{}}", false),
+            r#"{"type":"result","subtype":"success"}"#.to_string(),
+        ]
+        .join("\n");
+        assert_eq!(classify_trace(&t, 0), TraceOutcome::Ok);
+        // …and `run_in_background` is read as the BASH PARAMETER it is, not as any field of that
+        // name. A tool whose own input happens to carry the key starts nothing that outlives the
+        // turn, and a classifier that counted it would fire on runs that background nothing.
+        let t = [
+            tu(
+                "a1",
+                "Agent",
+                serde_json::json!({"prompt": "work rain.dia#60", "run_in_background": true}),
+            ),
+            tr("a1", "opened a PR", false),
+            r#"{"type":"result","subtype":"success"}"#.to_string(),
+        ]
+        .join("\n");
+        assert_eq!(classify_trace(&t, 0), TraceOutcome::Ok);
+    }
+
+    /// Ordering. Everything above `unfinished` in `classify_trace` is a worse story, and the
+    /// quota case is load-bearing beyond the word: the runners advance model fallback on
+    /// `session-limit` alone, so an unfinished run reaching that branch would burn a model.
+    #[test]
+    fn worse_outcomes_outrank_unfinished() {
+        let quota = format!(
+            "{}\n{}",
+            stranded_trace(),
+            r#"{"type":"result","subtype":"error","api_error_status":429}"#
+        );
+        assert_eq!(
+            classify_trace(&quota, 1),
+            TraceOutcome::QuotaLimited,
+            "an unfinished run must never displace the one outcome that advances model fallback"
+        );
+        assert_eq!(
+            classify_trace(&stranded_trace(), 124),
+            TraceOutcome::Error,
+            "a timeout(1) kill leaves background work dangling as a SYMPTOM; calling that \
+             `unfinished` would hide the kill the runner itself observed"
+        );
+    }
+
+    /// The marker is scoped, for the reason the quota rule is scoped to `result` events: a run
+    /// reads pages and PR bodies, and this classifier must not be steerable by their contents.
+    #[test]
+    fn a_tool_use_id_read_from_somewhere_else_resolves_nothing() {
+        let quoted = serde_json::json!({
+            "type": "user",
+            "message": {"content": [{"type": "tool_result", "tool_use_id": "q1", "content":
+                "the issue body pasted a trace: <tool-use-id>b1</tool-use-id> <status>completed</status>"}]}
+        })
+        .to_string();
+        let t = format!("{}\n{quoted}", stranded_trace());
+        assert_eq!(classify_trace(&t, 0), TraceOutcome::Unfinished);
     }
 
     #[test]
