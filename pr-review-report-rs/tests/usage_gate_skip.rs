@@ -697,6 +697,51 @@ fn a_force_variable_is_refused_however_it_arrives(role: &'static Role, name: &st
     );
 }
 
+/// …and the kill switch outranks the refusal, which is where the guard SITS.
+///
+/// `usage-gate`'s own refusal of the retired `USAGE_SLACK_PCT` has always sat after the kill
+/// switch, so a config refusal has always been subordinate to a deliberate human stop. The
+/// `CRON_FORCE` guard is written to the same precedent it cites. Order it the other way and a
+/// paused pipeline with a stale `cron.env` exits 2 on every scheduled tick — recurring error noise
+/// about a setting that cannot affect anything while the switch is on, from a cron somebody
+/// deliberately turned off.
+fn the_kill_switch_outranks_the_force_variable(role: &'static Role, name: &str) {
+    let Some(f) = Fixture::new(role, name, 10, PAUSE_LINE) else {
+        return;
+    };
+    f.write_install(role.disabled, "");
+    f.write_install("cron.env", "CRON_FORCE=1\n");
+    let out = f.tick();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "a disabled runner exits 0 quietly; the stale setting is not news while it is off"
+    );
+    assert!(
+        !f.runs_jsonl().exists(),
+        "nothing ran and nothing was recorded"
+    );
+    let log = f.log();
+    assert!(
+        log.contains(role.disabled),
+        "the log names the kill switch, which is the reason it stopped: {log}"
+    );
+    assert!(
+        !log.contains("REFUSED"),
+        "and says nothing about CRON_FORCE — the switch decided this, not the setting: {log}"
+    );
+}
+
+#[test]
+fn the_producer_kill_switch_outranks_the_force_variable() {
+    the_kill_switch_outranks_the_force_variable(&PRODUCER, "producer-disabled-cron-force");
+}
+
+#[test]
+fn the_vetter_kill_switch_outranks_the_force_variable() {
+    the_kill_switch_outranks_the_force_variable(&VETTER, "vetter-disabled-cron-force");
+}
+
 #[test]
 fn a_producer_force_variable_is_refused_however_it_arrives() {
     a_force_variable_is_refused_however_it_arrives(&PRODUCER, "producer-cron-force");

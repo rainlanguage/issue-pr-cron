@@ -131,6 +131,14 @@ else
   _log() { cat >> "$LOG"; }
 fi
 
+# --- kill switch ---
+# NOT bypassed by --force (#245): this file is a deliberate stop with a human behind it, and a force
+# that walked through it would turn the one unambiguous off-switch into a suggestion.
+if [ -f "$DIR/DISABLED" ]; then
+  echo "$(date -u +%FT%TZ) SKIP: DISABLED flag present" | _log
+  exit 0
+fi
+
 # The stale-setting guard, in the posture `usage-gate` already takes toward the retired
 # USAGE_SLACK_PCT (#158): a knob that cannot be honoured is REFUSED rather than ignored, so a
 # cron.env carrying it surfaces instead of quietly doing nothing. CRON_FORCE has never been a knob —
@@ -140,17 +148,13 @@ fi
 # which is the case that matters: a stale cron.env must stop the pipeline visibly rather than run it
 # forced twelve times a day. Like the gate's own refusal it goes to the log, which is where a cron
 # leaves its reasons.
+# It sits BELOW the kill switch, in the position the gate's own refusal has always held: a config
+# refusal is subordinate to a deliberate human stop. Above it, a stale cron.env on a pipeline
+# somebody turned off would exit 2 twelve times a day — recurring error noise about a setting that
+# cannot affect anything while DISABLED is present.
 if [ -n "${CRON_FORCE:-}" ]; then
   echo "$(date -u +%FT%TZ) campaign run REFUSED: CRON_FORCE is set (cron.env or the environment), but forcing is an ARGUMENT, not a setting — as a variable it would force every scheduled tick. Unset it and pass: nix run git+file://<install-dir>#campaign-run -- --force" | _log
   exit 2
-fi
-
-# --- kill switch ---
-# NOT bypassed by --force (#245): this file is a deliberate stop with a human behind it, and a force
-# that walked through it would turn the one unambiguous off-switch into a suggestion.
-if [ -f "$DIR/DISABLED" ]; then
-  echo "$(date -u +%FT%TZ) SKIP: DISABLED flag present" | _log
-  exit 0
 fi
 
 # --- weekly-budget pace gate: skip this tick when usage is over the ceiling or inside the BAU
