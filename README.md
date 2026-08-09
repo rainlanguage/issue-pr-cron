@@ -747,8 +747,7 @@ ordering by the moment the PR became the human's, which is exactly the wait
 being bounded.
 
 **The counts are a partition, not a difference.** `aiDesign` equals
-`draft +
-humanRuled + unaddressable + presentable + noQuestion + fetchErrors +
+`draft + unaddressable + presentable + noQuestion + fetchErrors +
 archivedRepo`,
 and `withheld` names the rows behind three of them with the one line that says
 which. That shape is the fix for the failure mode a single `excluded` number
