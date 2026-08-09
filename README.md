@@ -3062,28 +3062,54 @@ quietly do nothing. An unrecognised argument is refused for the same reason: a
 typo'd flag that fell through would skip on the very pause it was typed to run
 past, and say nothing about why.
 
-What `--force` does **not** bypass, each deliberately:
+What `--force` reaches is **one property**, not a list. The list is what got
+this wrong the first time: the version first shipped refused the kill switch,
+and the first observation run it was built for printed
+`SKIP: DISABLED flag present` and did nothing.
 
-| not bypassed              | why                                                                                                                                  |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `DISABLED`                | a deliberate human stop; walking through it makes the one unambiguous off-switch a suggestion                                        |
-| the flock                 | two runs of a role collide on the same clones and the same GitHub state — the answer to "I want to watch a run" is to watch that one |
-| a gate config **refusal** | any non-zero gate exit that is not 10 means the gate could not read its config; forcing past it runs on config nobody validated      |
+> `--force` overrides **policy** stops. It never overrides **correctness**
+> stops.
 
-The row a forced run leaves is marked, in the same shape the skip row uses:
+A **policy** stop is the pipeline choosing not to spend right now. The human at
+the terminal owns that choice and may make it differently for one run:
+
+| policy stop — yields to `--force` | why the human owns it                                                                                                                               |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| the usage-gate **PAUSE**          | holding budget back from a tick nobody is watching is exactly right, and exactly wrong for a watched one                                            |
+| `DISABLED` / `review-DISABLED`    | the switch stops the **cron**; the human typing `--force` is its own owner overriding their own stop, which is not what the switch protects against |
+
+A **correctness** stop is the run being unable to do its job properly no matter
+who asked. No argument reaches these:
+
+| correctness stop — never yields | why no one owns it                                                                                               |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| the flock                       | two runs of a role corrupt each other's clones and GitHub state — not a choice about spending                    |
+| a gate config **refusal**       | any non-zero gate exit that is not 10: the gate could not validate its config, so the tick would run unvalidated |
+
+Every override is recorded. The row a forced run leaves carries, in the same
+shape the skip row uses but **plural**, because one run can walk past both:
 
 ```json
-"forced": "usage-gate", "forceReason": "<the gate's own line at the override, verbatim>"
+"forced": ["disabled", "usage-gate"], "forceReason": ["DISABLED flag present", "<the gate's own line, verbatim>"]
 ```
 
-Both fields are **absent** — not null — on every scheduled row, and `forced` and
-`skipped` can never appear together (they are opposites: a tick the pipeline
-declined to run against one it was told to run anyway; `run-metrics` refuses
-both at parse). `metrics/runs.jsonl` is what the dashboard draws its run series
-from, so a forced run that looked like a paced tick would show budget being
-spent on a schedule nobody followed. The marker rides **beside** `outcome`,
-never replacing it — forcing changes what the row says about how the run was
-started, never how the run is judged.
+The two arrays are **parallel**: index _i_ of `forced` is a stop's kind and
+index _i_ of `forceReason` is that stop's own line. `run-metrics` refuses a
+mismatched pair rather than truncating, because a stop silently paired with the
+wrong line is only visible on the dashboard weeks later.
+
+**Empty is a real state, and it is the common one.** A forced run that met no
+stop still carries `"forced": []` — what the row says first is that the schedule
+did not start this, and that is true whether or not anything was in the way.
+Keying the marker on "something was overridden" would draw exactly that run as a
+paced tick. Both fields are **absent** — not null — on every scheduled row, and
+`forced` and `skipped` can never appear together (they are opposites: a tick the
+pipeline declined to run against one it was told to run anyway; `run-metrics`
+refuses both at parse). `metrics/runs.jsonl` is what the dashboard draws its run
+series from, so a forced run that looked like a paced tick would show budget
+being spent on a schedule nobody followed. The marker rides **beside**
+`outcome`, never replacing it — forcing changes what the row says about how the
+run was started, never how the run is judged.
 
 ## Tooling failures are run failures, not verdict caveats
 
