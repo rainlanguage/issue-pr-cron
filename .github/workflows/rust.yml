@@ -206,7 +206,7 @@ jobs:
           check refresh-human-queue refresh-human-queue \
             date getent id flock mktemp mv rm git pr-review-report
           check design-doctor design-doctor \
-            date getent id cut flock gh pr-review-report
+            date getent id cut flock timeout gh pr-review-report
           check backfill-human-queue-history backfill-human-queue-history git wc pr-review-report
           check review-queue sort-review-queue pr-review-report
           check pr-review-report-sh pr-review-report-sh pr-review-report

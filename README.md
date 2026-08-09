@@ -781,24 +781,47 @@ routes **every** `noQuestion` row back to `ai:needs-work`, automatically.
   enumeration, one classifier, no second detector: the doctor acts on exactly
   the bucket `counts.noQuestion` states, so the dashboard's defect bucket and
   the pass that drains it can never disagree about the population.
-- **The transition is the standard needs-work send-back**: the trusted
-  `Rework note @<head>: …` work order plus the ONE-STATE label move (every other
-  `ai:*` cleared via the same removal path each verdict uses), performed through
-  the same step machinery a human ruling's send-back is — note first, so no
-  failure can leave a needs-work with no order. The routed row lands
-  **actionable** (`WorkOrder`, never `Parked`): the order is the exact marker
-  shape the producer's trusted-comments verification reads.
-- **The work order names the WHY and both exits**, verbatim on every routed row:
-  the label was present with no trusted raising comment at the current head — a
-  routing fix, not a code defect — so the producer either re-raises the question
-  with a trusted `flag-design` comment, or proceeds with the PR under the normal
-  lanes.
-- **What it never touches**: a live question (whoever raised it), a human
-  decision (`👤 human` ruling at head or a native review — `human:*` dominates
-  the doctor as it dominates every machine move), drafts, unaddressable hits,
-  archived-repo rows, and anything it could not read (a fetch error fails the
-  tick rather than shrinking it). Idempotent: a route strips `ai:design`, so a
-  second run finds zero rows.
+- **The send-back is a VERDICT, because the sender is a machine.** The doctor
+  writes what the vetter's own automated send-back (`draft_send_back_plan`)
+  writes: a `🤖 ai:vetter` `Reviewed <head>: needs-work` comment carrying the
+  note and a stated lens, then the one-state label edit. Two things follow that
+  a `Rework note` could not give it — the comment is the **currency stamp**, so
+  the next vetter run does not re-vet the PR and strip the `ai:needs-work` this
+  pass just wrote; and a machine decision does not wear the **human's marker**,
+  which the producer's prompt teaches as "what the human/assistant leaves".
+- **The comment goes first here**, inverting the draft send-back's order by that
+  order's own reasoning. There the label is what removes the PR from the leak
+  population; here it is what **keeps** the row in this pass's population, so a
+  failed label edit after a posted verdict is re-planned by the next tick (the
+  verdict dedups), while a failed comment after a label edit would strand a
+  needs-work with nothing trusted behind it and outside the doctor's own search.
+- **Both exits it offers are transitions the producer can perform**: push the
+  rework the PR was parked mid-way through, or re-raise the question with
+  `flag-design` — its own transition, which returns the row to the human's queue
+  with a claim behind it. "Proceed under the normal lanes" is deliberately not
+  offered: `next_action` gives a needs-work PR the rework exit, and
+  campaign-prompt.txt forbids the no-op push that faking one would need.
+- **What it never touches**, each re-established at write time against a fresh
+  fetch rather than trusted from the search index: a live question (whoever
+  raised it), a human decision (a `👤 human` ruling at head **or a native
+  review**), a PR carrying a co-resident modeled state the one-state strip would
+  destroy (`ai:close-candidate`, `ai:blocked-on` — `draft_send_back_strips_no_state`'s
+  rule), a draft, a PR outside the fleet (`$PR_ASSIGNEE` — both actors that
+  consume `ai:needs-work` enumerate by author, so routing a third party's PR
+  would move it into a state nobody reads), a PR written to inside the settling
+  window (both writers that raise a question label first and comment last, so a
+  still-moving PR may have one mid-write), archived-repo rows, and anything it
+  could not read.
+- **A withheld row is NAMED, and the ones the pass can never drain name their
+  consumer** — a human decision, a non-fleet PR and an anchorless PR each print
+  the move that does drain them, because an `Ok` line the pass repeats daily
+  about a stuck row is not a queue. Idempotent: a route strips `ai:design`, so a
+  second run finds zero rows. The routes run **serially**: they are
+  content-creating writes through an unretried `gh`, and
+  `retire_blocked_infra_mode`, the only comparable bulk-write pass, is serial
+  for the same reason.
+
+### Vetting is a pure function, and `vetted_at_head` is its cache key
 
 A verdict is the value of one function — **the PR at its current head** — and
 nothing else. A prior verdict is not an input to it: the same PR at the same

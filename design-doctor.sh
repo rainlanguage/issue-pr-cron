@@ -26,17 +26,39 @@ log() { echo "$(date -u +%FT%TZ) design-doctor: $*" >&2; }
 
 cd "$DIR" || { log "install dir '$DIR' is not usable — set CRON_DIR to the checkout"; exit 1; }
 
-# Org scope: single source is cron.env (same as the producer/vetter/refresher).
+# --- deployment config (defaults here; override in ./cron.env) ---
+# A hard cap, as both model runners carry (MAXTIME=3h, REVIEW_MAXTIME=2h): an unattended writer
+# with no cap can hold its flock for ever, and every later tick then logs "a previous tick still
+# holds the lock" while nothing drains. This pass is a bounded number of `gh` calls, so its cap is
+# small — long enough for a large backlog on a slow API, short enough that a wedged tick is gone
+# before the next one.
+DOCTOR_MAXTIME="30m"                   # hard cap per tick
+
+# Org scope + fleet: single source is cron.env (same as the producer/vetter/refresher). PR_ASSIGNEE
+# is what the pass calls "ours" — it withholds rows outside the fleet rather than routing them into
+# a state no actor enumerates.
 # shellcheck disable=SC1091
 [ -f cron.env ] && . ./cron.env
 : "${ORGS:=rainlanguage cyclofinance S01-Issuer}"; export ORGS
+export PR_ASSIGNEE
+
+# --- kill switch ---
+# The producer's own flag, not a third one. The README documents "Pause: touch DISABLED" directly
+# beneath this cron's line, so an operator halting the pipeline believes everything is stopped —
+# and this pass STRIPS LABELS and POSTS TRUSTED COMMENTS across every org in ORGS. A writer that
+# ignores the pause is the one runner whose ticks a halted operator cannot undo.
+if [ -f "$DIR/DISABLED" ]; then
+  log "SKIP: DISABLED flag present"
+  exit 0
+fi
 
 # flock so overlapping ticks never stack.
 exec 9>"$DIR/.design-doctor.lock"
 flock -n 9 || { log "skipped: a previous tick still holds the lock"; exit 0; }
 
-log "tick start"
-pr-review-report design-doctor "$@"
+log "tick start (cap $DOCTOR_MAXTIME)"
+timeout "$DOCTOR_MAXTIME" pr-review-report design-doctor "$@"
 rc=$?
+[ "$rc" -eq 124 ] && log "TIMED OUT after $DOCTOR_MAXTIME — the tick was cut off; rows it had not reached are re-enumerated next tick"
 log "tick end (rc=$rc)"
 exit "$rc"
