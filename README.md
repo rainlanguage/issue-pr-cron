@@ -782,17 +782,17 @@ routes **every** `noQuestion` row back to `ai:needs-work`, automatically.
   the bucket `counts.noQuestion` states, so the dashboard's defect bucket and
   the pass that drains it can never disagree about the population.
 - **The transition is the standard needs-work send-back**: the trusted
-  `Rework note @<head>: …` work order plus the ONE-STATE label move (every
-  other `ai:*` cleared via the same removal path each verdict uses), performed
-  through the same step machinery a human ruling's send-back is — note first,
-  so no failure can leave a needs-work with no order. The routed row lands
+  `Rework note @<head>: …` work order plus the ONE-STATE label move (every other
+  `ai:*` cleared via the same removal path each verdict uses), performed through
+  the same step machinery a human ruling's send-back is — note first, so no
+  failure can leave a needs-work with no order. The routed row lands
   **actionable** (`WorkOrder`, never `Parked`): the order is the exact marker
   shape the producer's trusted-comments verification reads.
-- **The work order names the WHY and both exits**, verbatim on every routed
-  row: the label was present with no trusted raising comment at the current
-  head — a routing fix, not a code defect — so the producer either re-raises
-  the question with a trusted `flag-design` comment, or proceeds with the PR
-  under the normal lanes.
+- **The work order names the WHY and both exits**, verbatim on every routed row:
+  the label was present with no trusted raising comment at the current head — a
+  routing fix, not a code defect — so the producer either re-raises the question
+  with a trusted `flag-design` comment, or proceeds with the PR under the normal
+  lanes.
 - **What it never touches**: a live question (whoever raised it), a human
   decision (`👤 human` ruling at head or a native review — `human:*` dominates
   the doctor as it dominates every machine move), drafts, unaddressable hits,
