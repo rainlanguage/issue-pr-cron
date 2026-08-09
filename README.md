@@ -747,8 +747,7 @@ ordering by the moment the PR became the human's, which is exactly the wait
 being bounded.
 
 **The counts are a partition, not a difference.** `aiDesign` equals
-`draft +
-humanRuled + unaddressable + presentable + noQuestion + fetchErrors +
+`draft + unaddressable + presentable + noQuestion + fetchErrors +
 archivedRepo`,
 and `withheld` names the rows behind three of them with the one line that says
 which. That shape is the fix for the failure mode a single `excluded` number
@@ -3103,6 +3102,54 @@ recording it provides.
 - **Pause:** `touch DISABLED` · **Resume:** `rm DISABLED`
 - **Watch:** `tail -f campaign.log` · **Run now:**
   `CRON_DIR=<install-dir> nix run git+file://<install-dir>#campaign-run`
+
+### Forcing one run past the pace gate, to watch it (#245)
+
+The pace gate cannot tell a deliberate human-initiated observation run from a
+scheduled tick, so a "run now" during a pause writes a skip row and stops.
+`--force` is the one-off that runs anyway — and, because the point is to watch
+it, streams the trail to stdout as well as to the log:
+
+```bash
+CRON_DIR=<install-dir> nix run git+file://<install-dir>#campaign-run -- --force
+CRON_DIR=<install-dir> nix run git+file://<install-dir>#review-run    -- --force
+```
+
+The bare `--` is **load-bearing**: `nix run` parses everything before it as its
+own flags and exits with `unrecognised flag '--force'` otherwise, so the runner
+never starts. Everything after it arrives as the packaged script's argv.
+
+It is an **argument** rather than a variable so that it belongs to one
+invocation and cannot be left switched on. `CRON_FORCE` in `cron.env` (or in the
+environment, or on the crontab line) is **REFUSED** — exit 2, one line in the
+log, no run — the same posture `usage-gate` takes toward the retired
+`USAGE_SLACK_PCT`: a knob that cannot be honoured has to surface rather than
+quietly do nothing. An unrecognised argument is refused for the same reason: a
+typo'd flag that fell through would skip on the very pause it was typed to run
+past, and say nothing about why.
+
+What `--force` does **not** bypass, each deliberately:
+
+| not bypassed              | why                                                                                                                                  |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `DISABLED`                | a deliberate human stop; walking through it makes the one unambiguous off-switch a suggestion                                        |
+| the flock                 | two runs of a role collide on the same clones and the same GitHub state — the answer to "I want to watch a run" is to watch that one |
+| a gate config **refusal** | any non-zero gate exit that is not 10 means the gate could not read its config; forcing past it runs on config nobody validated      |
+
+The row a forced run leaves is marked, in the same shape the skip row uses:
+
+```json
+"forced": "usage-gate", "forceReason": "<the gate's own line at the override, verbatim>"
+```
+
+Both fields are **absent** — not null — on every scheduled row, and `forced` and
+`skipped` can never appear together (they are opposites: a tick the pipeline
+declined to run against one it was told to run anyway; `run-metrics` refuses
+both at parse). `metrics/runs.jsonl` is what the dashboard draws its run series
+from, so a forced run that looked like a paced tick would show budget being
+spent on a schedule nobody followed. The marker rides **beside** `outcome`,
+never replacing it — forcing changes what the row says about how the run was
+started, never how the run is judged.
 
 ## Tooling failures are run failures, not verdict caveats
 

@@ -7,6 +7,7 @@
 #   WATCH:    tail -f campaign.log     (distilled trail)
 #             tail -f "$(ls -t runs/*.jsonl | head -1)"   (full live trace)
 #   RUN NOW:  ./campaign-run.sh
+#   FORCE:    ./campaign-run.sh --force    (one run, past a usage-gate PAUSE, streamed to stdout)
 #
 # Deployment-specific values live in ./cron.env (gitignored; copy from cron.env.example).
 # Guardrails: curated allowlist (campaign-settings.json) + the prompt forbids merge/deploy/
@@ -78,10 +79,82 @@ RUNDIR="$DIR/runs"
 # The local ledgers -- close-candidates.jsonl, design-candidates.jsonl and
 # review-verdicts.jsonl -- are retired. GitHub is the source of truth.
 
+# --- one-off manual FORCE (#245) ---------------------------------------------------------------
+# `--force` is the only argument this runner takes, and it authorises exactly ONE bypass: the
+# weekly-budget pace gate's PAUSE (usage-gate exit 10). It exists because the gate cannot tell a
+# deliberate human-initiated observation run from a scheduled tick, and holding budget back from a
+# tick nobody is watching is right where running a watched one is not.
+#
+#   CRON_DIR=<install-dir> nix run git+file://<install-dir>#campaign-run -- --force
+#
+# The bare `--` is LOAD-BEARING: `nix run` parses everything up to it as its own flags and exits
+# with `unrecognised flag '--force'` otherwise, so the runner never starts. Everything after it is
+# handed to the packaged script as argv, verified against nix 2.18.1 through the `git+file:` form
+# the crontab uses.
+#
+# An ARGUMENT and not a variable, deliberately: an argument belongs to one invocation and cannot be
+# left switched on, where a force in cron.env would silently force every scheduled tick for ever.
+# CRON_FORCE is refused below so that door is shut rather than merely unused.
+#
+# What --force does NOT bypass, each for its own reason:
+#   * the DISABLED kill switch — a deliberate human stop; a force that walked through it would turn
+#     the one unambiguous off-switch into a suggestion;
+#   * the flock — two runs of a role collide on the same clones and the same GitHub state, so the
+#     answer to "I want to watch a run" is to watch the one already going;
+#   * a gate config REFUSAL (any non-zero exit that is not 10) — a refusal means the gate could not
+#     read its config, and running past that is running on config nobody validated, which is a
+#     different thing entirely from running past a budget ceiling on purpose.
+FORCE=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --force)
+      FORCE=1
+      shift
+      ;;
+    *)
+      # Rejected rather than ignored: a typo'd flag that fell through would run UNFORCED and skip on
+      # the very pause the human invoked it to run past, reporting nothing about why.
+      echo "campaign-run: unknown argument '$1' — the only argument is --force" >&2
+      exit 2
+      ;;
+  esac
+done
+
+# --- where this run's trail goes ---------------------------------------------------------------
+# A scheduled tick has no terminal, so its trail is appended to $LOG and nowhere else. A FORCED run
+# is being WATCHED — live observability is the whole reason it exists — so the same bytes also
+# reach stdout as they are produced. Every writer below goes through `_log`, so the two sinks cannot
+# drift and `--force` is the only thing that decides which is in play.
+if [ "$FORCE" -eq 1 ]; then
+  _log() { tee -a "$LOG"; }
+else
+  _log() { cat >> "$LOG"; }
+fi
+
 # --- kill switch ---
+# NOT bypassed by --force (#245): this file is a deliberate stop with a human behind it, and a force
+# that walked through it would turn the one unambiguous off-switch into a suggestion.
 if [ -f "$DIR/DISABLED" ]; then
-  echo "$(date -u +%FT%TZ) SKIP: DISABLED flag present" >> "$LOG"
+  echo "$(date -u +%FT%TZ) SKIP: DISABLED flag present" | _log
   exit 0
+fi
+
+# The stale-setting guard, in the posture `usage-gate` already takes toward the retired
+# USAGE_SLACK_PCT (#158): a knob that cannot be honoured is REFUSED rather than ignored, so a
+# cron.env carrying it surfaces instead of quietly doing nothing. CRON_FORCE has never been a knob —
+# forcing is per-invocation — and this is what makes that structurally true instead of merely
+# intended: the obvious wrong guess fails loudly, and no scheduled tick can inherit a force from
+# cron.env, from the crontab line, or from an exported shell. Refused for a SCHEDULED tick too,
+# which is the case that matters: a stale cron.env must stop the pipeline visibly rather than run it
+# forced twelve times a day. Like the gate's own refusal it goes to the log, which is where a cron
+# leaves its reasons.
+# It sits BELOW the kill switch, in the position the gate's own refusal has always held: a config
+# refusal is subordinate to a deliberate human stop. Above it, a stale cron.env on a pipeline
+# somebody turned off would exit 2 twelve times a day — recurring error noise about a setting that
+# cannot affect anything while DISABLED is present.
+if [ -n "${CRON_FORCE:-}" ]; then
+  echo "$(date -u +%FT%TZ) campaign run REFUSED: CRON_FORCE is set (cron.env or the environment), but forcing is an ARGUMENT, not a setting — as a variable it would force every scheduled tick. Unset it and pass: nix run git+file://<install-dir>#campaign-run -- --force" | _log
+  exit 2
 fi
 
 # --- weekly-budget pace gate: skip this tick when usage is over the ceiling or inside the BAU
@@ -93,35 +166,53 @@ fi
 # the log): the tick must not run on config the gate refused to read, so propagate the failure — a
 # refusal is neither a run nor a pause, and it writes NO row. ---
 _ug="$(pr-review-report usage-gate 2>&1)"; _ugrc=$?
-echo "$(date -u +%FT%TZ) usage-gate: $_ug" >> "$LOG"
+echo "$(date -u +%FT%TZ) usage-gate: $_ug" | _log
 if [ "$_ugrc" -eq 10 ]; then
-  # A paused tick still writes its metrics/runs.jsonl row (#160): the dashboard reads runs from
-  # that file, and a pause that wrote nothing rendered as a dead stretch indistinguishable from a
-  # broken cron. Same shape as the preflight abort below — an empty trace, so the record's shape
-  # still comes from `run-metrics` and no second place knows what a runs.jsonl line looks like.
-  # The row records the GATE's exit 10 (as the preflight row records preflight's 12) plus the
-  # gate's own line, verbatim; this script still exits 0 because a pause is not a failure. The row
-  # reaches origin/main via the hourly refresh-human-queue cron, which stages this file — the one
-  # committer still awake during a pause.
-  TS="$(date -u +%Y%m%dT%H%M%SZ)"
-  RUNLOG="$RUNDIR/$TS.jsonl"
-  mkdir -p "$RUNDIR" "$DIR/metrics"
-  : > "$RUNLOG"
-  pr-review-report run-metrics "$RUNLOG" \
-    --run-id "$TS" --role producer --model "$MODEL" --exit-code 10 \
-    --skipped usage-gate --skip-reason "$_ug" \
-    >> "$DIR/metrics/runs.jsonl" 2>/dev/null || true
-  exit 0
-fi
-if [ "$_ugrc" -ne 0 ]; then
-  echo "$(date -u +%FT%TZ) campaign run ABORTED: usage-gate refused its config (exit $_ugrc) — fix cron.env" >> "$LOG"
+  if [ "$FORCE" -eq 1 ]; then
+    # FORCED past the PAUSE (#245), and past NOTHING else. The gate still ran and its line is in the
+    # log above, verbatim; the only difference is that this tick does not become a skip row. The
+    # force lives INSIDE the exit-10 branch on purpose — a refusal (below) can never reach it, so
+    # `--force` cannot be the thing that runs the pipeline on config the gate would not read.
+    echo "$(date -u +%FT%TZ) FORCED past the usage-gate PAUSE (--force): $_ug" | _log
+  else
+    # A paused tick still writes its metrics/runs.jsonl row (#160): the dashboard reads runs from
+    # that file, and a pause that wrote nothing rendered as a dead stretch indistinguishable from a
+    # broken cron. Same shape as the preflight abort below — an empty trace, so the record's shape
+    # still comes from `run-metrics` and no second place knows what a runs.jsonl line looks like.
+    # The row records the GATE's exit 10 (as the preflight row records preflight's 12) plus the
+    # gate's own line, verbatim; this script still exits 0 because a pause is not a failure. The row
+    # reaches origin/main via the hourly refresh-human-queue cron, which stages this file — the one
+    # committer still awake during a pause.
+    TS="$(date -u +%Y%m%dT%H%M%SZ)"
+    RUNLOG="$RUNDIR/$TS.jsonl"
+    mkdir -p "$RUNDIR" "$DIR/metrics"
+    : > "$RUNLOG"
+    pr-review-report run-metrics "$RUNLOG" \
+      --run-id "$TS" --role producer --model "$MODEL" --exit-code 10 \
+      --skipped usage-gate --skip-reason "$_ug" \
+      >> "$DIR/metrics/runs.jsonl" 2>/dev/null || true
+    exit 0
+  fi
+elif [ "$_ugrc" -ne 0 ]; then
+  echo "$(date -u +%FT%TZ) campaign run ABORTED: usage-gate refused its config (exit $_ugrc) — fix cron.env" | _log
   exit "$_ugrc"
+fi
+
+# --- the FORCE stamp every row this run writes carries (#245) ----------------------------------
+# A forced run is not a paced tick, and a runs.jsonl row that cannot say so puts budget on the
+# dashboard's run series against a schedule that was never followed. Built ONCE, here, from the
+# gate's own line — including an OK line, because what makes a row forced is the human who typed
+# `--force`, not what the gate happened to decide. Empty for a scheduled tick, which is what keeps
+# every existing row byte-identical.
+FORCED_FLAGS=()
+if [ "$FORCE" -eq 1 ]; then
+  FORCED_FLAGS=(--forced usage-gate --force-reason "$_ug")
 fi
 
 # --- single-run lock (non-blocking: skip this tick if a prior run is still going) ---
 exec 9>"$LOCK"
 if ! flock -n 9; then
-  echo "$(date -u +%FT%TZ) SKIP: previous run still holding the lock" >> "$LOG"
+  echo "$(date -u +%FT%TZ) SKIP: previous run still holding the lock" | _log
   exit 0
 fi
 
@@ -170,15 +261,16 @@ rm -f "$INFRAREC"
 # is also stricter than the read it replaces, because it checks the token's SCOPES rather than
 # eyeballing the word "Logged".
 _pf="$(pr-review-report preflight --gh-auth --sol-shell)"; _pfrc=$?
-printf '%s\n' "$_pf" | sed 's/^/  /' >> "$LOG"
+printf '%s\n' "$_pf" | sed 's/^/  /' | _log
 if [ "$_pfrc" -ne 0 ]; then
   _missing="$(printf '%s\n' "$_pf" | sed -n 's/^missing=//p')"
-  echo "$(date -u +%FT%TZ) campaign run ABORT: harness dependencies unsatisfied: $_missing" >> "$LOG"
+  echo "$(date -u +%FT%TZ) campaign run ABORT: harness dependencies unsatisfied: $_missing" | _log
   : > "$RUNLOG"
   mkdir -p "$DIR/metrics"
   pr-review-report run-metrics "$RUNLOG" \
     --run-id "$TS" --role producer --model "$MODEL" --exit-code "$_pfrc" \
     --preflight-missing "$_missing" \
+    "${FORCED_FLAGS[@]}" \
     >> "$DIR/metrics/runs.jsonl" 2>/dev/null || true
   exit "$_pfrc"
 fi
@@ -224,7 +316,7 @@ find "$WORK_DIR/scratch" -mindepth 1 -maxdepth 1 -type d -mmin +1440 -exec rm -r
 # it failing, which is exactly the state before #106, minus the clue. Same reading as the `cd
 # "$WORK_DIR" || exit 1` above: if the run cannot have its work area, it does not start.
 if ! mkdir -p "$SCRATCH_DIR"; then
-  echo "$(date -u +%FT%TZ) campaign run ABORT: cannot create scratch dir '$SCRATCH_DIR'" >> "$LOG"
+  echo "$(date -u +%FT%TZ) campaign run ABORT: cannot create scratch dir '$SCRATCH_DIR'" | _log
   exit 1
 fi
 export SCRATCH_DIR
@@ -281,20 +373,20 @@ PROMPT="$(sed -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
 # degradation this guard exists to prevent, one truncated file away. `-f` would pass it and so
 # would `-s`, so the test is a non-space byte.
 if ! grep -q '[^[:space:]]' "$DIR/campaign-worker-prompt.txt" 2>/dev/null; then
-  echo "$(date -u +%FT%TZ) campaign run ABORT: no campaign-worker-prompt.txt in '$DIR'" >> "$LOG"
+  echo "$(date -u +%FT%TZ) campaign run ABORT: no campaign-worker-prompt.txt in '$DIR'" | _log
   exit 1
 fi
 AGENTS_JSON="$(jq -nc --rawfile brief "$DIR/campaign-worker-prompt.txt" \
   '{"pr-worker":{"description":"Producer worker: does ONE dispatched item end to end and reports its outcome.","prompt":$brief}}')"
 if [ -z "$AGENTS_JSON" ]; then
-  echo "$(date -u +%FT%TZ) campaign run ABORT: could not build the worker brief from campaign-worker-prompt.txt" >> "$LOG"
+  echo "$(date -u +%FT%TZ) campaign run ABORT: could not build the worker brief from campaign-worker-prompt.txt" | _log
   exit 1
 fi
 
 {
   echo "================================================================="
   echo "$(date -u +%FT%TZ) campaign run START (model=$MODEL, host=$(uname -n)) trace=$RUNLOG"
-} >> "$LOG"
+} | _log
 
 # gh, jq and pr-review-report are on PATH as BARE executables, put there by nix from the flake's
 # runtimeInputs, so the model invokes them DIRECTLY:
@@ -338,7 +430,7 @@ fi
 USED_MODEL="$MODEL"
 rc=1
 for USED_MODEL in $MODEL $FALLBACK_MODELS; do
-  echo "$(date -u +%FT%TZ)   model attempt: $USED_MODEL" >> "$LOG"
+  echo "$(date -u +%FT%TZ)   model attempt: $USED_MODEL" | _log
   timeout "$MAXTIME" claude --print "$PROMPT" \
     --model "$USED_MODEL" \
     --settings "$DIR/campaign-settings.json" \
@@ -353,14 +445,14 @@ for USED_MODEL in $MODEL $FALLBACK_MODELS; do
     | tee "$RUNLOG" \
     | { pr-review-report run-timings --out "$DIR/metrics/runs.jsonl" --trace "$RUNLOG" \
           --run-id "$TS" --role producer --model "$USED_MODEL" 2>/dev/null || cat ; } \
-    | { pr-review-report distill-trace 2>/dev/null || cat >/dev/null ; } >> "$LOG"
+    | { pr-review-report distill-trace 2>/dev/null || cat >/dev/null ; } | _log
   rc=${PIPESTATUS[0]}
   # Advance to the next model ONLY on a usage/quota limit; any other outcome is final. The verdict
   # is a TYPE computed from the trace's result events (see `classify_trace`), not a grep over the
   # trace bytes — the old regex also matched a 429 quoted inside an unrelated tool result, which
   # could skip a model that was never quota-limited at all.
   if [ "$(pr-review-report trace-outcome "$RUNLOG" --exit-code "$rc")" = "session-limit" ]; then
-    echo "  !! model $USED_MODEL is quota-limited — falling back to next model" >> "$LOG"
+    echo "  !! model $USED_MODEL is quota-limited — falling back to next model" | _log
     continue
   fi
   break
@@ -368,11 +460,11 @@ done
 
 # surface a startup/auth failure (no stdout events) directly into the main log
 if [ ! -s "$RUNLOG" ] && [ -s "$ERRLOG" ]; then
-  echo "  !! no event stream — likely auth/startup failure; stderr:" >> "$LOG"
-  tail -5 "$ERRLOG" | sed 's/^/    /' >> "$LOG"
+  echo "  !! no event stream — likely auth/startup failure; stderr:" | _log
+  tail -5 "$ERRLOG" | sed 's/^/    /' | _log
 fi
 
-echo "$(date -u +%FT%TZ) campaign run END (exit=$rc, trace=$RUNLOG, err=$ERRLOG)" >> "$LOG"
+echo "$(date -u +%FT%TZ) campaign run END (exit=$rc, trace=$RUNLOG, err=$ERRLOG)" | _log
 
 # Persist per-run metrics BEFORE the next run's rotation deletes this trace.
 # Appends one enriched JSON line to metrics/runs.jsonl (committed+pushed to main by the hourly
@@ -387,6 +479,7 @@ if [ -s "$RUNLOG" ]; then
   pr-review-report run-metrics "$RUNLOG" \
     --run-id "$TS" --role producer --model "$USED_MODEL" --exit-code "$rc" \
     --infra "$INFRAREC" \
+    "${FORCED_FLAGS[@]}" \
     >> "$DIR/metrics/runs.jsonl" 2>/dev/null || true
 fi
 
@@ -399,7 +492,7 @@ fi
 # The exit code goes in the LOG and nowhere else — a skew is something to READ at the end of a run,
 # not a reason to fail a run whose PRs are already open. Best-effort, like every line around it.
 if [ -s "$RUNLOG" ]; then
-  pr-review-report sol-toolchain-audit "$RUNLOG" >> "$LOG" 2>&1 || true
+  pr-review-report sol-toolchain-audit "$RUNLOG" 2>&1 | _log || true
 fi
 
 # The scratch dir is reclaimed by the EXIT trap installed where the dir is created — including on
@@ -415,9 +508,9 @@ fi
 # fact is already on the metrics line above, so the record survives the exit, and the record file
 # itself is per-run and rotates with the traces.
 _ri="$(pr-review-report run-infra "$INFRAREC")"; _rirc=$?
-printf '%s\n' "$_ri" | sed 's/^/  /' >> "$LOG"
+printf '%s\n' "$_ri" | sed 's/^/  /' | _log
 if [ "$_rirc" -eq 12 ]; then
-  echo "$(date -u +%FT%TZ) campaign run ENDED EARLY: infrastructure down (see infraReason in metrics/runs.jsonl)" >> "$LOG"
+  echo "$(date -u +%FT%TZ) campaign run ENDED EARLY: infrastructure down (see infraReason in metrics/runs.jsonl)" | _log
   exit 12
 fi
 exit 0

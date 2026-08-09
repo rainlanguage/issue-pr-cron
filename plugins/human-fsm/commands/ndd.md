@@ -223,9 +223,10 @@ field of the row is one read a human otherwise does by hand:
   went. There is no claim to check on such a row, so it is listed rather than
   presented, and presenting one anyway would hand the human an empty centre.
 
-`queue.more` and `counts` frame the row. `counts.excluded` is drafts and PRs a
-`human:*` override already dominates; `counts.archivedRepo` is questions frozen
-in archived repos, where no ruling can be written at all.
+`queue.more` and `counts` frame the row. `counts.draft` is the PRs withheld from
+the head because the code the question is about is still moving, named in
+`withheld` rather than dropped; `counts.archivedRepo` is questions frozen in
+archived repos, where no ruling can be written at all.
 
 ## Present the result, do not summarise it away
 

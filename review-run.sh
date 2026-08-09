@@ -8,6 +8,7 @@
 #   DISABLE:  touch review-DISABLED        (independent of the producer cron's DISABLED)
 #   WATCH:    tail -f review.log
 #   RUN NOW:  ./review-run.sh
+#   FORCE:    ./review-run.sh --force      (one run, past a usage-gate PAUSE, streamed to stdout)
 # Deployment values come from ./cron.env (PR_ASSIGNEE, optional REVIEW_MODEL/REVIEW_MAXTIME/REVIEW_KEEP_RUNS).
 
 # Packaged as a flake output (`packages.review-run`), so nix builds PATH from the flake's locked
@@ -68,9 +69,74 @@ LOG="$DIR/review.log"
 LOCK="$DIR/review.lock"
 RUNDIR="$DIR/review-runs"
 
+# --- one-off manual FORCE (#245) ---------------------------------------------------------------
+# Identical in shape and in wording to campaign-run.sh's, because a force that works on the producer
+# and silently does nothing on the vetter is worse than no force at all. `--force` is the only
+# argument this runner takes and it authorises exactly ONE bypass: the weekly-budget pace gate's
+# PAUSE (usage-gate exit 10).
+#
+#   CRON_DIR=<install-dir> nix run git+file://<install-dir>#review-run -- --force
+#
+# The bare `--` is LOAD-BEARING: `nix run` parses everything up to it as its own flags and exits
+# with `unrecognised flag '--force'` otherwise, so the runner never starts. Everything after it is
+# handed to the packaged script as argv, verified against nix 2.18.1 through the `git+file:` form
+# the crontab uses.
+#
+# An ARGUMENT and not a variable, deliberately: an argument belongs to one invocation and cannot be
+# left switched on, where a force in cron.env would silently force every scheduled tick for ever.
+# CRON_FORCE is refused below so that door is shut rather than merely unused.
+#
+# It does NOT bypass the review-DISABLED kill switch (a deliberate human stop), the flock (two
+# vetter runs collide on the same checkouts and the same GitHub state), or a gate config REFUSAL
+# (any non-zero exit that is not 10 — the gate could not read its config, and running past that is
+# running on config nobody validated).
+FORCE=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --force)
+      FORCE=1
+      shift
+      ;;
+    *)
+      # Rejected rather than ignored: a typo'd flag that fell through would run UNFORCED and skip on
+      # the very pause the human invoked it to run past, reporting nothing about why.
+      echo "review-run: unknown argument '$1' — the only argument is --force" >&2
+      exit 2
+      ;;
+  esac
+done
+
+# --- where this run's trail goes ---------------------------------------------------------------
+# A scheduled tick has no terminal, so its trail is appended to $LOG and nowhere else. A FORCED run
+# is being WATCHED — live observability is the whole reason it exists — so the same bytes also
+# reach stdout as they are produced. Every writer below goes through `_log`, so the two sinks cannot
+# drift and `--force` is the only thing that decides which is in play.
+if [ "$FORCE" -eq 1 ]; then
+  _log() { tee -a "$LOG"; }
+else
+  _log() { cat >> "$LOG"; }
+fi
+
 # --- kill switch (independent of the producer cron) ---
+# NOT bypassed by --force (#245): this file is a deliberate stop with a human behind it, and a force
+# that walked through it would turn the one unambiguous off-switch into a suggestion.
 if [ -f "$DIR/review-DISABLED" ]; then
-  echo "$(date -u +%FT%TZ) SKIP: review-DISABLED flag present" >> "$LOG"; exit 0
+  echo "$(date -u +%FT%TZ) SKIP: review-DISABLED flag present" | _log; exit 0
+fi
+
+# The stale-setting guard, in the posture `usage-gate` already takes toward the retired
+# USAGE_SLACK_PCT (#158): a knob that cannot be honoured is REFUSED rather than ignored, so a
+# cron.env carrying it surfaces instead of quietly doing nothing. CRON_FORCE has never been a knob —
+# forcing is per-invocation — and this is what makes that structurally true instead of merely
+# intended. Refused for a SCHEDULED tick too, which is the case that matters: a stale cron.env must
+# stop the pipeline visibly rather than run it forced six times a day.
+# It sits BELOW the kill switch, in the position the gate's own refusal has always held: a config
+# refusal is subordinate to a deliberate human stop. Above it, a stale cron.env on a pipeline
+# somebody turned off would exit 2 six times a day — recurring error noise about a setting that
+# cannot affect anything while review-DISABLED is present.
+if [ -n "${CRON_FORCE:-}" ]; then
+  echo "$(date -u +%FT%TZ) review run REFUSED: CRON_FORCE is set (cron.env or the environment), but forcing is an ARGUMENT, not a setting — as a variable it would force every scheduled tick. Unset it and pass: nix run git+file://<install-dir>#review-run -- --force" | _log
+  exit 2
 fi
 
 # --- weekly-budget pace gate: skip this tick when usage is over the ceiling or inside the BAU
@@ -82,32 +148,49 @@ fi
 # the log): the tick must not run on config the gate refused to read, so propagate the failure — a
 # refusal is neither a run nor a pause, and it writes NO row. ---
 _ug="$(pr-review-report usage-gate 2>&1)"; _ugrc=$?
-echo "$(date -u +%FT%TZ) usage-gate: $_ug" >> "$LOG"
+echo "$(date -u +%FT%TZ) usage-gate: $_ug" | _log
 if [ "$_ugrc" -eq 10 ]; then
-  # A paused tick still writes its metrics/runs.jsonl row (#160) — same shape and same reasoning
-  # as campaign-run.sh: an empty trace so the record's shape still comes from `run-metrics`, the
-  # GATE's exit 10 on the row, the gate's own line verbatim, and exit 0 because a pause is not a
-  # failure. The hourly refresh-human-queue cron is what carries the row to origin/main during a
-  # pause. A REFUSAL (exit 2, below) writes no row and aborts loudly.
-  TS="$(date -u +%Y%m%dT%H%M%SZ)"
-  RUNLOG="$RUNDIR/$TS.jsonl"
-  mkdir -p "$RUNDIR" "$DIR/metrics"
-  : > "$RUNLOG"
-  pr-review-report run-metrics "$RUNLOG" \
-    --run-id "$TS" --role vetter --model "$REVIEW_MODEL" --exit-code 10 \
-    --skipped usage-gate --skip-reason "$_ug" \
-    >> "$DIR/metrics/runs.jsonl" 2>/dev/null || true
-  exit 0
-fi
-if [ "$_ugrc" -ne 0 ]; then
-  echo "$(date -u +%FT%TZ) review run ABORTED: usage-gate refused its config (exit $_ugrc) — fix cron.env" >> "$LOG"
+  if [ "$FORCE" -eq 1 ]; then
+    # FORCED past the PAUSE (#245), and past NOTHING else. The gate still ran and its line is in the
+    # log above, verbatim; the only difference is that this tick does not become a skip row. The
+    # force lives INSIDE the exit-10 branch on purpose — a refusal (below) can never reach it.
+    echo "$(date -u +%FT%TZ) FORCED past the usage-gate PAUSE (--force): $_ug" | _log
+  else
+    # A paused tick still writes its metrics/runs.jsonl row (#160) — same shape and same reasoning
+    # as campaign-run.sh: an empty trace so the record's shape still comes from `run-metrics`, the
+    # GATE's exit 10 on the row, the gate's own line verbatim, and exit 0 because a pause is not a
+    # failure. The hourly refresh-human-queue cron is what carries the row to origin/main during a
+    # pause. A REFUSAL (exit 2, below) writes no row and aborts loudly.
+    TS="$(date -u +%Y%m%dT%H%M%SZ)"
+    RUNLOG="$RUNDIR/$TS.jsonl"
+    mkdir -p "$RUNDIR" "$DIR/metrics"
+    : > "$RUNLOG"
+    pr-review-report run-metrics "$RUNLOG" \
+      --run-id "$TS" --role vetter --model "$REVIEW_MODEL" --exit-code 10 \
+      --skipped usage-gate --skip-reason "$_ug" \
+      >> "$DIR/metrics/runs.jsonl" 2>/dev/null || true
+    exit 0
+  fi
+elif [ "$_ugrc" -ne 0 ]; then
+  echo "$(date -u +%FT%TZ) review run ABORTED: usage-gate refused its config (exit $_ugrc) — fix cron.env" | _log
   exit "$_ugrc"
+fi
+
+# --- the FORCE stamp every row this run writes carries (#245) ----------------------------------
+# A forced run is not a paced tick, and a runs.jsonl row that cannot say so puts budget on the
+# dashboard's run series against a schedule that was never followed. Built ONCE, here, from the
+# gate's own line — including an OK line, because what makes a row forced is the human who typed
+# `--force`, not what the gate happened to decide. Empty for a scheduled tick, which is what keeps
+# every existing row byte-identical.
+FORCED_FLAGS=()
+if [ "$FORCE" -eq 1 ]; then
+  FORCED_FLAGS=(--forced usage-gate --force-reason "$_ug")
 fi
 
 # --- single-run lock (non-blocking) ---
 exec 9>"$LOCK"
 if ! flock -n 9; then
-  echo "$(date -u +%FT%TZ) SKIP: previous review run still holding the lock" >> "$LOG"; exit 0
+  echo "$(date -u +%FT%TZ) SKIP: previous review run still holding the lock" | _log; exit 0
 fi
 
 mkdir -p "$RUNDIR"
@@ -139,10 +222,10 @@ export RUN_LENS_LEDGER="$LENSLOG"
 # moved the verdict. So the check runs here and a miss ENDS the run: no verdict at all beats a
 # verdict from a lens that was blind without saying so.
 _pf="$(pr-review-report preflight)"; _pfrc=$?
-printf '%s\n' "$_pf" | sed 's/^/  /' >> "$LOG"
+printf '%s\n' "$_pf" | sed 's/^/  /' | _log
 if [ "$_pfrc" -ne 0 ]; then
   _missing="$(printf '%s\n' "$_pf" | sed -n 's/^missing=//p')"
-  echo "$(date -u +%FT%TZ) review run ABORT: harness tools missing from PATH: $_missing" >> "$LOG"
+  echo "$(date -u +%FT%TZ) review run ABORT: harness tools missing from PATH: $_missing" | _log
   # An empty trace, so the record's shape still comes from `run-metrics` — there is no second
   # place that knows what a runs.jsonl line looks like.
   : > "$RUNLOG"
@@ -150,6 +233,7 @@ if [ "$_pfrc" -ne 0 ]; then
   pr-review-report run-metrics "$RUNLOG" \
     --run-id "$TS" --role vetter --model "$REVIEW_MODEL" --exit-code "$_pfrc" \
     --preflight-missing "$_missing" \
+    "${FORCED_FLAGS[@]}" \
     >> "$DIR/metrics/runs.jsonl" 2>/dev/null || true
   exit "$_pfrc"
 fi
@@ -200,7 +284,7 @@ PROMPT="$(sed -e "s#{{ASSIGNEE}}#$PR_ASSIGNEE#g" \
 {
   echo "================================================================="
   echo "$(date -u +%FT%TZ) review run START (model=$REVIEW_MODEL, host=$(uname -n)) trace=$RUNLOG"
-} >> "$LOG"
+} | _log
 
 # `gh` is on PATH as a bare executable, put there by nix from the flake's runtimeInputs, for the MCP
 # SERVER — it shells out to gh for every GitHub read and for its one write. The vetter model itself
@@ -223,7 +307,7 @@ PROMPT="$(sed -e "s#{{ASSIGNEE}}#$PR_ASSIGNEE#g" \
 USED_MODEL="$REVIEW_MODEL"
 rc=1
 for USED_MODEL in $REVIEW_MODEL $FALLBACK_MODELS; do
-  echo "$(date -u +%FT%TZ)   model attempt: $USED_MODEL" >> "$LOG"
+  echo "$(date -u +%FT%TZ)   model attempt: $USED_MODEL" | _log
   timeout "$REVIEW_MAXTIME" claude --print "$PROMPT" \
     --model "$USED_MODEL" \
     --settings "$SETTINGS_FILE" \
@@ -237,23 +321,23 @@ for USED_MODEL in $REVIEW_MODEL $FALLBACK_MODELS; do
     | { pr-review-report run-timings --out "$DIR/metrics/runs.jsonl" --trace "$RUNLOG" \
           --lens "$LENSLOG" \
           --run-id "$TS" --role vetter --model "$USED_MODEL" 2>/dev/null || cat ; } \
-    | { pr-review-report distill-trace 2>/dev/null || cat >/dev/null ; } >> "$LOG"
+    | { pr-review-report distill-trace 2>/dev/null || cat >/dev/null ; } | _log
   rc=${PIPESTATUS[0]}
   # Typed verdict from the trace's result events, not a grep over the trace bytes (see
   # `classify_trace`): the old regex also matched a 429 quoted inside an unrelated tool result.
   if [ "$(pr-review-report trace-outcome "$RUNLOG" --exit-code "$rc")" = "session-limit" ]; then
-    echo "  !! model $USED_MODEL is quota-limited — falling back to next model" >> "$LOG"
+    echo "  !! model $USED_MODEL is quota-limited — falling back to next model" | _log
     continue
   fi
   break
 done
 
 if [ ! -s "$RUNLOG" ] && [ -s "$ERRLOG" ]; then
-  echo "  !! no event stream — likely auth/startup failure; stderr:" >> "$LOG"
-  tail -5 "$ERRLOG" | sed 's/^/    /' >> "$LOG"
+  echo "  !! no event stream — likely auth/startup failure; stderr:" | _log
+  tail -5 "$ERRLOG" | sed 's/^/    /' | _log
 fi
 
-echo "$(date -u +%FT%TZ) review run END (exit=$rc, trace=$RUNLOG)" >> "$LOG"
+echo "$(date -u +%FT%TZ) review run END (exit=$rc, trace=$RUNLOG)" | _log
 
 # `run-metrics` emits the whole enriched record, deriving `outcome` with the same typed classifier
 # the fallback loop uses, so the two can never disagree about whether a run was quota-limited.
@@ -262,6 +346,7 @@ echo "$(date -u +%FT%TZ) review run END (exit=$rc, trace=$RUNLOG)" >> "$LOG"
 if [ -s "$RUNLOG" ]; then
   pr-review-report run-metrics "$RUNLOG" \
     --run-id "$TS" --role vetter --model "$USED_MODEL" --exit-code "$rc" \
+    "${FORCED_FLAGS[@]}" \
     >> "$DIR/metrics/runs.jsonl" 2>/dev/null || true
 fi
 exit 0
