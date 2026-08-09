@@ -1865,6 +1865,12 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/issue-pr-cron",
+      "number": 251,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/251",
+      "title": "Expose the render harness as a subcommand: agents rebuild it from scratch every screenshot item"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
       "number": 239,
       "url": "https://github.com/rainlanguage/issue-pr-cron/issues/239",
       "title": "/ndd should relabel obvious close-candidates to ai:close-candidate, not ask a design question"
@@ -5583,16 +5589,16 @@
     "leaks": 0,
     "totalProducerPrs": 143,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 613,
+    "uncoveredIssues": 614,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 773
+    "openIssues": 774
   },
   "ages": {
     "openIssues": {
-      "meanDays": 315.5,
+      "meanDays": 315.1,
       "medianDays": 103.3,
-      "oldestDays": 1658.8
+      "oldestDays": 1658.9
     }
   }
 }
