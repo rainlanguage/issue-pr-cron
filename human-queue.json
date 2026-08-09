@@ -104,44 +104,6 @@
         "title": "Add \"remove and withdraw all\" option to order removal (#2024)"
       }
     ],
-    "ai:design": [
-      {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 412,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/412",
-        "title": "fix: drop malformed subgraph rows from AccountStatus transfer history"
-      },
-      {
-        "repo": "rainlanguage/rain.erc4626.words",
-        "number": 233,
-        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/233",
-        "title": "fix(security): bound vault and asset decimals to MAX_DECIMALS (closes #84)"
-      },
-      {
-        "repo": "rainlanguage/rain.erc4626.words",
-        "number": 166,
-        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/166",
-        "title": "fix(lib): use lossy decimal conversions to prevent revert on sub-decimal inputs"
-      },
-      {
-        "repo": "rainlanguage/raindex",
-        "number": 2778,
-        "url": "https://github.com/rainlanguage/raindex/pull/2778",
-        "title": "fix: mask signer row operand to low byte"
-      },
-      {
-        "repo": "rainlanguage/raindex",
-        "number": 2721,
-        "url": "https://github.com/rainlanguage/raindex/pull/2721",
-        "title": "fix(webapp): stop double-fetching custom registries in advanced mode"
-      },
-      {
-        "repo": "rainlanguage/raindex",
-        "number": 2720,
-        "url": "https://github.com/rainlanguage/raindex/pull/2720",
-        "title": "Retry SDK indexing on transient timeout before failing"
-      }
-    ],
     "ai:needs-work": [
       {
         "repo": "rainlanguage/rain.deploy",
@@ -300,6 +262,12 @@
         "title": "fix: validate account prop and transaction hash in AccountStatus"
       },
       {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 412,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/412",
+        "title": "fix: drop malformed subgraph rows from AccountStatus transfer history"
+      },
+      {
         "repo": "rainlanguage/rain.math.fixedpoint",
         "number": 25,
         "url": "https://github.com/rainlanguage/rain.math.fixedpoint/pull/25",
@@ -427,6 +395,12 @@
       },
       {
         "repo": "rainlanguage/rain.erc4626.words",
+        "number": 233,
+        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/233",
+        "title": "fix(security): bound vault and asset decimals to MAX_DECIMALS (closes #84)"
+      },
+      {
+        "repo": "rainlanguage/rain.erc4626.words",
         "number": 226,
         "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/226",
         "title": "refactor(extern): add INTEGRITY_FUNCTION_POINTERS_LENGTH and pin pointer slot non-zero tests"
@@ -511,6 +485,12 @@
       },
       {
         "repo": "rainlanguage/rain.erc4626.words",
+        "number": 166,
+        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/166",
+        "title": "fix(lib): use lossy decimal conversions to prevent revert on sub-decimal inputs"
+      },
+      {
+        "repo": "rainlanguage/rain.erc4626.words",
         "number": 162,
         "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/162",
         "title": "docs(natspec): document floor-rounding direction in convert* words"
@@ -526,6 +506,12 @@
         "number": 2779,
         "url": "https://github.com/rainlanguage/raindex/pull/2779",
         "title": "fix: include counterparty (zero address) as 3rd context row in addOrder/removeOrder"
+      },
+      {
+        "repo": "rainlanguage/raindex",
+        "number": 2778,
+        "url": "https://github.com/rainlanguage/raindex/pull/2778",
+        "title": "fix: mask signer row operand to low byte"
       },
       {
         "repo": "rainlanguage/rain.math.float",
@@ -640,6 +626,18 @@
         "number": 534,
         "url": "https://github.com/rainlanguage/rainlang/pull/534",
         "title": "Add LibParseMeta.lookupWord unit test"
+      },
+      {
+        "repo": "rainlanguage/raindex",
+        "number": 2721,
+        "url": "https://github.com/rainlanguage/raindex/pull/2721",
+        "title": "fix(webapp): stop double-fetching custom registries in advanced mode"
+      },
+      {
+        "repo": "rainlanguage/raindex",
+        "number": 2720,
+        "url": "https://github.com/rainlanguage/raindex/pull/2720",
+        "title": "Retry SDK indexing on transient timeout before failing"
       },
       {
         "repo": "rainlanguage/raindex",
@@ -959,13 +957,19 @@
         ]
       },
       "un-vetted": {
-        "count": 27,
+        "count": 28,
         "prs": [
           {
             "repo": "rainlanguage/issue-pr-cron",
-            "number": 242,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/242",
-            "title": "FSM design-doctor: route every noQuestion ai:design row back to ai:needs-work"
+            "number": 250,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/250",
+            "title": "Producer strands itself: the wait is a foreground call, and an unfinished run is not ok"
+          },
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 171,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/171",
+            "title": "feat(metrics): a forced run can override more than one stop"
           },
           {
             "repo": "rainlanguage/rain.factory",
@@ -1127,62 +1131,8 @@
       }
     },
     "vetter-verdicts": {
-      "ai:design": {
-        "count": 6,
-        "prs": [
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 412,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/412",
-            "title": "fix: drop malformed subgraph rows from AccountStatus transfer history",
-            "bucket": "noQuestion"
-          },
-          {
-            "repo": "rainlanguage/rain.erc4626.words",
-            "number": 233,
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/233",
-            "title": "fix(security): bound vault and asset decimals to MAX_DECIMALS (closes #84)",
-            "bucket": "noQuestion"
-          },
-          {
-            "repo": "rainlanguage/rain.erc4626.words",
-            "number": 166,
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/166",
-            "title": "fix(lib): use lossy decimal conversions to prevent revert on sub-decimal inputs",
-            "bucket": "noQuestion"
-          },
-          {
-            "repo": "rainlanguage/raindex",
-            "number": 2778,
-            "url": "https://github.com/rainlanguage/raindex/pull/2778",
-            "title": "fix: mask signer row operand to low byte",
-            "bucket": "noQuestion"
-          },
-          {
-            "repo": "rainlanguage/raindex",
-            "number": 2721,
-            "url": "https://github.com/rainlanguage/raindex/pull/2721",
-            "title": "fix(webapp): stop double-fetching custom registries in advanced mode",
-            "bucket": "noQuestion"
-          },
-          {
-            "repo": "rainlanguage/raindex",
-            "number": 2720,
-            "url": "https://github.com/rainlanguage/raindex/pull/2720",
-            "title": "Retry SDK indexing on transient timeout before failing",
-            "bucket": "noQuestion"
-          }
-        ],
-        "breakdown": {
-          "draft": 0,
-          "fetchErrors": 0,
-          "noQuestion": 6,
-          "presentable": 0,
-          "unaddressable": 0
-        }
-      },
       "ai:needs-work": {
-        "count": 94,
+        "count": 100,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -1341,6 +1291,12 @@
             "title": "fix: validate account prop and transaction hash in AccountStatus"
           },
           {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 412,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/412",
+            "title": "fix: drop malformed subgraph rows from AccountStatus transfer history"
+          },
+          {
             "repo": "rainlanguage/rain.math.fixedpoint",
             "number": 25,
             "url": "https://github.com/rainlanguage/rain.math.fixedpoint/pull/25",
@@ -1468,6 +1424,12 @@
           },
           {
             "repo": "rainlanguage/rain.erc4626.words",
+            "number": 233,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/233",
+            "title": "fix(security): bound vault and asset decimals to MAX_DECIMALS (closes #84)"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
             "number": 226,
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/226",
             "title": "refactor(extern): add INTEGRITY_FUNCTION_POINTERS_LENGTH and pin pointer slot non-zero tests"
@@ -1552,6 +1514,12 @@
           },
           {
             "repo": "rainlanguage/rain.erc4626.words",
+            "number": 166,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/166",
+            "title": "fix(lib): use lossy decimal conversions to prevent revert on sub-decimal inputs"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
             "number": 162,
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/162",
             "title": "docs(natspec): document floor-rounding direction in convert* words"
@@ -1567,6 +1535,12 @@
             "number": 2779,
             "url": "https://github.com/rainlanguage/raindex/pull/2779",
             "title": "fix: include counterparty (zero address) as 3rd context row in addOrder/removeOrder"
+          },
+          {
+            "repo": "rainlanguage/raindex",
+            "number": 2778,
+            "url": "https://github.com/rainlanguage/raindex/pull/2778",
+            "title": "fix: mask signer row operand to low byte"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -1681,6 +1655,18 @@
             "number": 534,
             "url": "https://github.com/rainlanguage/rainlang/pull/534",
             "title": "Add LibParseMeta.lookupWord unit test"
+          },
+          {
+            "repo": "rainlanguage/raindex",
+            "number": 2721,
+            "url": "https://github.com/rainlanguage/raindex/pull/2721",
+            "title": "fix(webapp): stop double-fetching custom registries in advanced mode"
+          },
+          {
+            "repo": "rainlanguage/raindex",
+            "number": 2720,
+            "url": "https://github.com/rainlanguage/raindex/pull/2720",
+            "title": "Retry SDK indexing on transient timeout before failing"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -5584,29 +5570,29 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 27,
+    "unvetted": 28,
     "blockedOn": 17,
     "ready": 0,
-    "needsWork": 94,
+    "needsWork": 100,
     "relink": 0,
-    "design": 6,
+    "design": 0,
     "blockedInfra": 0,
     "closeCandidateIssues": 0,
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 144,
+    "totalProducerPrs": 145,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 613,
     "designPresentable": 0,
-    "designNoQuestion": 6,
+    "designNoQuestion": 0,
     "openIssues": 774
   },
   "ages": {
     "openIssues": {
-      "meanDays": 314.9,
+      "meanDays": 315.0,
       "medianDays": 103.2,
-      "oldestDays": 1658.7
+      "oldestDays": 1658.8
     }
   }
 }
