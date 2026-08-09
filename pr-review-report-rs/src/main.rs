@@ -27870,7 +27870,7 @@ fn design_doctor_mode(dry_run: bool) -> i32 {
         );
     }
     if q.no_question.is_empty() {
-        println!("design-doctor: no noQuestion rows — every ai:design PR carries a live trusted question");
+        println!("design-doctor: no noQuestion rows — nothing to route");
         return if c.fetch_errors > 0 { 1 } else { 0 };
     }
     let results = map_bounded(&q.no_question, |(slug, num)| {
