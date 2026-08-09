@@ -16837,6 +16837,15 @@ const STATE_RELINK: StateDescriptor = StateDescriptor {
 };
 
 /// A design question only a human can answer or supply.
+///
+/// The one lane cell that carries more than `{count, prs}`: `human-queue --json` attaches
+/// `next_design`'s partition to it ([`attach_design_breakdown`] — a `breakdown` object beside
+/// `count`, a `bucket` on each entry), because this row files under the HUMAN owner and an
+/// owner's count is an inbox — a number that actor's own command will present. The raw label
+/// total is not that number: `/ndd` serves only `presentable`, and a row it withholds
+/// (`noQuestion` above all) is a defect to route out, not work a human can do. `count` stays
+/// the raw total; the split beside it is what lets a consumer draw the inbox and the defect
+/// apart.
 const STATE_DESIGN: StateDescriptor = StateDescriptor {
     key: "ai:design",
     owner: StateOwner::Human,
@@ -17320,6 +17329,11 @@ struct QueuePr {
     ready_vetted_at_head: Option<bool>,
     /// For a label-less PR: whether a trusted `🤖 ai:producer` comment is present (the leak signal).
     producer_commented: bool,
+    /// Whether GitHub reports the PR as a DRAFT, off the same search payload the labels come
+    /// from. Read only by the design split ([`design_bucket`]): a draft `ai:design` member is
+    /// withheld from `/ndd` before any per-PR read is paid, and the split classifies it from the
+    /// same fetch-free input so the two cannot disagree about which rows cost a read.
+    is_draft: bool,
 }
 
 /// PURE: build the lane-grouped inventory `{ <lane>: { <state>: { count, prs:[{repo,number,url,title}] } } }`
@@ -17382,6 +17396,459 @@ fn lane_state_count(lanes: &Value, lane: &str, state: &str) -> usize {
         .pointer(&format!("/{lane}/{state}/count"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0) as usize
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// the design cell's split (#240) — `next_design`'s own partition, carried on the snapshot.
+//
+// The dashboard files the `ai:design` cell under the human owner, and every count filed under
+// an owner is an inbox: a number the named actor's own command will present, and that draining
+// the queue drives to zero. The raw label total is not that number — `/ndd` withholds a
+// labelled PR whose label has no trusted question behind it — so the cell carries the split
+// beside its `count`: `breakdown` (every bucket, zeros included) plus a `bucket` annotation on
+// each `prs` entry, with `presentable` the human's share and `noQuestion` the defect bucket.
+// The split is computed by `next_design`'s OWN classifier stages over the cell's own members —
+// one enumeration, one classifier; a second detector for "does a trusted comment raise a
+// question" is exactly the drift that had the dashboard telling a human six questions awaited
+// while `/ndd` presented zero.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Where ONE `ai:design` cell member lands in `next_design`'s partition — the snapshot twin of
+/// [`DesignQueueCounts`]'s live buckets. Each spelling below is BOTH the cell's `breakdown` key
+/// and the member's `bucket` annotation, one constant serving the pair, so `breakdown.<key>`
+/// counts exactly the `prs` entries annotated `<key>` rather than two spellings agreeing.
+///
+/// `archivedRepo`, the sixth live bucket, has no twin here: [`producer_pr_inventory`] withholds
+/// archived-repo PRs before any lane is built, so this cell can never hold one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum DesignBucket {
+    /// A trusted comment raises a question in force: a row `/ndd` will serve. The ONE bucket
+    /// that is a human inbox — the number that reaches `counts.designPresentable`.
+    Presentable,
+    /// The label is on the PR and NO trusted comment raises a question
+    /// ([`NdOutcome::NoQuestion`]): nothing any human command presents — a defect bucket, not
+    /// work, reaching `counts.designNoQuestion` so the dashboard can draw it trending to zero.
+    NoQuestion,
+    /// A DRAFT: `/ndd` withholds it because the code the answer would be spent against is still
+    /// being shaped ([`DesignQueueCounts::draft`]'s reasoning, unchanged).
+    Draft,
+    /// The member's ref does not parse ([`DesignHit::Unaddressable`]). Structurally empty here —
+    /// every [`QueuePr`] was addressed by [`producer_pr_inventory`] — and still given its key,
+    /// so the partition is [`nd_hit_class`]'s whole codomain rather than the arms observed so far.
+    Unaddressable,
+    /// The `gh pr view` failed: un-read, not judged ([`NdOutcome::FetchFailed`]).
+    FetchError,
+}
+
+impl DesignBucket {
+    /// Every variant, for the emitter that writes each `breakdown` key unconditionally — a key
+    /// absent at zero would read as a bucket that does not exist.
+    const ALL: [DesignBucket; 5] = [
+        DesignBucket::Presentable,
+        DesignBucket::NoQuestion,
+        DesignBucket::Draft,
+        DesignBucket::Unaddressable,
+        DesignBucket::FetchError,
+    ];
+
+    /// The one spelling per bucket. `fetchErrors` keeps [`next_design_doc`]'s plural even on a
+    /// lone entry so a consumer can filter `prs` by any `breakdown` key with no second mapping.
+    fn key(self) -> &'static str {
+        match self {
+            DesignBucket::Presentable => "presentable",
+            DesignBucket::NoQuestion => "noQuestion",
+            DesignBucket::Draft => "draft",
+            DesignBucket::Unaddressable => "unaddressable",
+            DesignBucket::FetchError => "fetchErrors",
+        }
+    }
+}
+
+/// PURE: the design cell's members — the same PRs [`lanes_doc`] puts in the
+/// `vetter-verdicts`.`ai:design` cell, selected by the SAME [`classify_lane`] call on the same
+/// inputs, so the split describes exactly the list it is emitted beside. Deliberately not a
+/// label read: a PR wearing `ai:design` under a dominating state (`ai:close-candidate`,
+/// `ai:blocked-on`) is that state's inventory, not this cell's, and a label read would split a
+/// list the cell does not hold.
+fn design_lane_members(prs: &[QueuePr]) -> Vec<&QueuePr> {
+    prs.iter()
+        .filter(|p| {
+            classify_lane(&p.labels, p.ready_vetted_at_head, p.producer_commented)
+                == (Lane::VetterVerdicts, STATE_DESIGN.key.to_string())
+        })
+        .collect()
+}
+
+/// PURE: one member in the search-hit shape [`nd_hit_class`] reads, so the split enters
+/// `next_design`'s classifier through its own front door instead of a restatement of its
+/// draft/addressability rules.
+fn design_member_hit(p: &QueuePr) -> Value {
+    serde_json::json!({
+        "number": p.subject.number,
+        "url": p.subject.url,
+        "isDraft": p.is_draft,
+        "title": p.subject.title,
+    })
+}
+
+/// Where ONE member lands, given the same per-PR read `next_design` pays (inject
+/// [`nd_pr_detail`]; a seam so a test reaches every arm). Both stages are `next_design`'s own —
+/// [`nd_hit_class`] first, so a draft costs no fetch here either, then [`nd_outcome`] — and both
+/// matches are EXHAUSTIVE on purpose: a new arm in either stage refuses to compile until this
+/// split gives it a bucket, which is what keeps the snapshot's partition and `/ndd`'s from
+/// drifting apart.
+fn design_bucket(p: &QueuePr, fetch: impl Fn(&str, u64) -> Option<Value>) -> DesignBucket {
+    match nd_hit_class(&design_member_hit(p)) {
+        DesignHit::Draft { .. } => DesignBucket::Draft,
+        DesignHit::Unaddressable { .. } => DesignBucket::Unaddressable,
+        DesignHit::Candidate { slug, num } => match nd_outcome(&slug, num, fetch(&slug, num)) {
+            NdOutcome::Presentable(_) => DesignBucket::Presentable,
+            NdOutcome::NoQuestion { .. } => DesignBucket::NoQuestion,
+            NdOutcome::FetchFailed { .. } => DesignBucket::FetchError,
+        },
+    }
+}
+
+/// The whole cell's split: one `(repo, number) → bucket` row per member, keyed the way
+/// [`attach_design_breakdown`] looks entries up. THE READS RUN CONCURRENTLY, THE ROWS COME BACK
+/// IN MEMBER ORDER ([`map_bounded`]), for [`nd_classify`]'s reason: two runs over identical
+/// GitHub state must emit identical documents.
+fn design_lane_split(
+    prs: &[QueuePr],
+    fetch: impl Fn(&str, u64) -> Option<Value> + Sync,
+) -> Vec<((String, u64), DesignBucket)> {
+    let members = design_lane_members(prs);
+    map_bounded(&members, |p| {
+        (
+            (p.subject.repo.clone(), p.subject.number),
+            design_bucket(p, &fetch),
+        )
+    })
+}
+
+/// PURE: attach the split to the ONE cell it describes — a `bucket` annotation on each `prs`
+/// entry, a `breakdown` object beside `count`. `count` and the entries' shared keys are
+/// untouched: `count` stays the raw label total every existing consumer reads, and the split is
+/// ADDITIVE beside it (an old snapshot simply lacks both, the dashboard's documented
+/// degradation). An absent cell attaches nothing — the lane is empty, [`design_lane_members`]
+/// was empty with it, and writing a cell here would break the sparse-`lanes` contract.
+///
+/// The `breakdown` numbers are COUNTED OFF THE ANNOTATED ENTRIES, never copied from `split`, so
+/// `breakdown.<key>` equals the number of `prs` rows annotated `<key>` by construction — the
+/// conservation a consumer checks — with every key written even at zero. An entry `split` does
+/// not name stays un-annotated and out of every number, so `breakdown` summing short of `count`
+/// is visible arithmetic, never a guessed bucket.
+fn attach_design_breakdown(lanes: &mut Value, split: &[((String, u64), DesignBucket)]) {
+    let Some(cell) = lanes.pointer_mut(&format!(
+        "/{}/{}",
+        Lane::VetterVerdicts.key(),
+        STATE_DESIGN.key
+    )) else {
+        return;
+    };
+    let by_member: std::collections::HashMap<&(String, u64), DesignBucket> =
+        split.iter().map(|(k, b)| (k, *b)).collect();
+    let mut counted: std::collections::BTreeMap<&'static str, u64> =
+        DesignBucket::ALL.iter().map(|b| (b.key(), 0)).collect();
+    if let Some(prs) = cell.get_mut("prs").and_then(|v| v.as_array_mut()) {
+        for entry in prs {
+            let key = (
+                entry
+                    .get("repo")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                entry.get("number").and_then(|v| v.as_u64()).unwrap_or(0),
+            );
+            let Some(bucket) = by_member.get(&key) else {
+                continue;
+            };
+            entry["bucket"] = Value::from(bucket.key());
+            *counted.entry(bucket.key()).or_insert(0) += 1;
+        }
+    }
+    cell["breakdown"] = Value::Object(
+        counted
+            .into_iter()
+            .map(|(k, n)| (k.to_string(), Value::from(n)))
+            .collect(),
+    );
+}
+
+/// PURE: one bucket's size off the cell's own `breakdown` — sparse-absent ⇒ 0, the contract
+/// [`lane_state_count`] holds for an absent cell. The ONE reader behind the two `counts` keys
+/// the history rollup carries, so the cell, the count and the series cannot measure different
+/// populations.
+fn design_breakdown_count(lanes: &Value, bucket: DesignBucket) -> u64 {
+    lanes
+        .pointer(&format!(
+            "/{}/{}/breakdown/{}",
+            Lane::VetterVerdicts.key(),
+            STATE_DESIGN.key,
+            bucket.key()
+        ))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod design_split_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn qp(repo: &str, num: u64, labels: &[&str], is_draft: bool) -> QueuePr {
+        QueuePr {
+            subject: SubjectRef::new(
+                repo,
+                num,
+                format!("https://github.com/{repo}/pull/{num}"),
+                format!("pr {num}"),
+            ),
+            labels: labels.iter().map(|s| s.to_string()).collect(),
+            ready_vetted_at_head: None,
+            producer_commented: false,
+            is_draft,
+        }
+    }
+
+    /// A detail whose ONE trusted comment is the producer's real flag-design record, built by
+    /// the REAL writer ([`state_comment`]) so the fixture can drift from neither side.
+    fn detail_with_question() -> Value {
+        json!({"comments": [{
+            "author": {"login": TRUSTED_AUTHOR},
+            "body": state_comment("ai:design", "which constant is shared?", &[]),
+            "createdAt": "2026-08-01T00:00:00Z",
+        }]})
+    }
+
+    // The members are THE cell's population: the same classifier call `lanes_doc` buckets with,
+    // over the same inputs — never a label read. A PR wearing `ai:design` under a dominating
+    // state must be missing from BOTH the cell and the members, or the split describes a list
+    // the cell does not hold.
+    #[test]
+    fn the_members_are_the_cells_own_prs() {
+        let prs = vec![
+            qp("o/r", 1, &["ai:design"], false),
+            qp("o/r", 2, &["ai:design"], true),
+            // Dominated: the close-candidate hand-off and the blocked flag own these two, so
+            // the cell excludes them however their labels read — and the members must too.
+            qp("o/r", 3, &["ai:design", "ai:close-candidate"], false),
+            qp("o/r", 4, &["ai:blocked-on", "ai:design"], false),
+            qp("o/r", 5, &["ai:needs-work"], false),
+            qp("o/r", 6, &[], false),
+        ];
+        let member_nums: Vec<u64> = design_lane_members(&prs)
+            .iter()
+            .map(|p| p.subject.number)
+            .collect();
+        let cell_nums: Vec<u64> = lanes_doc(&prs)
+            .pointer(&format!("/vetter-verdicts/{}/prs", STATE_DESIGN.key))
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|e| e.get("number").and_then(|n| n.as_u64()))
+            .collect();
+        assert_eq!(member_nums, vec![1, 2]);
+        assert_eq!(
+            member_nums, cell_nums,
+            "the split's population and the emitted cell's must be one enumeration"
+        );
+    }
+
+    // Each member lands in exactly ONE bucket, decided by `next_design`'s own stages: the draft
+    // withholding costs no read (the fetch here panics), the question decision is
+    // [`last_design_question`]'s through [`nd_outcome`] — trust rule included — and a failed
+    // read is un-read, not judged.
+    #[test]
+    fn a_member_lands_where_ndd_would_put_it() {
+        assert_eq!(
+            design_bucket(&qp("o/r", 7, &["ai:design"], true), |_, _| panic!(
+                "a draft is classified from the search payload — no read is paid"
+            )),
+            DesignBucket::Draft
+        );
+        assert_eq!(
+            design_bucket(&qp("o/r", 8, &["ai:design"], false), |_, _| Some(
+                detail_with_question()
+            )),
+            DesignBucket::Presentable
+        );
+        // The live 2026-08-09 shape: labelled, and no trusted comment raises a question.
+        assert_eq!(
+            design_bucket(&qp("o/r", 9, &["ai:design"], false), |_, _| Some(
+                json!({"comments": []})
+            )),
+            DesignBucket::NoQuestion
+        );
+        // An untrusted author writing the raising words is still no question — the trust rule
+        // arrives WITH the classifier instead of being restated here.
+        assert_eq!(
+            design_bucket(&qp("o/r", 10, &["ai:design"], false), |_, _| Some(
+                json!({"comments": [{
+                    "author": {"login": "someone-else"},
+                    "body": "🤖 ai:producer\nDesign-question: which constant is shared?",
+                    "createdAt": "2026-08-01T00:00:00Z",
+                }]})
+            )),
+            DesignBucket::NoQuestion
+        );
+        assert_eq!(
+            design_bucket(&qp("o/r", 11, &["ai:design"], false), |_, _| None),
+            DesignBucket::FetchError
+        );
+    }
+
+    /// The enriched lanes a three-member cell produces — one presentable, two with no question,
+    /// ASYMMETRIC on purpose so a mutant swapping the two headline buckets cannot pass — through
+    /// the same pure pipeline the subcommand runs.
+    fn enriched_lanes() -> Value {
+        let prs = vec![
+            qp("o/r", 1, &["ai:design"], false),
+            qp("o/r", 2, &["ai:design"], false),
+            qp("o/r", 3, &["ai:design"], false),
+            qp("o/r", 4, &["ai:needs-work"], false),
+        ];
+        let mut lanes = lanes_doc(&prs);
+        let split = design_lane_split(&prs, |_, num| match num {
+            1 => Some(detail_with_question()),
+            _ => Some(json!({"comments": []})),
+        });
+        attach_design_breakdown(&mut lanes, &split);
+        lanes
+    }
+
+    // The split is attached BESIDE the cell's numbers, never instead of them: `count` stays the
+    // raw label total, every entry keeps its shared keys plus exactly one `bucket`, and
+    // `breakdown` PARTITIONS the list — each key counting precisely the entries annotated with
+    // it, zeros written out, the whole summing to `count`. That partition is the invariant the
+    // panel needs: a withheld row in two buckets draws twice, one in none vanishes.
+    #[test]
+    fn the_breakdown_partitions_the_cell_it_is_attached_to() {
+        let lanes = enriched_lanes();
+        let cell = lanes
+            .pointer(&format!("/vetter-verdicts/{}", STATE_DESIGN.key))
+            .unwrap();
+        assert_eq!(
+            cell["count"],
+            json!(3),
+            "the raw label total is the backward-compat number and stays"
+        );
+        let prs = cell["prs"].as_array().unwrap();
+        assert_eq!(prs.len(), 3);
+        let breakdown = cell["breakdown"].as_object().unwrap();
+        // Every bucket key is written, zeros included — an absent key would read as a bucket
+        // that does not exist. Derived from the enum, not typed twice.
+        let mut keys: Vec<&str> = breakdown.keys().map(|k| k.as_str()).collect();
+        keys.sort_unstable();
+        let mut want: Vec<&str> = DesignBucket::ALL.iter().map(|b| b.key()).collect();
+        want.sort_unstable();
+        assert_eq!(keys, want);
+        // Each entry keeps the shared subject keys and carries exactly one bucket, spelled as a
+        // breakdown key — which is what lets a consumer list any bucket by filtering `prs`.
+        for e in prs {
+            assert!(e["url"].as_str().unwrap().contains("github.com"));
+            let b = e["bucket"].as_str().expect("every member is annotated");
+            assert!(
+                breakdown.contains_key(b),
+                "an entry's bucket must be a breakdown key, got {b:?}"
+            );
+        }
+        assert_eq!(cell.pointer("/breakdown/presentable"), Some(&json!(1)));
+        assert_eq!(cell.pointer("/breakdown/noQuestion"), Some(&json!(2)));
+        // Conservation, both directions: breakdown.<key> counts the entries annotated <key>,
+        // and the buckets sum to the raw total — no row in two buckets, none in zero.
+        let mut sum = 0u64;
+        for (k, v) in breakdown {
+            let annotated = prs.iter().filter(|e| e["bucket"] == json!(k)).count() as u64;
+            assert_eq!(v.as_u64().unwrap(), annotated, "breakdown.{k}");
+            sum += v.as_u64().unwrap();
+        }
+        assert_eq!(sum, 3, "the buckets partition the whole cell");
+    }
+
+    // A draft member is filed apart WITHOUT a read — the same fetch-free withholding `/ndd`
+    // applies — while staying in the cell it labels: it IS in the state; it is just not inbox.
+    #[test]
+    fn a_draft_member_is_filed_apart_without_a_read() {
+        let prs = vec![
+            qp("o/r", 1, &["ai:design"], true),
+            qp("o/r", 2, &["ai:design"], false),
+        ];
+        let mut lanes = lanes_doc(&prs);
+        let split = design_lane_split(&prs, |_, num| {
+            assert_ne!(num, 1, "the draft must not be fetched");
+            Some(detail_with_question())
+        });
+        attach_design_breakdown(&mut lanes, &split);
+        let cell = lanes
+            .pointer(&format!("/vetter-verdicts/{}", STATE_DESIGN.key))
+            .unwrap();
+        assert_eq!(cell["count"], json!(2));
+        assert_eq!(cell.pointer("/breakdown/draft"), Some(&json!(1)));
+        assert_eq!(cell.pointer("/breakdown/presentable"), Some(&json!(1)));
+        assert_eq!(cell["prs"][0]["bucket"], json!("draft"));
+        assert_eq!(cell["prs"][1]["bucket"], json!("presentable"));
+    }
+
+    /// The document over given lanes, everything else empty — [`human_queue_doc`] with the same
+    /// stand-ins its sibling fixtures use.
+    fn doc_with(lanes: Value) -> Value {
+        human_queue_doc(
+            &std::collections::BTreeMap::new(),
+            &lanes,
+            &[],
+            json!([]),
+            0,
+            json!([]),
+            0,
+            &[],
+            None,
+            &[],
+            0,
+            &[],
+            0,
+        )
+    }
+
+    // An empty lane attaches nothing — no cell is invented, the sparse-`lanes` contract holds —
+    // and the two `counts` keys still emit, at zero: an empty inbox is an answer.
+    #[test]
+    fn an_empty_design_lane_emits_zeroes_not_a_cell() {
+        let mut lanes = lanes_doc(&[]);
+        attach_design_breakdown(&mut lanes, &[]);
+        assert!(lanes
+            .pointer(&format!("/vetter-verdicts/{}", STATE_DESIGN.key))
+            .is_none());
+        let doc = doc_with(lanes);
+        assert_eq!(doc.pointer("/counts/designPresentable"), Some(&json!(0)));
+        assert_eq!(doc.pointer("/counts/designNoQuestion"), Some(&json!(0)));
+    }
+
+    // The snapshot's two new `counts` keys ARE the cell's own breakdown — one measurement — and
+    // `counts.design` beside them stays the raw cell size, so the pre-#240 series keeps its
+    // meaning while the new pair carries the inbox and the defect apart. The history rollup
+    // copies `counts` verbatim, so the same three numbers are what `queue-history-line` appends
+    // and what the dashboard's time-series draws.
+    #[test]
+    fn the_counts_mirror_the_breakdown_and_the_raw_series_survives() {
+        let doc = doc_with(enriched_lanes());
+        assert_eq!(doc.pointer("/counts/design"), Some(&json!(3)));
+        assert_eq!(doc.pointer("/counts/designPresentable"), Some(&json!(1)));
+        assert_eq!(doc.pointer("/counts/designNoQuestion"), Some(&json!(2)));
+        let line = queue_history_line(&doc.to_string(), "2026-08-09T10:00:00Z").unwrap();
+        let parsed: Value = serde_json::from_str(&line).unwrap();
+        for (k, n) in [
+            ("design", 3),
+            ("designPresentable", 1),
+            ("designNoQuestion", 2),
+        ] {
+            assert_eq!(
+                parsed.pointer(&format!("/counts/{k}")),
+                Some(&json!(n)),
+                "counts.{k}"
+            );
+        }
+    }
 }
 
 /// The daily review's state sections, in printed order — a title and the ROW whose declared
@@ -17746,6 +18213,24 @@ fn human_queue_doc(
     {
         counts.insert(k.clone(), v.clone());
     }
+    // The design cell's split (#240), mirrored into `counts` so the history rollup — which
+    // copies `counts` verbatim ([`queue_history_line`]) — carries the two series the dashboard
+    // draws: `designPresentable`, the human inbox (the number `/ndd` serves, which draining the
+    // queue drives to zero), and `designNoQuestion`, the defect bucket (rows whose label has no
+    // trusted question behind it). `counts.design` above stays the raw cell size exactly as
+    // [`lane_counts_json`] derives it — the split is additive and the existing series keeps its
+    // meaning. Both keys read the cell's own `breakdown` through [`design_breakdown_count`]
+    // (0 while the lane is empty), so the annotation, the count and the series are one
+    // measurement.
+    for (key, bucket) in [
+        ("designPresentable", DesignBucket::Presentable),
+        ("designNoQuestion", DesignBucket::NoQuestion),
+    ] {
+        counts.insert(
+            key.to_string(),
+            Value::from(design_breakdown_count(lanes, bucket)),
+        );
+    }
     let mut counts = Value::Object(counts);
     if let Some(open) = open {
         // The org-wide open-issue count goes in `counts` beside the queue counts, and the ages go
@@ -17829,8 +18314,9 @@ fn human_queue_doc(
 struct ProducerPrInventory {
     /// Legacy label buckets (`states`, unchanged): the first `ai:*` label → its PRs.
     buckets: std::collections::BTreeMap<String, Vec<SubjectRef>>,
-    /// Every addressable PR with its full label list — what the lane classifier consumes.
-    records: Vec<(SubjectRef, Vec<String>)>,
+    /// Every addressable PR with its full label list and draft bit — what the lane classifier
+    /// and the design split consume.
+    records: Vec<(SubjectRef, Vec<String>, bool)>,
     /// The PRs [`is_leak_candidate`] admits — i.e. the ones whose labels leave [`classify_lane`]'s
     /// leak arm reachable — for [`leak_scan`] to settle with a comment read. A candidate is not yet
     /// a leak: freshly-opened/un-vetted is the modeled reading until a trusted producer note says
@@ -17872,8 +18358,11 @@ fn producer_pr_inventory() -> Result<ProducerPrInventory, String> {
             "1000",
             "--json",
             // `createdAt` is the leak queue's ORDERING key (oldest first), taken from the search
-            // that is already being made rather than from a per-row fetch.
-            "url,number,repository,title,labels,createdAt",
+            // that is already being made rather than from a per-row fetch. `isDraft` is the design
+            // split's draft input ([`design_bucket`]), off this same payload for the same reason:
+            // `next_design` classifies a draft from its search JSON before any per-PR read is paid,
+            // and the split routes through that classifier's own stages.
+            "url,number,repository,title,labels,createdAt,isDraft",
         ]
         .iter()
         .map(|s| s.to_string()),
@@ -17919,7 +18408,7 @@ fn producer_pr_inventory() -> Result<ProducerPrInventory, String> {
     let mut buckets: std::collections::BTreeMap<String, Vec<SubjectRef>> =
         std::collections::BTreeMap::new();
     let mut leak_candidates: Vec<LeakCandidate> = Vec::new();
-    let mut records: Vec<(SubjectRef, Vec<String>)> = Vec::new();
+    let mut records: Vec<(SubjectRef, Vec<String>, bool)> = Vec::new();
     for p in &prs {
         let url = p
             .get("url")
@@ -17961,7 +18450,11 @@ fn producer_pr_inventory() -> Result<ProducerPrInventory, String> {
                     .to_string(),
             });
         }
-        records.push((subject, labels));
+        records.push((
+            subject,
+            labels,
+            p.get("isDraft").and_then(|v| v.as_bool()).unwrap_or(false),
+        ));
     }
     Ok(ProducerPrInventory {
         buckets,
@@ -18090,8 +18583,9 @@ where
 /// producer acting outside the FSM). The leak count is the conformance metric: it trends to zero as
 /// the producer is restricted to labeled transitions. The legacy `states`/`counts`/`leaks` keys are
 /// kept UNCHANGED for the dashboard's existing reads; the new `lanes` object + additive `counts` keys
-/// are the full-machine view. Runtime is O(unlabeled + ai:ready producer PRs) extra `gh` calls (the
-/// leak/reason check, plus the verdict-currency check that returns an ai:ready PR to un-vetted).
+/// are the full-machine view. Runtime is O(unlabeled + ai:ready + ai:design producer PRs) extra
+/// `gh` calls (the leak/reason check, the verdict-currency check that returns an ai:ready PR to
+/// un-vetted, and — `--json` only — the design cell's split, #240).
 fn human_queue_mode(json_out: bool) -> i32 {
     let ProducerPrInventory {
         buckets,
@@ -18124,7 +18618,7 @@ fn human_queue_mode(json_out: bool) -> i32 {
         .collect();
     let mut ready_vetted: std::collections::HashMap<(String, u64), bool> =
         std::collections::HashMap::new();
-    for (subject, labels) in &records {
+    for (subject, labels, _) in &records {
         let key = (subject.repo.clone(), subject.number);
         if needs_verdict_currency(labels, leak_keys.contains(&key)) {
             if let Some(j) = gh_json(&[
@@ -18145,13 +18639,14 @@ fn human_queue_mode(json_out: bool) -> i32 {
     // The full lane-grouped inventory (each PR bucketed once, by FSM precedence).
     let queue_prs: Vec<QueuePr> = records
         .iter()
-        .map(|(subject, labels)| {
+        .map(|(subject, labels, is_draft)| {
             let key = (subject.repo.clone(), subject.number);
             QueuePr {
                 subject: subject.clone(),
                 labels: labels.clone(),
                 ready_vetted_at_head: ready_vetted.get(&key).copied(),
                 producer_commented: leak_keys.contains(&key),
+                is_draft: *is_draft,
             }
         })
         .collect();
@@ -18239,6 +18734,12 @@ fn human_queue_mode(json_out: bool) -> i32 {
     };
 
     if json_out {
+        // The design cell's split (#240): one `gh pr view` per design-lane member — the same
+        // read `next_design` pays — routed through its classifier so the snapshot's partition
+        // and `/ndd`'s cannot drift. JSON only: the daily review prints the cell whole, and the
+        // text path spends no reads on a split it does not render.
+        let mut lanes = lanes;
+        attach_design_breakdown(&mut lanes, &design_lane_split(&queue_prs, nd_pr_detail));
         let doc = human_queue_doc(
             &buckets,
             &lanes,
@@ -26232,7 +26733,7 @@ fn next_leak_fetch(limit: usize) -> Result<Value, String> {
     let labels_of: std::collections::HashMap<(&str, u64), &[String]> = inv
         .records
         .iter()
-        .map(|(s, l)| ((s.repo.as_str(), s.number), l.as_slice()))
+        .map(|(s, l, _)| ((s.repo.as_str(), s.number), l.as_slice()))
         .collect();
     let rows: Vec<Value> = next_leak_page(&scan.leaks, limit)
         .into_iter()
@@ -50773,6 +51274,7 @@ mod fsm_completeness_tests {
             labels: s(labels),
             ready_vetted_at_head,
             producer_commented,
+            is_draft: false,
         }
     }
 
@@ -51163,6 +51665,7 @@ mod state_descriptor_tests {
                         labels: labels.clone(),
                         ready_vetted_at_head: rvah,
                         producer_commented: pc,
+                        is_draft: false,
                     });
                 }
             }
@@ -51432,6 +51935,7 @@ mod state_descriptor_tests {
             labels: vec![STATE_READY.key.to_string()],
             ready_vetted_at_head: Some(false),
             producer_commented: false,
+            is_draft: false,
         }]));
         let (unvetted, rest) = out
             .split_once("▓▓ MERGE")
@@ -51474,6 +51978,7 @@ mod state_descriptor_tests {
             labels: vec![RETIRED_STATE_LABEL.to_string()],
             ready_vetted_at_head: None,
             producer_commented: false,
+            is_draft: false,
         }]));
         assert!(
             residue.contains("BLOCKED-INFRA") && residue.contains("/pull/535"),
@@ -51579,14 +52084,28 @@ mod state_descriptor_tests {
             "archivedRepoPrs",
             "openIssues",
         ];
+        // The design cell's split (#240): two series that are neither a state's own `hist` nor a
+        // non-state rollup — the partition of ONE state's cell into its inbox and defect halves,
+        // written beside `counts.design` by [`human_queue_doc`] off the cell's own `breakdown`.
+        // Spelled here exactly as [`DesignBucket`] emits them; the dashboard's conservation
+        // sweep claims the same pair through the split it renders.
+        const DESIGN_SPLIT_COUNTS: [&str; 2] = ["designPresentable", "designNoQuestion"];
+        for k in DESIGN_SPLIT_COUNTS {
+            assert!(
+                counts.contains_key(k),
+                "counts.{k} must emit even over an empty design lane — an absent series key \
+                 draws no sample, and an empty inbox is an answer"
+            );
+        }
         for k in counts.keys() {
             assert!(
                 hists.contains(&k.as_str())
                     || folds.contains(&k.as_str())
-                    || NON_STATE_COUNTS.contains(&k.as_str()),
+                    || NON_STATE_COUNTS.contains(&k.as_str())
+                    || DESIGN_SPLIT_COUNTS.contains(&k.as_str()),
                 "counts.{k} is claimed by no state descriptor — neither as a live series nor as \
-                 a folded past — and is not a named non-state rollup: occupancy a consumer \
-                 cannot know exists (#130)"
+                 a folded past — and is not a named non-state rollup or the design split: \
+                 occupancy a consumer cannot know exists (#130)"
             );
         }
     }
@@ -52002,12 +52521,14 @@ mod subject_ref_tests {
                 labels: vec!["ai:ready".to_string()],
                 ready_vetted_at_head: Some(true),
                 producer_commented: false,
+                is_draft: false,
             },
             QueuePr {
                 subject: sref("rainlanguage/raindex", 11, "pull", "design pr"),
                 labels: vec!["ai:design".to_string()],
                 ready_vetted_at_head: None,
                 producer_commented: false,
+                is_draft: false,
             },
         ]);
         // One issue-shaped and one PR-shaped member, each with the url it really has: the emitted
@@ -60712,6 +61233,7 @@ mod infra_down_tests {
                 labels: labels.clone(),
                 ready_vetted_at_head: None,
                 producer_commented: false,
+                is_draft: false,
             }]);
             for lane in Lane::ALL {
                 assert_eq!(
