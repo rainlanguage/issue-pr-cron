@@ -45042,6 +45042,47 @@ mod settings_tests {
         );
     }
 
+    /// #249, the WORKER's half. The brief named the right command and then wrapped it in the wrong
+    /// mechanism: `Monitor {"command": "pr-review-report await …"}`. A dispatched agent's turn ends
+    /// when it returns exactly as the main loop's does, so an armed watcher delivers its events to
+    /// a turn that never happens — the agent reports back having waited for nothing, and its item
+    /// comes home undone with no failure anywhere in the trace to say so.
+    ///
+    /// The property is the same one the producer prompt is held to, so it is asserted the same
+    /// way and separately: a mechanism is prescribed by the CALL an agent can copy.
+    #[test]
+    fn the_worker_brief_never_prescribes_an_asynchronous_wait() {
+        let Some(brief) = repo_root_text("campaign-worker-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            !brief.contains("Monitor {"),
+            "the brief must show no `Monitor` call to copy: it returns immediately, so the call it \
+             spelled around `await` ended the wait instead of holding it"
+        );
+        assert!(
+            brief.contains("A FOREGROUND `pr-review-report await`"),
+            "deleting the wrapper is half a rule — the brief must STATE that the blocking call IS \
+             the wait, or a worker with no mechanism improvises the probe-per-turn this brief \
+             exists to remove"
+        );
+        assert!(
+            brief.contains("RETURNS IMMEDIATELY") && brief.contains("LATER TURN you never get"),
+            "`Monitor` may be named only WITH the two facts that strand a run: it returns at once, \
+             and the turn its events need never comes"
+        );
+        assert!(
+            brief.contains("START NOTHING THAT OUTLIVES YOUR TURN")
+                && brief.contains("run_in_background"),
+            "the ban has to cover the TOOL PARAMETER, not just the `&` shell form: `&` was already \
+             forbidden and the run that stranded used neither — it passed `run_in_background`"
+        );
+        assert!(
+            brief.contains("20260809T145150Z"),
+            "the rule carries its measurement, like every other rule in this brief"
+        );
+    }
+
     /// The fix must not become the thing #200 warns about. The brief is bytes in EVERY worker's
     /// context on EVERY one of its turns, so it is the one part of this change that can silently
     /// cost more than it saves — and it would be invisible, because the calls it removes leave the
