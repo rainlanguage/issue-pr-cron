@@ -28508,10 +28508,7 @@ fn design_doctor_plan_argv(
             .map(|s| (*s).to_string())
             .collect();
         if !has_target {
-            edit.extend([
-                "--add-label".to_string(),
-                DESIGN_DOCTOR_TARGET.to_string(),
-            ]);
+            edit.extend(["--add-label".to_string(), DESIGN_DOCTOR_TARGET.to_string()]);
         }
         for r in clears {
             edit.extend(["--remove-label".to_string(), r.clone()]);
@@ -28890,7 +28887,14 @@ mod design_doctor_tests {
     fn a_live_trusted_question_withholds_the_route_whoever_raised_it() {
         let head = "b".repeat(40);
         for raising in [
-            verdict_comment(&head, "design", "shared or duplicated?", Some(40), "b", None),
+            verdict_comment(
+                &head,
+                "design",
+                "shared or duplicated?",
+                Some(40),
+                "b",
+                None,
+            ),
             state_comment("ai:design", "version slot taken", &[]),
         ] {
             let pr = design_pr(&head, &["ai:design"], vec![trusted(raising.clone())]);
@@ -29098,26 +29102,26 @@ mod design_doctor_tests {
     #[test]
     fn the_route_posts_a_vetter_verdict_first_then_the_one_state_label_edit() {
         let head = "a".repeat(40);
-        let argv = design_doctor_plan_argv(
-            "o/r",
-            7,
-            &head,
-            &["ai:design".to_string()],
-            false,
-            false,
-        );
+        let argv =
+            design_doctor_plan_argv("o/r", 7, &head, &["ai:design".to_string()], false, false);
         assert_eq!(argv.len(), 2, "{argv:?}");
         // The COMMENT is first: this pass enumerates by ai:design, so a failed label edit after a
         // posted verdict leaves the row exactly where the next tick finds it again. Label-first
         // would strand it as a needs-work with nothing trusted behind it AND outside this pass's
         // own population.
-        assert_eq!(&argv[0][..6], &["pr", "comment", "7", "-R", "o/r", "--body"]);
+        assert_eq!(
+            &argv[0][..6],
+            &["pr", "comment", "7", "-R", "o/r", "--body"]
+        );
         let body = &argv[0][6];
         // It is the VETTER's verdict, which is what makes `vetted_at_head` true — without it the
         // next vetter run re-vets the PR and its `labels_to_remove` deletes the ai:needs-work this
         // pass just wrote, landing the PR in the human's ready queue at a head nobody reworked.
         assert!(body.starts_with("🤖 ai:vetter"), "{body}");
-        assert!(body.contains(&format!("Reviewed {head}: needs-work")), "{body}");
+        assert!(
+            body.contains(&format!("Reviewed {head}: needs-work")),
+            "{body}"
+        );
         assert!(
             !body.contains(REWORK_MARKER) && !body.contains(HUMAN_MARKER),
             "a machine routing decision must not wear the human's marker: {body}"
@@ -29141,7 +29145,8 @@ mod design_doctor_tests {
         // A retry that already posted the verdict and already carries the label writes NOTHING.
         assert!(design_doctor_plan_argv("o/r", 7, &head, &[], true, true).is_empty());
         // …and one that only needs the label edit does only that.
-        let only_edit = design_doctor_plan_argv("o/r", 7, &head, &["ai:design".to_string()], false, true);
+        let only_edit =
+            design_doctor_plan_argv("o/r", 7, &head, &["ai:design".to_string()], false, true);
         assert_eq!(only_edit.len(), 1);
         assert_eq!(only_edit[0][1], "edit");
     }
@@ -29314,7 +29319,9 @@ mod design_doctor_tests {
             true
         )
         .starts_with("[dry-run] "));
-        assert!(!design_doctor_line("o/r", 1, &DesignDoctorPlan::Draft, true).starts_with("[dry-run]"));
+        assert!(
+            !design_doctor_line("o/r", 1, &DesignDoctorPlan::Draft, true).starts_with("[dry-run]")
+        );
     }
 
     // A CLASSIFICATION IS NEVER A RUN FAILURE (#241 review findings 7/15). Driven through the
@@ -29363,9 +29370,8 @@ mod design_doctor_tests {
             ),
         ] {
             let got = design_doctor_route_from("o/r", 1, pr, NOW, false, never_written);
-            let line = got.unwrap_or_else(|(_, e)| {
-                panic!("{what} must be reported, not fail the tick: {e}")
-            });
+            let line = got
+                .unwrap_or_else(|(_, e)| panic!("{what} must be reported, not fail the tick: {e}"));
             assert!(line.contains(&format!("[{what}]")), "{what}: {line}");
         }
 

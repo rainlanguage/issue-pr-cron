@@ -805,13 +805,13 @@ routes **every** `noQuestion` row back to `ai:needs-work`, automatically.
   fetch rather than trusted from the search index: a live question (whoever
   raised it), a human decision (a `👤 human` ruling at head **or a native
   review**), a PR carrying a co-resident modeled state the one-state strip would
-  destroy (`ai:close-candidate`, `ai:blocked-on` — `draft_send_back_strips_no_state`'s
-  rule), a draft, a PR outside the fleet (`$PR_ASSIGNEE` — both actors that
-  consume `ai:needs-work` enumerate by author, so routing a third party's PR
-  would move it into a state nobody reads), a PR written to inside the settling
-  window (both writers that raise a question label first and comment last, so a
-  still-moving PR may have one mid-write), archived-repo rows, and anything it
-  could not read.
+  destroy (`ai:close-candidate`, `ai:blocked-on` —
+  `draft_send_back_strips_no_state`'s rule), a draft, a PR outside the fleet
+  (`$PR_ASSIGNEE` — both actors that consume `ai:needs-work` enumerate by
+  author, so routing a third party's PR would move it into a state nobody
+  reads), a PR written to inside the settling window (both writers that raise a
+  question label first and comment last, so a still-moving PR may have one
+  mid-write), archived-repo rows, and anything it could not read.
 - **A withheld row is NAMED, and the ones the pass can never drain name their
   consumer** — a human decision, a non-fleet PR and an anchorless PR each print
   the move that does drain them, because an `Ok` line the pass repeats daily
