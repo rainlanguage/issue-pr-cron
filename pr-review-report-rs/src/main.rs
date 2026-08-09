@@ -27367,9 +27367,7 @@ mod next_leak_tests {
         let scan = leak_scan_with(&candidates, |s| {
             let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
             peak.fetch_max(now, Ordering::SeqCst);
-            inversion.record(s.number == 0, || {
-                completion.lock().unwrap().push(s.number)
-            });
+            inversion.record(s.number == 0, || completion.lock().unwrap().push(s.number));
             in_flight.fetch_sub(1, Ordering::SeqCst);
             // Evens read and leak, odds fail: the two outcomes interleave through the whole run.
             (s.number % 2 == 0).then(|| producer_comments("🤖 ai:producer rework pushed"))
