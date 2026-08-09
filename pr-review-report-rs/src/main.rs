@@ -29203,8 +29203,10 @@ mod design_doctor_tests {
             "the rework exit is the producer's own transition and must be named"
         );
         assert!(
-            DESIGN_DOCTOR_NOTE.contains("flag-design"),
-            "the re-raise exit must name the transition that performs it"
+            DESIGN_DOCTOR_NOTE.contains("re-raise it with `pr-review-report flag-design"),
+            "the re-raise exit must INSTRUCT the transition, not merely mention its name: \
+             'mention it in a comment' names no transition, which is the defect — an exit that \
+             is prose leaves the row exactly as stuck as before"
         );
         assert!(
             !DESIGN_DOCTOR_NOTE.contains("proceed with the PR under the normal lanes"),
