@@ -112,12 +112,6 @@
         "title": "fix: drop malformed subgraph rows from AccountStatus transfer history"
       },
       {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 386,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/386",
-        "title": "fix(store): add inflightToken concurrency guard to blockNumberStore"
-      },
-      {
         "repo": "rainlanguage/rain.erc4626.words",
         "number": 233,
         "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/233",
@@ -382,6 +376,12 @@
         "number": 388,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/388",
         "title": "fix(component): catch getAndStartDataFetcher rejection in DataFetcherProvider"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 386,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/386",
+        "title": "fix(store): add inflightToken concurrency guard to blockNumberStore"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -1122,19 +1122,13 @@
     },
     "vetter-verdicts": {
       "ai:design": {
-        "count": 7,
+        "count": 6,
         "prs": [
           {
             "repo": "cyclofinance/cyclo.site",
             "number": 412,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/412",
             "title": "fix: drop malformed subgraph rows from AccountStatus transfer history"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 386,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/386",
-            "title": "fix(store): add inflightToken concurrency guard to blockNumberStore"
           },
           {
             "repo": "rainlanguage/rain.erc4626.words",
@@ -1169,7 +1163,7 @@
         ]
       },
       "ai:needs-work": {
-        "count": 93,
+        "count": 94,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -1404,6 +1398,12 @@
             "number": 388,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/388",
             "title": "fix(component): catch getAndStartDataFetcher rejection in DataFetcherProvider"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 386,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/386",
+            "title": "fix(store): add inflightToken concurrency guard to blockNumberStore"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -5568,9 +5568,9 @@
     "unvetted": 26,
     "blockedOn": 17,
     "ready": 0,
-    "needsWork": 93,
+    "needsWork": 94,
     "relink": 0,
-    "design": 7,
+    "design": 6,
     "blockedInfra": 0,
     "closeCandidateIssues": 0,
     "closeCandidateUnvetted": 0,
