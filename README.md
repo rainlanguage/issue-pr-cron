@@ -3372,25 +3372,25 @@ direction that matters is the one that opens a duplicate PR.
 Every producer run that took a screenshot item **rebuilt the cyclo.site render
 harness from scratch**. Across the retained trace corpus:
 
-| file                 | runs | file                  | runs |
-| -------------------- | ---- | --------------------- | ---- |
-| `vite.config.js`     | 5    | `main.js`             | 3    |
-| `svelte-wagmi.js`    | 3    | `stores.js`           | 2    |
-| `wagmi-core.js`      | 2    | `transactionStore.js` | 2    |
-| `balancesStore.js`   | 2    | `tailwind.config.js`  | 2    |
-| `shoot.sh`           | 2    | `shoot.mjs`           | 2    |
+| file               | runs | file                  | runs |
+| ------------------ | ---- | --------------------- | ---- |
+| `vite.config.js`   | 5    | `main.js`             | 3    |
+| `svelte-wagmi.js`  | 3    | `stores.js`           | 2    |
+| `wagmi-core.js`    | 2    | `transactionStore.js` | 2    |
+| `balancesStore.js` | 2    | `tailwind.config.js`  | 2    |
+| `shoot.sh`         | 2    | `shoot.mjs`           | 2    |
 
 Eleven harness file writes in `20260729T170004`, seven in each of
 `20260802T130003` and `20260804T114433`. Unlike the probe-per-turn and raw
 `gh api` counts, which decayed to zero once `await` and the tool-only I/O rule
-existed, **this one cannot decay on its own**: screenshots are mandatory on every
-visual PR, so the frequency is structural (#251).
+existed, **this one cannot decay on its own**: screenshots are mandatory on
+every visual PR, so the frequency is structural (#251).
 
-`pr-review-report render-component --checkout <dir> --component <path> --out
-<png>` is that harness. The vite config, the alias order and the stub modules are
-its implementation detail; the caller supplies only what is genuinely
-component-specific, through `--fixture` (`export const props`, `export function
-setup()`).
+`pr-review-report render-component` is that harness: it takes `--checkout`, a
+`--component` and an `--out` path, and returns a PNG. The vite config, the alias
+order and the stub modules are its implementation detail; the caller supplies
+only what is genuinely component-specific, through `--fixture` — an ES module
+exporting `props` and an optional `setup()`.
 
 **The stub set is the tool's, and it is deliberately short.** An agent
 reconstructing `svelte-wagmi.js` from memory is how a render silently diverges
@@ -3400,12 +3400,12 @@ one file already differ. A module that _loads_ in a bare checkout is used real:
 hand-copied token entry, and it needs no stub at all, so the render's network,
 token and explorer data are the app's own. What is stubbed is only what cannot
 load (`balancesStore` → `$lib/pyth` → an uninitialised submodule's JSON) or must
-not run (`@wagmi/core`, exact-matched so `@wagmi/core/chains` stays real). A stub
-that drifts from the module it stands in for is a rollup `is not exported by`
-error naming the stub file — loud, not a wrong picture.
+not run (`@wagmi/core`, exact-matched so `@wagmi/core/chains` stays real). A
+stub that drifts from the module it stands in for is a rollup
+`is not exported by` error naming the stub file — loud, not a wrong picture.
 
-**A component it cannot render says so.** Exit `2` is the invocation, `12` is the
-box (no `node`, no chromium, no fonts, no `node_modules`), `3` is _this
+**A component it cannot render says so.** Exit `2` is the invocation, `12` is
+the box (no `node`, no chromium, no fonts, no `node_modules`), `3` is _this
 component_ — and the two failures a PNG cannot show are measured in the page and
 refused before an image is written: a component that mounted into zero pixels,
 and text drawn at less than a 3:1 contrast ratio against what is behind it. That
@@ -3420,10 +3420,10 @@ suite without an initialised submodule, two generated files, `.env` and
 by the stub set, which is what the stub set is for.
 
 It resolves `node` and a chromium from PATH and does not put them there: run it
-inside a shell that has them (`nix shell nixpkgs#chromium`), and an absent one is
-an exit-`12` fault naming what is missing rather than a degraded render. Whether
-they belong in the producer runner's own closure is an open question on #251, not
-a decision this took.
+inside a shell that has them (`nix shell nixpkgs#chromium`), and an absent one
+is an exit-`12` fault naming what is missing rather than a degraded render.
+Whether they belong in the producer runner's own closure is an open question on
+#251, not a decision this took.
 
 ## What a run does
 
