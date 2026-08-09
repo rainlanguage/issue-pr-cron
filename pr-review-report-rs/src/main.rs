@@ -2397,24 +2397,159 @@ mod parallel_queue_tests {
     use super::*;
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Mutex;
+    use std::sync::{Condvar, Mutex};
     use std::time::Duration;
 
-    /// How long a test waits for another worker to make progress before giving up. Generous
-    /// enough that a loaded box does not fail it, bounded so a pool that cannot run two things at
-    /// once FAILS the assertion instead of hanging the suite.
-    const INVERSION_TIMEOUT: Duration = Duration::from_secs(5);
-
-    /// Block until `ready` says another worker got there first, or [`INVERSION_TIMEOUT`] elapses.
+    /// The rendezvous' DEADLOCK GUARD — not its schedule.
     ///
-    /// `pub(crate)` because the same inversion is what pins every CALL SITE of [`map_bounded`], not
-    /// just the pool: each state-load's test drives a fetch that finishes out of order and then
-    /// asserts the emitted lists came back in candidate order anyway. One timeout and one wait
-    /// loop, named once — three copies of a five-second bound is three places it can drift.
-    pub(crate) fn await_another_worker(ready: impl Fn() -> bool) {
-        let deadline = std::time::Instant::now() + INVERSION_TIMEOUT;
-        while !ready() && std::time::Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(1));
+    /// [`WorkerInversion`] blocks on the arrival of another WORKER, so a passing run leaves each
+    /// wait the instant its counterpart shows up and never observes this bound at all. It exists
+    /// for the one case where the counterpart can never show up — a fan-out that runs the items
+    /// ONE AT A TIME — where a bare `Condvar` would hang the suite for ever. Expiry is therefore
+    /// a failure this reports, never a step a green run takes, which is why it is generous:
+    /// raising it cannot slow a passing run down, and lowering it cannot make a failing one more
+    /// correct.
+    const RENDEZVOUS_DEADLOCK_GUARD: Duration = Duration::from_secs(60);
+
+    /// The two facts a fan-out test needs true of a run before its assertions mean anything.
+    #[derive(Default)]
+    struct InversionState {
+        /// The `last` worker is INSIDE the fan-out and waiting. Until this is true, no other
+        /// worker may finish — which is what makes the two of them provably concurrent.
+        last_in_flight: bool,
+        /// Some worker other than `last` has recorded its completion. Until this is true, `last`
+        /// may not record — which is what makes completion order differ from input order.
+        another_recorded: bool,
+    }
+
+    /// A two-phase rendezvous between the ONE worker a test needs to finish LAST and whichever
+    /// other worker gets there first.
+    ///
+    /// Every fan-out test in this crate asserts two things that are only true of a run that
+    /// actually fanned out: that the reads OVERLAPPED, and that the emitted lists came back in
+    /// input order anyway even though completion order did not. Both are properties of the
+    /// interleaving, so both are arranged here rather than hoped for:
+    ///
+    /// 1. every other worker waits for `last` to be in flight before it may record, so two
+    ///    workers are inside the fan-out at the same instant and the peak is provably at least
+    ///    two; then
+    /// 2. `last` waits for one of them to have recorded before it may record, so completion order
+    ///    provably differs from input order.
+    ///
+    /// One phase alone is not the property. Ordering alone is satisfied by a worker that enters
+    /// after another has already finished and LEFT — the completions are still inverted, nothing
+    /// ever overlapped, and the parallelism assertion fails on a run that did nothing wrong.
+    ///
+    /// It waits on the arrivals, never on the clock: a worker that parks is precisely what frees
+    /// the core its counterpart needs, and a stalled box — a throttled CI container advances
+    /// `Instant::now()` while running nothing — makes both parties late together rather than
+    /// making one of them give up.
+    ///
+    /// `pub(crate)` because the same inversion pins every CALL SITE of [`map_bounded`], not just
+    /// the pool: each state-load's test drives a fetch that finishes out of order and then asserts
+    /// the emitted lists came back in candidate order anyway. One protocol, named once.
+    pub(crate) struct WorkerInversion {
+        /// The STATE, not the notifications: a wake-up that arrives before its waiter parks
+        /// cannot be lost, because every wait re-reads this rather than trusting it was signalled.
+        state: Mutex<InversionState>,
+        wake: Condvar,
+    }
+
+    impl WorkerInversion {
+        /// Build the rendezvous for a [`map_bounded`] over `items` entries, REFUSING up front the
+        /// input on which it could never happen.
+        ///
+        /// [`map_bounded`] spawns `QUEUE_FETCH_CONCURRENCY.min(items)` workers, so two workers
+        /// exist BY CONSTRUCTION whenever there are two items — that is what makes a real
+        /// rendezvous possible, on any core count. Below two there is no second worker to meet and
+        /// every assertion the rendezvous protects would be vacuous, so a test that cannot be
+        /// non-vacuous says so HERE, by name, instead of proceeding to a downstream failure about
+        /// something else.
+        pub(crate) fn over(items: usize) -> Self {
+            let workers = QUEUE_FETCH_CONCURRENCY.min(items);
+            assert!(
+                workers >= 2,
+                "this test cannot be non-vacuous: map_bounded spawns \
+                 QUEUE_FETCH_CONCURRENCY.min({items}) = {workers} worker(s) for {items} item(s), \
+                 so there is no OTHER worker to meet and the overlap and inversion its assertions \
+                 rest on are impossible — hand the fan-out at least two items"
+            );
+            Self {
+                state: Mutex::new(InversionState::default()),
+                wake: Condvar::new(),
+            }
+        }
+
+        /// Record this worker's completion, at the point in the interleaving the rendezvous
+        /// demands.
+        ///
+        /// `last` marks the ONE worker the test needs to finish after the others. Both halves of
+        /// the protocol live behind this one call so a call site cannot implement one and forget
+        /// the other — a waiter with no counterpart is the deadlock, and a counterpart with no
+        /// waiter is a run that proves nothing.
+        ///
+        /// The two waits cannot deadlock against each other: `last` publishes its own arrival
+        /// BEFORE it waits, and [`map_bounded`] hands out index 0 first, so the worker the others
+        /// are waiting for is never itself one of the workers waiting.
+        pub(crate) fn record<T>(&self, last: bool, record: impl FnOnce() -> T) -> T {
+            if last {
+                self.announce_and_await_another();
+                return record();
+            }
+            self.await_the_last();
+            let out = record();
+            self.set(|s| s.another_recorded = true);
+            out
+        }
+
+        /// Publish that the `last` worker is in flight, then block until another has recorded.
+        fn announce_and_await_another(&self) {
+            self.set(|s| s.last_in_flight = true);
+            self.await_state(
+                |s| s.another_recorded,
+                "the inversion never happened: no other worker recorded a completion while this \
+                 one held its item open waiting for one",
+            );
+        }
+
+        /// Block until the `last` worker is in flight, so this worker's completion is recorded
+        /// while that one is still holding its own item open — the overlap the peak measures.
+        fn await_the_last(&self) {
+            self.await_state(
+                |s| s.last_in_flight,
+                "the overlap never happened: the worker this rendezvous is built around never \
+                 entered the fan-out while this one held its item open alongside it",
+            );
+        }
+
+        /// Mutate the shared state and wake everyone waiting on it.
+        ///
+        /// `notify_all` rather than `notify_one`: the two phases have different waiters, and a
+        /// notification aimed at whichever one happens to be parked would strand the other.
+        fn set(&self, mutate: impl FnOnce(&mut InversionState)) {
+            mutate(&mut self.state.lock().expect("rendezvous mutex poisoned"));
+            self.wake.notify_all();
+        }
+
+        /// Block until `reached`, and FAIL LOUDLY with `unreached` rather than hanging or carrying
+        /// on as if the rendezvous had happened.
+        fn await_state(&self, reached: impl Fn(&InversionState) -> bool, unreached: &str) {
+            let guard = self.state.lock().expect("rendezvous mutex poisoned");
+            let (guard, _) = self
+                .wake
+                .wait_timeout_while(guard, RENDEZVOUS_DEADLOCK_GUARD, |s| !reached(s))
+                .expect("rendezvous mutex poisoned");
+            let arrived = reached(&guard);
+            // Dropped before the assert: panicking with the guard held poisons the mutex, every
+            // other worker then dies on its own `expect`, and this message — the one that says
+            // what actually went wrong — is buried under theirs.
+            drop(guard);
+            assert!(
+                arrived,
+                "{unreached}, and {RENDEZVOUS_DEADLOCK_GUARD:?} went by. The wait is on the other \
+                 WORKER, not on a clock, so this is not a slow box — it is a fan-out that ran the \
+                 items ONE AT A TIME, which is the serial queue #235 is about"
+            );
         }
     }
 
@@ -2428,11 +2563,9 @@ mod parallel_queue_tests {
     fn map_bounded_returns_input_order_not_completion_order() {
         let items: Vec<usize> = (0..16).collect();
         let completion: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+        let inversion = WorkerInversion::over(items.len());
         let out = map_bounded(&items, |i| {
-            if *i == 0 {
-                await_another_worker(|| !completion.lock().unwrap().is_empty());
-            }
-            completion.lock().unwrap().push(*i);
+            inversion.record(*i == 0, || completion.lock().unwrap().push(*i));
             *i * 10
         });
         assert_ne!(
@@ -2794,11 +2927,11 @@ mod parallel_queue_tests {
             ("cyclofinance".to_string(), 12u64),
         ];
         let completion: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        let inversion = WorkerInversion::over(candidates.len());
         let outcomes = map_bounded(&candidates, |(owner, num)| {
-            if owner == "rainlanguage" {
-                await_another_worker(|| !completion.lock().unwrap().is_empty());
-            }
-            completion.lock().unwrap().push(owner.clone());
+            inversion.record(owner == "rainlanguage", || {
+                completion.lock().unwrap().push(owner.clone())
+            });
             CandidateOutcome::Present(Box::new(present_pr(40, owner, "erc4626", *num)))
         });
         assert_eq!(
@@ -25405,7 +25538,7 @@ mod next_close_candidate_tests {
     // fetch fails the test rather than passing it slowly.
     #[test]
     fn the_flag_reads_fan_out_and_every_list_stays_in_hit_order() {
-        use crate::parallel_queue_tests::await_another_worker;
+        use crate::parallel_queue_tests::WorkerInversion;
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Mutex;
 
@@ -25415,13 +25548,11 @@ mod next_close_candidate_tests {
         let peak = AtomicUsize::new(0);
         let in_flight = AtomicUsize::new(0);
         let archived = ArchivedRepos::from_slugs([] as [&str; 0]);
+        let inversion = WorkerInversion::over(hits.len());
         let q = ncc_classify(&hits, &archived, |_slug, num| {
             let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
             peak.fetch_max(now, Ordering::SeqCst);
-            if num == 0 {
-                await_another_worker(|| !completion.lock().unwrap().is_empty());
-            }
-            completion.lock().unwrap().push(num);
+            inversion.record(num == 0, || completion.lock().unwrap().push(num));
             in_flight.fetch_sub(1, Ordering::SeqCst);
             match num % 3 {
                 0 => Some(upheld("2026-07-20T09:00:00Z")),
@@ -27220,7 +27351,7 @@ mod next_leak_tests {
     // the discriminating test for the fan-out rather than a restatement of the fail-safe above.
     #[test]
     fn the_leak_reads_fan_out_and_the_unknowns_stay_in_candidate_order() {
-        use crate::parallel_queue_tests::await_another_worker;
+        use crate::parallel_queue_tests::WorkerInversion;
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Mutex;
 
@@ -27232,13 +27363,13 @@ mod next_leak_tests {
         let completion: Mutex<Vec<u64>> = Mutex::new(Vec::new());
         let peak = AtomicUsize::new(0);
         let in_flight = AtomicUsize::new(0);
+        let inversion = WorkerInversion::over(candidates.len());
         let scan = leak_scan_with(&candidates, |s| {
             let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
             peak.fetch_max(now, Ordering::SeqCst);
-            if s.number == 0 {
-                await_another_worker(|| !completion.lock().unwrap().is_empty());
-            }
-            completion.lock().unwrap().push(s.number);
+            inversion.record(s.number == 0, || {
+                completion.lock().unwrap().push(s.number)
+            });
             in_flight.fetch_sub(1, Ordering::SeqCst);
             // Evens read and leak, odds fail: the two outcomes interleave through the whole run.
             (s.number % 2 == 0).then(|| producer_comments("🤖 ai:producer rework pushed"))
@@ -30037,7 +30168,7 @@ mod next_design_tests {
 
     // ── the per-candidate phase: concurrent reads, serial counting ────────────────────────────
 
-    use crate::parallel_queue_tests::await_another_worker;
+    use crate::parallel_queue_tests::WorkerInversion;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
 
@@ -30073,8 +30204,8 @@ mod next_design_tests {
     // The inversion is DELIBERATE rather than hoped for: candidate 0 does not finish until some
     // other candidate has, so completion order provably differs from candidate order and the three
     // ordering assertions below cannot pass by luck. It is also what makes the test discriminate a
-    // serial implementation — with one thread nothing else can finish first, so the wait times out
-    // and the inversion assertion fails.
+    // serial implementation — with one thread nothing else can finish first, so [`WorkerInversion`]
+    // never rendezvouses and fails naming that as the cause.
     #[test]
     fn the_design_reads_fan_out_and_every_list_stays_in_candidate_order() {
         // Twice the cap, so the pool cycles rather than running one wave and the tail past the
@@ -30084,13 +30215,11 @@ mod next_design_tests {
         let completion: Mutex<Vec<u64>> = Mutex::new(Vec::new());
         let peak = AtomicUsize::new(0);
         let in_flight = AtomicUsize::new(0);
+        let inversion = WorkerInversion::over(hits.len());
         let q = nd_classify(&hits, 0, |_slug, num| {
             let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
             peak.fetch_max(now, Ordering::SeqCst);
-            if num == 0 {
-                await_another_worker(|| !completion.lock().unwrap().is_empty());
-            }
-            completion.lock().unwrap().push(num);
+            inversion.record(num == 0, || completion.lock().unwrap().push(num));
             in_flight.fetch_sub(1, Ordering::SeqCst);
             // Thirds, so all three outcomes interleave through the whole run rather than sitting
             // in one block a wave-shaped bug could still order correctly.
