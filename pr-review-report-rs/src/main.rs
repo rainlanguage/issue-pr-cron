@@ -12975,6 +12975,32 @@ fn human_close_ruled(detail: &Value) -> bool {
         })
 }
 
+/// PURE: is a human ruling on this subject TORN — the decision made, the write it was half of not
+/// finished? The one signal [`cc_gate`] reads a human decision through (#244), and the input to
+/// [`CcGate::TornHumanRuling`].
+///
+/// Two shapes, because a ruling has two ways to land half-written, and both leave the same
+/// contradiction on the subject:
+///
+/// - A recorded CLOSE ruling ([`human_close_ruled`]) on a still-open subject — the #213 tear,
+///   asked unconditionally because `human-close` writes no label, so the flag is not what makes it
+///   detectable.
+/// - A sacred `human:*` ruling LABEL standing beside a LIVE producer flag. Every issue ruling that
+///   may land on a live flag retires `ai:close-candidate` in the same call
+///   ([`FLAG_DISPOSING_RULINGS`]; the rest are refused outright as
+///   [`HumanRulePlan::StrandsFlag`]), so the pair can only exist where that call tore between its
+///   label write and its label clear — or where a label was applied by hand outside every
+///   transition.
+///
+/// The label half is asked ONLY of a live flag, and that is load-bearing twice over. A ruling
+/// label with no producer claim beneath it is already [`CcGate::NoFlag`], whose #179 clearance
+/// consumes it — so widening here would take work off a transition that already does it. And on a
+/// PR the un-flagged label is [`CcGate::VetterClose`], a verdict in force that nothing here may
+/// retire (#211): reading a stray `human:*` as a tear would erase the vetter's own judgement.
+fn torn_human_ruling(detail: &Value, flag_at: &str) -> bool {
+    human_close_ruled(detail) || (!flag_at.is_empty() && has_human_ruling(&label_names(detail)))
+}
+
 /// The issue-side analogue of [`vetted_at_head`]: a flag is vetted only when the vetter's own
 /// comment pins the CURRENT flag's timestamp. The `ai:close-candidate` label alone is not a verdict
 /// — it is the producer's claim. A RE-flag (new comment, new timestamp) un-vets, exactly as a moved
@@ -15681,7 +15707,7 @@ fn human_rule_issue_apply(
 // decide/do on a terminal act that is a single API call — the pinned `👤 human` comment alone is
 // the durable intent. A tear between that comment and the close leaves the torn-close signature
 // (ruling on the record, subject still open), which the close-candidate machinery recognises and
-// COMPLETES ([`CcGate::TornHumanClose`]) wherever the subject is scan-visible, and which a re-run
+// COMPLETES ([`CcGate::TornHumanRuling`]) wherever the subject is scan-visible, and which a re-run
 // of this same command resumes everywhere else (the comment dedups; the close executes).
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -15766,7 +15792,7 @@ fn human_close_plan(subject: &Value, is_pr: bool) -> HumanClosePlan {
 /// - `Comment` FIRST. The pinned ruling is the durable intent; a tear after it leaves the
 ///   torn-close signature — close ruling on the record, subject still open — which the flag scan
 ///   sees and COMPLETES while the subject carries `ai:close-candidate`
-///   ([`CcGate::TornHumanClose`]), and which a re-run of this command resumes when it does not
+///   ([`CcGate::TornHumanRuling`]), and which a re-run of this command resumes when it does not
 ///   (the comment dedups, the close executes).
 /// - `Close` SECOND, ahead of every label removal — the REVERSE of the ruling order's
 ///   "close last". That rule kept label writes reachable on a subject whose plans read closed as
@@ -21169,6 +21195,13 @@ const CC_CLEAR_REJECTED: &str = "clear-stranded-rejected";
 /// never to be worked (#206).
 const CC_SKIP_ARCHIVED: &str = "skip-archived-repo";
 
+/// The action a [`CcGate::TornHumanRuling`] subject asks for: FINISH the human's own half-written
+/// write. Named for the whole ruling vocabulary rather than for the close alone (#244) — the same
+/// tear reaches this state through a recorded close and through a ruling label left beside the
+/// live flag it should have retired, and [`cc_complete_torn_ruling`] performs whichever one the
+/// record says was decided.
+const CC_COMPLETE_RULING: &str = "complete-human-ruling";
+
 /// PURE: the trusted `🤖 ai:vetter` comment that RECORDS a stranded-label clearance, or `None` for
 /// any state that is not stranded — so a live flag cannot be cleared by construction rather than by
 /// the caller remembering not to.
@@ -21219,13 +21252,13 @@ fn cc_stranded_cleared_comment(gate: CcGate, flag_at: &str) -> Option<String> {
         // archived repo refuses both — a clearance attempted there fails on every run and reports
         // `clearanceFailed` for ever. NEVER `VetterClose` either: that label is a verdict in
         // force, and clearing it would erase the vetter's own judgement (#211). NEVER
-        // `TornHumanClose`: its consuming transition is the COMPLETION (#213), not a label
-        // clearance. Total over the enum on purpose, so a new state is non-clearable until
-        // somebody decides otherwise.
+        // `TornHumanRuling`: its consuming transition is the COMPLETION (#213/#244), not a label
+        // clearance — the human's own ruling comment already states the reason, so a clearance
+        // note here would be provenance nobody authored. Total over the enum on purpose, so a new
+        // state is non-clearable until somebody decides otherwise.
         CcGate::Presentable
         | CcGate::VetterClose
-        | CcGate::TornHumanClose
-        | CcGate::HumanRuled
+        | CcGate::TornHumanRuling
         | CcGate::Unvetted
         | CcGate::RepoArchived => None,
     }
@@ -21259,19 +21292,18 @@ fn cc_row(
     let vetted = cc_vetted_at_flag(detail, &flag_at);
     let gate = cc_gate(
         repo_archived,
-        human,
         &flag_at,
         last_cc_vetter_comment(detail).and_then(|b| cc_verdict_parts(&b)),
         // Computed off the SAME detail the gate classifies, and only where it can mean anything:
         // the `Reviewed <sha>: close` shape is a PR verdict, so an issue never reads as one.
         subject_is_pr(detail) && last_pr_close_verdict(detail).is_some(),
-        human_close_ruled(detail),
+        torn_human_ruling(detail, &flag_at),
     );
-    // Precedence is `cc_gate`'s, which is the PR side's: writability first, then a human ruling,
-    // then "nothing was claimed", then what the vetter did with the claim.
+    // Precedence is `cc_gate`'s, which is the PR side's: writability first, then a human ruling
+    // the machine owes a completion, then "nothing was claimed", then what the vetter did with the
+    // claim.
     let action = match gate {
         CcGate::RepoArchived => CC_SKIP_ARCHIVED,
-        CcGate::HumanRuled => "skip-human-decided",
         CcGate::NoFlag => CC_CLEAR_NO_FLAG,
         CcGate::RejectedStillFlagged => CC_CLEAR_REJECTED,
         CcGate::Presentable => "skip-vetted-at-flag",
@@ -21279,9 +21311,9 @@ fn cc_row(
         // flag does, into the same ONE human inbox (#212) — under its own name, because "vetted at
         // flag" would claim a flag that does not exist.
         CcGate::VetterClose => "skip-vetter-close",
-        // The torn `human-close` (#213): the recorded ruling is executed by the state-load, so
+        // The torn human ruling (#213/#244): the recorded ruling is executed by the state-load, so
         // the action names the completion rather than any queue.
-        CcGate::TornHumanClose => "complete-human-close",
+        CcGate::TornHumanRuling => CC_COMPLETE_RULING,
         CcGate::Unvetted => "vet",
     };
     (
@@ -21430,18 +21462,78 @@ fn cc_clear_stranded_flag(
     Ok(())
 }
 
-/// The torn-close COMPLETION (#213): execute the close a recorded `👤 human` ruling already
-/// ordered. Close FIRST, then retire the flag — a failure between the two leaves a CLOSED subject
-/// with a stale flag, exactly the state `human-close`'s already-closed re-run path consumes
-/// (#94); the reverse order would tear into an open, unflagged subject no scan enumerates.
+/// WHICH write a torn ruling's completion owes. A typed decision rather than a branch inside the
+/// network call, because it is the one judgement [`cc_complete_torn_ruling`] makes and the one a
+/// test can otherwise never reach — and getting it backwards CLOSES an issue a human ruled to keep
+/// open, which is the most expensive direction an error here has.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum TornRulingCompletion {
+    /// A recorded `👤 human` CLOSE ruling: close the subject, then retire the flag — the #213 tear.
+    CloseThenRetireFlag,
+    /// A sacred `human:*` ruling LABEL beside the live flag it contradicts: retire the flag, and
+    /// nothing else. The subject stays OPEN — no ruling label ever ordered a close.
+    RetireFlag,
+}
+
+/// PURE: read that decision off the record.
 ///
-/// NO comment is written: the ruling comment is the decision's record and GitHub's own close
-/// event records the act — a machine comment between them would be provenance nobody authored.
+/// The close is asked FIRST, which is the precedence [`human_close_plan`] already writes down: a
+/// close supersedes every standing `human:*` ruling, "because the subject it parked no longer
+/// exists to be parked". Both marks can only coexist where `human-close` itself tore between its
+/// comment and its label removals, and answering that the other way would invent a second,
+/// contradictory answer to a question the terminal edge has already settled.
+fn torn_ruling_completion(detail: &Value) -> TornRulingCompletion {
+    if human_close_ruled(detail) {
+        TornRulingCompletion::CloseThenRetireFlag
+    } else {
+        TornRulingCompletion::RetireFlag
+    }
+}
+
+/// The torn-ruling COMPLETION (#213/#244): execute the write the human's own ruling already
+/// ordered and did not finish. WHICH write is read off the record, never guessed:
+///
+/// - A recorded CLOSE ruling ⇒ close, then retire the flag. Close FIRST — a failure between the
+///   two leaves a CLOSED subject with a stale flag, exactly the state `human-close`'s
+///   already-closed re-run path consumes (#94); the reverse order would tear into an open,
+///   unflagged subject no scan enumerates.
+/// - Any other standing ruling (a sacred `human:*` label) ⇒ retire the flag, and nothing else. The
+///   ruling itself already landed; the flag is the half that did not come off, and it is the half
+///   that keeps the subject out of the producer's backlog while making
+///   `record_close_candidate_verdict` refuse for ever. The subject stays OPEN — a label ruling
+///   never ordered a close, and inferring one from `human:needs-work` would destroy work on a
+///   guess.
+///
+/// Which of the two is owed is [`torn_ruling_completion`]'s answer, never re-derived here.
+///
+/// NO comment is written on either branch: the ruling comment is the decision's record, and
+/// GitHub's own close event records the act — a machine comment between them would be provenance
+/// nobody authored. This is the difference from [`cc_clear_stranded_flag`], which must comment
+/// precisely because no ruling explains what it did.
 ///
 /// `Err` is the reason, for the row: a failed completion is REPORTED and retried next state-load,
-/// never swallowed. The caller must not count it as completed — the subject is still open.
-fn cc_complete_torn_close(slug: &str, num: u64, detail: &Value) -> Result<(), String> {
+/// never swallowed. The caller must not count it as completed — the write is still owed.
+fn cc_complete_torn_ruling(slug: &str, num: u64, detail: &Value) -> Result<(), String> {
     let n = num.to_string();
+    if torn_ruling_completion(detail) == TornRulingCompletion::RetireFlag {
+        if !gh_run(&[
+            "issue",
+            "edit",
+            &n,
+            "-R",
+            slug,
+            "--remove-label",
+            "ai:close-candidate",
+        ]) {
+            return Err(
+                "the human's ruling stands and retiring ai:close-candidate FAILED — the flag is \
+                 still live, so the subject is still out of the producer's backlog and the flag \
+                 still cannot be judged; the next state-load retries"
+                    .to_string(),
+            );
+        }
+        return Ok(());
+    }
     let noun = if subject_is_pr(detail) { "pr" } else { "issue" };
     if !gh_run(&[noun, "close", &n, "-R", slug]) {
         return Err(
@@ -21470,7 +21562,7 @@ fn cc_complete_torn_close(slug: &str, num: u64, detail: &Value) -> Result<(), St
 
 /// The CLOSED-side stale-flag sweep: every closed subject still carrying `ai:close-candidate` gets
 /// the label removed, org-wide, every state-load. This is the tear between `human-close`'s close
-/// and its flag retirement (and [`cc_complete_torn_close`]'s identical pair) made VISIBLE to
+/// and its flag retirement (and [`cc_complete_torn_ruling`]'s identical pair) made VISIBLE to
 /// machinery: every open-side search excludes closed subjects, so without this enumeration that
 /// tear would sit for ever — the exact #94 population, which measured 74 when it was filed.
 ///
@@ -21561,14 +21653,14 @@ fn unvetted_close_candidates_fetch(
     // a skip is a state something else owns, and these were owned by nobody.
     let mut cleared: Vec<Value> = Vec::new();
     let mut clear_failures: Vec<Value> = Vec::new();
-    // The torn `human-close` completions (#213), same posture as the clearances: executed here,
-    // split by outcome, never silently absorbed into a skip.
-    let mut completed_closes: Vec<Value> = Vec::new();
+    // The torn human-ruling completions (#213/#244), same posture as the clearances: executed
+    // here, split by outcome, never silently absorbed into a skip.
+    let mut completed_rulings: Vec<Value> = Vec::new();
     let mut completion_failures: Vec<Value> = Vec::new();
-    let (mut n_human, mut n_vetted, mut n_vetter_close) = (0usize, 0usize, 0usize);
+    let (mut n_vetted, mut n_vetter_close) = (0usize, 0usize);
     let (mut n_cleared_no_flag, mut n_cleared_rejected, mut n_clear_failed) =
         (0usize, 0usize, 0usize);
-    let (mut n_completed_close, mut n_completion_failed) = (0usize, 0usize);
+    let (mut n_completed_ruling, mut n_completion_failed) = (0usize, 0usize);
     for i in &found {
         let url = i.get("url").and_then(|u| u.as_str()).unwrap_or("");
         let title = i.get("title").and_then(|t| t.as_str()).unwrap_or("");
@@ -21604,17 +21696,17 @@ fn unvetted_close_candidates_fetch(
             archived_flags.push(row);
             continue;
         }
-        // The torn-close COMPLETION (#213), run every state-load exactly as the clearances are:
-        // the pinned `👤 human` ruling already ordered this close, so the machine executes it —
-        // no queue, no second judgement. Split by outcome; a failure keeps the subject here and
-        // the next state-load retries.
-        if gate == CcGate::TornHumanClose {
+        // The torn-ruling COMPLETION (#213/#244), run every state-load exactly as the clearances
+        // are: the human's ruling already ordered this write, so the machine executes it — no
+        // queue, no second judgement. Split by outcome; a failure keeps the subject here and the
+        // next state-load retries.
+        if gate == CcGate::TornHumanRuling {
             let obj = row.as_object_mut().expect("row is an object");
-            match cc_complete_torn_close(&slug, num, &detail) {
+            match cc_complete_torn_ruling(&slug, num, &detail) {
                 Ok(()) => {
-                    n_completed_close += 1;
+                    n_completed_ruling += 1;
                     obj.insert("completed".into(), Value::from(true));
-                    completed_closes.push(row);
+                    completed_rulings.push(row);
                 }
                 Err(why) => {
                     n_completion_failed += 1;
@@ -21647,8 +21739,7 @@ fn unvetted_close_candidates_fetch(
                         CcGate::RejectedStillFlagged => n_cleared_rejected += 1,
                         CcGate::Presentable
                         | CcGate::VetterClose
-                        | CcGate::TornHumanClose
-                        | CcGate::HumanRuled
+                        | CcGate::TornHumanRuling
                         | CcGate::Unvetted
                         | CcGate::RepoArchived => {
                             unreachable!(
@@ -21675,7 +21766,6 @@ fn unvetted_close_candidates_fetch(
             rows.push(row);
         } else {
             match action {
-                "skip-human-decided" => n_human += 1,
                 // Its own count, not folded into skipVettedAtFlag: a PR-side close verdict is the
                 // human's for a different reason than an upheld flag, and folding a new state into
                 // an old count is the silent accumulation #179 names.
@@ -21695,14 +21785,17 @@ fn unvetted_close_candidates_fetch(
     let (issues, more) = page(rows, limit);
     let (cleared_page, more_cleared) = page(cleared, limit);
     let (clear_failures_page, more_clear_failures) = page(clear_failures, limit);
-    let (completed_page, more_completed) = page(completed_closes, limit);
+    let (completed_page, more_completed) = page(completed_rulings, limit);
     let (completion_failures_page, more_completion_failures) = page(completion_failures, limit);
     let (stale_failures_page, more_stale_failures) = page(stale_failures, limit);
     let mut doc = serde_json::json!({
         "counts": {
             "flagged": found.len() + archived_flags.len(),
             "vet": n_vet,
-            "skipHumanDecided": n_human,
+            // There is deliberately NO `skipHumanDecided` here (#244). A human ruling on a flagged
+            // subject is not a skip: it is a torn write this state-load COMPLETES, counted under
+            // `completedHumanRuling` below. A zero-forever key would be the deleted bucket wearing
+            // a number.
             "skipVettedAtFlag": n_vetted,
             // The PR-side close verdicts (#211/#212): already judged, human-owned, listed in the
             // upheld projection beside the upheld flags.
@@ -21719,12 +21812,13 @@ fn unvetted_close_candidates_fetch(
             // A clearance that could not be written. This is the one that must never be quietly
             // zero: the label is still live, so the issue is still parked.
             "clearanceFailed": n_clear_failed,
-            // The torn `human-close` completions (#213): closes this state-load EXECUTED because
-            // a pinned `👤 human` ruling ordered them and the subject was still open. The failed
-            // count is the one that must never be quietly non-zero-and-ignored — the decision
-            // stands recorded while the subject stays open.
-            "completedHumanClose": n_completed_close,
-            "humanCloseCompletionFailed": n_completion_failed,
+            // The torn human-ruling completions (#213/#244): writes this state-load EXECUTED
+            // because a human's own ruling ordered them and only half of it landed — a recorded
+            // close on a still-open subject, or a ruling label beside the live flag it should have
+            // retired. The failed count is the one that must never be quietly
+            // non-zero-and-ignored — the decision stands recorded while the write stays owed.
+            "completedHumanRuling": n_completed_ruling,
+            "humanRulingCompletionFailed": n_completion_failed,
             // The CLOSED-side sweep: stale flags on closed subjects (the tear between a close and
             // its flag retirement, and the legacy hand-close residue, #94). Its OWN population —
             // a closed subject is in no open-side count above, so these are additive, not parts
@@ -21732,8 +21826,8 @@ fn unvetted_close_candidates_fetch(
             "staleClosedFlagsCleared": n_stale_cleared,
             "staleClosedFlagClearFailed": n_stale_failed,
             "staleClosedFlagsArchived": n_stale_archived,
-            // flagged == vet + skip* + cleared* + clearanceFailed + completedHumanClose +
-            // humanCloseCompletionFailed + fetchErrors, always. A non-zero fetchErrors is the
+            // flagged == vet + skip* + cleared* + clearanceFailed + completedHumanRuling +
+            // humanRulingCompletionFailed + fetchErrors, always. A non-zero fetchErrors is the
             // ONLY reason the parts may not sum to the whole.
             "fetchErrors": errors.len(),
         },
@@ -21741,10 +21835,10 @@ fn unvetted_close_candidates_fetch(
         "moreCleared": more_cleared,
         "clearanceFailures": clear_failures_page,
         "moreClearanceFailures": more_clear_failures,
-        "completedHumanCloses": completed_page,
-        "moreCompletedHumanCloses": more_completed,
-        "humanCloseCompletionFailures": completion_failures_page,
-        "moreHumanCloseCompletionFailures": more_completion_failures,
+        "completedHumanRulings": completed_page,
+        "moreCompletedHumanRulings": more_completed,
+        "humanRulingCompletionFailures": completion_failures_page,
+        "moreHumanRulingCompletionFailures": more_completion_failures,
         "staleClosedFlagClearFailures": stale_failures_page,
         "moreStaleClosedFlagClearFailures": more_stale_failures,
         "issues": issues,
@@ -23943,9 +24037,11 @@ mod next_ready_tests {
 
 /// Which side of the HUMAN's flag gate one `ai:close-candidate` issue is on.
 ///
-/// A typed state rather than a bool, because "not presentable" covers four situations that need
-/// four different things done about them, and three of them are invisible unless named: the vetter
-/// owes a verdict, nobody can judge this at all, a human already ruled, or a write landed half-done.
+/// A typed state rather than a bool, because "not presentable" covers several situations that need
+/// different things done about them, and most are invisible unless named: the vetter owes a
+/// verdict, nobody can judge this at all, or a human's ruling landed half-written. None of them is
+/// "a human already ruled here" — that was a bucket, and #244 deleted it: a human decision is a
+/// transition INTO one of these, never a state of its own.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum CcGate {
     /// The vetter UPHELD the current flag and no human has ruled: the human's to rule on.
@@ -23956,12 +24052,21 @@ enum CcGate {
     /// to dispose of, alongside `Presentable`, in the ONE mixed upheld inbox; never stranded and
     /// never cleared — clearing it would erase a verdict in force.
     VetterClose,
-    /// A torn `human-close` (#213): a trusted `👤 human` close ruling is on the record and the
-    /// subject is still OPEN — the comment landed, the close did not. Not an inbox: the decision
-    /// is made and needs no second judgement, so the vetter's state-load EXECUTES the recorded
-    /// close (the same self-heal posture as the stranded-flag clearances, #179) and the human's
-    /// queue never sees the subject.
-    TornHumanClose,
+    /// A torn HUMAN RULING (#213/#244): the ruling landed and the write it was half of did not.
+    /// Two shapes, one tear — a trusted `👤 human` close ruling on a still-OPEN subject (the
+    /// comment landed, the close did not), or any sacred `human:*` ruling label standing beside a
+    /// LIVE `ai:close-candidate` claim it was supposed to retire in the same call.
+    ///
+    /// Not an inbox: the decision is made and needs no second judgement, so the vetter's
+    /// state-load EXECUTES the recorded ruling (the same self-heal posture as the stranded-flag
+    /// clearances, #179) and the human's queue never sees the subject.
+    ///
+    /// The label shape used to be its own PARKED state (`HumanRuled`, deleted by #244), which
+    /// dominated this arm and made the tear permanent: the ruling could never be completed and the
+    /// flag could never be judged, because `record_close_candidate_verdict` refuses once a human
+    /// has ruled. A human decision is a TRANSITION, so the machine finishes it rather than
+    /// counting it.
+    TornHumanRuling,
     /// The REPO is archived (#206). Read-only: no label moves, no comment posts, no issue closes,
     /// so not one transition this FSM owns can be applied — including the stranded-flag clearance
     /// below, which is why this arm is FIRST in [`cc_gate`] and dominates every other state.
@@ -23971,9 +24076,6 @@ enum CcGate {
     /// be written. The ordering is oldest-flag-first, so a frozen flag sorts to the FRONT and stays
     /// there.
     RepoArchived,
-    /// A `human:*` label is already on the issue. Human decisions are sacred, and a ruling is not an
-    /// inbox item — whatever the flag still says.
-    HumanRuled,
     /// The label is on the issue and NO trusted producer comment says why. There is no claim to
     /// check, so there is nothing here to rule on evidence.
     ///
@@ -24003,9 +24105,8 @@ impl CcGate {
         match self {
             CcGate::Presentable => "presentable",
             CcGate::VetterClose => "vetter-close-verdict",
-            CcGate::TornHumanClose => "torn-human-close",
+            CcGate::TornHumanRuling => "torn-human-ruling",
             CcGate::RepoArchived => "repo-archived",
-            CcGate::HumanRuled => "human-ruled",
             CcGate::NoFlag => "no-producer-flag",
             CcGate::Unvetted => "unvetted-vetter-owes-a-verdict",
             CcGate::RejectedStillFlagged => "vetter-rejected-but-still-flagged",
@@ -24053,18 +24154,23 @@ fn cc_verdict_parts(body: &str) -> Option<(String, String)> {
     Some((at.to_string(), verdict.to_string()))
 }
 
-/// PURE: where one flagged issue stands, from the three facts that decide it.
+/// PURE: where one flagged issue stands, from the facts that decide it.
 ///
-/// Ordered as the vetter's own `cc_row` orders its skips, and for the same reason: a human ruling
-/// dominates everything (it is sacred and already made), then "nothing was claimed", then what the
-/// vetter did with the claim. Only the last arm can produce a row.
+/// Ordered as the vetter's own `cc_row` orders its skips, and for the same reason: writability
+/// first, then a human ruling the machine owes a COMPLETION (it is sacred and already made, so
+/// there is nothing left to judge), then "nothing was claimed", then what the vetter did with the
+/// claim. Only the last arm can produce a row.
+///
+/// `torn_ruling` is [`torn_human_ruling`]'s answer, and it is the only place a human decision
+/// enters this gate. There is deliberately no arm that merely NOTICES a ruling: #244's ruling is
+/// that a human decision is a transition, so the one thing this gate may do with it is route it to
+/// the write that finishes it.
 fn cc_gate(
     repo_archived: bool,
-    human_ruled: bool,
     flag_at: &str,
     verdict: Option<(String, String)>,
     vetter_close: bool,
-    close_ruled: bool,
+    torn_ruling: bool,
 ) -> CcGate {
     // FIRST, ahead of every other arm including the sacred one (#206). Every state below names
     // something a transition would DO — present it to a human, clear the label, ask the vetter for
@@ -24074,15 +24180,13 @@ fn cc_gate(
     if repo_archived {
         return CcGate::RepoArchived;
     }
-    if human_ruled {
-        return CcGate::HumanRuled;
-    }
-    // A recorded close ruling on a still-open subject is a torn `human-close` (#213), and it
-    // dominates the whole flag lifecycle below: the human has already judged the very question
-    // every remaining state exists to route — spending a vetter verdict or a human presentation
-    // on it would re-ask a decided question. The completion consumes it.
-    if close_ruled {
-        return CcGate::TornHumanClose;
+    // A human ruling that did not finish its own write (#213/#244) dominates the whole flag
+    // lifecycle below: the human has already judged the very question every remaining state exists
+    // to route — spending a vetter verdict or a human presentation on it would re-ask a decided
+    // question. The completion consumes it. This arm is where the deleted `HumanRuled` park used
+    // to sit, and the park DOMINATED it, which is precisely why the tear never healed.
+    if torn_ruling {
+        return CcGate::TornHumanRuling;
     }
     if flag_at.is_empty() {
         // Between "no claim" and "stranded": a PR-side `close` verdict explains the label without
@@ -24568,9 +24672,13 @@ fn next_close_candidate_row(f: &NextCcFacts) -> Value {
 }
 
 /// The whole-queue breakdown. Every subject in this queue's population lands in exactly one of
-/// these, plus the fetch errors — so `flagged == presentable + vetterCloseVerdict + unvetted +
-/// noProducerFlag + humanRuled + vetterRejectedStillFlagged + fetchErrors`, always, and a reader
-/// can see there is no further bucket quietly absorbing rows.
+/// these, plus the fetch errors — so `flagged == presentable + vetterCloseVerdict +
+/// tornHumanRuling + unvetted + noProducerFlag + vetterRejectedStillFlagged + fetchErrors`,
+/// always, and a reader can see there is no further bucket quietly absorbing rows.
+///
+/// `humanRuled` is GONE from that sum (#244), and the sum is still asserted over what is left —
+/// which is the point: the invariant is what proves the deleted bucket's rows were re-homed into a
+/// state with a transition rather than dropped on the floor.
 ///
 /// Archived-repo hits are not part of `flagged` at all: an archived repo refuses every write this
 /// FSM owns, so those hits are dropped from the population before anything is counted — which also
@@ -24583,13 +24691,13 @@ struct FlagQueueCounts {
     /// The PR-side `close` verdicts (#211/#212) — human-owned like `presentable`, counted apart
     /// so folding two states into one number never hides which route filled the queue.
     vetter_close: usize,
-    /// Torn `human-close` transitions (#213) — a recorded close ruling on a still-open subject.
-    /// Never presented: the vetter's state-load executes these, so a non-zero count here is a
-    /// completion that has not run yet or could not write.
-    torn_human_close: usize,
+    /// Torn human rulings (#213/#244) — a recorded close ruling on a still-open subject, or a
+    /// ruling label beside the live flag it should have retired. Never presented: the vetter's
+    /// state-load executes these, so a non-zero count here is a completion that has not run yet or
+    /// could not write.
+    torn_human_ruling: usize,
     unvetted: usize,
     no_flag: usize,
-    human_ruled: usize,
     rejected_still_flagged: usize,
     fetch_errors: usize,
 }
@@ -24636,10 +24744,9 @@ fn next_close_candidate_doc(rows: Vec<Value>, w: &FlagQueueWithheld) -> Value {
             "flagged": w.counts.flagged,
             "presentable": w.counts.presentable,
             "vetterCloseVerdict": w.counts.vetter_close,
-            "tornHumanClose": w.counts.torn_human_close,
+            "tornHumanRuling": w.counts.torn_human_ruling,
             "unvetted": w.counts.unvetted,
             "noProducerFlag": w.counts.no_flag,
-            "humanRuled": w.counts.human_ruled,
             "vetterRejectedStillFlagged": w.counts.rejected_still_flagged,
             "fetchErrors": w.counts.fetch_errors,
         },
@@ -24860,11 +24967,10 @@ fn ncc_outcome(
     };
     let gate = cc_gate(
         archived.contains(&slug),
-        has_human_ruling(&label_names(&detail)),
         &flag_at,
         last_cc_vetter_comment(&detail).and_then(|b| cc_verdict_parts(&b)),
         close_verdict.is_some(),
-        human_close_ruled(&detail),
+        torn_human_ruling(&detail, &flag_at),
     );
     NccOutcome::Classified(Box::new(NccClassified {
         slug,
@@ -24914,10 +25020,9 @@ fn ncc_apply_outcome(
     match c.gate {
         CcGate::Presentable => counts.presentable += 1,
         CcGate::VetterClose => counts.vetter_close += 1,
-        // Counted, never presented: the vetter's state-load executes these (#213), and one
+        // Counted, never presented: the vetter's state-load executes these (#213/#244), and one
         // showing here means that completion has not run yet or could not write.
-        CcGate::TornHumanClose => counts.torn_human_close += 1,
-        CcGate::HumanRuled => counts.human_ruled += 1,
+        CcGate::TornHumanRuling => counts.torn_human_ruling += 1,
         CcGate::Unvetted => counts.unvetted += 1,
         CcGate::NoFlag => counts.no_flag += 1,
         CcGate::RejectedStillFlagged => counts.rejected_still_flagged += 1,
@@ -25150,35 +25255,33 @@ mod next_close_candidate_tests {
         let at = "2026-07-20T09:00:00Z";
         let parts = |w: &str| Some((at.to_string(), w.to_string()));
         assert_eq!(
-            cc_gate(false, false, at, parts("uphold"), false, false),
+            cc_gate(false, at, parts("uphold"), false, false),
             CcGate::Presentable
         );
         assert_eq!(
-            cc_gate(false, false, at, parts("reject"), false, false),
+            cc_gate(false, at, parts("reject"), false, false),
             CcGate::RejectedStillFlagged
         );
         // A word this machine does not know is not a verdict in force — the vetter still owes one,
         // exactly as an unstamped vet-protocol is never current.
         for unknown in ["close", "ready", "UPHOLD"] {
             assert_eq!(
-                cc_gate(false, false, at, parts(unknown), false, false),
+                cc_gate(false, at, parts(unknown), false, false),
                 CcGate::Unvetted,
                 "{unknown}"
             );
         }
-        assert_eq!(
-            cc_gate(false, false, at, None, false, false),
-            CcGate::Unvetted
-        );
+        assert_eq!(cc_gate(false, at, None, false, false), CcGate::Unvetted);
         // A LIVE flag outranks a stored PR close verdict: the flag is the newer claim, so the
         // subject re-enters the vet lifecycle rather than sitting on the old judgement (#211).
-        assert_eq!(
-            cc_gate(false, false, at, None, true, false),
-            CcGate::Unvetted
-        );
+        assert_eq!(cc_gate(false, at, None, true, false), CcGate::Unvetted);
         assert!(CcGate::RejectedStillFlagged.is_stranded());
         assert!(CcGate::NoFlag.is_stranded());
-        for live in [CcGate::Presentable, CcGate::Unvetted, CcGate::HumanRuled] {
+        for live in [
+            CcGate::Presentable,
+            CcGate::Unvetted,
+            CcGate::TornHumanRuling,
+        ] {
             assert!(!live.is_stranded(), "{live:?}");
         }
     }
@@ -25192,7 +25295,6 @@ mod next_close_candidate_tests {
         assert_eq!(
             cc_gate(
                 false,
-                false,
                 second,
                 Some((first.to_string(), "uphold".into())),
                 false,
@@ -25202,7 +25304,6 @@ mod next_close_candidate_tests {
         );
         assert_eq!(
             cc_gate(
-                false,
                 false,
                 first,
                 Some((first.to_string(), "uphold".into())),
@@ -25217,20 +25318,33 @@ mod next_close_candidate_tests {
     // vetter's own judgement — human-owned like an upheld flag, never stranded, never cleared.
     #[test]
     fn a_pr_close_verdict_is_human_owned_not_stranded_and_not_cleared() {
+        assert_eq!(cc_gate(false, "", None, true, false), CcGate::VetterClose);
+        // A recorded human CLOSE ruling still dominates it: the human answered the very question
+        // the verdict was pending on, so the completion executes rather than the queue presenting.
         assert_eq!(
-            cc_gate(false, false, "", None, true, false),
-            CcGate::VetterClose
-        );
-        // A human ruling still dominates it, exactly as it dominates an upheld flag.
-        assert_eq!(
-            cc_gate(false, true, "", None, true, false),
-            CcGate::HumanRuled
+            cc_gate(false, "", None, true, true),
+            CcGate::TornHumanRuling
         );
         // …and an archived repo dominates everything.
-        assert_eq!(
-            cc_gate(true, false, "", None, true, false),
-            CcGate::RepoArchived
-        );
+        assert_eq!(cc_gate(true, "", None, true, false), CcGate::RepoArchived);
+        // But a stray `human:*` LABEL on a PR whose only claim is the vetter's own `close` verdict
+        // does NOT: with no live producer flag there is no torn write, and `torn_human_ruling`
+        // asks the label half only of a live flag precisely so this row keeps reading as the
+        // verdict in force. Retiring the label here would erase the vetter's judgement (#211).
+        let vc_labelled = json!({
+            "state": "OPEN",
+            "labels": [{"name": "ai:close-candidate"}, {"name": "human:keep-open"}],
+            "url": "https://github.com/o/r/pull/63",
+            "comments": [{
+                "author": {"login": TRUSTED_AUTHOR},
+                "createdAt": "2026-07-26T10:00:00Z",
+                "body": "🤖 ai:vetter\nvet-protocol 1\nReviewed f0107db: close — superseded by #48",
+            }],
+        });
+        assert!(!torn_human_ruling(&vc_labelled, ""));
+        let (gate, action, _) = cc_row("o/r", 63, "t", &vc_labelled, false);
+        assert_eq!(gate, CcGate::VetterClose);
+        assert_eq!(action, "skip-vetter-close");
         assert!(!CcGate::VetterClose.is_stranded());
         // NOT clearable: the label is a verdict in force, and the #179 clearance erasing it would
         // erase the vetter's own judgement.
@@ -25415,10 +25529,9 @@ mod next_close_candidate_tests {
         let c = &q.counts;
         let parts = c.presentable
             + c.vetter_close
-            + c.torn_human_close
+            + c.torn_human_ruling
             + c.unvetted
             + c.no_flag
-            + c.human_ruled
             + c.rejected_still_flagged
             + c.fetch_errors;
         assert_eq!(c.flagged, hits.len());
@@ -25426,19 +25539,23 @@ mod next_close_candidate_tests {
             c.flagged,
             parts,
             "flagged must be provably the sum of its parts: presentable {} + vetterClose {} + \
-             tornHumanClose {} + unvetted {} + noProducerFlag {} + humanRuled {} + \
-             rejectedStillFlagged {} + fetchErrors {}",
+             tornHumanRuling {} + unvetted {} + noProducerFlag {} + rejectedStillFlagged {} + \
+             fetchErrors {}",
             c.presentable,
             c.vetter_close,
-            c.torn_human_close,
+            c.torn_human_ruling,
             c.unvetted,
             c.no_flag,
-            c.human_ruled,
             c.rejected_still_flagged,
             c.fetch_errors
         );
+        // `o/ruled` is the row that USED to sit in `human_ruled`, and the partition is what proves
+        // where it went (#244): with that bucket deleted, a subject the deletion dropped on the
+        // floor would break the sum above, and one quietly absorbed by an unrelated bucket would
+        // break this. It is a TORN RULING — the ruling landed, the flag it contradicts did not
+        // come off — and the sum holds over the reduced set.
         assert_eq!(
-            (c.presentable, c.no_flag, c.unvetted, c.human_ruled),
+            (c.presentable, c.no_flag, c.unvetted, c.torn_human_ruling),
             (1, 1, 1, 1)
         );
         assert_eq!(c.fetch_errors, 2);
@@ -25446,12 +25563,12 @@ mod next_close_candidate_tests {
         assert_eq!(flag_refs(&q), ["o/upheld#1"]);
     }
 
-    // The torn `human-close` (#213): a recorded close ruling on a still-open subject dominates
-    // the flag lifecycle ENTIRELY — flagless, unvetted, upheld, rejected or verdict-close alike —
-    // because the human already answered the question every one of those states routes. Only a
-    // live `human:*` label ruling and an archived repo rank above it.
+    // A torn human ruling (#213/#244) dominates the flag lifecycle ENTIRELY — flagless, unvetted,
+    // upheld, rejected or verdict-close alike — because the human already answered the question
+    // every one of those states routes. ONLY an archived repo ranks above it; nothing parks it,
+    // and the arm that used to (`HumanRuled`) is gone.
     #[test]
-    fn a_recorded_close_ruling_dominates_the_flag_lifecycle() {
+    fn a_torn_human_ruling_dominates_the_flag_lifecycle() {
         let at = "2026-07-20T09:00:00Z";
         for (flag_at, verdict, vetter_close) in [
             ("", None, false),
@@ -25461,57 +25578,52 @@ mod next_close_candidate_tests {
             (at, Some((at.to_string(), "reject".to_string())), false),
         ] {
             assert_eq!(
-                cc_gate(false, false, flag_at, verdict.clone(), vetter_close, true),
-                CcGate::TornHumanClose,
+                cc_gate(false, flag_at, verdict.clone(), vetter_close, true),
+                CcGate::TornHumanRuling,
                 "({flag_at:?}, {verdict:?}, {vetter_close})"
             );
             assert_eq!(
-                cc_gate(false, true, flag_at, verdict.clone(), vetter_close, true),
-                CcGate::HumanRuled
-            );
-            assert_eq!(
-                cc_gate(true, false, flag_at, verdict, vetter_close, true),
+                cc_gate(true, flag_at, verdict, vetter_close, true),
                 CcGate::RepoArchived
             );
         }
         // Consumed by the COMPLETION, so it is neither stranded nor label-clearable.
-        assert!(!CcGate::TornHumanClose.is_stranded());
+        assert!(!CcGate::TornHumanRuling.is_stranded());
         assert_eq!(
-            cc_stranded_cleared_comment(CcGate::TornHumanClose, at),
+            cc_stranded_cleared_comment(CcGate::TornHumanRuling, at),
             None
         );
-        assert_eq!(CcGate::TornHumanClose.as_str(), "torn-human-close");
+        assert_eq!(CcGate::TornHumanRuling.as_str(), "torn-human-ruling");
+        // The name and the action say RULING, not close: the same state now covers the ruling
+        // label tear, whose completion never closes anything.
+        assert!(!CcGate::TornHumanRuling.as_str().contains("close"));
+        assert_eq!(CC_COMPLETE_RULING, "complete-human-ruling");
     }
 
-    // The precedence, in the one order that matters: a human ruling is sacred and already made, so
-    // it dominates a flag, a verdict, and the absence of either.
+    // The precedence, in the one order that matters: a torn ruling is already-made and dominates a
+    // flag, a verdict, and the absence of either.
     #[test]
-    fn a_human_ruling_dominates_and_a_flagless_label_is_stranded() {
+    fn a_torn_ruling_dominates_and_a_flagless_label_is_stranded() {
         let at = "2026-07-20T09:00:00Z";
         assert_eq!(
             cc_gate(
                 false,
-                true,
                 at,
                 Some((at.to_string(), "uphold".into())),
                 false,
-                false
+                true
             ),
-            CcGate::HumanRuled
+            CcGate::TornHumanRuling
         );
         assert_eq!(
-            cc_gate(false, true, "", None, false, false),
-            CcGate::HumanRuled
+            cc_gate(false, "", None, false, true),
+            CcGate::TornHumanRuling
         );
         // Labelled, with no trusted producer comment behind it: nothing was CLAIMED, so there is
         // nothing to rule on evidence — and the vetter skips it too, which is why it is named.
-        assert_eq!(
-            cc_gate(false, false, "", None, false, false),
-            CcGate::NoFlag
-        );
+        assert_eq!(cc_gate(false, "", None, false, false), CcGate::NoFlag);
         assert_eq!(
             cc_gate(
-                false,
                 false,
                 "",
                 Some((at.to_string(), "uphold".into())),
@@ -25535,7 +25647,7 @@ mod next_close_candidate_tests {
         let at = "2026-07-20T09:00:00Z";
         // Each of these is a DIFFERENT state when the repo is live. Archived, all of them are the
         // same one — which is what "dominates" means and what a reordering would break.
-        for (human, flag_at, verdict, vetter_close) in [
+        for (torn, flag_at, verdict, vetter_close) in [
             (
                 false,
                 at,
@@ -25551,6 +25663,9 @@ mod next_close_candidate_tests {
             (false, at, None, false),
             (false, "", None, false),
             (false, "", None, true),
+            // The torn ruling too — the ONE state that outranks every other live arm now that the
+            // park is gone, so it is the one whose domination by `RepoArchived` matters most: the
+            // completion is a close and a `--remove-label`, and an archived repo refuses both.
             (
                 true,
                 at,
@@ -25559,14 +25674,14 @@ mod next_close_candidate_tests {
             ),
         ] {
             assert_ne!(
-                cc_gate(false, human, flag_at, verdict.clone(), vetter_close, false),
+                cc_gate(false, flag_at, verdict.clone(), vetter_close, torn),
                 CcGate::RepoArchived,
                 "a LIVE repo never produces RepoArchived"
             );
             assert_eq!(
-                cc_gate(true, human, flag_at, verdict, vetter_close, false),
+                cc_gate(true, flag_at, verdict, vetter_close, torn),
                 CcGate::RepoArchived,
-                "archived must dominate (human_ruled={human}, flag_at={flag_at:?})"
+                "archived must dominate (torn_ruling={torn}, flag_at={flag_at:?})"
             );
         }
         // NOT stranded: `strandedFlags` names label states a transition could still clear, and
@@ -26210,10 +26325,9 @@ mod next_close_candidate_tests {
             flagged: 10,
             presentable: 5,
             vetter_close: 1,
-            torn_human_close: 0,
+            torn_human_ruling: 1,
             unvetted: 2,
             no_flag: 1,
-            human_ruled: 1,
             rejected_still_flagged: 0,
             fetch_errors: 0,
         });
@@ -26229,10 +26343,9 @@ mod next_close_candidate_tests {
         let parts: u64 = [
             "presentable",
             "vetterCloseVerdict",
-            "tornHumanClose",
+            "tornHumanRuling",
             "unvetted",
             "noProducerFlag",
-            "humanRuled",
             "vetterRejectedStillFlagged",
             "fetchErrors",
         ]
@@ -26240,6 +26353,18 @@ mod next_close_candidate_tests {
         .map(|k| c[k].as_u64().unwrap())
         .sum();
         assert_eq!(parts, c["flagged"].as_u64().unwrap());
+        // The deleted bucket must be gone from the WIRE, not merely from the struct: a key still
+        // emitted as a constant zero is the park with a number on it, and a reader wiring the
+        // dashboard against it gets a field that means nothing (#244).
+        assert!(
+            c.get("humanRuled").is_none(),
+            "humanRuled is still emitted: {c}"
+        );
+        // And the partition above must still be TOTAL over what is left — this is the assertion
+        // that proves no surviving bucket quietly absorbed the deleted one's rows, so the key list
+        // is checked against the emitted object rather than trusted to have been kept in step.
+        let emitted: Vec<&String> = c.as_object().unwrap().keys().collect();
+        assert_eq!(emitted.len(), 8, "unpartitioned counts key: {emitted:?}");
     }
 
     // The two stranded states, named rather than folded into a skip. The vetter's state-load clears
@@ -26413,10 +26538,9 @@ mod next_close_candidate_tests {
                     flagged: usize::MAX,
                     presentable: usize::MAX,
                     vetter_close: usize::MAX,
-                    torn_human_close: usize::MAX,
+                    torn_human_ruling: usize::MAX,
                     unvetted: usize::MAX,
                     no_flag: usize::MAX,
-                    human_ruled: usize::MAX,
                     rejected_still_flagged: usize::MAX,
                     fetch_errors: usize::MAX,
                 },
@@ -29371,7 +29495,7 @@ fn mcp_all_tools() -> Value {
         {
             "name": "unvetted_close_candidates",
             "narrows": "limit",
-            "description": "State-load: ONE PAGE of the producer close-candidate flags on open SUBJECTS — issues AND pull requests (#211; the row's url says which) — to vet. Per subject: flagAt, flagReason (the producer's stated evidence), labels, humanSacred, vettedAtFlag. `counts` is whole-queue; `more` is how many this page left behind — the NEXT run's work: a run spends at most 3 ITEMS in total, shared with the PRs from unvetted, so never re-call for a second page. Human-ruled and already-vetted-at-flag subjects are excluded, as are PRs whose label is the vetter's own `close` verdict (counts.skipVetterClose — the human's queue, not a claim to judge).",
+            "description": "State-load: ONE PAGE of the producer close-candidate flags on open SUBJECTS — issues AND pull requests (#211; the row's url says which) — to vet. Per subject: flagAt, flagReason (the producer's stated evidence), labels, humanSacred, vettedAtFlag. `counts` is whole-queue; `more` is how many this page left behind — the NEXT run's work: a run spends at most 3 ITEMS in total, shared with the PRs from unvetted, so never re-call for a second page. Already-vetted-at-flag subjects are excluded, as are PRs whose label is the vetter's own `close` verdict (counts.skipVetterClose — the human's queue, not a claim to judge). A subject a human has RULED is not excluded and not skipped: the ruling is a transition whose write only half landed, so this call COMPLETES it — the recorded close executed, or the flag the ruling contradicts retired (counts.completedHumanRuling / humanRulingCompletionFailed).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -39111,25 +39235,60 @@ mod queue_tests {
         assert_eq!(gate, CcGate::NoFlag);
     }
 
-    /// A human ruling LABEL dominates a stranded label. A sacred `human:*` is sacred with no
-    /// carve-out, and "the label looks stuck" is not one — the clearance is an AI write, so it
-    /// must not fire on an issue a human has already parked, whatever the flag underneath still
-    /// says.
+    /// **#244's acceptance case.** An issue carrying a sacred `human:*` ruling AND a live
+    /// `ai:close-candidate` is a TORN WRITE, and the state-load COMPLETES it — it is not a state,
+    /// not a skip, and not something a human's queue ever sees again.
+    ///
+    /// Before #244 every row here was `CcGate::HumanRuled` / `skip-human-decided`: skipped on every
+    /// run for ever, counted under `humanRuled`, transitioning nowhere, while the label kept the
+    /// issue out of the producer's backlog AND `record_close_candidate_verdict` refused to judge
+    /// the flag because a human had ruled. That is the park a human decision must never create —
+    /// a decision is a transition INTO a state, never a state of its own — and the arm is deleted.
+    ///
+    /// Iterated over the whole ruling vocabulary rather than over `keep-open` alone: the property
+    /// is about the NAMESPACE, so a verb added to `HUMAN_ISSUE_RULINGS` is covered the day it lands
+    /// instead of the day someone remembers this test.
     #[test]
-    fn a_human_ruling_beats_a_stranded_label_and_nothing_is_cleared() {
+    fn a_human_ruling_beside_a_live_flag_is_a_torn_write_the_state_load_completes() {
         let at = "2026-07-17T21:23:11Z";
         for ruling in HUMAN_ISSUE_RULINGS.iter().filter_map(|(_, t)| *t) {
-            // Both stranded shapes, under a human ruling: a rejected flag, and no flag at all.
-            let rejected = flagged_issue(
+            // The tear `human-rule-issue keep-open` leaves if it dies between its AddLabel and its
+            // RemoveLabel: ruling landed, contradicted flag still live. Carrying the vetter's
+            // `reject` too, so the row is ALSO in a stranded shape — the completion outranks it,
+            // and both roads end with the flag off the issue.
+            let torn = flagged_issue(
                 &[ruling, "ai:close-candidate"],
                 at,
                 "already-fixed-on-main: #181",
                 vec![vetter_cc_comment(at, "reject")],
             );
-            let (gate, action, _) = cc_row("o/r", 93, "t", &rejected, false);
-            assert_eq!(gate, CcGate::HumanRuled, "{ruling}");
-            assert_eq!(action, "skip-human-decided", "{ruling}");
+            assert!(torn_human_ruling(&torn, at), "{ruling}");
+            let (gate, action, _) = cc_row("o/r", 93, "t", &torn, false);
+            assert_eq!(gate, CcGate::TornHumanRuling, "{ruling}");
+            assert_eq!(action, CC_COMPLETE_RULING, "{ruling}");
+            // The completion is the consuming transition, so this state is neither stranded (a
+            // label the clearance would drop with an invented reason) nor a skip.
+            assert!(!gate.is_stranded(), "{ruling}");
             assert_eq!(cc_stranded_cleared_comment(gate, at), None, "{ruling}");
+            assert_ne!(action, "skip-human-decided", "{ruling}");
+            assert!(!action.starts_with("skip"), "{ruling}: {action}");
+            // No ruling LABEL orders a close — only a recorded close ruling does. Inferring one
+            // from `human:needs-work` would destroy work on a guess, so the completion here is the
+            // flag retirement and the subject stays open.
+            assert!(!human_close_ruled(&torn), "{ruling}");
+        }
+        // …and no CcGate state answers to the deleted park's names any more. Read off the enum's
+        // own vocabulary, so a variant reintroduced under either spelling fails here.
+        for gate in [
+            CcGate::Presentable,
+            CcGate::VetterClose,
+            CcGate::TornHumanRuling,
+            CcGate::RepoArchived,
+            CcGate::NoFlag,
+            CcGate::Unvetted,
+            CcGate::RejectedStillFlagged,
+        ] {
+            assert_ne!(gate.as_str(), "human-ruled", "{gate:?}");
         }
     }
 
@@ -39180,7 +39339,11 @@ mod queue_tests {
             );
         }
         // A live state has no clearance at all — the guard is the type, not the caller.
-        for gate in [CcGate::Presentable, CcGate::HumanRuled, CcGate::Unvetted] {
+        for gate in [
+            CcGate::Presentable,
+            CcGate::TornHumanRuling,
+            CcGate::Unvetted,
+        ] {
             assert_eq!(cc_stranded_cleared_comment(gate, "T"), None, "{gate:?}");
         }
     }
@@ -39364,13 +39527,14 @@ mod queue_tests {
                 // same judgement by its other route, and the human's ONE disposal inbox holds it
                 // beside the upheld flags.
                 row("rainlanguage/rain.dia", 63, "superseded test PR", "skip-vetter-close", "pull"),
-                // None of these is UPHELD: one is a human ruling, one has no flag to judge, and one
-                // is `rain.erc4626.words#93`'s state — a flag the vetter REJECTED, still labelled.
-                // The last used to land in `upheld`, because "vetted at its flag" was read as
-                // upheld on the argument that a rejected flag cannot still carry the label. It can,
-                // and rendering a `reject` to a human as the vetter agreeing to close is the worst
-                // direction for the error: the human's next move on an upheld flag destroys work.
-                row("rainlanguage/raindex", 184, "frontmatter lint", "skip-human-decided", "issues"),
+                // None of these is UPHELD: one is a human ruling this state-load COMPLETED, one has
+                // no flag to judge, and one is `rain.erc4626.words#93`'s state — a flag the vetter
+                // REJECTED, still labelled. The last used to land in `upheld`, because "vetted at
+                // its flag" was read as upheld on the argument that a rejected flag cannot still
+                // carry the label. It can, and rendering a `reject` to a human as the vetter
+                // agreeing to close is the worst direction for the error: the human's next move on
+                // an upheld flag destroys work.
+                row("rainlanguage/raindex", 184, "frontmatter lint", CC_COMPLETE_RULING, "issues"),
                 row("rainlanguage/raindex", 999, "no flag", CC_CLEAR_NO_FLAG, "issues"),
                 row("rainlanguage/raindex", 93, "rejected, still flagged", CC_CLEAR_REJECTED, "issues"),
             ],
@@ -39403,8 +39567,8 @@ mod queue_tests {
             upheld[1]["url"],
             json!("https://github.com/rainlanguage/rain.dia/pull/63")
         );
-        // Only `skip-vetted-at-flag` and `skip-vetter-close` are upheld — a human ruling, a
-        // missing flag, and a REJECTED flag still wearing its label are none of them.
+        // Only `skip-vetted-at-flag` and `skip-vetter-close` are upheld — a completed human
+        // ruling, a missing flag, and a REJECTED flag still wearing its label are none of them.
         for r in &upheld {
             assert_ne!(r["number"], json!(184));
             assert_ne!(r["number"], json!(999));
@@ -53980,6 +54144,53 @@ mod human_rule_tests {
         );
     }
 
+    /// The stranding guard's property, stated TOTALLY over the issue-side ruling surface (#244):
+    /// **no human issue ruling can land while leaving a live producer flag behind it.** Every verb
+    /// either REFUSES outright or retires `ai:close-candidate` in the same call — so a ruling never
+    /// creates something for a later state to park, which is what makes deleting the park safe
+    /// rather than merely tidy.
+    ///
+    /// Driven off the vocabulary TABLE plus `human-close`'s own plan word, so this is a property of
+    /// the surface and not a list of the verbs that existed when it was typed: a verb added to
+    /// `HUMAN_ISSUE_RULINGS` must satisfy it or fail here. Each verb's own test above pins WHICH
+    /// side it lands on; this pins that there is no third side.
+    #[test]
+    fn no_issue_ruling_lands_while_leaving_a_live_flag() {
+        let flag_at = "2026-07-17T21:23:11Z";
+        let flagged = issue(
+            &["ai:close-candidate"],
+            "2026-01-01T00:00:00Z",
+            Some(flag_at),
+            vec![],
+        );
+        let disposes = |clears: &[String]| clears.iter().any(|l| l == PENDING_CLOSE_FLAG);
+        for (verb, target) in HUMAN_ISSUE_RULINGS {
+            match human_issue_rule_plan(&flagged, verb, target) {
+                // Refused: nothing is written at all, so nothing is left standing.
+                HumanRulePlan::StrandsFlag { flag_at: at } => assert_eq!(at, flag_at, "{verb}"),
+                // Landed: then the flag must come off in this very call.
+                HumanRulePlan::Record { clears, .. } => assert!(
+                    disposes(&clears),
+                    "{verb} landed on a live flag without retiring it: {clears:?}"
+                ),
+                other => panic!("{verb}: {other:?}"),
+            }
+        }
+        // `human-close` is the third mover on this surface and is NOT in the vocabulary table
+        // (#213: deciding a close IS executing one), so it is asserted by name or it is asserted
+        // by nothing. Its retirement lives in `human_close_plan`, not in the ruling plan.
+        let (_, _, clears, ..) = close_record(human_close_plan(&flagged, false));
+        assert!(disposes(&clears), "human-close must retire it: {clears:?}");
+        // The two sides are exactly `FLAG_DISPOSING_RULINGS`: the verbs that land are the verbs
+        // that dispose, which is what "the verb is its own disposition" means and where the
+        // refusal draws its line.
+        let (landing, refused): (Vec<&str>, Vec<&str>) = human_rulings(&HUMAN_ISSUE_RULINGS)
+            .into_iter()
+            .partition(|v| FLAG_DISPOSING_RULINGS.contains(v));
+        assert_eq!(landing, ["keep-open"]);
+        assert_eq!(refused, ["needs-work", "design"]);
+    }
+
     // The PR side has NO stranding arm, structurally (#211's shape cannot arise since #219):
     // every PR ruling's target is the ONE `ai:*` needs-work state, which disposes a live flag by
     // clearing its label through the same one-state rule — whichever verb ruled. What the test
@@ -54731,8 +54942,8 @@ mod human_rule_tests {
         );
         assert!(human_close_ruled(&torn));
         let (gate, action, _) = cc_row("o/r", 93, "t", &torn, false);
-        assert_eq!(gate, CcGate::TornHumanClose);
-        assert_eq!(action, "complete-human-close");
+        assert_eq!(gate, CcGate::TornHumanRuling);
+        assert_eq!(action, CC_COMPLETE_RULING);
         // Tear after Comment, subject UNFLAGGED: no scan enumerates it, so the exit is the re-run
         // of the same command — the comment dedups and the plan's remaining step is the act.
         let unflagged = issue(
@@ -54793,8 +55004,85 @@ mod human_rule_tests {
             !human_close_ruled(&kept),
             "a keep-open ruling is not a close"
         );
+        // …and with no `human:keep-open` LABEL on the issue either, the comment alone is not a
+        // torn ruling: `human-rule-issue` posts its comment BEFORE it adds the label, so this
+        // prefix is the re-run's to resume, not the state-load's to complete. The subject stays in
+        // the ordinary lifecycle.
         let (gate, ..) = cc_row("o/r", 93, "t", &kept, false);
-        assert_ne!(gate, CcGate::TornHumanClose);
+        assert_ne!(gate, CcGate::TornHumanRuling);
+        // One step later — the label landed, the flag clear did not — it IS the torn write, and
+        // the completion retires the flag WITHOUT closing an issue the human ruled keep-open.
+        // This is the pair the deleted `HumanRuled` arm used to park for ever.
+        let mut labelled = kept.clone();
+        labelled["labels"] = json!([{"name": "ai:close-candidate"}, {"name": "human:keep-open"}]);
+        assert!(torn_human_ruling(&labelled, at));
+        assert!(!human_close_ruled(&labelled), "still not a close");
+        let (gate, action, _) = cc_row("o/r", 93, "t", &labelled, false);
+        assert_eq!(gate, CcGate::TornHumanRuling);
+        assert_eq!(action, CC_COMPLETE_RULING);
+    }
+
+    /// ONE state, TWO writes, and which one is owed is read off the record rather than assumed
+    /// (#244). Getting this backwards is the expensive direction: it would CLOSE an issue a human
+    /// ruled `keep-open`, on the strength of a state name.
+    #[test]
+    fn the_completion_closes_only_where_a_close_was_actually_ruled() {
+        let at = "2026-07-17T21:23:11Z";
+        let ruled = |verb: &str| {
+            json!({
+                "author": {"login": TRUSTED_AUTHOR},
+                "body": human_rule_comment(&format!("close-candidate @{at}"), verb, "evidence"),
+            })
+        };
+        // A recorded close ruling: the terminal act, then the flag.
+        let closed = issue(
+            &["ai:close-candidate"],
+            "2026-01-01T00:00:00Z",
+            Some(at),
+            vec![ruled("close-candidate")],
+        );
+        assert_eq!(
+            torn_ruling_completion(&closed),
+            TornRulingCompletion::CloseThenRetireFlag
+        );
+        // Every OTHER ruling in the vocabulary, standing as a label beside the live flag: the flag
+        // comes off and the subject stays open. Iterated over the table so a new verb is covered
+        // by the day it lands, and asserted with its ruling COMMENT present too — the comment is
+        // what a "read the newest ruling word" implementation would trip over.
+        for (verb, target) in HUMAN_ISSUE_RULINGS {
+            let Some(label) = target else { continue };
+            let kept = issue(
+                &[label, "ai:close-candidate"],
+                "2026-01-01T00:00:00Z",
+                Some(at),
+                vec![ruled(verb)],
+            );
+            assert!(torn_human_ruling(&kept, at), "{verb}");
+            assert_eq!(
+                torn_ruling_completion(&kept),
+                TornRulingCompletion::RetireFlag,
+                "{verb} must never be completed as a close"
+            );
+        }
+        // And where BOTH marks are present — the only way that happens is `human-close` tearing
+        // between its comment and its label removals — the close wins, which is the precedence
+        // `human_close_plan` already writes down by superseding every standing `human:*` ruling.
+        let both = issue(
+            &["human:keep-open", "ai:close-candidate"],
+            "2026-01-01T00:00:00Z",
+            Some(at),
+            vec![ruled("keep-open"), ruled("close-candidate")],
+        );
+        assert_eq!(
+            torn_ruling_completion(&both),
+            TornRulingCompletion::CloseThenRetireFlag
+        );
+        let (_, supersedes, ..) = close_record(human_close_plan(&both, false));
+        assert!(
+            supersedes.contains(&"human:keep-open".to_string()),
+            "the close supersedes the standing ruling, which is why it outranks it here: \
+             {supersedes:?}"
+        );
     }
 
     // WHICH GitHub operation each step performs. A `Close` spelled as an `edit`, or an

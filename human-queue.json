@@ -959,8 +959,14 @@
         ]
       },
       "un-vetted": {
-        "count": 27,
+        "count": 28,
         "prs": [
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 246,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/246",
+            "title": "feat(runners): --force one manual run past the usage-gate pause"
+          },
           {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 242,
@@ -1864,12 +1870,6 @@
   "closeCandidateUnvetted": [],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
-    {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 240,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/240",
-      "title": "Dashboard design-lane count must match /ndd: presentable is the inbox, noQuestion is a defect bucket"
-    },
     {
       "repo": "rainlanguage/issue-pr-cron",
       "number": 239,
@@ -5577,7 +5577,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 27,
+    "unvetted": 28,
     "blockedOn": 17,
     "ready": 0,
     "needsWork": 94,
@@ -5588,16 +5588,16 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 144,
+    "totalProducerPrs": 145,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 614,
+    "uncoveredIssues": 613,
     "openIssues": 775
   },
   "ages": {
     "openIssues": {
-      "meanDays": 314.4,
-      "medianDays": 103.0,
-      "oldestDays": 1658.6
+      "meanDays": 314.5,
+      "medianDays": 103.1,
+      "oldestDays": 1658.7
     }
   }
 }
