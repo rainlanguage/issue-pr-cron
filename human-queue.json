@@ -2,6 +2,18 @@
   "states": {
     "ai:blocked-on": [
       {
+        "repo": "rainlanguage/rain.factory",
+        "number": 51,
+        "url": "https://github.com/rainlanguage/rain.factory/pull/51",
+        "title": "feat: open-salt deterministic clone variant (ICloneableFactoryV4)"
+      },
+      {
+        "repo": "rainlanguage/rain.factory.deploy",
+        "number": 7,
+        "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/7",
+        "title": "AddressRegistry: the write-once IAddressRegistryV1 concrete"
+      },
+      {
         "repo": "rainlanguage/rain.factory.deploy",
         "number": 6,
         "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/6",
@@ -850,8 +862,20 @@
   "lanes": {
     "vet-lifecycle": {
       "ai:blocked-on": {
-        "count": 17,
+        "count": 19,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 51,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/51",
+            "title": "feat: open-salt deterministic clone variant (ICloneableFactoryV4)"
+          },
+          {
+            "repo": "rainlanguage/rain.factory.deploy",
+            "number": 7,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/7",
+            "title": "AddressRegistry: the write-once IAddressRegistryV1 concrete"
+          },
           {
             "repo": "rainlanguage/rain.factory.deploy",
             "number": 6,
@@ -957,32 +981,8 @@
         ]
       },
       "un-vetted": {
-        "count": 28,
+        "count": 24,
         "prs": [
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 250,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/250",
-            "title": "Producer strands itself: the wait is a foreground call, and an unfinished run is not ok"
-          },
-          {
-            "repo": "rainlanguage/rain-org-health",
-            "number": 171,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/171",
-            "title": "feat(metrics): a forced run can override more than one stop"
-          },
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 51,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/51",
-            "title": "feat: open-salt deterministic clone variant (ICloneableFactoryV4)"
-          },
-          {
-            "repo": "rainlanguage/rain.factory.deploy",
-            "number": 7,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/7",
-            "title": "AddressRegistry: the write-once IAddressRegistryV1 concrete"
-          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 26,
@@ -5570,8 +5570,8 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 28,
-    "blockedOn": 17,
+    "unvetted": 24,
+    "blockedOn": 19,
     "ready": 0,
     "needsWork": 100,
     "relink": 0,
@@ -5581,16 +5581,16 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 145,
+    "totalProducerPrs": 143,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 613,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 774
+    "openIssues": 773
   },
   "ages": {
     "openIssues": {
-      "meanDays": 315.0,
+      "meanDays": 315.4,
       "medianDays": 103.2,
       "oldestDays": 1658.8
     }
