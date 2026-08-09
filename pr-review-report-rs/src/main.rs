@@ -27466,6 +27466,11 @@ struct DesignQueue {
     counts: DesignQueueCounts,
     withheld: Vec<Value>,
     errors: Vec<Value>,
+    /// The `noQuestion` bucket as ADDRESSES — the same rows `counts.no_question` counts and the
+    /// withheld list names, carried typed so the design doctor (#241) acts on the classifier's own
+    /// bucket rather than re-deriving it by parsing a listed string (classification by message is
+    /// the defect class the typed [`NdOutcome`] exists to prevent). In candidate order.
+    no_question: Vec<(String, u64)>,
 }
 
 /// PURE given `fetch`: the whole per-hit phase of the design queue — the search-JSON classification
@@ -27510,7 +27515,14 @@ fn nd_classify(
     let outcomes = map_bounded(&candidates, |(slug, num)| {
         nd_outcome(slug, *num, fetch(slug, *num))
     });
-    for out in outcomes {
+    // [`map_bounded`] returns one outcome per candidate IN CANDIDATE ORDER, so zipping is the
+    // typed route back from an outcome to the address it was computed for — the doctor's bucket
+    // is captured here, beside the fold, rather than re-parsed out of the withheld list's prose.
+    let mut no_question: Vec<(String, u64)> = Vec::new();
+    for ((slug, num), out) in candidates.iter().zip(outcomes) {
+        if matches!(out, NdOutcome::NoQuestion { .. }) {
+            no_question.push((slug.clone(), *num));
+        }
         nd_apply_outcome(out, &mut designs, &mut counts, &mut withheld, &mut errors);
     }
     DesignQueue {
@@ -27518,6 +27530,7 @@ fn nd_classify(
         counts,
         withheld,
         errors,
+        no_question,
     }
 }
 
@@ -27548,6 +27561,9 @@ fn next_design_fetch(limit: usize) -> Result<Value, String> {
         counts,
         withheld,
         errors,
+        // The doctor's bucket. This READ presents it through `counts.noQuestion` + the withheld
+        // list; acting on it is `design_doctor_mode`'s (#241).
+        no_question: _,
     } = nd_classify(&arr, frozen.len(), nd_pr_detail);
     rank_designs(&mut designs);
     let rows: Vec<Value> = next_design_page(&designs, limit)
@@ -27573,6 +27589,642 @@ fn next_design_fetch(limit: usize) -> Result<Value, String> {
             more_errors,
         },
     ))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// design-doctor — the FSM pass that routes every noQuestion `ai:design` row
+// back to `ai:needs-work` (#241).
+//
+// An `ai:design` label with no trusted comment raising a question is a state no
+// actor consumes: `next_design` withholds it (there is no claim to present),
+// the producer and vetter both skip it (`ai:design` parks the PR outside every
+// AI actor's queue by design), and no other command lists it — so the row sits
+// for ever. Ruling (thedavidmeister, 2026-08-09, #241): the FSM-conformance
+// pass moves ALL such rows to `ai:needs-work`, automatically. The work the
+// send-back carries is well-defined: re-raise the question with a trusted
+// `flag-design` comment if one still exists, otherwise proceed with the PR.
+//
+// Detection is `next_design`'s OWN classification — [`nd_classify`], the one
+// classifier, over the one enumeration [`design_open_prs_args`] spells — and
+// the transition is the standard needs-work send-back: the trusted `Rework
+// note` work order at the current head plus the ONE-STATE label move, performed
+// through the same step machinery every human ruling uses. No second detector,
+// no hand-rolled label write.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The state the doctor routes INTO — THE needs-work state every send-back lands (#133/#219).
+const DESIGN_DOCTOR_TARGET: &str = "ai:needs-work";
+
+/// The work order every routed row carries, posted VERBATIM as the trusted
+/// `Rework note @<head>: …` comment ([`rework_note_comment`] — the exact shape the producer's
+/// author-verified marker read accepts, so a routed row lands actionable, never parked).
+///
+/// It names WHY the row was routed (the label was present with no trusted raising comment at the
+/// current head — a routing fix, not a code defect) and BOTH exits the producer may take.
+const DESIGN_DOCTOR_ORDER: &str = "routed ai:design -> ai:needs-work by the design doctor \
+(https://github.com/rainlanguage/issue-pr-cron/issues/241): the ai:design label was present but \
+no trusted comment raises a design question at the current head, so the row sat in a state no \
+actor consumes. This is a routing fix, not a code defect. Choose one: re-raise the question with \
+a trusted flag-design comment (`pr-review-report flag-design <owner/repo> <pr> \"<question>\"`) \
+if a genuine design question still exists; otherwise proceed with the PR under the normal lanes \
+— the question was superseded or never recorded.";
+
+/// The `gh pr view --json` fields [`design_doctor_plan`] reads — named for [`PR_RULE_FIELDS`]'s
+/// reason: a field the plan reads but the fetch omits is a guard that silently stops firing.
+/// `reviewDecision` is here because the write guard is [`pr_human_sacred`], which reads it; the
+/// classifier's own fetch ([`nd_pr_detail`]) has no reason to carry it.
+const DESIGN_DOCTOR_ROUTE_FIELDS: &str = "state,headRefOid,labels,comments,reviewDecision";
+
+/// PURE: may the doctor route this PR, and what does the send-back change? Computed from a FRESH
+/// `gh pr view` at write time — the guard-before-write shape every transition here has
+/// ([`producer_state_plan`], [`human_pr_rule_plan`]) — so a row that moved between the enumeration
+/// and the write is re-judged, not written over. The actionability rule is #241's, re-checked with
+/// the CLASSIFIER'S OWN functions: label present ([`label_names`]), no live trusted question
+/// ([`last_design_question`] — the author-scoped read, so a spoofed marker still counts for
+/// nothing), no human override ([`pr_human_sacred`]).
+#[derive(Debug, PartialEq)]
+enum DesignDoctorPlan {
+    /// Merged or closed since the enumeration: the state a route would move it out of is terminal.
+    Moot,
+    /// `ai:design` is no longer on the PR — some other transition already consumed the row. This
+    /// is also the second run's answer for every row the first run routed, which is what makes
+    /// the pass idempotent even when the enumeration races the write.
+    LeftDesign,
+    /// A trusted comment raises a live design question after all (raised since the enumeration,
+    /// or the classifier read a stale snapshot): the row is the human's, and the doctor's writing
+    /// over it would erase a real claim.
+    QuestionLive,
+    /// A human decision is present ([`pr_human_sacred`]): a native review, or a `👤 human` ruling
+    /// pinned to this head. The `human:*` namespace dominates every machine move, this one
+    /// included.
+    HumanSacred,
+    /// No head sha — nothing to pin the work order to, the same refusal every ruling makes rather
+    /// than posting an order bound to nothing.
+    NoAnchor,
+    /// Route it: the standard needs-work send-back.
+    Route {
+        /// The head the work order pins to.
+        head: String,
+        /// Every `ai:*` label except the target — [`labels_to_remove`], the ONE-STATE rule.
+        clears: Vec<String>,
+        /// `ai:needs-work` already present (a retry finishing a half-written route).
+        has_target: bool,
+        /// The identical work order is already posted ([`rework_note_recorded`]) — a retry posts
+        /// no duplicate.
+        note_deduped: bool,
+    },
+}
+
+fn design_doctor_plan(pr_json: &Value) -> DesignDoctorPlan {
+    if pr_json
+        .get("state")
+        .and_then(|s| s.as_str())
+        .is_some_and(|s| s != "OPEN")
+    {
+        return DesignDoctorPlan::Moot;
+    }
+    let labels = label_names(pr_json);
+    if !labels.iter().any(|l| l == "ai:design") {
+        return DesignDoctorPlan::LeftDesign;
+    }
+    if last_design_question(pr_json).is_some() {
+        return DesignDoctorPlan::QuestionLive;
+    }
+    let head = pr_json
+        .get("headRefOid")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    // The human check comes BEFORE the anchor check: a native review is sacred whether or not the
+    // API handed back a head to pin anything to.
+    if pr_human_sacred(pr_json, head) {
+        return DesignDoctorPlan::HumanSacred;
+    }
+    if head.is_empty() {
+        return DesignDoctorPlan::NoAnchor;
+    }
+    DesignDoctorPlan::Route {
+        head: head.to_string(),
+        clears: labels_to_remove(&labels, DESIGN_DOCTOR_TARGET),
+        has_target: labels.iter().any(|l| l == DESIGN_DOCTOR_TARGET),
+        note_deduped: rework_note_recorded(
+            pr_json,
+            &rework_note_comment(head, DESIGN_DOCTOR_ORDER),
+        ),
+    }
+}
+
+/// PURE: the write sequence ONE route performs — [`human_rule_steps`] + [`with_rework_note`], the
+/// same machinery every human ruling's send-back goes through, so the doctor hand-rolls no label
+/// write and inherits the tested fail-safe order: the work order FIRST (a failure after it leaves
+/// the row still `ai:design`, re-found and finished by the next run with the note deduping), then
+/// ensure/add the one target state, then the removals.
+///
+/// `skip_comment` is hard-true because the doctor records no ruling comment — the work order IS
+/// the whole record, and with no `Comment` step [`with_rework_note`] places it first.
+fn design_doctor_steps(
+    clears: &[String],
+    has_target: bool,
+    note_deduped: bool,
+    order_body: String,
+) -> Vec<RuleStep> {
+    with_rework_note(
+        human_rule_steps(&[], clears, true, has_target, true),
+        (!note_deduped).then_some(order_body),
+    )
+}
+
+/// One row's route: fetch fresh, plan, and — outside `--dry-run` — perform the steps through
+/// [`human_rule_write`]. Every non-`Route` plan is an `Ok` that says why nothing was written: the
+/// doctor's contract is convergence, and a row that left the state by another door is the pass
+/// succeeding, not failing.
+fn design_doctor_route(slug: &str, num: u64, dry_run: bool) -> Result<String, (i32, String)> {
+    let n = num.to_string();
+    let Some(prj) = gh_json(&[
+        "pr",
+        "view",
+        &n,
+        "-R",
+        slug,
+        "--json",
+        DESIGN_DOCTOR_ROUTE_FIELDS,
+    ]) else {
+        return Err((
+            1,
+            format!("error: `gh pr view {slug}#{num}` failed — not writing on incomplete data"),
+        ));
+    };
+    let (head, clears, has_target, note_deduped) = match design_doctor_plan(&prj) {
+        DesignDoctorPlan::Moot => {
+            return Ok(format!(
+                "{slug}#{num}: no longer open — the state a route would move it out of is terminal; nothing written"
+            ));
+        }
+        DesignDoctorPlan::LeftDesign => {
+            return Ok(format!(
+                "{slug}#{num}: ai:design is no longer present — already consumed by another transition; nothing written"
+            ));
+        }
+        DesignDoctorPlan::QuestionLive => {
+            return Ok(format!(
+                "{slug}#{num}: a trusted comment raises a live design question — the row is the human's; nothing written"
+            ));
+        }
+        DesignDoctorPlan::HumanSacred => {
+            return Ok(format!(
+                "{slug}#{num}: human decision present — not overriding; nothing written"
+            ));
+        }
+        DesignDoctorPlan::NoAnchor => {
+            return Err((
+                1,
+                format!(
+                    "error: {slug}#{num} has no head sha — a work order pinned to nothing is the \
+                     bare label this transition replaces"
+                ),
+            ));
+        }
+        DesignDoctorPlan::Route {
+            head,
+            clears,
+            has_target,
+            note_deduped,
+        } => (head, clears, has_target, note_deduped),
+    };
+    let order_body = rework_note_comment(&head, DESIGN_DOCTOR_ORDER);
+    if dry_run {
+        return Ok(format!(
+            "[dry-run] {slug}#{num} -> {DESIGN_DOCTOR_TARGET}\n  labels to remove: {}\n  work order: {}",
+            if clears.is_empty() {
+                "(none)".to_string()
+            } else {
+                clears.join(", ")
+            },
+            if note_deduped {
+                "skip (identical order already posted)".to_string()
+            } else {
+                format!("post @ {head}")
+            },
+        ));
+    }
+    let steps = design_doctor_steps(&clears, has_target, note_deduped, order_body);
+    // The `comment` argument feeds only a `Comment` step, and the doctor's step list never
+    // contains one — its whole record is the work order the steps carry.
+    human_rule_write("pr", slug, &n, DESIGN_DOCTOR_TARGET, "", &steps)?;
+    Ok(format!(
+        "routed {slug}#{num} -> {DESIGN_DOCTOR_TARGET}{}{}",
+        if clears.is_empty() {
+            String::new()
+        } else {
+            format!(" (removed {})", clears.join(","))
+        },
+        if note_deduped {
+            " [work order deduped]"
+        } else {
+            " [work order posted]"
+        },
+    ))
+}
+
+/// `design-doctor [--dry-run]`: the whole pass — enumerate the `ai:design` population ONCE (the
+/// same search, archived-repo withholding and classifier `next_design` runs), then route every
+/// row the classifier bucketed `noQuestion` back to `ai:needs-work`. The routes fan out through
+/// [`map_bounded`] exactly as the classifying reads do — the population is whatever the org has,
+/// never assumed small — and are REPORTED serially in candidate order.
+///
+/// Idempotent: a route strips `ai:design`, so a second run's enumeration finds zero rows; a row
+/// re-found mid-write (a half-finished retry) re-plans against fresh state and the note dedups.
+/// A failed enumeration writes nothing and exits non-zero — routing over a falsely-empty or
+/// half-read population is the lie every enumeration here refuses to act on.
+fn design_doctor_mode(dry_run: bool) -> i32 {
+    let args = design_open_prs_args();
+    let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+    let Some(val) = gh_json(&argref) else {
+        eprintln!("error: `gh search prs --label ai:design` failed (transient API error / auth?) — not routing on incomplete data");
+        return 1;
+    };
+    let Some(arr) = val.as_array() else {
+        eprintln!("error: `gh search prs` returned non-array JSON — aborting");
+        return 1;
+    };
+    let archived_set = match archived_repos() {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("{}", archived_read_error(e));
+            return 1;
+        }
+    };
+    let (live, frozen) = nd_population(arr.clone(), &archived_set);
+    let q = nd_classify(&live, frozen.len(), nd_pr_detail);
+    let c = &q.counts;
+    println!(
+        "design-doctor: aiDesign={} presentable={} noQuestion={} draft={} unaddressable={} fetchErrors={} archivedRepo={}",
+        c.raw, c.presentable, c.no_question, c.draft, c.unaddressable, c.fetch_errors, c.archived_repo
+    );
+    // A row that could not be read was not classified, so this run cannot say it conforms: name
+    // each one and fail the tick, so the miss is a red cron line rather than a silent shrink.
+    for e in &q.errors {
+        eprintln!(
+            "  unread: {} — {}",
+            e["pr"].as_str().unwrap_or_default(),
+            e["why"].as_str().unwrap_or_default()
+        );
+    }
+    if q.no_question.is_empty() {
+        println!("design-doctor: no noQuestion rows — every ai:design PR carries a live trusted question");
+        return if c.fetch_errors > 0 { 1 } else { 0 };
+    }
+    let results = map_bounded(&q.no_question, |(slug, num)| {
+        design_doctor_route(slug, *num, dry_run)
+    });
+    let mut failed = c.fetch_errors > 0;
+    for res in results {
+        match res {
+            Ok(line) => println!("{line}"),
+            Err((_, msg)) => {
+                eprintln!("{msg}");
+                failed = true;
+            }
+        }
+    }
+    if failed {
+        1
+    } else {
+        0
+    }
+}
+
+#[cfg(test)]
+mod design_doctor_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Fixtures through the REAL writers ([`verdict_comment`], [`state_comment`],
+    /// [`human_rule_comment`], [`rework_note_comment`]), so they drift with none of them.
+    fn trusted(body: String) -> Value {
+        json!({
+            "author": {"login": TRUSTED_AUTHOR},
+            "body": body,
+            "createdAt": "2026-08-01T00:00:00Z",
+        })
+    }
+
+    fn labelled(names: &[&str]) -> Vec<Value> {
+        names.iter().map(|n| json!({"name": n})).collect()
+    }
+
+    /// An open `ai:design` PR at `head` with the given trusted-account comments — the doctor's
+    /// route case unless a comment or label says otherwise.
+    fn design_pr(head: &str, labels: &[&str], comments: Vec<Value>) -> Value {
+        json!({
+            "state": "OPEN",
+            "headRefOid": head,
+            "labels": labelled(labels),
+            "comments": comments,
+        })
+    }
+
+    // ── the actionable set IS the classifier's bucket ─────────────────────────────────────────
+
+    fn hit(slug: &str, num: u64) -> Value {
+        json!({
+            "url": format!("https://github.com/{slug}/pull/{num}"),
+            "number": num,
+            "repository": {"nameWithOwner": slug},
+            "isDraft": false,
+            "labels": [{"name": "ai:design"}],
+        })
+    }
+
+    // THE PROPERTY #241 NAMES, derived from the classifier rather than restated beside it: for
+    // every row [`nd_classify`] buckets `noQuestion` the doctor holds exactly one address to
+    // send back, and for every other bucket — presentable, draft, unaddressable, fetchErrors,
+    // archivedRepo — it holds none. One enumeration, one classifier, no second detector.
+    #[test]
+    fn the_doctors_targets_are_exactly_the_classifiers_noquestion_bucket() {
+        let raises = json!({"comments": [trusted(state_comment("ai:design", "why", &[]))]});
+        let silent = json!({"comments": []});
+        let mut hits: Vec<Value> = (0..9).map(|i| hit("o/r", i)).collect();
+        let mut draft = hit("o/d", 40);
+        draft["isDraft"] = json!(true);
+        hits.push(draft);
+        hits.push(json!({"title": "a hit carrying no ref"}));
+        let frozen = 2;
+        let q = nd_classify(&hits, frozen, |_slug, num| match num % 3 {
+            0 => Some(raises.clone()),
+            1 => Some(silent.clone()),
+            _ => None,
+        });
+        // The doctor's set is the silent third — by ADDRESS, in candidate order.
+        let want: Vec<(String, u64)> = (0..9)
+            .filter(|i| i % 3 == 1)
+            .map(|i| ("o/r".to_string(), i))
+            .collect();
+        assert_eq!(q.no_question, want);
+        // …and it is the SAME bucket the counts state: one send-back per counted row, none for
+        // any other bucket, or the partition and the doctor would disagree about the population.
+        assert_eq!(q.no_question.len(), q.counts.no_question);
+        assert_eq!(
+            (
+                q.counts.presentable,
+                q.counts.fetch_errors,
+                q.counts.draft,
+                q.counts.unaddressable,
+                q.counts.archived_repo
+            ),
+            (3, 3, 1, 1, frozen)
+        );
+        // An empty lane is zero targets — the idempotence half: after every row is routed, the
+        // label search returns nothing and a second run has nothing to do.
+        assert!(nd_classify(&[], 0, |_, _| None).no_question.is_empty());
+    }
+
+    // ── the write-time plan: label present, no live question, no human override ───────────────
+
+    #[test]
+    fn a_bare_design_label_routes_and_the_send_back_is_the_one_state_move() {
+        let head = "a".repeat(40);
+        // A trusted comment that raises NOTHING (a vetter ready verdict) alongside the label:
+        // adjacent trusted prose must not read as a question, exactly as `next_design` holds.
+        let pr = design_pr(
+            &head,
+            &["ai:design", "ai:ready", "bug"],
+            vec![trusted(verdict_comment(
+                &head, "ready", "fine", None, "", None,
+            ))],
+        );
+        assert_eq!(
+            design_doctor_plan(&pr),
+            DesignDoctorPlan::Route {
+                head: head.clone(),
+                // EVERY other ai:* comes off, not just ai:design — the one-state rule the
+                // send-back inherits from `labels_to_remove`; human:* and plain labels stay.
+                clears: vec!["ai:design".to_string(), "ai:ready".to_string()],
+                has_target: false,
+                note_deduped: false,
+            }
+        );
+    }
+
+    #[test]
+    fn a_live_trusted_question_withholds_the_route_whoever_raised_it() {
+        let head = "b".repeat(40);
+        for raising in [
+            verdict_comment(
+                &head,
+                "design",
+                "shared or duplicated?",
+                Some(40),
+                "b",
+                None,
+            ),
+            state_comment("ai:design", "version slot taken", &[]),
+        ] {
+            let pr = design_pr(&head, &["ai:design"], vec![trusted(raising.clone())]);
+            assert_eq!(
+                design_doctor_plan(&pr),
+                DesignDoctorPlan::QuestionLive,
+                "{raising:?} must keep the row in the human's queue"
+            );
+        }
+    }
+
+    // The provenance rule is author-scoped already: a third-party comment wearing either raising
+    // marker counts for nothing, so the row ROUTES — the same spoof `next_design` refuses to
+    // present is the one the doctor refuses to be parked by.
+    #[test]
+    fn a_spoofed_raising_marker_does_not_park_the_row() {
+        let head = "c".repeat(40);
+        for body in [
+            format!("🤖 ai:vetter\nReviewed {head}: design — should this be shared?"),
+            "🤖 ai:producer\nDesign-question: should this be shared?".to_string(),
+        ] {
+            let pr = design_pr(
+                &head,
+                &["ai:design"],
+                vec![json!({
+                    "author": {"login": "someone-else"},
+                    "body": body,
+                    "createdAt": "2026-08-01T00:00:00Z",
+                })],
+            );
+            assert!(
+                matches!(design_doctor_plan(&pr), DesignDoctorPlan::Route { .. }),
+                "{body:?} from an untrusted author must not withhold the route"
+            );
+        }
+    }
+
+    // The human:* override dominates the doctor as it dominates every machine move: a `👤 human`
+    // ruling pinned to THIS head, or a native review, and the doctor writes nothing. A ruling
+    // pinned to a SUPERSEDED head is stale by the same rule every actor reads it under, and the
+    // route proceeds.
+    #[test]
+    fn a_human_decision_dominates_the_doctor() {
+        let head = "d".repeat(40);
+        let ruled = design_pr(
+            &head,
+            &["ai:design"],
+            vec![trusted(human_rule_comment(&head, "needs-work", "my call"))],
+        );
+        assert_eq!(design_doctor_plan(&ruled), DesignDoctorPlan::HumanSacred);
+
+        let mut reviewed = design_pr(&head, &["ai:design"], vec![]);
+        reviewed["reviewDecision"] = json!("CHANGES_REQUESTED");
+        assert_eq!(design_doctor_plan(&reviewed), DesignDoctorPlan::HumanSacred);
+
+        let stale = design_pr(
+            &head,
+            &["ai:design"],
+            vec![trusted(human_rule_comment(
+                &"e".repeat(40),
+                "needs-work",
+                "about an old head",
+            ))],
+        );
+        assert!(matches!(
+            design_doctor_plan(&stale),
+            DesignDoctorPlan::Route { .. }
+        ));
+    }
+
+    #[test]
+    fn a_terminal_unlabelled_or_anchorless_row_is_never_routed() {
+        let head = "f".repeat(40);
+        let mut merged = design_pr(&head, &["ai:design"], vec![]);
+        merged["state"] = json!("MERGED");
+        assert_eq!(design_doctor_plan(&merged), DesignDoctorPlan::Moot);
+
+        // The post-route state, which is also every row a concurrent transition consumed first:
+        // the second run writes nothing — idempotence at the plan, not only at the search.
+        let routed = design_pr(&head, &[DESIGN_DOCTOR_TARGET], vec![]);
+        assert_eq!(design_doctor_plan(&routed), DesignDoctorPlan::LeftDesign);
+
+        let anchorless = design_pr("", &["ai:design"], vec![]);
+        assert_eq!(design_doctor_plan(&anchorless), DesignDoctorPlan::NoAnchor);
+    }
+
+    // ── the transition is the standard machinery, in the fail-safe order ──────────────────────
+
+    #[test]
+    fn the_route_steps_are_the_note_first_then_the_one_state_label_moves() {
+        let body = rework_note_comment(&"a".repeat(40), DESIGN_DOCTOR_ORDER);
+        assert_eq!(
+            design_doctor_steps(&["ai:design".to_string()], false, false, body.clone()),
+            vec![
+                // The work order FIRST: a failure after it leaves the row still ai:design —
+                // re-found by the next run, the note deduped — never a needs-work with no order.
+                RuleStep::ReworkNote(body.clone()),
+                RuleStep::EnsureLabel,
+                RuleStep::AddLabel,
+                RuleStep::RemoveLabel("ai:design".to_string()),
+            ]
+        );
+        // A retry finishing a half-written route: the note is on the record and the target is
+        // on the PR, so what remains is exactly the removals — nothing posts twice.
+        assert_eq!(
+            design_doctor_steps(&["ai:design".to_string()], true, true, body),
+            vec![
+                RuleStep::EnsureLabel,
+                RuleStep::RemoveLabel("ai:design".to_string()),
+            ]
+        );
+    }
+
+    // THE POINT OF THE SHAPE: the routed row must land ACTIONABLE for the producer — the work
+    // order is read back by the producer's own trusted-marker verification, so the row classifies
+    // `WorkOrder`, never `Parked`. A doctor whose note the producer cannot read would move rows
+    // from one dead state to another.
+    #[test]
+    fn a_routed_row_lands_actionable_for_the_producer_never_parked() {
+        let head = "a".repeat(40);
+        let labels = vec![DESIGN_DOCTOR_TARGET.to_string()];
+        let routed = json!({
+            "comments": [trusted(rework_note_comment(&head, DESIGN_DOCTOR_ORDER))],
+        });
+        assert_eq!(
+            needs_work_state(&labels, &routed),
+            NeedsWorkState::WorkOrder,
+            "the doctor's send-back must be consumable by the producer's own read"
+        );
+        // …and the trust is the AUTHOR, not the marker: the same body from a third party leaves
+        // the row parked, so a spoofed order cannot feed the producer instructions.
+        let spoofed = json!({
+            "comments": [{
+                "author": {"login": "someone-else"},
+                "body": rework_note_comment(&head, DESIGN_DOCTOR_ORDER),
+                "createdAt": "2026-08-01T00:00:00Z",
+            }],
+        });
+        assert_eq!(needs_work_state(&labels, &spoofed), NeedsWorkState::Parked);
+    }
+
+    // The note is posted verbatim on every routed row, so its content is a contract: it must name
+    // the WHY (label present, no trusted raising comment at the current head) and BOTH exits —
+    // re-flag or proceed — with the full issue URL for the ruling it executes.
+    #[test]
+    fn the_work_order_names_the_why_and_both_exits() {
+        assert!(DESIGN_DOCTOR_ORDER
+            .contains("no trusted comment raises a design question at the current head"));
+        assert!(
+            DESIGN_DOCTOR_ORDER.contains("flag-design"),
+            "the re-raise exit must name the transition that performs it"
+        );
+        assert!(
+            DESIGN_DOCTOR_ORDER.contains("otherwise proceed with the PR"),
+            "the proceed exit must be stated, or the producer reads the route as an obligation \
+             to re-flag"
+        );
+        assert!(DESIGN_DOCTOR_ORDER
+            .contains("https://github.com/rainlanguage/issue-pr-cron/issues/241"));
+        // The dedup that makes a retry idempotent is FULL-BODY equality, so the order must be
+        // byte-stable run to run — no timestamps, no per-run text.
+        assert_eq!(
+            rework_note_comment("H", DESIGN_DOCTOR_ORDER),
+            rework_note_comment("H", DESIGN_DOCTOR_ORDER)
+        );
+    }
+
+    // The doctor's re-plan after its own completed route: the identical order is on the record,
+    // pinned to the SAME head, so a re-found row (label restored by hand, say) posts nothing new.
+    #[test]
+    fn an_already_posted_order_at_the_same_head_dedups() {
+        let head = "a".repeat(40);
+        let pr = design_pr(
+            &head,
+            &["ai:design"],
+            vec![trusted(rework_note_comment(&head, DESIGN_DOCTOR_ORDER))],
+        );
+        match design_doctor_plan(&pr) {
+            DesignDoctorPlan::Route { note_deduped, .. } => assert!(note_deduped),
+            other => panic!("expected a route, got {other:?}"),
+        }
+        // A MOVED head un-pins the order — the producer trusts only a note pinned to the head it
+        // is asked to rework — so the doctor posts a fresh one there.
+        let moved = design_pr(
+            &"b".repeat(40),
+            &["ai:design"],
+            vec![trusted(rework_note_comment(&head, DESIGN_DOCTOR_ORDER))],
+        );
+        match design_doctor_plan(&moved) {
+            DesignDoctorPlan::Route { note_deduped, .. } => assert!(!note_deduped),
+            other => panic!("expected a route, got {other:?}"),
+        }
+    }
+
+    // The CLI surface: the subcommand parses on its kebab-case name with the standard --dry-run,
+    // pinned as `cli_tests` pins every other subcommand's.
+    #[test]
+    fn the_design_doctor_subcommand_parses_with_the_standard_dry_run() {
+        use clap::Parser;
+        let cmd = Cli::try_parse_from(["prr", "design-doctor"])
+            .expect("design-doctor must parse")
+            .command;
+        assert_eq!(cmd, Cmd::DesignDoctor { dry_run: false });
+        let cmd = Cli::try_parse_from(["prr", "design-doctor", "--dry-run"])
+            .expect("design-doctor --dry-run must parse")
+            .command;
+        assert_eq!(cmd, Cmd::DesignDoctor { dry_run: true });
+    }
 }
 
 /// Digits reserved, per numeric field, in the fixed allowances above — [`NR_MAX_DIGITS`]'s role.
@@ -34116,6 +34768,14 @@ enum Cmd {
         #[arg(long)]
         dry_run: bool,
     },
+    /// FSM doctor for the design lane (#241): route every `ai:design` PR with NO live trusted
+    /// design question back to `ai:needs-work`, posting the trusted work order (re-flag or
+    /// proceed) at the current head. Detection is `next_design`'s own classifier; human decisions
+    /// and live questions are left alone. Idempotent — a second run finds zero rows.
+    DesignDoctor {
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// RETIRED (#162): refuses, naming the replacement (`flag-blocked-on --blocked-by <the repo's
     /// migration ref>`). Kept parseable so the refusal can teach — a clap unknown-subcommand error
     /// names neither the why nor the repair. See [`retired_flag_blocked_deploy_refusal`].
@@ -37809,6 +38469,7 @@ fn main() {
         Cmd::InfraDown { reason, root_cause } => infra_down_mode(&reason.join(" "), &root_cause),
         Cmd::RunInfra { record, json } => run_infra_mode(record.as_deref(), json),
         Cmd::RetireBlockedInfra { dry_run } => retire_blocked_infra_mode(dry_run),
+        Cmd::DesignDoctor { dry_run } => design_doctor_mode(dry_run),
         // RETIRED (#162): unconditional refusal — no fetch, no write, `--dry-run` included.
         Cmd::FlagBlockedDeploy { slug, pr, .. } => {
             eprintln!("{}", retired_flag_blocked_deploy_refusal(&slug, &pr));

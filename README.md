@@ -765,7 +765,40 @@ order, in one call — the same act a rejection is (#219). So every ruling retir
 its own row, which is why the page caps at 3 for `next_ready`'s reason with more
 force: a page is stale past its head by construction.
 
-### Vetting is a pure function, and `vetted_at_head` is its cache key
+#### `design-doctor` — the machine exit for the `noQuestion` bucket (#241)
+
+A `noQuestion` row — the label on the PR with no trusted comment raising a
+question behind it — is a state no actor consumes: `next_design` withholds it
+(there is no claim to present), the producer and vetter both skip it
+(`ai:design` parks the PR by design), and no other command lists it, so the row
+sits for ever. The withholding is right; what was missing is any transition OUT.
+`design-doctor [--dry-run]` is that transition, ruled in
+[#241](https://github.com/rainlanguage/issue-pr-cron/issues/241): the daily pass
+routes **every** `noQuestion` row back to `ai:needs-work`, automatically.
+
+- **Detection is `next_design`'s own classifier** — the same search, the same
+  archived-repo withholding, the same author-scoped question read. One
+  enumeration, one classifier, no second detector: the doctor acts on exactly
+  the bucket `counts.noQuestion` states, so the dashboard's defect bucket and
+  the pass that drains it can never disagree about the population.
+- **The transition is the standard needs-work send-back**: the trusted
+  `Rework note @<head>: …` work order plus the ONE-STATE label move (every
+  other `ai:*` cleared via the same removal path each verdict uses), performed
+  through the same step machinery a human ruling's send-back is — note first,
+  so no failure can leave a needs-work with no order. The routed row lands
+  **actionable** (`WorkOrder`, never `Parked`): the order is the exact marker
+  shape the producer's trusted-comments verification reads.
+- **The work order names the WHY and both exits**, verbatim on every routed
+  row: the label was present with no trusted raising comment at the current
+  head — a routing fix, not a code defect — so the producer either re-raises
+  the question with a trusted `flag-design` comment, or proceeds with the PR
+  under the normal lanes.
+- **What it never touches**: a live question (whoever raised it), a human
+  decision (`👤 human` ruling at head or a native review — `human:*` dominates
+  the doctor as it dominates every machine move), drafts, unaddressable hits,
+  archived-repo rows, and anything it could not read (a fetch error fails the
+  tick rather than shrinking it). Idempotent: a route strips `ai:design`, so a
+  second run finds zero rows.
 
 A verdict is the value of one function — **the PR at its current head** — and
 nothing else. A prior verdict is not an input to it: the same PR at the same
@@ -3033,6 +3066,16 @@ recording it provides.
 
   ```cron
   0 0 * * * PATH=$HOME/.nix-profile/bin:/usr/bin:/bin nix run git+file://<install-dir>#pr-review-report -- gc <work-dir> <install-dir> >> <install-dir>/gc.log 2>&1
+  ```
+
+  The **design doctor** (#241) runs daily at 04:00 UTC — a run-free slot, and
+  just ahead of the 05:00 producer tick that consumes what it routes. It is a
+  flake package like the runners (its closure pins `gh` and the binary), and it
+  writes GitHub state, so it is deliberately NOT folded into the data-only
+  `refresh-human-queue` tick:
+
+  ```cron
+  0 4 * * * PATH=$HOME/.nix-profile/bin:/usr/bin:/bin CRON_DIR=<install-dir> nix run git+file://<install-dir>#design-doctor >> <install-dir>/design-doctor.log 2>&1
   ```
 - **Pause:** `touch DISABLED` · **Resume:** `rm DISABLED`
 - **Watch:** `tail -f campaign.log` · **Run now:**

@@ -51,7 +51,7 @@ jobs:
           # writeShellApplication packages that depend on pr-review-report, so the
           # fileset governs their hashes too — churn leaking into the source
           # rebuilds the runner as well as the binary.
-          OUTPUTS="pr-review-report campaign-run review-run refresh-human-queue backfill-human-queue-history review-queue"
+          OUTPUTS="pr-review-report campaign-run review-run refresh-human-queue design-doctor backfill-human-queue-history review-queue"
 
           drvs() {
             for o in $OUTPUTS; do
@@ -205,6 +205,8 @@ jobs:
             date uname getent id flock timeout find sort cut tail rm mkdir tee sed grep gh pr-review-report
           check refresh-human-queue refresh-human-queue \
             date getent id flock mktemp mv rm git pr-review-report
+          check design-doctor design-doctor \
+            date getent id cut flock gh pr-review-report
           check backfill-human-queue-history backfill-human-queue-history git wc pr-review-report
           check review-queue sort-review-queue pr-review-report
           check pr-review-report-sh pr-review-report-sh pr-review-report
