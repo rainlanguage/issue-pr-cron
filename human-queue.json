@@ -981,19 +981,13 @@
         ]
       },
       "un-vetted": {
-        "count": 26,
+        "count": 25,
         "prs": [
           {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 254,
             "url": "https://github.com/rainlanguage/issue-pr-cron/pull/254",
             "title": "Expose the render harness as a subcommand: render-component"
-          },
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 253,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/253",
-            "title": "feat: observation-run instruments — watch-run, token-profile, corpus-report"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -5582,7 +5576,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 26,
+    "unvetted": 25,
     "blockedOn": 19,
     "ready": 0,
     "needsWork": 100,
@@ -5593,17 +5587,17 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 145,
+    "totalProducerPrs": 144,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 613,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 775
+    "openIssues": 774
   },
   "ages": {
     "openIssues": {
-      "meanDays": 315.2,
-      "medianDays": 103.8,
+      "meanDays": 315.7,
+      "medianDays": 103.9,
       "oldestDays": 1659.4
     }
   }
