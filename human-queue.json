@@ -694,12 +694,6 @@
         "title": "fix(lock): gate LOCK on price freshness, send 1% slippage as minSharesOut (A17-4)"
       },
       {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 294,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/294",
-        "title": "feat: show re-up opportunity per receipt on unlock page"
-      },
-      {
         "repo": "rainlanguage/rain.strategies",
         "number": 60,
         "url": "https://github.com/rainlanguage/rain.strategies/pull/60",
@@ -856,6 +850,12 @@
         "number": 125,
         "url": "https://github.com/rainlanguage/rain.flare/pull/125",
         "title": "Fix staleness overflow: use subtraction instead of addition in stale check"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 294,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/294",
+        "title": "feat: show re-up opportunity per receipt on unlock page"
       }
     ]
   },
@@ -981,8 +981,14 @@
         ]
       },
       "un-vetted": {
-        "count": 24,
+        "count": 25,
         "prs": [
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 258,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/258",
+            "title": "Journal LLM mistakes separately from the prompt, so rules can be deleted"
+          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 26,
@@ -1132,7 +1138,7 @@
     },
     "vetter-verdicts": {
       "ai:needs-work": {
-        "count": 100,
+        "count": 99,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -1711,12 +1717,6 @@
             "title": "fix(lock): gate LOCK on price freshness, send 1% slippage as minSharesOut (A17-4)"
           },
           {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 294,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/294",
-            "title": "feat: show re-up opportunity per receipt on unlock page"
-          },
-          {
             "repo": "rainlanguage/rain.strategies",
             "number": 60,
             "url": "https://github.com/rainlanguage/rain.strategies/pull/60",
@@ -1733,6 +1733,17 @@
             "number": 3,
             "url": "https://github.com/rainlanguage/rain.subgraph.docker/pull/3",
             "title": "2023 12 23 anvil"
+          }
+        ]
+      },
+      "ai:ready": {
+        "count": 1,
+        "prs": [
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 294,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/294",
+            "title": "feat: show re-up opportunity per receipt on unlock page"
           }
         ]
       }
@@ -1863,12 +1874,6 @@
   "closeCandidateUnvetted": [],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
-    {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 256,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/256",
-      "title": "Journal LLM mistakes separately from the prompt, so rules can be deleted and the prompt can be A/B'd"
-    },
     {
       "repo": "rainlanguage/issue-pr-cron",
       "number": 239,
@@ -5576,10 +5581,10 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 24,
+    "unvetted": 25,
     "blockedOn": 19,
-    "ready": 0,
-    "needsWork": 100,
+    "ready": 1,
+    "needsWork": 99,
     "relink": 0,
     "design": 0,
     "blockedInfra": 0,
@@ -5587,18 +5592,18 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 143,
+    "totalProducerPrs": 144,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 614,
+    "uncoveredIssues": 613,
     "designPresentable": 0,
     "designNoQuestion": 0,
     "openIssues": 774
   },
   "ages": {
     "openIssues": {
-      "meanDays": 315.7,
+      "meanDays": 315.8,
       "medianDays": 104.0,
-      "oldestDays": 1659.5
+      "oldestDays": 1659.6
     }
   }
 }
