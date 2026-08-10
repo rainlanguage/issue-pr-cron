@@ -353,6 +353,12 @@
       },
       {
         "repo": "cyclofinance/cyclo.site",
+        "number": 389,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/389",
+        "title": "fix(component): guard totalRewards with || 0n fallback in AccountStats"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
         "number": 388,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/388",
         "title": "fix(component): catch getAndStartDataFetcher rejection in DataFetcherProvider"
@@ -816,12 +822,6 @@
         "title": "fix(component): guard zero/invalid tokenId in ReceiptsTable; use BigInt exponentiation"
       },
       {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 389,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/389",
-        "title": "fix(component): guard totalRewards with || 0n fallback in AccountStats"
-      },
-      {
         "repo": "rainlanguage/rain.flare",
         "number": 196,
         "url": "https://github.com/rainlanguage/rain.flare/pull/196",
@@ -981,8 +981,20 @@
         ]
       },
       "un-vetted": {
-        "count": 25,
+        "count": 26,
         "prs": [
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 263,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/263",
+            "title": "Make CLAUDE.md a router: 47,797 → 20,983 bytes, with a pointer per moved file"
+          },
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 262,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/262",
+            "title": "observe-run: prescribe a backgrounded force-run, so a long run reads as a long run"
+          },
           {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 258,
@@ -1098,12 +1110,6 @@
             "title": "fix(component): guard zero/invalid tokenId in ReceiptsTable; use BigInt exponentiation"
           },
           {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 389,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/389",
-            "title": "fix(component): guard totalRewards with || 0n fallback in AccountStats"
-          },
-          {
             "repo": "rainlanguage/rain.flare",
             "number": 196,
             "url": "https://github.com/rainlanguage/rain.flare/pull/196",
@@ -1138,7 +1144,7 @@
     },
     "vetter-verdicts": {
       "ai:needs-work": {
-        "count": 99,
+        "count": 100,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -1373,6 +1379,12 @@
             "number": 390,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/390",
             "title": "fix(store): throw on non-positive Pyth price; use BigInt exponentiation"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 389,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/389",
+            "title": "fix(component): guard totalRewards with || 0n fallback in AccountStats"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -5581,10 +5593,10 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 25,
+    "unvetted": 26,
     "blockedOn": 19,
     "ready": 1,
-    "needsWork": 99,
+    "needsWork": 100,
     "relink": 0,
     "design": 0,
     "blockedInfra": 0,
@@ -5592,16 +5604,16 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 144,
+    "totalProducerPrs": 146,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 613,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 774
+    "openIssues": 776
   },
   "ages": {
     "openIssues": {
-      "meanDays": 315.8,
+      "meanDays": 315.0,
       "medianDays": 104.0,
       "oldestDays": 1659.6
     }
