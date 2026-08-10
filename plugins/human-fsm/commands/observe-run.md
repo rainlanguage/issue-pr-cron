@@ -44,24 +44,12 @@ filter, so what reaches you is the distiller's own lines (`·` narration, `▸`
 tool calls, `⟹` results, `!` warnings) plus the runner's lifecycle lines, and
 nothing else. Its exit code is the **run's**.
 
-Start it in a **background** `Bash` call and **Read** that call's output file as
-the run goes. A run outlives a foreground call — the harness backgrounds one at
-its 600-second ceiling and hands back nothing of the stream when it does, so a
-foreground call buys ten minutes of blank screen and then backgrounds anyway,
-which is how a working run gets read as a hang and killed [LJ-0004].
-Backgrounded from the start it returns in seconds naming its output file, with
-the fast-forward verdict, the `log:` line and `running:` readable there at once.
-One read when you want to know where the run is, then get on with something else
-— the run's exit arrives as a task notification.
-
-**Pipe it into nothing at all** — and read the file instead. `force-run` flushes
-every line as it prints it, and a pipe throws that away: `tail` without `-f`
-reads to EOF before printing anything, so the output file stays empty for the
-whole run [LJ-0004].
-
-If that output file is gone — a restarted session, or a run you did not start —
-the `log:` line names where the same bytes are still being appended, and step
-2's `watch-run` reattaches there.
+Start it in a **background** `Bash` call and read the output file it names.
+Don't pipe it — not `tail`, not `head`, nothing: anything between the stream and
+you holds it. One read when you want to know where the run is, then get on with
+something else; the exit arrives as a task notification. If that file is gone,
+the `log:` line names where the same bytes are still going and step 2's
+`watch-run` reattaches there. [LJ-0004]
 
 `--force` walks **policy** stops and never **correctness** ones. It overrides
 the `DISABLED` kill switch and a usage-gate PAUSE — both are the pipeline
@@ -73,10 +61,7 @@ plus the stop's own line, so this observation stays distinguishable from a paced
 tick in the series it contributes to.
 
 **Killing mid-run is sometimes right** — the 2026-08-09 run was killed once.
-Stopping the background task kills the whole process tree it started, the runner
-among it, and the flock goes with the descriptor it is held on. Probed on
-2026-08-10, backgrounded both ways: neither process survived and the lock was
-free at once.
+Stopping the background task kills the runner and releases the flock [LJ-0004].
 
 ## 2. Reattach, if the stream was interrupted
 
