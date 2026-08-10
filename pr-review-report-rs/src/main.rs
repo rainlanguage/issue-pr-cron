@@ -66665,6 +66665,9 @@ mod vetter_state_load_tests {
         let detail = json!({
             "headRefOid": "h",
             "body": "fix\n\n## QA\n- Discriminating tests: t_x - fails on base",
+            // `changedFiles` makes the list provably COMPLETE — `touches_ui` answers `no` only
+            // off a complete list; without the count this reads `unknown`.
+            "changedFiles": 1,
             "files": [{"path": "src/lib.rs", "additions": 1, "deletions": 0}],
             "comments": [
                 {"author": {"login": TRUSTED_AUTHOR}, "body": "🤖 ai:producer screenshot pending (manual): mounted A.svelte, throws without a query context"},
