@@ -52962,8 +52962,11 @@ mod settings_tests {
 
     /// The vetter's half of #257, and the rule it REUSES rather than restates: only the item goes
     /// into a dispatch. The producer's version of the prohibition names fleet state; the vetter's
-    /// fleet is its `unvetted` page, so that is what this one has to name — and the measurement
-    /// has to travel with it, or the next run reads the rule as stinginess and talks itself out.
+    /// fleet is its `unvetted` page, so that is what this one has to name — and the measurement's
+    /// FIGURE has to travel with it, or the next run reads the rule as stinginess and talks itself
+    /// out. The full story lives in the journal the prompt points at (#265): the prompt carries
+    /// the per-call asymmetry and the LJ pointer, `mistake-journal.jsonl` carries the measured
+    /// run, and both halves are asserted so neither can drift away from the other.
     #[test]
     fn the_review_prompt_fans_the_audit_out_and_pastes_no_queue_state() {
         let Some(prompt) = repo_root_text("review-prompt.txt") else {
@@ -52974,9 +52977,16 @@ mod settings_tests {
             "the FAN OUT rule must name the briefed type in the form the `Agent` call takes"
         );
         assert!(
-            prompt.contains("223,804"),
-            "the rule must carry the measurement that forces it"
+            prompt.contains("LJ-0004") && prompt.contains("224k cached tokens PER CALL"),
+            "the rule must carry the measurement's figure and the journal pointer holding the \
+             full story (#265)"
         );
+        if let Some(journal) = repo_root_text("mistake-journal.jsonl") {
+            assert!(
+                journal.contains("\"LJ-0004\"") && journal.contains("223,804"),
+                "the measured run the prompt's pointer names must live in the journal"
+            );
+        }
         assert!(
             prompt.contains("DO NOT PASTE THE QUEUE INTO A DISPATCH"),
             "the prompt must forbid the obvious kindness, which measures as a loss"
