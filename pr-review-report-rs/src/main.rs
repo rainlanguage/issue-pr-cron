@@ -38313,6 +38313,11 @@ struct ForceRunPlan {
     /// HEAD, so a run started against a stale checkout silently exercises old code — which
     /// happened twice on 2026-08-09, both times costing a whole run.
     fast_forward: Vec<String>,
+    /// Exported to the runner: both runner scripts resolve `DIR="${CRON_DIR:-$PWD}"`, so a child
+    /// without this inherits the CALLER's working directory as its install dir — a cwd that is
+    /// some checkout of this repo silently starts a PAID run against the wrong dir, and any other
+    /// cwd refuses at startup (#264).
+    env: Vec<(String, String)>,
     /// The runner, with the one argument it takes.
     runner: Vec<String>,
     /// Where the same bytes are also being appended, for `watch-run` to reattach to.
@@ -38326,6 +38331,7 @@ fn force_run_plan(role: RunnerRole, install_dir: &str) -> ForceRunPlan {
             .iter()
             .map(|s| (*s).to_string())
             .collect(),
+        env: vec![("CRON_DIR".into(), install_dir.into())],
         // `--` separates nix's own arguments from the runner's, and `--force` is the only argument
         // either runner takes.
         runner: vec![
@@ -38337,6 +38343,32 @@ fn force_run_plan(role: RunnerRole, install_dir: &str) -> ForceRunPlan {
         ],
         log: format!("{install_dir}/{}", role.log_file()),
     }
+}
+
+/// PURE: one word of a paste-able sh command line, quoted only when sh would read it back as
+/// something other than this word. `#` is allowed unquoted because it only opens a comment at the
+/// start of a word, and no word here starts with it.
+fn shell_word(w: &str) -> String {
+    let plain = !w.is_empty()
+        && w.chars()
+            .all(|c| c.is_ascii_alphanumeric() || "@%^_+=:,./#-".contains(c));
+    if plain {
+        w.to_string()
+    } else {
+        format!("'{}'", w.replace('\'', "'\\''"))
+    }
+}
+
+/// PURE: the invocation the previews print, exactly as a human would retype it — assignments
+/// first with the VALUE quoted when it needs it (a quote before the name would stop sh reading an
+/// assignment at all), then the argv. With nothing to quote this is byte-for-byte the manual
+/// invocation the runner headers and the README document.
+fn render_invocation(env: &[(String, String)], argv: &[String]) -> String {
+    env.iter()
+        .map(|(k, v)| format!("{k}={}", shell_word(v)))
+        .chain(argv.iter().map(|a| shell_word(a)))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Pass a live run's own stdout through the watch filter.
@@ -38378,14 +38410,21 @@ fn force_run_mode(role: &str, install_dir: Option<&str>, no_run: bool) -> i32 {
             return 2;
         }
     };
+    // Flag first, then `INSTALL_DIR`, then `CRON_DIR`: the runners' own export is the more
+    // specific name for exactly this dir, and the crontab's `CRON_DIR` names the same dir under
+    // the convention every runner script resolves. An empty value at any level is unset, not a
+    // dir.
+    let env_dir = |name: &str| std::env::var(name).ok().filter(|d| !d.is_empty());
     let Some(dir) = install_dir
         .map(str::to_string)
-        .or_else(|| std::env::var("INSTALL_DIR").ok())
         .filter(|d| !d.is_empty())
+        .or_else(|| env_dir("INSTALL_DIR"))
+        .or_else(|| env_dir("CRON_DIR"))
     else {
         eprintln!(
-            "error: force-run needs --install-dir <dir> (or INSTALL_DIR in the environment) — \
-             a run forced against a guessed install dir spends real money somewhere nobody is watching"
+            "error: force-run needs --install-dir <dir> (or INSTALL_DIR / CRON_DIR in the \
+             environment) — a run forced against a guessed install dir spends real money \
+             somewhere nobody is watching"
         );
         return 2;
     };
@@ -38399,6 +38438,18 @@ fn force_run_mode(role: &str, install_dir: Option<&str>, no_run: bool) -> i32 {
         }
     };
     let plan = force_run_plan(role, &dir);
+    // The plan exports its own `CRON_DIR` to the child, so an exported `CRON_DIR` that disagrees
+    // loses — rightly, the resolved dir is the one this run is pinned to, but never silently.
+    if let Some(ambient) = env_dir("CRON_DIR") {
+        let same = std::fs::canonicalize(&ambient)
+            .map(|p| p.to_string_lossy() == dir)
+            .unwrap_or(false);
+        if !same {
+            println!(
+                "note: CRON_DIR={ambient} in the environment is overridden by CRON_DIR={dir} for this run"
+            );
+        }
+    }
 
     let head = |when: &str| {
         Command::new("git")
@@ -38436,15 +38487,16 @@ fn force_run_mode(role: &str, install_dir: Option<&str>, no_run: bool) -> i32 {
     }
     println!("log: {} (watch-run reattaches here)", plan.log);
     if no_run {
-        println!("would run: {}", plan.runner.join(" "));
+        println!("would run: {}", render_invocation(&plan.env, &plan.runner));
         return 0;
     }
 
-    println!("running: {}", plan.runner.join(" "));
+    println!("running: {}", render_invocation(&plan.env, &plan.runner));
     // stderr is INHERITED, not filtered: nix's build output belongs on a human's terminal
     // unfiltered, and the watch filter is about the run's own trail.
     let child = Command::new(&plan.runner[0])
         .args(&plan.runner[1..])
+        .envs(plan.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
         .stdout(std::process::Stdio::piped())
         .spawn();
     let mut child = match child {
@@ -74345,6 +74397,13 @@ mod observation_recommendation_tests {
             ]
         );
         assert_eq!(
+            p.env,
+            vec![(
+                "CRON_DIR".to_string(),
+                "/home/gildlab/issue-pr-cron".to_string()
+            )]
+        );
+        assert_eq!(
             p.runner,
             vec![
                 "nix",
@@ -74358,9 +74417,35 @@ mod observation_recommendation_tests {
         // The vetter differs in exactly two places, and a role can never reach the other runner.
         let v = force_run_plan(RunnerRole::Vetter, "/home/gildlab/issue-pr-cron");
         assert_eq!(v.fast_forward, p.fast_forward);
-        assert!(v.runner[2].ends_with("#review-run"));
+        assert_eq!(v.env, p.env);
+        let flake_ref = v
+            .runner
+            .iter()
+            .find(|a| a.starts_with("git+file://"))
+            .expect("no flake ref in the vetter argv");
+        assert!(flake_ref.ends_with("#review-run"));
         assert_eq!(v.log, "/home/gildlab/issue-pr-cron/review.log");
         assert_eq!(v.runner.last().unwrap(), "--force");
+    }
+
+    /// What the previews print is what a human pastes back. Nothing quoted when nothing needs it
+    /// — the README's own documented form — and when the install dir carries whitespace, quoted
+    /// so sh reads the SAME words: the assignment quotes its value, the argv quotes whole words.
+    #[test]
+    fn a_previewed_invocation_is_pasteable() {
+        let p = force_run_plan(RunnerRole::Producer, "/home/gildlab/issue-pr-cron");
+        assert_eq!(
+            render_invocation(&p.env, &p.runner),
+            "CRON_DIR=/home/gildlab/issue-pr-cron nix run \
+             git+file:///home/gildlab/issue-pr-cron#campaign-run -- --force"
+        );
+        let s = force_run_plan(RunnerRole::Vetter, "/tmp/install dir");
+        let line = render_invocation(&s.env, &s.runner);
+        assert!(line.contains("CRON_DIR='/tmp/install dir'"), "{line}");
+        assert!(
+            line.contains("'git+file:///tmp/install dir#review-run'"),
+            "{line}"
+        );
     }
 
     fn streamed(src: &str) -> String {
