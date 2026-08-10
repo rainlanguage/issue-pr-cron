@@ -44,8 +44,30 @@ filter, so what reaches you is the distiller's own lines (`·` narration, `▸`
 tool calls, `⟹` results, `!` warnings) plus the runner's lifecycle lines, and
 nothing else. Its exit code is the **run's**.
 
-Run it in a **foreground** `Bash` call. It blocks for the whole run, which is
-the point; wrapping it in anything that returns immediately abandons the wait.
+Start it in a **background** `Bash` call, and read that call's output file as
+the run goes. A run outlives a foreground call: one is moved to the background
+at the 600-second ceiling and hands back nothing of the stream when it is, while
+the runs measured on 2026-08-10 took 32m 48s (producer) and 22m 30s (vetter). So
+a foreground call buys ten minutes of blank screen and then backgrounds anyway,
+which is how vetter run `20260810T102325Z` — fast-forwarded, both stops walked,
+three auditors dispatched and working — came to be read as a hang and killed.
+Backgrounded from the start it returns in seconds naming its output file, and
+the fast-forward verdict, the `log:` line and `running:` are readable there
+immediately. Read that file with the **Read** tool when you want to know where
+the run is: it accumulates the stream line by line as the run writes it. One
+read, then get on with something else — the run's exit arrives as a task
+notification.
+
+**Nothing may sit between the stream and you.** `force-run` flushes every line
+as it prints it, and a pipe throws that away: `tail` and `head` both hold the
+whole stream until the writer exits, which for a half-hour run is half an hour
+of nothing. That was the first thing tried on 2026-08-10 and it showed nothing,
+well before any timeout was reached. So pipe it into nothing at all — not
+`tail`, not `head`, not a filter of any kind — and read the file.
+
+If that output file is gone — a restarted session, or a run you did not start —
+the `log:` line names where the same bytes are still being appended, and step
+2's `watch-run` reattaches there.
 
 `--force` walks **policy** stops and never **correctness** ones. It overrides
 the `DISABLED` kill switch and a usage-gate PAUSE — both are the pipeline
@@ -57,8 +79,14 @@ plus the stop's own line, so this observation stays distinguishable from a paced
 tick in the series it contributes to.
 
 **Killing mid-run is sometimes right** — the 2026-08-09 run was killed once.
-Kill this call and the runner dies with it, which releases the flock, because
-the lock is an open descriptor on the runner process.
+Stopping the background task kills the runner with it and releases the flock:
+the whole process tree that task started is killed, `force-run` holds the runner
+as its own child, and the lock is an open descriptor on that runner process, so
+it goes when the process does. Probed on 2026-08-10 against a stand-in of the
+same shape — a parent streaming a child that holds an `flock` on an open
+descriptor — and stopping the task left neither process alive with the lock free
+on the next attempt, both for a call backgrounded from the start and for one the
+600-second ceiling backgrounded.
 
 ## 2. Reattach, if the stream was interrupted
 
