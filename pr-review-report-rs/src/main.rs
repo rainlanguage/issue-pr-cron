@@ -35975,6 +35975,785 @@ mod sol_conventions_tests {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Observation-run instruments (#252): watch a forced run, profile what it spent,
+// mine the retained corpus for what a run is still hand-rolling.
+//
+// All three were HAND-WRITTEN during the 2026-08-09 observation session — the watch
+// filter and the token profile more than once in a single afternoon — which is the
+// evidence they are missing subcommands rather than instructions. A mechanic written
+// out as prose for the next caller to re-derive is the same hand-roll with an extra
+// step, so each is a function here, tested, and each is useful on its own: the
+// profile answers "what did that run cost" for any trace, and the corpus report
+// answers "what is still being hand-rolled" without forcing a run at all.
+//
+// None of them decides anything. What to BUILD from a corpus reading is a human
+// judgement, which is why the command that composes them is a `human-fsm` command
+// and not a cron.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The distiller's own line prefixes, exactly as [`TraceDistiller`] writes them: `·` narration,
+/// `▸` a tool call, `⟹` a result, `!` a runner warning (`!!`, whose first char is this one).
+///
+/// A forced run TEES its distilled stream into the log live, so these lines are what a watched run
+/// actually produces between its lifecycle lines. The first hand-written filter matched only the
+/// lifecycle lines, so a run that was narrating steadily looked silent and the human was told
+/// "nothing more will surface until it ends" while `campaign.log` was filling. That is the whole
+/// reason the filter belongs to the tool.
+const DISTILLED_PREFIXES: [char; 4] = ['·', '▸', '⟹', '!'];
+
+/// The runner lifecycle lines, as `campaign-run.sh` and `review-run.sh` both spell them. Held as
+/// substrings rather than anchored patterns because the runners prefix every one with a UTC stamp
+/// and, for `model attempt`, two spaces of indent.
+const RUN_LIFECYCLE_MARKERS: &[&str] = &[
+    "run START",
+    "run END",
+    "model attempt",
+    "FORCED past",
+    "usage-gate:",
+    "SKIP:",
+    "ABORT",
+    "REFUSED",
+    "ENDED EARLY",
+];
+
+/// The lifecycle lines after which this run produces nothing more: it ended, it was skipped, it
+/// aborted, or its config was refused. Seeing one is how the watcher returns instead of holding the
+/// caller's turn open for the whole timeout.
+const RUN_TERMINAL_MARKERS: &[&str] = &["run END", "SKIP:", "ABORT", "REFUSED"];
+
+/// PURE: is this a line the DISTILLER wrote (as opposed to the runner's own shell `echo`)?
+fn distilled_line(line: &str) -> bool {
+    line.trim_start()
+        .chars()
+        .next()
+        .is_some_and(|c| DISTILLED_PREFIXES.contains(&c))
+}
+
+/// PURE: does a human watching a run want to see this line?
+///
+/// The union of the two halves, which is what neither hand-written attempt had: the distiller's
+/// stream AND the runner's lifecycle. Everything else in the log — the preflight dump, the infra
+/// record, the sol-toolchain audit — is post-hoc detail that reads back from the trace afterwards.
+fn watch_line_signal(line: &str) -> bool {
+    distilled_line(line) || RUN_LIFECYCLE_MARKERS.iter().any(|m| line.contains(m))
+}
+
+/// PURE: does this line END the run being watched?
+///
+/// A DISTILLED line can never be terminal however it reads. The model narrates about aborting and
+/// skipping constantly ("· I'll ABORT the rebase and …"), and a watcher that stopped on the model's
+/// prose would report the run finished while it was still working — the same class of false report
+/// the tail-replay bug produced, arriving from the other direction.
+fn watch_line_terminal(line: &str) -> bool {
+    !distilled_line(line) && RUN_TERMINAL_MARKERS.iter().any(|m| line.contains(m))
+}
+
+/// How long the watcher follows a log before giving up, when the caller names no deadline. Runs
+/// take 15–60 minutes; an hour is past the longest retained run and still bounded, because a
+/// watcher with no deadline is a turn that never returns.
+const WATCH_DEFAULT_TIMEOUT_SECS: u64 = 3600;
+
+/// `watch-run <log> [--timeout-secs n]`: follow a live run log FROM NOW, printing only the lines a
+/// human watching the run needs.
+///
+/// FROM NOW is half the subcommand. `tail -f` without `-n 0` replays the log's existing tail, so
+/// the PREVIOUS run's `SKIP`/`END` lines arrive as events for the current one — twice on
+/// 2026-08-09 that produced a false report to the human. Here the starting offset is the file's
+/// length at the moment the watcher starts, so a line the current run did not write cannot be
+/// attributed to it, and there is no flag that turns that off.
+///
+/// Exit 0 when the run's own END/SKIP/ABORT line arrives, 3 when the deadline stopped the watch
+/// first (the run may still be going — the watcher owns no process). The log NOT existing yet is
+/// not an error: a forced run is started in one call and watched in the next, and on a fresh
+/// install the log's first byte is written by the run being watched.
+fn watch_run_mode(log: &str, timeout_secs: u64) -> i32 {
+    use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
+    let path = std::path::Path::new(log);
+    // The offset the current run's first line lands at. An absent log is length 0, which is the
+    // same answer for the same reason.
+    let mut pos = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    if !path.exists() {
+        eprintln!("watch-run: {log} does not exist yet — waiting for the run to write it");
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+    let mut stdout = std::io::stdout();
+    loop {
+        if let Ok(mut f) = std::fs::File::open(path) {
+            let len = f.metadata().map(|m| m.len()).unwrap_or(pos);
+            // Truncated or rotated under us: the bytes this offset named are gone, and holding it
+            // would skip the whole of the new file.
+            if len < pos {
+                pos = 0;
+            }
+            if len > pos && f.seek(SeekFrom::Start(pos)).is_ok() {
+                let mut reader = BufReader::new(&mut f);
+                loop {
+                    let mut buf = String::new();
+                    match reader.read_line(&mut buf) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            // A line with no terminator is the WRITER mid-line. Leaving `pos` where
+                            // it is re-reads it whole on the next pass; printing it now would split
+                            // one log line across two, which is how a filter drops a marker that
+                            // straddles the tear.
+                            if !buf.ends_with('\n') {
+                                break;
+                            }
+                            pos += n as u64;
+                            let line = buf.trim_end_matches(['\n', '\r']);
+                            if watch_line_signal(line) && writeln!(stdout, "{line}").is_err() {
+                                return 0; // downstream closed
+                            }
+                            if watch_line_terminal(line) {
+                                let _ = stdout.flush();
+                                return 0;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+                let _ = stdout.flush();
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = stdout.flush();
+            eprintln!(
+                "watch-run: deadline reached after {timeout_secs}s — the run may still be going"
+            );
+            return 3;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+}
+
+/// The two per-tool-call context figures `campaign-prompt.txt` records, and the runs they were
+/// measured on. A run's own number is read against these: near the first is a run whose work went
+/// to sub-agents carrying their own context; near the second is the inline pathology, where the
+/// main loop re-reads its whole history on every call.
+///
+/// They are per CALL, and both were computed as a run's whole-run `cacheRead` over its `toolCalls`
+/// — the two fields `run-metrics` writes. That is why [`token_profile`] reports a per-call figure
+/// beside the per-turn one: a per-turn average held against a per-call benchmark is a comparison
+/// between two different denominators, which is the shape of a plausible wrong answer.
+const BENCH_DISPATCHING_PER_CALL: u64 = 75_000;
+const BENCH_INLINE_PER_CALL: u64 = 264_000;
+const BENCH_DISPATCHING_RUN: &str = "20260802T130003Z";
+const BENCH_INLINE_RUN: &str = "20260804T114433Z";
+
+/// What a run's own `usage` events say it spent — the missing sibling of `distill-trace`,
+/// `trace-outcome`, `run-metrics` and `run-timings`.
+///
+/// CONTEXT is `cache_read_input_tokens`, which is the size of the history the model re-read on that
+/// turn. Its SHAPE against the turn count is the reading: flat context with a rising turn count is
+/// work happening off the main loop; context climbing in step with turns is the inline pathology.
+#[derive(Debug, Default, PartialEq, Clone)]
+struct TokenProfile {
+    /// Turns carrying usage, DEDUPED by `message.id` — the rule [`token_attribution`] and
+    /// [`UsageProbe`] already apply, because a streaming message is re-emitted with the same usage
+    /// snapshot and one block of its content at a time. Counting the emissions instead inflates a
+    /// run's cumulative cache read by ~30% (5.16M against 3.96M on `20260809T155241Z`) and puts
+    /// this reader at odds with the number `run-metrics` writes for the same run.
+    turns: usize,
+    /// Tool calls, counted like [`StartupProbe`] does: every `tool_use` block on every assistant
+    /// event, no dedupe. Deliberately the OTHER rule, because a streamed message carries a
+    /// DIFFERENT content block per emission — deduping content drops real calls, while not
+    /// deduping usage double-counts one snapshot.
+    tool_calls: usize,
+    context_first: Option<u64>,
+    context_last: Option<u64>,
+    context_peak: u64,
+    cache_read: u64,
+    cache_write: u64,
+}
+
+impl TokenProfile {
+    /// Cumulative cache read over turns. `None` on a trace with no usage at all — a usage-gate
+    /// pause writes an empty trace, and a zero average there would be a measurement of nothing.
+    fn per_turn(&self) -> Option<u64> {
+        (self.turns > 0).then(|| self.cache_read / self.turns as u64)
+    }
+
+    /// Cumulative cache read over TOOL CALLS: the denominator the recorded benchmarks use.
+    fn per_tool_call(&self) -> Option<u64> {
+        (self.tool_calls > 0).then(|| self.cache_read / self.tool_calls as u64)
+    }
+}
+
+/// PURE: profile a stream-json trace.
+fn token_profile(content: &str) -> TokenProfile {
+    use std::collections::HashSet;
+    let mut p = TokenProfile::default();
+    let mut counted: HashSet<String> = HashSet::new();
+    for line in content.lines() {
+        let Ok(ev) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if ev.get("type").and_then(|t| t.as_str()) != Some("assistant") {
+            continue;
+        }
+        let Some(msg) = ev.get("message") else {
+            continue;
+        };
+        if let Some(blocks) = msg.get("content").and_then(|c| c.as_array()) {
+            p.tool_calls += blocks
+                .iter()
+                .filter(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_use"))
+                .count();
+        }
+        let Some(usage) = msg.get("usage") else {
+            continue;
+        };
+        // An absent or empty id identifies no message, so each such event counts — the same reading
+        // [`token_attribution`] gives, for the same reason: letting `""` into the set would make the
+        // first empty-id message swallow every later one.
+        let id = msg.get("id").and_then(|i| i.as_str()).unwrap_or("");
+        if !id.is_empty() && !counted.insert(id.to_string()) {
+            continue;
+        }
+        let g = |k: &str| usage.get(k).and_then(|n| n.as_u64()).unwrap_or(0);
+        let cc = usage.get("cache_creation");
+        let ttl = |k: &str| cc.and_then(|c| c.get(k)).and_then(|n| n.as_u64());
+        // The same fallback [`token_attribution`] takes: an absent TTL breakdown means the whole
+        // write is the undifferentiated field. Two readers of one stream must not disagree about
+        // what a run wrote.
+        let write = match (
+            ttl("ephemeral_5m_input_tokens"),
+            ttl("ephemeral_1h_input_tokens"),
+        ) {
+            (None, None) => g("cache_creation_input_tokens"),
+            (a, b) => a.unwrap_or(0) + b.unwrap_or(0),
+        };
+        let ctx = g("cache_read_input_tokens");
+        p.turns += 1;
+        if p.context_first.is_none() {
+            p.context_first = Some(ctx);
+        }
+        p.context_last = Some(ctx);
+        p.context_peak = p.context_peak.max(ctx);
+        p.cache_read += ctx;
+        p.cache_write += write;
+    }
+    p
+}
+
+/// `token-profile <trace> [--json]`: what one run's context did, and what it cost to re-read.
+fn token_profile_mode(path: &str, json: bool) -> i32 {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: cannot read trace {path}: {e}");
+            return 2;
+        }
+    };
+    let p = token_profile(&content);
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "trace": path,
+                "turns": p.turns,
+                "toolCalls": p.tool_calls,
+                "contextFirst": p.context_first,
+                "contextLast": p.context_last,
+                "contextPeak": (p.turns > 0).then_some(p.context_peak),
+                "cacheRead": p.cache_read,
+                "cacheWrite": p.cache_write,
+                "cacheReadPerTurn": p.per_turn(),
+                "cacheReadPerToolCall": p.per_tool_call(),
+                "benchmarkDispatchingPerCall": BENCH_DISPATCHING_PER_CALL,
+                "benchmarkDispatchingRun": BENCH_DISPATCHING_RUN,
+                "benchmarkInlinePerCall": BENCH_INLINE_PER_CALL,
+                "benchmarkInlineRun": BENCH_INLINE_RUN,
+            }))
+            .unwrap()
+        );
+        return 0;
+    }
+    let cell = |v: Option<u64>| v.map_or_else(|| "—".to_string(), |n| n.to_string());
+    println!("trace              {path}");
+    println!("turns              {}", p.turns);
+    println!("tool calls         {}", p.tool_calls);
+    println!("context first      {}", cell(p.context_first));
+    println!("context last       {}", cell(p.context_last));
+    println!(
+        "context peak       {}",
+        cell((p.turns > 0).then_some(p.context_peak))
+    );
+    println!("cache read (cum)   {}", p.cache_read);
+    println!("cache write (cum)  {}", p.cache_write);
+    println!("cache read / turn  {}", cell(p.per_turn()));
+    println!("cache read / call  {}", cell(p.per_tool_call()));
+    println!(
+        "\nbenchmarks (campaign-prompt.txt, per CALL): {BENCH_DISPATCHING_PER_CALL} dispatching \
+         ({BENCH_DISPATCHING_RUN}), {BENCH_INLINE_PER_CALL} inline ({BENCH_INLINE_RUN})"
+    );
+    if p.turns == 0 {
+        println!(
+            "! this trace carries no usage events — an empty trace is what a gate SKIP writes"
+        );
+    }
+    0
+}
+
+/// Command-position tokens that mean the run reached for an interpreter rather than for a tool.
+/// Matched on the token's BASENAME, so `/usr/bin/python3` and `python3` are one thing.
+const CORPUS_INTERPRETERS: &[&str] = &[
+    "python", "python3", "node", "bash", "sh", "zsh", "ruby", "perl", "deno",
+];
+
+/// The extensions that make a written file a HELPER SCRIPT — the issue's own definition of the
+/// thing being counted (#252).
+const CORPUS_SCRIPT_EXTS: &[&str] = &[".py", ".sh", ".js", ".mjs"];
+
+/// The render-harness scaffold files, by basename — a LABELLED SUBSET of the helper scripts above,
+/// naming the one hand-roll the 2026-08-09 corpus reading turned on.
+///
+/// It is a fixed list because the thing being counted is a fixed artefact: an alias-stub Vite
+/// harness for rendering a Svelte component outside its app, rebuilt from scratch by every run that
+/// took a screenshot item. The helper-script count alone cannot show it — that count DECAYS across
+/// the corpus while this one does not, and the two answers differ by a factor of ten in the
+/// frequency of what they point at. A basename list is exactly as durable as the scaffold it names,
+/// which is the honest lifetime for this measurement.
+const CORPUS_HARNESS_SCAFFOLD: &[&str] = &[
+    "vite.config.js",
+    "tailwind.config.js",
+    "main.js",
+    "shoot.sh",
+    "shoot.mjs",
+    "svelte-wagmi.js",
+    "wagmi-core.js",
+    "stores.js",
+    "transactionStore.js",
+    "balancesStore.js",
+];
+
+/// PURE: the tokens a shell command runs something AS — the first word of each `;`/`|`/`&&`/newline
+/// segment, plus what follows a `-c`/`--command`/`xargs`, with leading `VAR=value` assignments and
+/// transparent wrappers stepped over.
+///
+/// Command position is the whole point: `cat probe.sh` mentions an interpreter's file and runs
+/// nothing, while `nix develop -c python3 probe.py` runs one without ever putting it first.
+fn command_heads(cmd: &str) -> Vec<&str> {
+    let mut heads = Vec::new();
+    for seg in cmd.split(['\n', ';', '|', '&', '(', ')', '`']) {
+        let tokens: Vec<&str> = seg.split_whitespace().collect();
+        let mut i = 0;
+        while let Some(t) = tokens.get(i) {
+            // `VAR=value cmd` and `env`/`exec`/`time`/`nohup`/`command` are prefixes, not the
+            // command — the run is still running whatever comes after them.
+            if (t.contains('=') && !t.starts_with('/') && !t.starts_with('.'))
+                || matches!(*t, "env" | "exec" | "time" | "nohup" | "command" | "sudo")
+            {
+                i += 1;
+                continue;
+            }
+            break;
+        }
+        if let Some(t) = tokens.get(i) {
+            heads.push(*t);
+        }
+        // A `-c` payload is a command position one wrapper deep: `nix develop -c forge test`,
+        // `xargs -n1 python3`. Taking the token after it is what stops a wrapper from hiding the
+        // interpreter underneath.
+        for (n, t) in tokens.iter().enumerate() {
+            if matches!(*t, "-c" | "--command" | "xargs") {
+                if let Some(next) = tokens.get(n + 1) {
+                    heads.push(*next);
+                }
+            }
+        }
+    }
+    heads
+}
+
+/// PURE: does this command name `needle` as a whole word?
+///
+/// `gh api` inside `--jq '.gh apiVersion'` is not the pipeline reaching past its tools; a substring
+/// scan cannot tell them apart.
+fn contains_word(haystack: &str, needle: &str) -> bool {
+    let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+    let bytes = haystack.as_bytes();
+    let mut from = 0;
+    while let Some(at) = haystack[from..].find(needle) {
+        let start = from + at;
+        let end = start + needle.len();
+        let before = haystack[..start].chars().next_back();
+        let after = haystack[end..].chars().next();
+        if !word(before) && !word(after) {
+            return true;
+        }
+        // Advance by one BYTE boundary past the match start, so a second occurrence is still found.
+        from = start + 1;
+        while from < bytes.len() && !haystack.is_char_boundary(from) {
+            from += 1;
+        }
+        if from >= haystack.len() {
+            break;
+        }
+    }
+    false
+}
+
+/// PURE: a PROBE-shaped `gh pr view`/`gh pr checks` — a run asking GitHub for a PR's head sha or
+/// its check state, which is what `await` exists to do in one bounded call instead of per turn.
+///
+/// `gh pr view --json body` is a first READ and not a probe; `gh pr checks` is always one, because
+/// asking for checks IS asking whether the PR has settled.
+fn is_probe_call(cmd: &str) -> bool {
+    (cmd.contains("gh pr view") || cmd.contains("gh pr checks"))
+        && (cmd.contains("headRefOid") || cmd.contains("checks"))
+}
+
+/// PURE: a raw `gh api` call — GitHub I/O assembled by hand instead of asked for as a transition.
+fn is_raw_gh_api(cmd: &str) -> bool {
+    contains_word(cmd, "gh api")
+}
+
+/// PURE: fetching or unpacking a tarball to find out what is inside a package.
+fn is_tarball_call(cmd: &str) -> bool {
+    cmd.contains(".tgz")
+        || cmd.contains(".tar")
+        || cmd.contains("npm pack")
+        || command_heads(cmd)
+            .into_iter()
+            .any(|h| h.rsplit('/').next() == Some("tar"))
+}
+
+/// PURE: running an interpreter, or a helper script the run wrote for itself.
+fn is_interpreter_call(cmd: &str) -> bool {
+    command_heads(cmd).into_iter().any(|h| {
+        let base = h.rsplit('/').next().unwrap_or(h);
+        CORPUS_INTERPRETERS.contains(&base) || CORPUS_SCRIPT_EXTS.iter().any(|e| base.ends_with(e))
+    })
+}
+
+/// One retained trace's hand-roll counts. Every count is per TOOL CALL — one `Bash` block that
+/// probes twice counts once, because what a run pays for is the call.
+#[derive(Debug, Default, PartialEq, Clone)]
+struct CorpusRow {
+    run: String,
+    tool_calls: usize,
+    probes: usize,
+    gh_api: usize,
+    tarball: usize,
+    interpreters: usize,
+    helper_scripts: usize,
+    harness_scaffold: usize,
+}
+
+impl CorpusRow {
+    /// A trace that issued no tool call at all — a usage-gate SKIP writes an empty one, and a
+    /// failed startup writes a handful of bytes. Its zeros are the absence of a run, not the
+    /// absence of a pathology, so [`decay_shape`] never sees them.
+    fn active(&self) -> bool {
+        self.tool_calls > 0
+    }
+}
+
+/// PURE: count one trace.
+fn corpus_row(run: &str, content: &str) -> CorpusRow {
+    let mut row = CorpusRow {
+        run: run.to_string(),
+        ..Default::default()
+    };
+    for line in content.lines() {
+        let Ok(ev) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if ev.get("type").and_then(|t| t.as_str()) != Some("assistant") {
+            continue;
+        }
+        let Some(blocks) = ev
+            .get("message")
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_array())
+        else {
+            continue;
+        };
+        for b in blocks {
+            if b.get("type").and_then(|t| t.as_str()) != Some("tool_use") {
+                continue;
+            }
+            row.tool_calls += 1;
+            let name = b.get("name").and_then(|n| n.as_str()).unwrap_or("");
+            let input = b.get("input");
+            match name {
+                "Write" => {
+                    let path = input
+                        .and_then(|i| i.get("file_path"))
+                        .and_then(|p| p.as_str())
+                        .unwrap_or("");
+                    let base = path.rsplit('/').next().unwrap_or(path);
+                    if CORPUS_SCRIPT_EXTS.iter().any(|e| base.ends_with(e)) {
+                        row.helper_scripts += 1;
+                    }
+                    if CORPUS_HARNESS_SCAFFOLD.contains(&base) {
+                        row.harness_scaffold += 1;
+                    }
+                }
+                "Bash" => {
+                    let cmd = input
+                        .and_then(|i| i.get("command"))
+                        .and_then(|c| c.as_str())
+                        .unwrap_or("");
+                    if is_probe_call(cmd) {
+                        row.probes += 1;
+                    }
+                    if is_raw_gh_api(cmd) {
+                        row.gh_api += 1;
+                    }
+                    if is_tarball_call(cmd) {
+                        row.tarball += 1;
+                    }
+                    if is_interpreter_call(cmd) {
+                        row.interpreters += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    row
+}
+
+/// The SHAPE of one metric's series across the corpus's active runs, oldest first.
+///
+/// Typed from the numbers and nothing else. What a zero MEANS — a tool landed and retired the
+/// pathology, or this run simply had no occasion for it — is not in the numbers, and saying which
+/// is the reading a human does. That distinction is the whole reason the corpus step exists: on
+/// 2026-08-09 raw `gh api` and the render-harness rebuild both ended at zero, and only one of them
+/// was solved.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum DecayShape {
+    /// No active run in this corpus exhibited it.
+    Absent,
+    /// Zero on the newest active run. `lastSeen` says how far back it was last exhibited.
+    Quiet,
+    /// The newest active run still exhibits it, below its own peak.
+    Falling,
+    /// The newest active run exhibits it at or above its peak.
+    Holding,
+}
+
+impl DecayShape {
+    fn label(self) -> &'static str {
+        match self {
+            DecayShape::Absent => "absent",
+            DecayShape::Quiet => "quiet",
+            DecayShape::Falling => "falling",
+            DecayShape::Holding => "holding",
+        }
+    }
+}
+
+/// PURE: the shape of a series of per-run counts, oldest first.
+fn decay_shape(series: &[usize]) -> DecayShape {
+    let Some(&latest) = series.last() else {
+        return DecayShape::Absent;
+    };
+    let peak = series.iter().copied().max().unwrap_or(0);
+    if peak == 0 {
+        DecayShape::Absent
+    } else if latest == 0 {
+        DecayShape::Quiet
+    } else if latest < peak {
+        DecayShape::Falling
+    } else {
+        DecayShape::Holding
+    }
+}
+
+/// The metrics a corpus reading reports, in the order they print: the display label, the JSON key,
+/// and how to read the count off a row. One list, so the table, the summary and the JSON cannot
+/// come apart.
+#[allow(clippy::type_complexity)]
+const CORPUS_METRICS: &[(&str, &str, fn(&CorpusRow) -> usize)] = &[
+    ("probes", "probes", |r| r.probes),
+    ("raw gh api", "ghApi", |r| r.gh_api),
+    ("tarball", "tarball", |r| r.tarball),
+    ("interpreters", "interpreters", |r| r.interpreters),
+    ("helper scripts", "helperScripts", |r| r.helper_scripts),
+    ("harness scaffold", "harnessScaffold", |r| {
+        r.harness_scaffold
+    }),
+];
+
+/// One metric read across the corpus.
+#[derive(Debug, PartialEq, Clone)]
+struct CorpusMetric {
+    label: &'static str,
+    key: &'static str,
+    first: usize,
+    peak: usize,
+    latest: usize,
+    /// Active runs that exhibited it at all — the frequency half of the reading. The 2026-08-09
+    /// session's competing candidate appeared twice in twenty-one traces; the one it lost to
+    /// appeared in every run that took a screenshot item.
+    runs_seen_in: usize,
+    /// The newest active run that exhibited it, or `None`.
+    last_seen: Option<String>,
+    shape: DecayShape,
+}
+
+/// PURE: read every metric across the corpus's ACTIVE rows, oldest first.
+fn corpus_metrics(rows: &[CorpusRow]) -> Vec<CorpusMetric> {
+    let active: Vec<&CorpusRow> = rows.iter().filter(|r| r.active()).collect();
+    CORPUS_METRICS
+        .iter()
+        .map(|(label, key, read)| {
+            let series: Vec<usize> = active.iter().map(|r| read(r)).collect();
+            CorpusMetric {
+                label,
+                key,
+                first: series.first().copied().unwrap_or(0),
+                peak: series.iter().copied().max().unwrap_or(0),
+                latest: series.last().copied().unwrap_or(0),
+                runs_seen_in: series.iter().filter(|n| **n > 0).count(),
+                last_seen: active
+                    .iter()
+                    .rev()
+                    .find(|r| read(r) > 0)
+                    .map(|r| r.run.clone()),
+                shape: decay_shape(&series),
+            }
+        })
+        .collect()
+}
+
+/// `corpus-report <runs-dir> [--json]`: what every retained trace still hand-rolls.
+///
+/// The corpus is bounded by `KEEP_RUNS`: what has rotated out of the directory is not history this
+/// can see, so the report states how many traces it ACTUALLY read and the window they span rather
+/// than implying it read the pipeline's whole life.
+fn corpus_report_mode(dir: &str, json: bool) -> i32 {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("error: cannot read runs dir {dir}: {e}");
+            return 2;
+        }
+    };
+    // Sorted by file name, which for `<UTC timestamp>.jsonl` IS chronological order — the order
+    // every decay reading depends on, and one that costs no stat call.
+    let mut traces: Vec<std::path::PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("jsonl"))
+        .collect();
+    traces.sort();
+    let mut rows = Vec::new();
+    let mut unreadable = Vec::new();
+    for path in &traces {
+        let run = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        match std::fs::read_to_string(path) {
+            Ok(c) => rows.push(corpus_row(&run, &c)),
+            Err(e) => unreadable.push(format!("{run}: {e}")),
+        }
+    }
+    let metrics = corpus_metrics(&rows);
+    let active = rows.iter().filter(|r| r.active()).count();
+
+    if json {
+        let rows_json: Vec<Value> = rows
+            .iter()
+            .map(|r| {
+                let mut o = serde_json::json!({
+                    "run": r.run,
+                    "toolCalls": r.tool_calls,
+                    "active": r.active(),
+                });
+                for (_, key, read) in CORPUS_METRICS {
+                    o[*key] = serde_json::json!(read(r));
+                }
+                o
+            })
+            .collect();
+        let metrics_json: Vec<Value> = metrics
+            .iter()
+            .map(|m| {
+                serde_json::json!({
+                    "metric": m.key,
+                    "first": m.first,
+                    "peak": m.peak,
+                    "latest": m.latest,
+                    "runsSeenIn": m.runs_seen_in,
+                    "lastSeen": m.last_seen,
+                    "shape": m.shape.label(),
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "dir": dir,
+                "tracesSeen": rows.len(),
+                "activeTraces": active,
+                "oldest": rows.first().map(|r| r.run.clone()),
+                "newest": rows.last().map(|r| r.run.clone()),
+                "unreadable": unreadable,
+                "runs": rows_json,
+                "metrics": metrics_json,
+            }))
+            .unwrap()
+        );
+        return 0;
+    }
+
+    println!("corpus: {dir}");
+    println!(
+        "traces seen: {} ({active} with tool calls){}",
+        rows.len(),
+        match (rows.first(), rows.last()) {
+            (Some(a), Some(b)) => format!(" — {} … {}", a.run, b.run),
+            _ => String::new(),
+        }
+    );
+    println!(
+        "KEEP_RUNS bounds this window: a trace already rotated out is not evidence of anything.\n"
+    );
+    print!("{:<18}{:>8}", "trace", "calls");
+    for (label, _, _) in CORPUS_METRICS {
+        print!("{label:>18}");
+    }
+    println!();
+    for r in &rows {
+        print!("{:<18}{:>8}", r.run, r.tool_calls);
+        for (_, _, read) in CORPUS_METRICS {
+            print!("{:>18}", read(r));
+        }
+        println!();
+    }
+    println!(
+        "\n{:<18}{:>8}{:>8}{:>8}{:>8}  {:<18}shape",
+        "metric", "first", "peak", "latest", "runs", "last seen"
+    );
+    for m in &metrics {
+        println!(
+            "{:<18}{:>8}{:>8}{:>8}{:>8}  {:<18}{}",
+            m.label,
+            m.first,
+            m.peak,
+            m.latest,
+            m.runs_seen_in,
+            m.last_seen.as_deref().unwrap_or("—"),
+            m.shape.label()
+        );
+    }
+    for u in &unreadable {
+        println!("! unreadable trace {u}");
+    }
+    println!(
+        "\nshape is a fact about the series over the {active} active traces, not a recommendation: \
+         a zero can mean a landed tool retired the hand-roll or that this run had no occasion for \
+         it, and only a reader who knows which can say."
+    );
+    0
+}
+
 /// The CLI surface. Each subcommand maps to one `*_mode` function; clap owns all positional/flag
 /// parsing, validation, and `--help`/usage (replacing the former hand-rolled `args.get(n)` dispatch).
 #[derive(Parser)]
@@ -36242,6 +37021,40 @@ enum Cmd {
     },
     /// Read a stream-json trace on stdin, write the human-readable run log on stdout.
     DistillTrace,
+    /// Follow a LIVE run log from NOW, printing only what a human watching the run needs: the
+    /// distiller's own lines (`·` narration, `▸` tool calls, `⟹` results, `!` warnings) and the
+    /// runner's lifecycle/abort lines. Never replays the log's existing tail — the previous run's
+    /// `SKIP`/`END` arriving as this run's is how a hand-rolled `tail -f` produced two false
+    /// reports (#252). Exit 0 when the run's own END/SKIP/ABORT line arrives, 3 on the deadline.
+    WatchRun {
+        /// The log the runner tees into (`<install-dir>/campaign.log`, `review.log`). Followed even
+        /// if it does not exist yet.
+        log: String,
+        /// Give up after this many seconds. The watcher owns no process — a deadline stops the
+        /// WATCH, never the run.
+        #[arg(long, default_value_t = WATCH_DEFAULT_TIMEOUT_SECS)]
+        timeout_secs: u64,
+    },
+    /// What a run's context did and what re-reading it cost: turns, context first/last/peak from
+    /// `cache_read_input_tokens`, cumulative cache read and write, and the per-turn and per-call
+    /// averages against the benchmarks `campaign-prompt.txt` records. The missing sibling of
+    /// `distill-trace` / `trace-outcome` / `run-metrics` / `run-timings` (#252).
+    TokenProfile {
+        /// The run trace to read (runs/<id>.jsonl).
+        trace: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// What every RETAINED trace still hand-rolls: per-run counts of probe-shaped `gh pr
+    /// view`/`checks`, raw `gh api`, tarball fetch/extract, interpreter invocations, helper scripts
+    /// written, and render-harness scaffold rebuilds — with each metric's shape across the series.
+    /// The corpus is bounded by `KEEP_RUNS`, so the report states how many traces it actually read.
+    CorpusReport {
+        /// The retained traces (`<install-dir>/runs`).
+        dir: String,
+        #[arg(long)]
+        json: bool,
+    },
     /// Attribute a run's token spend to the agent that incurred it, dearest first. `run-metrics`
     /// reports whole-run COST beside main-thread-only TOKENS; this splits the same trace by
     /// `parent_tool_use_id` so a run's cost can be read per dispatched task.
@@ -40052,6 +40865,9 @@ fn main() {
         Cmd::TraceOutcome { trace, exit_code } => trace_outcome_mode(&trace, exit_code),
         Cmd::QueueHistoryLine { snapshot, ts } => queue_history_line_mode(snapshot.as_deref(), &ts),
         Cmd::DistillTrace => distill_trace_mode(),
+        Cmd::WatchRun { log, timeout_secs } => watch_run_mode(&log, timeout_secs),
+        Cmd::TokenProfile { trace, json } => token_profile_mode(&trace, json),
+        Cmd::CorpusReport { dir, json } => corpus_report_mode(&dir, json),
         Cmd::TokenReport { trace, json } => token_report_mode(&trace, json),
         Cmd::WorkTokens { path, json } => work_tokens_mode(&path, json),
         Cmd::BackfillMetrics { path, write } => backfill_metrics_mode(&path, write),
@@ -57518,7 +58334,8 @@ mod marketplace_tests {
                 "ndd",
                 "needs-work",
                 "nm",
-                "nr"
+                "nr",
+                "observe-run"
             ],
             "the shipped command set changed"
         );
@@ -65787,5 +66604,608 @@ mod work_tokens_tests {
             ..Default::default()
         };
         assert_eq!(agent_tokens(&a), 4_321);
+    }
+}
+
+/// Behavioural tests for the observation-run instruments (#252): the watch filter, the token
+/// profile, and the corpus reading.
+///
+/// Every subject here is a PURE function over text a run already wrote, which is what makes the
+/// forced run itself unnecessary to test them — a forced producer run costs real money, and the
+/// three mechanics these replace were all hand-written against traces already on disk.
+#[cfg(test)]
+mod observation_run_tests {
+    use super::*;
+    use serde_json::json;
+
+    // ── the watch filter ──────────────────────────────────────────────────────────────────────
+
+    /// The half the FIRST hand-written filter dropped. It matched only lifecycle lines, so a run
+    /// that was narrating steadily looked silent and the human was told nothing more would surface
+    /// until it ended — while `campaign.log` was filling with exactly these four shapes.
+    #[test]
+    fn the_filter_carries_the_distillers_own_four_prefixes() {
+        for line in [
+            "  · Reading the worklist",
+            "  ▸ Bash  gh pr list",
+            "  ⟹ SUCCESS: opened the PR",
+            "  !! model opus is quota-limited — falling back",
+        ] {
+            assert!(watch_line_signal(line), "dropped {line:?}");
+        }
+    }
+
+    /// The other half: the runner's own `echo`s. Every one of these is a line the human is watching
+    /// FOR, and a filter with only the distiller's prefixes would drop the whole lifecycle.
+    #[test]
+    fn the_filter_carries_every_runner_lifecycle_line() {
+        for line in [
+            "2026-08-09T15:52:41Z campaign run START (model=opus, host=box) trace=runs/x.jsonl",
+            "2026-08-09T16:06:26Z campaign run END (exit=0, trace=runs/x.jsonl)",
+            "2026-08-09T15:52:41Z   model attempt: opus",
+            "2026-08-09T15:52:41Z FORCED past the DISABLED kill switch (--force)",
+            "2026-08-09T15:52:41Z FORCED past the usage-gate PAUSE (--force): OK",
+            "2026-08-09T15:52:41Z usage-gate: OK 41% used",
+            "2026-08-09T15:52:41Z SKIP: previous run still holding the lock",
+            "2026-08-09T15:52:41Z campaign run ABORT: harness dependencies unsatisfied: gh",
+            "2026-08-09T15:52:41Z campaign run ABORTED: usage-gate refused its config (exit 2)",
+            "2026-08-09T15:52:41Z campaign run REFUSED: CRON_FORCE is set",
+            "2026-08-09T15:52:41Z campaign run ENDED EARLY: infrastructure down",
+        ] {
+            assert!(watch_line_signal(line), "dropped {line:?}");
+        }
+    }
+
+    /// A filter that passed everything would be `cat`. These are the log's post-hoc detail — the
+    /// preflight dump, the infra record, the sol-toolchain audit — which read back off the trace
+    /// afterwards and are noise while the run is going.
+    #[test]
+    fn the_filter_drops_the_logs_post_hoc_detail() {
+        for line in [
+            "  ok=gh,jq,forge,cargo",
+            "  {\"outage\":false,\"reason\":null}",
+            "  matched: rainlanguage/rain.math#12 nix develop .#sol-shell",
+            "",
+            "some unprefixed prose",
+        ] {
+            assert!(!watch_line_signal(line), "passed {line:?}");
+        }
+    }
+
+    /// The second false report of 2026-08-09, arriving from the other direction. The model narrates
+    /// about aborting and skipping constantly; a watcher that read its prose as the run's own
+    /// lifecycle would report the run over while it was still working.
+    #[test]
+    fn a_distilled_line_is_never_terminal_however_it_reads() {
+        for line in [
+            "  · I'll ABORT the rebase and start again",
+            "  ⟹ SUCCESS: the run END line is written by the runner, not by me",
+            "  !! SKIP: this is the model quoting a log line",
+        ] {
+            assert!(watch_line_signal(line), "{line:?} should still be shown");
+            assert!(!watch_line_terminal(line), "{line:?} stopped the watch");
+        }
+    }
+
+    /// What DOES end the watch: the run ended, was skipped, aborted, or its config was refused.
+    #[test]
+    fn the_runners_own_end_skip_abort_and_refusal_are_terminal() {
+        for line in [
+            "2026-08-09T16:06:26Z campaign run END (exit=0, trace=runs/x.jsonl)",
+            "2026-08-09T16:06:26Z review run END (exit=0, trace=runs/x.jsonl)",
+            "2026-08-09T15:52:41Z SKIP: DISABLED flag present",
+            "2026-08-09T15:52:41Z campaign run ABORT: cannot create scratch dir",
+            "2026-08-09T15:52:41Z campaign run ABORTED: usage-gate refused its config (exit 2)",
+            "2026-08-09T15:52:41Z campaign run REFUSED: CRON_FORCE is set",
+        ] {
+            assert!(watch_line_terminal(line), "{line:?} left the watch armed");
+        }
+        // A run that is merely STARTING, attempting a model, or reporting the gate is not over.
+        for line in [
+            "2026-08-09T15:52:41Z campaign run START (model=opus, host=box)",
+            "2026-08-09T15:52:41Z   model attempt: opus",
+            "2026-08-09T15:52:41Z usage-gate: OK 41% used",
+            "2026-08-09T15:52:41Z FORCED past the DISABLED kill switch (--force)",
+        ] {
+            assert!(!watch_line_terminal(line), "{line:?} ended the watch early");
+        }
+    }
+
+    // ── the token profile ─────────────────────────────────────────────────────────────────────
+
+    /// One assistant event carrying `n` tool calls and a usage snapshot.
+    fn turn(id: &str, read: u64, write: u64, tools: usize) -> String {
+        let blocks: Vec<Value> = (0..tools)
+            .map(|_| json!({"type":"tool_use","name":"Bash","input":{"command":"true"}}))
+            .collect();
+        format!(
+            "{}\n",
+            json!({"type":"assistant","message":{
+                "id": id,
+                "content": blocks,
+                "usage": {"cache_read_input_tokens": read, "cache_creation_input_tokens": write}
+            }})
+        )
+    }
+
+    /// The profile the 2026-08-09 session hand-wrote in Python, twice: turns, context first/last/
+    /// peak, cumulative read and write, and the per-turn average.
+    #[test]
+    fn the_profile_reports_turns_context_and_cumulative_spend() {
+        let trace = format!(
+            "{}{}{}",
+            turn("m1", 17_002, 100, 1),
+            turn("m2", 85_749, 200, 2),
+            turn("m3", 77_797, 300, 0),
+        );
+        let p = token_profile(&trace);
+        assert_eq!(p.turns, 3);
+        assert_eq!(p.tool_calls, 3);
+        assert_eq!(p.context_first, Some(17_002));
+        assert_eq!(p.context_last, Some(77_797));
+        // The PEAK is not the last value — the run's context fell back after its widest turn, which
+        // is exactly the shape a max-of-the-series must catch and a last-value read cannot.
+        assert_eq!(p.context_peak, 85_749);
+        assert_eq!(p.cache_read, 17_002 + 85_749 + 77_797);
+        assert_eq!(p.cache_write, 600);
+        assert_eq!(p.per_turn(), Some((17_002 + 85_749 + 77_797) / 3));
+        assert_eq!(p.per_tool_call(), Some((17_002 + 85_749 + 77_797) / 3));
+    }
+
+    /// The dedupe rule this reader shares with `token-report` and the live usage probe. A streaming
+    /// message is re-emitted with the SAME usage snapshot and one block of its content at a time —
+    /// so usage is counted once per `message.id`, and the blocks are counted every time.
+    ///
+    /// Measured on `20260809T155241Z`: 102 emissions of 80 messages. Counting the emissions makes
+    /// cumulative cache read 5.16M against the 3.96M `run-metrics` records for the same run.
+    #[test]
+    fn a_streamed_message_is_one_turn_and_all_of_its_tool_calls() {
+        let trace = format!(
+            "{}{}{}",
+            turn("m1", 1_000, 10, 1),
+            turn("m1", 1_000, 10, 1), // same message, next content block
+            turn("m2", 2_000, 20, 1),
+        );
+        let p = token_profile(&trace);
+        assert_eq!(p.turns, 2, "usage deduped by message.id");
+        assert_eq!(p.tool_calls, 3, "content is NOT deduped — blocks differ");
+        assert_eq!(p.cache_read, 3_000);
+        assert_eq!(p.cache_write, 30);
+    }
+
+    /// An absent or empty `message.id` identifies no message, so each such event counts. Letting
+    /// `""` into the dedupe set would make the first empty-id message swallow every later one —
+    /// dropping real spend to avoid double-counting a case no trace exhibits.
+    #[test]
+    fn an_empty_or_absent_message_id_is_never_deduped() {
+        let anon = |read: u64| {
+            format!(
+                "{}\n",
+                json!({"type":"assistant","message":{
+                    "content": [], "usage": {"cache_read_input_tokens": read}}})
+            )
+        };
+        let empty = |read: u64| {
+            format!(
+                "{}\n",
+                json!({"type":"assistant","message":{
+                    "id": "", "content": [], "usage": {"cache_read_input_tokens": read}}})
+            )
+        };
+        let p = token_profile(&format!("{}{}{}{}", anon(5), anon(5), empty(7), empty(7)));
+        assert_eq!(p.turns, 4);
+        assert_eq!(p.cache_read, 24);
+    }
+
+    /// The profile is WHOLE-RUN, every thread. A dispatching run puts almost all of its turns on
+    /// sub-agents, and a main-thread-only reading of `20260809T155241Z` reports 21 turns for a run
+    /// that took 102 — which reads as the flat-context signature of dispatch on a run that had none.
+    #[test]
+    fn subagent_turns_are_counted_beside_the_main_loop() {
+        let sub = format!(
+            "{}\n",
+            json!({"type":"assistant","parent_tool_use_id":"toolu_1","message":{
+                "id":"m2","content":[],"usage":{"cache_read_input_tokens": 50}}})
+        );
+        let p = token_profile(&format!("{}{}", turn("m1", 10, 0, 0), sub));
+        assert_eq!(p.turns, 2);
+        assert_eq!(p.cache_read, 60);
+    }
+
+    /// The cache-write fallback `token-report` already takes: the TTL breakdown when the trace
+    /// carries one, the undifferentiated field when it does not. Two readers of one stream
+    /// disagreeing about what a run wrote is how a metrics row and a profile of the same trace stop
+    /// reconciling.
+    #[test]
+    fn cache_write_prefers_the_ttl_breakdown_and_falls_back_to_the_whole_field() {
+        let split = format!(
+            "{}\n",
+            json!({"type":"assistant","message":{"id":"m1","content":[],"usage":{
+                "cache_creation_input_tokens": 999,
+                "cache_creation": {"ephemeral_5m_input_tokens": 30, "ephemeral_1h_input_tokens": 7}}}})
+        );
+        assert_eq!(token_profile(&split).cache_write, 37);
+        let whole = format!(
+            "{}\n",
+            json!({"type":"assistant","message":{"id":"m1","content":[],"usage":{
+                "cache_creation_input_tokens": 999}}})
+        );
+        assert_eq!(token_profile(&whole).cache_write, 999);
+    }
+
+    /// A usage-gate pause writes an EMPTY trace, and a zero average over zero turns is a
+    /// measurement of nothing — so the averages are absent rather than 0.
+    #[test]
+    fn an_empty_trace_has_no_averages_rather_than_zero_ones() {
+        let p = token_profile("");
+        assert_eq!(p.turns, 0);
+        assert_eq!(p.context_first, None);
+        assert_eq!(p.per_turn(), None);
+        assert_eq!(p.per_tool_call(), None);
+        // A trace with tool calls but no usage still has a per-CALL denominator and no numerator.
+        let no_usage = format!(
+            "{}\n",
+            json!({"type":"assistant","message":{"id":"m1","content":[
+                {"type":"tool_use","name":"Bash","input":{"command":"true"}}]}})
+        );
+        let q = token_profile(&no_usage);
+        assert_eq!(q.turns, 0);
+        assert_eq!(q.tool_calls, 1);
+        assert_eq!(q.per_turn(), None);
+        assert_eq!(q.per_tool_call(), Some(0));
+    }
+
+    /// Only `assistant` events carry model usage, and reading any other type is how a future event
+    /// shape silently doubles a run's measured context.
+    #[test]
+    fn only_assistant_events_are_profiled() {
+        let user = format!(
+            "{}\n",
+            json!({"type":"user","message":{"id":"u1","content":[],
+                "usage":{"cache_read_input_tokens": 900}}})
+        );
+        let result = format!(
+            "{}\n",
+            json!({"type":"result","subtype":"success","usage":{"cache_read_input_tokens": 900}})
+        );
+        let p = token_profile(&format!("{}{}{}", user, result, turn("m1", 10, 0, 0)));
+        assert_eq!(p.turns, 1);
+        assert_eq!(p.cache_read, 10);
+    }
+
+    // ── the corpus reading ────────────────────────────────────────────────────────────────────
+
+    /// One `Bash` tool call.
+    fn bash(cmd: &str) -> String {
+        format!(
+            "{}\n",
+            json!({"type":"assistant","message":{"content":[
+                {"type":"tool_use","name":"Bash","input":{"command":cmd}}]}})
+        )
+    }
+
+    /// One `Write` tool call.
+    fn write_file(path: &str) -> String {
+        format!(
+            "{}\n",
+            json!({"type":"assistant","message":{"content":[
+                {"type":"tool_use","name":"Write","input":{"file_path":path,"content":"x"}}]}})
+        )
+    }
+
+    /// A trace exhibiting exactly the counts asked for — the fixture the decay table is built from.
+    fn synthetic_trace(probes: usize, gh_api: usize, harness: usize) -> String {
+        let mut s = String::new();
+        for _ in 0..probes {
+            s.push_str(&bash("gh pr view 1 -R a/b --json headRefOid"));
+        }
+        for _ in 0..gh_api {
+            s.push_str(&bash("gh api repos/a/b/pulls/1"));
+        }
+        for _ in 0..harness {
+            s.push_str(&write_file("/work/harness/vite.config.js"));
+        }
+        s
+    }
+
+    /// The decay table the 2026-08-09 corpus reading produced, reproduced as a fixture: probes
+    /// 365 → 92 → 7 → 3, raw `gh api` 48 → 85 → 0 → 0, harness scaffold 11 → 7 → 7 → 0.
+    ///
+    /// The two zero-ending columns are the whole point of the corpus step. `gh api` reaches zero
+    /// and STAYS there once the tool-only I/O rule exists; the harness scaffold is rebuilt by every
+    /// run that takes a screenshot item, and its last nonzero run is the NEWER of the two. Reading
+    /// the most recent run alone answers neither.
+    #[test]
+    fn the_corpus_reproduces_the_measured_decay_table() {
+        let table = [
+            ("20260729T170004Z", 365, 48, 11),
+            ("20260802T130003Z", 92, 85, 7),
+            ("20260804T114433Z", 7, 0, 7),
+            ("20260809T155241Z", 3, 0, 0),
+        ];
+        let rows: Vec<CorpusRow> = table
+            .iter()
+            .map(|(run, p, g, h)| corpus_row(run, &synthetic_trace(*p, *g, *h)))
+            .collect();
+        for (row, (run, p, g, h)) in rows.iter().zip(table.iter()) {
+            assert_eq!(&row.run, run);
+            assert_eq!(row.probes, *p, "{run} probes");
+            assert_eq!(row.gh_api, *g, "{run} gh api");
+            assert_eq!(row.harness_scaffold, *h, "{run} harness scaffold");
+            // The scaffold is a labelled SUBSET of the helper scripts, so every scaffold write is
+            // counted in both — a scaffold count above the script count would mean the subset
+            // relation had been broken.
+            assert!(row.helper_scripts >= row.harness_scaffold, "{run}");
+        }
+        let metrics = corpus_metrics(&rows);
+        let by = |k: &str| metrics.iter().find(|m| m.key == k).unwrap().clone();
+
+        let probes = by("probes");
+        assert_eq!((probes.first, probes.peak, probes.latest), (365, 365, 3));
+        assert_eq!(probes.runs_seen_in, 4);
+        assert_eq!(probes.last_seen.as_deref(), Some("20260809T155241Z"));
+        assert_eq!(probes.shape, DecayShape::Falling);
+
+        let api = by("ghApi");
+        assert_eq!((api.first, api.peak, api.latest), (48, 85, 0));
+        assert_eq!(api.runs_seen_in, 2);
+        assert_eq!(api.last_seen.as_deref(), Some("20260802T130003Z"));
+        assert_eq!(api.shape, DecayShape::Quiet);
+
+        let harness = by("harnessScaffold");
+        assert_eq!((harness.first, harness.peak, harness.latest), (11, 11, 0));
+        assert_eq!(harness.runs_seen_in, 3);
+        // The discriminating fact, and the reason both metrics reading `quiet` is not the end of
+        // the reading: the scaffold was last rebuilt LATER than the last raw `gh api` call.
+        assert_eq!(harness.last_seen.as_deref(), Some("20260804T114433Z"));
+        assert_eq!(harness.shape, DecayShape::Quiet);
+    }
+
+    /// A `gh pr view` asking for the PR's BODY is a first read, not a probe. Counting it would put
+    /// the enumeration a producer is supposed to do in the same bucket as the per-turn polling
+    /// `await` exists to replace.
+    #[test]
+    fn a_probe_is_a_head_sha_or_a_check_state_read() {
+        for cmd in [
+            "gh pr view 1 -R a/b --json headRefOid",
+            "gh pr checks 1 -R a/b",
+            "gh pr view 1 -R a/b --json files,headRefOid,mergeStateStatus",
+            "gh pr checks 1 -R a/b | head -6; gh pr checks 2 -R a/b",
+        ] {
+            assert!(is_probe_call(cmd), "missed {cmd:?}");
+        }
+        for cmd in [
+            "gh pr view 1 -R a/b --json body",
+            "gh pr view 1 -R a/b --json labels,reviewDecision",
+            "gh pr view 1 -R a/b --json mergeStateStatus",
+            "gh issue view 1 -R a/b --json body",
+            "pr-review-report await a/b#1",
+        ] {
+            assert!(!is_probe_call(cmd), "counted {cmd:?}");
+        }
+    }
+
+    /// `gh api` as a WHOLE WORD. A substring scan cannot tell the pipeline reaching past its tools
+    /// from a jq path that happens to spell it.
+    #[test]
+    fn raw_gh_api_is_matched_as_a_word() {
+        for cmd in [
+            "gh api repos/a/b/pulls/1",
+            "set -e; gh api graphql -f query='x'",
+            "x=$(gh api repos/a/b)",
+        ] {
+            assert!(is_raw_gh_api(cmd), "missed {cmd:?}");
+        }
+        for cmd in [
+            "gh apiVersion",
+            "echo 'high api usage'",
+            "jq -r '.gh apiVersion'",
+            "gh pr view 1 --json body",
+        ] {
+            assert!(!is_raw_gh_api(cmd), "counted {cmd:?}");
+        }
+        // The scan must keep looking past a non-word-boundary hit, or the FIRST near-miss hides a
+        // real call behind it.
+        assert!(is_raw_gh_api("gh apiVersion; gh api repos/a/b"));
+    }
+
+    /// An interpreter is counted where the run RUNS one, not where it mentions one. `cat probe.sh`
+    /// reads a file; `./probe.sh` executes the helper the run just wrote itself.
+    #[test]
+    fn an_interpreter_is_counted_in_command_position_only() {
+        for cmd in [
+            "python3 x.py",
+            "/usr/bin/python3 probe.py",
+            "./probe.sh",
+            "bash /work/scratch/mutate.sh",
+            "nix develop -c node shoot.mjs",
+            "FOO=1 python3 x.py",
+            "env FOO=1 node x.js",
+            "ls | xargs node",
+            "cd /work && ./final-check.sh",
+        ] {
+            assert!(is_interpreter_call(cmd), "missed {cmd:?}");
+        }
+        for cmd in [
+            "cat probe.sh",
+            "git -C /work diff -- shoot.mjs",
+            "grep -n python3 campaign-run.sh",
+            "pr-review-report state-load --json",
+            "rm -f /work/scratch/probe.py",
+        ] {
+            assert!(!is_interpreter_call(cmd), "counted {cmd:?}");
+        }
+    }
+
+    /// A helper script is any of the four extensions the issue names; the harness scaffold is the
+    /// labelled subset. `extract.py` is a helper and NOT a scaffold — which is precisely the run
+    /// whose most visible waste was the wrong thing to build.
+    #[test]
+    fn a_written_script_is_counted_as_a_helper_and_only_sometimes_as_scaffold() {
+        let row = corpus_row(
+            "r",
+            &format!(
+                "{}{}{}{}",
+                write_file("/work/scratch/extract.py"),
+                write_file("/work/harness/vite.config.js"),
+                write_file("/work/harness/stubs/svelte-wagmi.js"),
+                write_file("/work/notes.md"),
+            ),
+        );
+        assert_eq!(row.helper_scripts, 3);
+        assert_eq!(row.harness_scaffold, 2);
+        assert_eq!(row.tool_calls, 4);
+    }
+
+    /// Counting is per TOOL CALL, because what a run pays for is the call. One `Bash` block that
+    /// probes twice is one probe-shaped call, and per-occurrence counting reports 453 for the run
+    /// that made 365.
+    #[test]
+    fn each_metric_counts_calls_not_occurrences() {
+        let row = corpus_row(
+            "r",
+            &bash(
+                "gh pr checks 1 -R a/b; gh pr checks 2 -R a/b; gh api repos/a/b; gh api repos/c/d",
+            ),
+        );
+        assert_eq!(row.tool_calls, 1);
+        assert_eq!(row.probes, 1);
+        assert_eq!(row.gh_api, 1);
+    }
+
+    /// Only `assistant` events issue tool calls. Two shapes have to be refused, and the second is
+    /// the one that makes the guard load-bearing rather than decorative:
+    ///
+    /// - a `user` event carries the RESULT of a call, and its text routinely quotes the command;
+    /// - an event of ANY other type carrying a `tool_use` block would be counted twice over — once
+    ///   on the assistant turn that issued it and once here. No trace on disk has one, which is
+    ///   exactly why the guard has to be asserted rather than assumed: it is parity with
+    ///   [`StartupProbe`] and [`token_attribution`], held against a shape the corpus has not
+    ///   produced YET.
+    #[test]
+    fn only_assistant_events_are_counted() {
+        let echoed = format!(
+            "{}\n",
+            json!({"type":"user","message":{"content":[
+                {"type":"tool_result","content":"gh api repos/a/b returned 404"}]}})
+        );
+        let replayed = format!(
+            "{}\n",
+            json!({"type":"system","subtype":"task_progress","message":{"content":[
+                {"type":"tool_use","name":"Bash","input":{"command":"gh api repos/a/b"}}]}})
+        );
+        let row = corpus_row(
+            "r",
+            &format!("{}{}{}", echoed, replayed, bash("gh api repos/a/b")),
+        );
+        assert_eq!(row.tool_calls, 1, "the assistant turn is the only call");
+        assert_eq!(row.gh_api, 1);
+    }
+
+    /// A torn or non-JSON line is skipped rather than fatal: the corpus is written by another
+    /// process, and a killed run's final line is routinely half-written.
+    #[test]
+    fn an_unparseable_line_does_not_lose_the_trace() {
+        let torn = "not json at all\n{\"type\":\"assis";
+        let row = corpus_row("r", &format!("{}{}", bash("gh api repos/a/b"), torn));
+        assert_eq!(row.gh_api, 1);
+    }
+
+    /// Tarball fetch/extract — the shape the newest 2026-08-09 run spent a worker on.
+    #[test]
+    fn a_tarball_fetch_or_extract_is_counted() {
+        for cmd in [
+            "npm pack rainlanguage/orderbook",
+            "tar -tzf pkg.tgz",
+            "curl -sL https://x/y.tar.gz -o /tmp/y.tar.gz",
+            "tar xzf /tmp/y.tar.gz -C /tmp/out",
+        ] {
+            assert!(is_tarball_call(cmd), "missed {cmd:?}");
+        }
+        for cmd in [
+            "gh api repos/a/b",
+            "ls /tmp",
+            "target/debug/pr-review-report",
+        ] {
+            assert!(!is_tarball_call(cmd), "counted {cmd:?}");
+        }
+    }
+
+    // ── the decay shape ───────────────────────────────────────────────────────────────────────
+
+    /// The typed reading of a series. Every branch, and the boundary that separates `falling` from
+    /// `holding`: a latest EQUAL to the peak is not decaying.
+    #[test]
+    fn the_shape_is_read_off_the_series_alone() {
+        assert_eq!(decay_shape(&[]), DecayShape::Absent);
+        assert_eq!(decay_shape(&[0, 0, 0]), DecayShape::Absent);
+        assert_eq!(decay_shape(&[5, 2, 0]), DecayShape::Quiet);
+        assert_eq!(decay_shape(&[365, 92, 7, 3]), DecayShape::Falling);
+        assert_eq!(decay_shape(&[3, 3, 3]), DecayShape::Holding);
+        assert_eq!(decay_shape(&[0, 0, 5]), DecayShape::Holding);
+        assert_eq!(decay_shape(&[5, 9]), DecayShape::Holding);
+        // A single active run says only that it happened — never that anything decayed.
+        assert_eq!(decay_shape(&[7]), DecayShape::Holding);
+        assert_eq!(decay_shape(&[0]), DecayShape::Absent);
+    }
+
+    /// A trace that issued NO tool call is a gate skip or a failed startup, not a run. Its zeros
+    /// are the absence of a run, and letting them into the series turns every live hand-roll into
+    /// `quiet` the moment the crons pause — which is the state this pipeline spends most of its
+    /// week in (17 of the 21 retained traces on 2026-08-09).
+    #[test]
+    fn inactive_traces_are_excluded_from_every_series() {
+        let rows = vec![
+            corpus_row("a", &bash("gh api repos/a/b")),
+            corpus_row("b", ""),
+            corpus_row("c", ""),
+        ];
+        assert!(rows[0].active());
+        assert!(!rows[1].active());
+        let api = corpus_metrics(&rows)
+            .into_iter()
+            .find(|m| m.key == "ghApi")
+            .unwrap();
+        assert_eq!(
+            api.shape,
+            DecayShape::Holding,
+            "two empty traces are not a decay"
+        );
+        assert_eq!(api.latest, 1);
+        assert_eq!(api.last_seen.as_deref(), Some("a"));
+        assert_eq!(api.runs_seen_in, 1);
+    }
+
+    /// A corpus with no active trace at all reports `absent` for everything and names no last-seen
+    /// run — rather than panicking on an empty series or claiming the newest trace exhibited zero.
+    #[test]
+    fn a_corpus_of_only_skips_reads_as_absent() {
+        let rows = vec![corpus_row("a", ""), corpus_row("b", "")];
+        for m in corpus_metrics(&rows) {
+            assert_eq!(m.shape, DecayShape::Absent, "{}", m.key);
+            assert_eq!(m.last_seen, None, "{}", m.key);
+            assert_eq!((m.first, m.peak, m.latest, m.runs_seen_in), (0, 0, 0, 0));
+        }
+    }
+
+    /// Every metric the report prints is in ONE list, so the table, the summary and the JSON cannot
+    /// name different sets.
+    #[test]
+    fn every_metric_is_read_from_the_one_list() {
+        let keys: Vec<&str> = CORPUS_METRICS.iter().map(|(_, k, _)| *k).collect();
+        assert_eq!(
+            keys,
+            vec![
+                "probes",
+                "ghApi",
+                "tarball",
+                "interpreters",
+                "helperScripts",
+                "harnessScaffold"
+            ]
+        );
+        let rows = vec![corpus_row("a", &bash("gh api repos/a/b"))];
+        let read: Vec<&str> = corpus_metrics(&rows).iter().map(|m| m.key).collect();
+        assert_eq!(read, keys, "the summary reads exactly the printed set");
     }
 }
