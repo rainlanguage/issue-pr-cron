@@ -6,6 +6,13 @@
 !/.gitignore
 !/README.md
 !/CLAUDE.md
+# The two files CLAUDE.md routes to (#261). CLAUDE.md keeps what governs judgement and
+# auto-loads; these two hold the reference material a role reaches for, and each has a
+# one-line pointer in the router. Untracked they would exist on this box and NOWHERE else,
+# so every pointer would dangle on a fresh checkout — which is what the router promises not
+# to do. `every_router_pointer_resolves_to_a_file_that_exists` is the gate.
+!/TRANSITIONS.md
+!/WORK-CLONES.md
 !/campaign-run.sh
 !/campaign-prompt.txt
 # The standing brief `--agents` loads into every DISPATCHED worker. Tracked as PLAIN TEXT and
