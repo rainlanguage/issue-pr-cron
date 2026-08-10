@@ -73448,6 +73448,10 @@ mod journal_tests {
             "2026-08-09 14:51:50Z",
             "2026-8-9T14:51:50Z",
             "20260809T145150Z",
+            // A valid instant with something after it. The length check is what refuses this, and
+            // it is not cosmetic: `journal_instant` would hand back a LONGER comparable string,
+            // which sorts after every well-formed one whatever date it claims.
+            "2026-08-09T14:51:50Zjunk",
             "",
         ] {
             let mut e = producer("LJ-0001", bad, "k");
@@ -73459,6 +73463,14 @@ mod journal_tests {
             );
         }
         assert!(is_journal_instant("2026-08-09T14:51:50Z"));
+        // Surrounding whitespace is TRIMMED before this is asked, so `" …Z "` is a well-formed
+        // record with a stray space and not a malformed instant — which is why the refusals above
+        // are all about the spelling itself.
+        let mut padded = producer("LJ-0001", "2026-08-09T14:51:50Z", "k");
+        padded["at"] = json!(" 2026-08-09T14:51:50Z ");
+        let (entries, defects) = journal_entries(&entry(padded));
+        assert!(defects.is_empty(), "{defects:?}");
+        assert_eq!(entries[0].at, "2026-08-09T14:51:50Z");
         // A run id and an instant reduce to the SAME comparable form, which is what lets a rule's
         // landing be compared against a run without a date library.
         assert_eq!(
@@ -73475,6 +73487,7 @@ mod journal_tests {
         for bad in [
             "2026-08-09T14:51:50Z",
             "20260809T145150",
+            "20260809T145150Zx",
             "20260809t145150Z",
             "latest",
         ] {
@@ -73687,10 +73700,34 @@ mod journal_tests {
         assert!(!kind(&kinds, "k")
             .recurrences
             .contains(&"LJ-0002".to_string()));
-        // Recurrence is evidence FOR the rule, so it can never also be a deletion candidate.
-        let verdict = journal_verdict(&kinds);
+        // Recurrence is evidence FOR the rule, so it can never also be a deletion candidate — and
+        // that has to be asserted against a corpus that WOULD otherwise make it one. With no runs
+        // given, every kind is undeletable for the unrelated reason that its silence is unknown,
+        // and the recurrence guard does no work in the assertion at all.
+        let runs = journal_runs(
+            &(run_row("20260809T140000Z", "producer", Some("ok"))
+                + &run_row("20260809T150000Z", "producer", Some("ok"))),
+        );
+        let with_runs = journal_kinds(&entries, Some(&runs));
+        assert_eq!(
+            kind(&with_runs, "k").runs_since,
+            Some(2),
+            "two runs since the rule landed, so only the recurrence can be disqualifying it"
+        );
+        let verdict = journal_verdict(&with_runs);
         assert_eq!(verdict.recurring.len(), 1);
         assert_eq!(verdict.delete_next(), None);
+        assert!(verdict.deletable.is_empty());
+        // The same kind without its recurrence IS deletable over the same corpus, which is what
+        // makes the line above about the recurrence and not about the denominator.
+        let (clean, _) =
+            journal_entries(&j.replace("2026-08-09T13:00:00Z", "2026-08-09T11:30:00Z"));
+        assert_eq!(
+            journal_verdict(&journal_kinds(&clean, Some(&runs)))
+                .delete_next()
+                .map(|k| k.kind.as_str()),
+            Some("k")
+        );
     }
 
     /// A rule that was strengthened is a different rule. Measuring from the ORIGINAL landing would
@@ -73804,6 +73841,15 @@ mod journal_tests {
             runs[0].skipped,
             "the skip arrives on the LAST row, not the first"
         );
+        // …and in the other order too. Nothing in this file's format guarantees which row carries
+        // the outcome, so the skip is ORed across a run's rows rather than taken from whichever
+        // one happened to come last — read as an assignment, a trailing row silently un-skips it.
+        let skip_first = journal_runs(
+            &(run_row("20260809T120000Z", "producer", Some("skipped"))
+                + &run_row("20260809T120000Z", "producer", None)),
+        );
+        assert_eq!(skip_first.len(), 1);
+        assert!(skip_first[0].skipped, "a later row must not clear the skip");
         // Rows a denominator cannot use are ignored rather than refused: the metrics file
         // accumulates across schema changes and this is not a gate on it.
         let mixed = journal_runs(
