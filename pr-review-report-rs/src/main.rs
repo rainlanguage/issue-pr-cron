@@ -1213,7 +1213,11 @@ enum PresentState {
     Presentable,
     Red,
     Pending,
-    Conflicting,
+    /// CONFLICTING merge state on an `ai:ready` PR. Not a state of its own — the true state is
+    /// the needs-work send-back the vetter's next state-load writes ([`VetAction::ConflictNeedsWork`]);
+    /// this bucket is the PRs owed that demotion between vetter passes, reported by the state they
+    /// are IN rather than the label they still wear, exactly as `unvetted` reports a stale verdict.
+    NeedsWork,
     MergeUnknown,
     Approved,
 }
@@ -1230,7 +1234,7 @@ fn presentable_state(ci: Ci, merge: Merge, review_decision: Option<&str>) -> Pre
         Ci::Red => PresentState::Red,
         Ci::Pending => PresentState::Pending,
         Ci::Green | Ci::NoChecks => match merge {
-            Merge::Conflicting => PresentState::Conflicting,
+            Merge::Conflicting => PresentState::NeedsWork,
             // Unknown = GitHub has not confirmed the PR merges cleanly. Not fully clean, so not
             // presentable; surfaced as MergeUnknown (the producer's job to settle before a human views).
             Merge::Unknown => PresentState::MergeUnknown,
@@ -1318,7 +1322,7 @@ fn issue_slug(url: &str) -> Option<String> {
 struct QueueCounts {
     raw: usize,      // all ai:ready PRs the search returned
     excluded: usize, // filtered before the per-PR check: drafts + human:* overrides
-    conflict: usize,
+    needs_work: usize,
     red: usize,
     pending: usize,
     merge_unknown: usize,
@@ -1336,7 +1340,7 @@ struct QueueCounts {
     archived_repo: usize,
 }
 
-/// Render the queue: a header with the true ai:ready -> presentable / conflicting / red / pending /
+/// Render the queue: a header with the true ai:ready -> presentable / needs-work / red / pending /
 /// approved breakdown, then the cheapest-first presentable rows (printed list capped at `top`,
 /// 0 = all; a `+N more` line notes any presentable rows beyond the cap).
 fn render_queue(rows: &[QueueRow], c: &QueueCounts, top: usize) -> String {
@@ -1380,8 +1384,8 @@ fn render_queue(rows: &[QueueRow], c: &QueueCounts, top: usize) -> String {
         top.min(rows.len())
     };
     let mut out = format!(
-        "review queue: {} ai:ready -> {} presentable, {} conflicting, {} red, {} pending, {} unknown-merge, {} approved, {} un-vetted{}{}{}{}{} (cheapest first){}\n",
-        c.raw, rows.len(), c.conflict, c.red, c.pending, c.merge_unknown, c.approved, c.unvetted, threads, err, limited, excl, archived, trunc
+        "review queue: {} ai:ready -> {} presentable, {} needs-work, {} red, {} pending, {} unknown-merge, {} approved, {} un-vetted{}{}{}{}{} (cheapest first){}\n",
+        c.raw, rows.len(), c.needs_work, c.red, c.pending, c.merge_unknown, c.approved, c.unvetted, threads, err, limited, excl, archived, trunc
     );
     for (cost, repo, num, url, basis) in rows.iter().take(shown) {
         let cs = if *cost == 1001 {
@@ -1977,7 +1981,9 @@ enum CandidateOutcome {
     Unvetted,
     Red,
     Pending,
-    Conflicting,
+    /// Merge state CONFLICTING under an `ai:ready` label: owed the needs-work send-back the
+    /// vetter's next state-load writes. See [`PresentState::NeedsWork`].
+    NeedsWork,
     MergeUnknown,
     Approved,
 }
@@ -2051,7 +2057,7 @@ fn candidate_outcome(
         }
         PresentState::Red => CandidateOutcome::Red,
         PresentState::Pending => CandidateOutcome::Pending,
-        PresentState::Conflicting => CandidateOutcome::Conflicting,
+        PresentState::NeedsWork => CandidateOutcome::NeedsWork,
         PresentState::MergeUnknown => CandidateOutcome::MergeUnknown,
         PresentState::Approved => CandidateOutcome::Approved,
     }
@@ -2078,7 +2084,7 @@ fn apply_outcome(out: CandidateOutcome, rows: &mut Vec<PresentablePr>, counts: &
         CandidateOutcome::Unvetted => counts.unvetted += 1,
         CandidateOutcome::Red => counts.red += 1,
         CandidateOutcome::Pending => counts.pending += 1,
-        CandidateOutcome::Conflicting => counts.conflict += 1,
+        CandidateOutcome::NeedsWork => counts.needs_work += 1,
         CandidateOutcome::MergeUnknown => counts.merge_unknown += 1,
         CandidateOutcome::Approved => counts.approved += 1,
     }
@@ -2355,7 +2361,7 @@ fn presentable_queue() -> Result<(Vec<PresentablePr>, QueueCounts), String> {
         // archived count explains part of the difference rather than vanishing from both sides.
         raw: arr.len() + frozen.len(),
         excluded: arr.len() - candidates.len(),
-        conflict: 0,
+        needs_work: 0,
         red: 0,
         pending: 0,
         merge_unknown: 0,
@@ -2672,7 +2678,7 @@ mod parallel_queue_tests {
         QueueCounts {
             raw: 0,
             excluded: 0,
-            conflict: 0,
+            needs_work: 0,
             red: 0,
             pending: 0,
             merge_unknown: 0,
@@ -2691,7 +2697,7 @@ mod parallel_queue_tests {
     /// what makes a regression that folds it back in fail.
     fn counters(c: &QueueCounts) -> [usize; 9] {
         [
-            c.conflict,
+            c.needs_work,
             c.red,
             c.pending,
             c.merge_unknown,
@@ -2723,7 +2729,7 @@ mod parallel_queue_tests {
     #[test]
     fn each_outcome_bumps_exactly_one_counter() {
         let cases = [
-            (CandidateOutcome::Conflicting, [1, 0, 0, 0, 0, 0, 0, 0, 0]),
+            (CandidateOutcome::NeedsWork, [1, 0, 0, 0, 0, 0, 0, 0, 0]),
             (CandidateOutcome::Red, [0, 1, 0, 0, 0, 0, 0, 0, 0]),
             (CandidateOutcome::Pending, [0, 0, 1, 0, 0, 0, 0, 0, 0]),
             (CandidateOutcome::MergeUnknown, [0, 0, 0, 1, 0, 0, 0, 0, 0]),
@@ -3056,7 +3062,7 @@ mod parallel_queue_tests {
         let vetted = vec![vetter_comment(&head, "40 — a basis")];
         let cases = vec![
             GateCase {
-                name: "conflicting",
+                name: "conflicted -> needs-work",
                 pr: Some(detail("CONFLICTING", "SUCCESS", "", vetted.clone())),
                 threads: Some(0),
                 want: [1, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -4846,7 +4852,8 @@ enum PrOutcome {
     /// Open and presentable (or already approved): DELIVERED, and waiting on the one actor this
     /// pipeline deliberately cannot be: the human who merges.
     AwaitingHuman,
-    /// Open but not presentable — red, pending, conflicting, or unconfirmed. Work in progress that
+    /// Open but not presentable — red, pending, conflicted (owed the needs-work send-back), or
+    /// unconfirmed. Work in progress that
     /// has been paid for and has not arrived.
     Reworking,
     /// Closed without merging. Paid for, abandoned.
@@ -20975,6 +20982,23 @@ enum VetAction {
     /// every PR here is inventoried by the state its own label puts it in — which is the very
     /// reason it was withheld.
     SkipDraftInState,
+    /// The PR carries `ai:ready` but GitHub reports its merge state CONFLICTING, and the
+    /// state-load SENDS IT BACK: `ai:needs-work` plus a work order asking the producer to merge
+    /// the base branch in (never rebase) and re-run the suite on the merge commit.
+    ///
+    /// "Conflicting" is not an FSM state — a conflicted ready PR is the ordinary needs-work
+    /// send-back with the base's movement as its ground. Left as `ai:ready` it sat in a bespoke
+    /// queue bucket that no actor consumed: not presentable (the queue requires mergeable), not
+    /// vet work (the verdict is current at head), and in the producer's fleet only as a derived
+    /// `conflict-3d` row with nothing trusted saying what to do. The send-back replaces the
+    /// bucket with the one send-back state, and the note it writes is a work order
+    /// [`needs_work_instruction`] can read — so the producer arrives via `rework-needs-work`
+    /// with a stated move.
+    ///
+    /// Like [`VetAction::DraftNeedsWork`], the verdict is written by the state-load itself rather
+    /// than offered to the vetter as work, because no reading of the code can change it: the
+    /// mergeable field decides it. See [`conflict_send_back_plan`].
+    ConflictNeedsWork,
     SkipVetted,
     SkipOpenThreads,
     /// `ai:blocked-on` with a typed dep still OPEN: the flag holds, the PR is not offered for a
@@ -20999,6 +21023,7 @@ impl VetAction {
             VetAction::SkipHuman => "skip-human-decided",
             VetAction::DraftNeedsWork => "draft-needs-work",
             VetAction::SkipDraftInState => "skip-draft-in-state",
+            VetAction::ConflictNeedsWork => "conflict-needs-work",
             VetAction::SkipVetted => "skip-vetted-at-head",
             VetAction::SkipOpenThreads => "skip-open-threads",
             VetAction::SkipBlockedOn => "skip-blocked-on",
@@ -21035,10 +21060,20 @@ fn vet_action(
     is_draft: bool,
     human_sacred: bool,
     vetted_at_head: bool,
+    conflicted_ready: bool,
     labels: &[String],
 ) -> VetAction {
     if human_sacred {
         return VetAction::SkipHuman;
+    }
+    // The CONFLICT arm sits ABOVE the currency check, and that placement is the transition: an
+    // `ai:ready` PR whose merge state is CONFLICTING is vetted-at-head — its verdict still
+    // describes the code — but the verdict no longer describes a PR anyone can merge, and no
+    // reading of the diff changes what the producer must do about that. Under the currency check
+    // it would skip as vetted forever. It sits UNDER `human_sacred` for that check's own reason:
+    // a PR a person has decided is not re-stated by any rule, this one included.
+    if conflicted_ready {
+        return VetAction::ConflictNeedsWork;
     }
     if vetted_at_head {
         return VetAction::SkipVetted;
@@ -21131,6 +21166,31 @@ fn draft_send_back_plan(
     head: &str,
     labels: &[String],
 ) -> Option<Vec<Vec<String>>> {
+    send_back_plan(
+        slug,
+        num,
+        head,
+        labels,
+        DRAFT_SEND_BACK_NOTE,
+        DRAFT_SEND_BACK_LENS,
+    )
+}
+
+/// PURE: the shared body of the state-load's mechanical send-backs — the label swap and the
+/// verdict comment, in the label-first order documented on [`draft_send_back_plan`], which is the
+/// only caller-visible contract. The note and lens are the ONLY parts that vary between the
+/// grounds (draft flag, merge conflict): each ground states what it read and what the producer's
+/// move is, and everything else — one `gh pr edit` carrying both label halves, the
+/// [`verdict_comment`] needs-work form — is one construction so the two send-backs cannot drift
+/// into different shapes.
+fn send_back_plan(
+    slug: &str,
+    num: u64,
+    head: &str,
+    labels: &[String],
+    note: &str,
+    lens: &str,
+) -> Option<Vec<Vec<String>>> {
     if head.is_empty() {
         return None;
     }
@@ -21152,14 +21212,7 @@ fn draft_send_back_plan(
         }
         plan.push(edit);
     }
-    let body = verdict_comment(
-        head,
-        "needs-work",
-        DRAFT_SEND_BACK_NOTE,
-        None,
-        "",
-        Some(DRAFT_SEND_BACK_LENS),
-    );
+    let body = verdict_comment(head, "needs-work", note, None, "", Some(lens));
     plan.push(
         ["pr", "comment", &n, "-R", slug, "--body", &body]
             .iter()
@@ -21168,6 +21221,32 @@ fn draft_send_back_plan(
     );
     Some(plan)
 }
+
+/// The work order a conflict send-back carries. Built rather than fixed because it names the PR's
+/// own base branch; mechanical for the same reason [`DRAFT_SEND_BACK_NOTE`] is: GitHub's
+/// CONFLICTING answer decides the verdict, and no reading of the diff can change it. MERGE, never
+/// rebase — the branch's history is shared state — and the full suite on the merge commit, because
+/// a semantic conflict hides outside the conflict markers.
+fn conflict_send_back_note(base: &str) -> String {
+    let base = if base.is_empty() {
+        "the base branch"
+    } else {
+        base
+    };
+    format!(
+        "this PR's merge state is CONFLICTING: the base has moved and GitHub can no longer merge \
+         it, so an ai:ready verdict describes code nobody can land. Merge origin/{base} into the \
+         branch (never rebase), resolve the conflicts, and run the FULL suite on the merge \
+         commit — semantic conflicts hide outside the markers. The push moves the head and the PR \
+         re-enters vetting fresh."
+    )
+}
+
+/// The `lens` stamp a conflict send-back writes: no source was read, and none was needed, because
+/// the verdict is about the merge state rather than about the code. Stated for the reason
+/// [`DRAFT_SEND_BACK_LENS`] is: an absent stamp already means a pre-lens verdict.
+const CONFLICT_SEND_BACK_LENS: &str =
+    "no source read — GitHub's CONFLICTING merge state decides this verdict, not the diff";
 
 /// Run a [`draft_send_back_plan`] through `run`, STOPPING at the first call that fails. `true` iff
 /// the whole plan ran.
@@ -21197,6 +21276,32 @@ fn record_draft_send_back(slug: &str, num: u64, head: &str, labels: &[String]) -
         );
         return false;
     };
+    record_send_back(slug, &plan)
+}
+
+/// The conflict send-back write: [`send_back_plan`] with the conflict ground's note and lens,
+/// through the same label-ensure and short-circuit as the draft's. `true` iff the whole plan ran.
+fn record_conflict_send_back(
+    slug: &str,
+    num: u64,
+    head: &str,
+    labels: &[String],
+    base: &str,
+) -> bool {
+    let note = conflict_send_back_note(base);
+    let Some(plan) = send_back_plan(slug, num, head, labels, &note, CONFLICT_SEND_BACK_LENS) else {
+        eprintln!(
+            "warning: {slug}#{num} is CONFLICTING with no head sha — no verdict can be pinned to \
+             it, so nothing was written"
+        );
+        return false;
+    };
+    record_send_back(slug, &plan)
+}
+
+/// The shared impure tail of both send-backs: ensure the label exists in the repo, then run the
+/// plan through [`run_draft_send_back`]. `true` iff the whole plan ran.
+fn record_send_back(slug: &str, plan: &[Vec<String>]) -> bool {
     let target = STATE_NEEDS_WORK.key;
     let (color, desc) = label_meta(target);
     if !gh_run(&[
@@ -21213,7 +21318,7 @@ fn record_draft_send_back(slug: &str, num: u64, head: &str, labels: &[String]) -
     ]) {
         eprintln!("warning: could not ensure label {target} exists in {slug}");
     }
-    run_draft_send_back(&plan, gh_run)
+    run_draft_send_back(plan, gh_run)
 }
 
 /// The draft SEND-BACK on the vetter's state-load, applied to one already-classified row. It is the
@@ -21248,6 +21353,43 @@ fn send_back_draft(
         .filter_map(|l| l.as_str().map(String::from))
         .collect();
     let sent = write(&head, &labels);
+    if let Some(obj) = json.as_object_mut() {
+        obj.insert("sentBack".into(), Value::from(sent));
+    }
+    (action, prio, json)
+}
+
+/// The conflict SEND-BACK on the vetter's state-load, applied to one already-classified row — the
+/// impure half of [`vet_action`]'s conflict arm, on [`send_back_draft`]'s exact contract: `write`
+/// is called ONLY for a [`VetAction::ConflictNeedsWork`] row, and the outcome rides on the row as
+/// `sentBack` because this action MUTATES a PR. Its one extra input is the row's own
+/// `baseRefName`, which the work order names so the producer merges the right branch in.
+fn send_back_conflict(
+    row: (VetAction, u8, Value),
+    write: impl FnOnce(&str, &[String], &str) -> bool,
+) -> (VetAction, u8, Value) {
+    let (action, prio, mut json) = row;
+    if action != VetAction::ConflictNeedsWork {
+        return (action, prio, json);
+    }
+    let head = json
+        .get("headRefOid")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let base = json
+        .get("baseRefName")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let labels: Vec<String> = json
+        .get("labels")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|l| l.as_str().map(String::from))
+        .collect();
+    let sent = write(&head, &labels, &base);
     if let Some(obj) = json.as_object_mut() {
         obj.insert("sentBack".into(), Value::from(sent));
     }
@@ -21363,7 +21505,12 @@ fn unvetted_row(
     let ci = classify_ci(detail.get("statusCheckRollup").unwrap_or(&Value::Null));
     let merge = parse_merge(detail.get("mergeable").and_then(|v| v.as_str()));
     let labels = label_names(detail);
-    let action = vet_action(is_draft, human_sacred, vetted, &labels);
+    // The conflict send-back's condition, whole: the modeled ready state (the LABEL, not the
+    // verdict's currency — a stale ready label is still the ready state) plus the typed
+    // CONFLICTING answer from GitHub's own mergeable field. CI does not gate it: red or green,
+    // the base has moved and the producer's move is the same.
+    let conflicted_ready = labels.iter().any(|l| l == "ai:ready") && merge == Merge::Conflicting;
+    let action = vet_action(is_draft, human_sacred, vetted, conflicted_ready, &labels);
     let review_decision = detail
         .get("reviewDecision")
         .and_then(|v| v.as_str())
@@ -21373,6 +21520,7 @@ fn unvetted_row(
         "url": url,
         "title": title,
         "headRefOid": head,
+        "baseRefName": detail.get("baseRefName").and_then(|v| v.as_str()).unwrap_or(""),
         "labels": labels,
         "reviewDecision": review_decision,
         "humanSacred": human_sacred,
@@ -21445,6 +21593,7 @@ fn unvetted_doc(
     let mut blocked_manual: Vec<Value> = Vec::new();
     let mut archived: Vec<Value> = Vec::new();
     let mut draft_sent_back: Vec<Value> = Vec::new();
+    let mut conflict_sent_back: Vec<Value> = Vec::new();
     let (mut n_human, mut n_vetted, mut n_threads) = (0usize, 0usize, 0usize);
     let mut n_draft_in_state = 0usize;
     for (action, prio, row) in rows {
@@ -21467,6 +21616,16 @@ fn unvetted_doc(
                     // reconstructed from GitHub. `sentBack: false` is a write that did not land.
                     VetAction::DraftNeedsWork => {
                         draft_sent_back.push(serde_json::json!({
+                            "pr": row.get("pr").cloned().unwrap_or(Value::Null),
+                            "url": row.get("url").cloned().unwrap_or(Value::Null),
+                            "sentBack": row.get("sentBack").cloned().unwrap_or(Value::Null),
+                        }));
+                    }
+                    // UNCONDITIONAL for `DraftNeedsWork`'s reason: this action WRITES — the
+                    // conflicted `ai:ready` PR was sent back as `ai:needs-work` with the
+                    // merge-base-in work order on it.
+                    VetAction::ConflictNeedsWork => {
+                        conflict_sent_back.push(serde_json::json!({
                             "pr": row.get("pr").cloned().unwrap_or(Value::Null),
                             "url": row.get("url").cloned().unwrap_or(Value::Null),
                             "sentBack": row.get("sentBack").cloned().unwrap_or(Value::Null),
@@ -21533,10 +21692,12 @@ fn unvetted_doc(
     let (n_blocked, n_blocked_manual) = (blocked_on.len(), blocked_manual.len());
     let n_archived = archived.len();
     let n_draft_sent_back = draft_sent_back.len();
+    let n_conflict_sent_back = conflict_sent_back.len();
     let (blocked_on, more_blocked) = page(blocked_on, limit);
     let (blocked_manual, more_blocked_manual) = page(blocked_manual, limit);
     let (archived, more_archived) = page(archived, limit);
     let (draft_sent_back, more_draft_sent_back) = page(draft_sent_back, limit);
+    let (conflict_sent_back, more_conflict_sent_back) = page(conflict_sent_back, limit);
     let mut doc = serde_json::json!({
         "counts": {
             "open": rows.len(),
@@ -21545,6 +21706,10 @@ fn unvetted_doc(
             // for a skip that no longer occurs: a draft is not withheld from anything, it is
             // verdicted and handed to the producer.
             "draftNeedsWork": n_draft_sent_back,
+            // The conflicted `ai:ready` PRs this call SENT BACK as `ai:needs-work` — "conflicting"
+            // is not a state, so a conflicted ready PR takes the one send-back state with the
+            // merge-base-in work order on it.
+            "conflictNeedsWork": n_conflict_sent_back,
             // The drafts the send-back was WITHHELD from: already in a modeled state, and the
             // write would have stripped it. Its own key, never folded into `draftNeedsWork`
             // (nothing was written) or `skipVettedAtHead` (nothing was vetted).
@@ -21570,6 +21735,8 @@ fn unvetted_doc(
         "moreArchivedRepo": more_archived,
         "draftNeedsWork": draft_sent_back,
         "moreDraftNeedsWork": more_draft_sent_back,
+        "conflictNeedsWork": conflict_sent_back,
+        "moreConflictNeedsWork": more_conflict_sent_back,
     });
     if include_skipped {
         let (rows, more_skipped) = page(skipped, limit);
@@ -22576,7 +22743,7 @@ fn blocked_on_state_load_row(
                 "-R",
                 slug,
                 "--json",
-                "headRefOid,labels,reviewDecision,mergeable,statusCheckRollup,comments,isDraft",
+                "headRefOid,baseRefName,labels,reviewDecision,mergeable,statusCheckRollup,comments,isDraft",
             ]) else {
                 return Err(format!(
                     "error: `gh pr view {slug}#{num}` failed after blocked-on clearance — \
@@ -22661,7 +22828,7 @@ fn unvetted_fetch(include_skipped: bool, limit: Option<usize>) -> Result<Value, 
             "-R",
             &slug,
             "--json",
-            "headRefOid,labels,reviewDecision,mergeable,statusCheckRollup,comments,isDraft",
+            "headRefOid,baseRefName,labels,reviewDecision,mergeable,statusCheckRollup,comments,isDraft",
         ]) else {
             return Err(format!(
                 "error: `gh pr view {slug}#{num}` failed — aborting rather than report an incomplete vet queue"
@@ -22680,10 +22847,15 @@ fn unvetted_fetch(include_skipped: bool, limit: Option<usize>) -> Result<Value, 
                 unresolved_threads(owner, repo, num)
             })
         };
-        // The draft send-back, applied to WHICHEVER path produced the row and reading the head and
-        // labels off the row itself — so a draft the clearance path just re-fetched is sent back on
-        // its post-clearance state, and a draft still HELD by an open dep is not touched at all (the
-        // clearance row's own action owns it, and `ai:blocked-on` is already a modeled state).
+        // Both mechanical send-backs, applied to WHICHEVER path produced the row and reading the
+        // head, labels and base off the row itself — so a draft the clearance path just re-fetched
+        // is sent back on its post-clearance state, and a PR still HELD by an open dep is not
+        // touched at all (the clearance row's own action owns it, and `ai:blocked-on` is already a
+        // modeled state). The two are mutually exclusive by [`vet_action`]'s arm order, so at most
+        // one `write` fires per PR.
+        let row = send_back_conflict(row, |head, labels, base| {
+            record_conflict_send_back(&slug, num, head, labels, base)
+        });
         rows.push(send_back_draft(row, |head, labels| {
             record_draft_send_back(&slug, num, head, labels)
         }));
@@ -22705,10 +22877,11 @@ fn unvetted_mode(json_out: bool, include_skipped: bool, limit: Option<usize>) ->
     }
     let c = &doc["counts"];
     println!(
-        "un-vetted: {} to vet ({} open · {} draft->needs-work · {} draft-in-state · {} human-decided · {} vetted-at-head · {} open-threads · {} blocked-on · {} blocked-on-manual-review · {} archived-repo)",
+        "un-vetted: {} to vet ({} open · {} draft->needs-work · {} conflict->needs-work · {} draft-in-state · {} human-decided · {} vetted-at-head · {} open-threads · {} blocked-on · {} blocked-on-manual-review · {} archived-repo)",
         c["vet"],
         c["open"],
         c["draftNeedsWork"],
+        c["conflictNeedsWork"],
         c["skipDraftInState"],
         c["skipHumanDecided"],
         c["skipVettedAtHead"],
@@ -22735,6 +22908,19 @@ fn unvetted_mode(json_out: bool, include_skipped: bool, limit: Option<usize>) ->
     for d in doc["draftNeedsWork"].as_array().into_iter().flatten() {
         println!(
             "  {}  [draft -> ai:needs-work{}]",
+            d["pr"].as_str().unwrap_or(""),
+            if d["sentBack"] == Value::Bool(true) {
+                ""
+            } else {
+                " · WRITE FAILED, re-derived next run"
+            }
+        );
+    }
+    // The conflict send-backs, unconditionally, for the same reason as the drafts above: this run
+    // WROTE to these PRs.
+    for d in doc["conflictNeedsWork"].as_array().into_iter().flatten() {
+        println!(
+            "  {}  [conflict -> ai:needs-work{}]",
             d["pr"].as_str().unwrap_or(""),
             if d["sentBack"] == Value::Bool(true) {
                 ""
@@ -23675,7 +23861,7 @@ fn next_ready_doc(rows: Vec<Value>, counts: &QueueCounts, presentable: usize) ->
             "aiReady": counts.raw,
             "excluded": counts.excluded,
             "presentable": presentable,
-            "conflicting": counts.conflict,
+            "needsWork": counts.needs_work,
             "red": counts.red,
             "pending": counts.pending,
             "mergeUnknown": counts.merge_unknown,
@@ -24120,7 +24306,7 @@ mod next_ready_tests {
             rate_limited: usize::MAX,
             raw: usize::MAX,
             excluded: usize::MAX,
-            conflict: usize::MAX,
+            needs_work: usize::MAX,
             red: usize::MAX,
             pending: usize::MAX,
             merge_unknown: usize::MAX,
@@ -24168,7 +24354,7 @@ mod next_ready_tests {
         let counts = QueueCounts {
             raw: 0,
             excluded: 0,
-            conflict: 0,
+            needs_work: 0,
             red: 0,
             pending: 0,
             merge_unknown: 0,
@@ -24373,7 +24559,7 @@ mod next_ready_tests {
             rate_limited: 0,
             raw: 12,
             excluded: 2,
-            conflict: 1,
+            needs_work: 1,
             red: 1,
             pending: 0,
             merge_unknown: 0,
@@ -48278,12 +48464,13 @@ diff --git a/a.c b/a.c
         );
     }
 
-    // Green but conflicting is the producer's step-3d work, not presentable.
+    // Green but CONFLICTING is the needs-work send-back owed, not presentable: the bucket reports
+    // the state the PR is in, not the ai:ready label it still wears.
     #[test]
-    fn green_conflicting_is_conflicting() {
+    fn green_conflicting_is_needs_work() {
         assert_eq!(
             presentable_state(Ci::Green, Merge::Conflicting, None),
-            PresentState::Conflicting
+            PresentState::NeedsWork
         );
     }
 
@@ -48361,11 +48548,17 @@ diff --git a/a.c b/a.c
 
     // --- render_queue: header breakdown + rows + cap --------------------------------------------
 
-    fn qc(raw: usize, conflict: usize, red: usize, pending: usize, approved: usize) -> QueueCounts {
+    fn qc(
+        raw: usize,
+        needs_work: usize,
+        red: usize,
+        pending: usize,
+        approved: usize,
+    ) -> QueueCounts {
         QueueCounts {
             raw,
             excluded: 0,
-            conflict,
+            needs_work,
             red,
             pending,
             merge_unknown: 0,
@@ -48378,7 +48571,7 @@ diff --git a/a.c b/a.c
         }
     }
 
-    // Header pins the true ai:ready -> presentable/conflicting/red/pending/approved breakdown.
+    // Header pins the true ai:ready -> presentable/needs-work/red/pending/approved breakdown.
     #[test]
     fn render_header_breakdown() {
         let rows: Vec<QueueRow> = vec![(
@@ -48391,7 +48584,7 @@ diff --git a/a.c b/a.c
         let out = render_queue(&rows, &qc(5, 2, 1, 0, 1), 0);
         assert!(
             out.starts_with(
-                "review queue: 5 ai:ready -> 1 presentable, 2 conflicting, 1 red, 0 pending, 0 unknown-merge, 1 approved, 0 un-vetted (cheapest first)\n"
+                "review queue: 5 ai:ready -> 1 presentable, 2 needs-work, 1 red, 0 pending, 0 unknown-merge, 1 approved, 0 un-vetted (cheapest first)\n"
             ),
             "header:\n{out}"
         );
@@ -64854,17 +65047,23 @@ mod vetter_state_load_tests {
 
     #[test]
     fn un_vetted_pr_is_vetted() {
-        assert_eq!(vet_action(false, false, false, NO_LABELS), VetAction::Vet);
+        assert_eq!(
+            vet_action(false, false, false, false, NO_LABELS),
+            VetAction::Vet
+        );
     }
 
     #[test]
     fn vetted_at_head_is_skipped_and_a_moved_head_re_opens_it() {
         assert_eq!(
-            vet_action(false, false, true, NO_LABELS),
+            vet_action(false, false, true, false, NO_LABELS),
             VetAction::SkipVetted
         );
         // head moved past the last verdict (vetted_at_head false) -> back in the vet queue.
-        assert_eq!(vet_action(false, false, false, NO_LABELS), VetAction::Vet);
+        assert_eq!(
+            vet_action(false, false, false, false, NO_LABELS),
+            VetAction::Vet
+        );
     }
 
     #[test]
@@ -64872,7 +65071,7 @@ mod vetter_state_load_tests {
         // The UNLABELLED draft — `flow#475`, the PR this rule exists for and the whole population
         // the leak can contain, since `is_leak_candidate` admits no PR carrying an `ai:*` label.
         assert_eq!(
-            vet_action(true, false, false, NO_LABELS),
+            vet_action(true, false, false, false, NO_LABELS),
             VetAction::DraftNeedsWork
         );
     }
@@ -64884,13 +65083,13 @@ mod vetter_state_load_tests {
     #[test]
     fn a_draft_verdicted_at_its_head_is_not_verdicted_again() {
         assert_eq!(
-            vet_action(true, false, true, NO_LABELS),
+            vet_action(true, false, true, false, NO_LABELS),
             VetAction::SkipVetted
         );
         // …and a push that moves the head buys it a fresh send-back, exactly as it buys any other
         // PR a fresh verdict. A draft costs one verdict per head, never one per run.
         assert_eq!(
-            vet_action(true, false, false, NO_LABELS),
+            vet_action(true, false, false, false, NO_LABELS),
             VetAction::DraftNeedsWork
         );
     }
@@ -64902,11 +65101,11 @@ mod vetter_state_load_tests {
     #[test]
     fn a_human_decision_survives_a_moved_head() {
         assert_eq!(
-            vet_action(false, true, false, NO_LABELS),
+            vet_action(false, true, false, false, NO_LABELS),
             VetAction::SkipHuman
         );
         assert_eq!(
-            vet_action(false, true, true, NO_LABELS),
+            vet_action(false, true, true, false, NO_LABELS),
             VetAction::SkipHuman
         );
         // …and it dominates the DRAFT rule too, in both currency states. A PR a person has decided
@@ -64914,11 +65113,11 @@ mod vetter_state_load_tests {
         // what "the human check resolves first" has to mean for every arm under it, not just for
         // the head comparison the ordering was written against.
         assert_eq!(
-            vet_action(true, true, false, NO_LABELS),
+            vet_action(true, true, false, false, NO_LABELS),
             VetAction::SkipHuman
         );
         assert_eq!(
-            vet_action(true, true, true, NO_LABELS),
+            vet_action(true, true, true, false, NO_LABELS),
             VetAction::SkipHuman
         );
     }
@@ -64946,7 +65145,7 @@ mod vetter_state_load_tests {
             "ai:blocked-on",
         ] {
             assert_eq!(
-                vet_action(true, false, false, &only(label)),
+                vet_action(true, false, false, false, &only(label)),
                 VetAction::SkipDraftInState,
                 "{label} names a state the send-back must not strip"
             );
@@ -64962,15 +65161,57 @@ mod vetter_state_load_tests {
         // only with `vetted_at_head == false`, and `classify_lane` calls that PR `un-vetted`. A
         // draft is not ready, and the label no longer names a state anybody is waiting in.
         assert_eq!(
-            vet_action(true, false, false, &only(STATE_READY.key)),
+            vet_action(true, false, false, false, &only(STATE_READY.key)),
             VetAction::DraftNeedsWork
         );
         // The send-back's OWN target: `labels_to_remove` leaves it, so the write strips nothing and
         // is only the currency stamp — which is what heals a send-back whose comment failed and
         // left the PR `NeedsWorkState::Parked`. Withholding here would strand that PR on a human.
         assert_eq!(
-            vet_action(true, false, false, &only(STATE_NEEDS_WORK.key)),
+            vet_action(true, false, false, false, &only(STATE_NEEDS_WORK.key)),
             VetAction::DraftNeedsWork
+        );
+    }
+
+    // The conflict arm, above the currency check on purpose: a conflicted `ai:ready` PR IS
+    // vetted-at-head — the verdict still describes the code — but it no longer describes a PR
+    // anyone can merge, and under the currency check it would skip as vetted forever. That
+    // dead-stated bucket ("conflicting") is what this arm replaces with the one send-back state.
+    #[test]
+    fn a_conflicted_ready_pr_is_demoted_to_needs_work_even_while_vetted_at_head() {
+        assert_eq!(
+            vet_action(false, false, true, true, NO_LABELS),
+            VetAction::ConflictNeedsWork
+        );
+        // A stale ready label (head moved, verdict no longer current) is the same state and the
+        // same demotion — the LABEL is the state, not the verdict's currency.
+        assert_eq!(
+            vet_action(false, false, false, true, NO_LABELS),
+            VetAction::ConflictNeedsWork
+        );
+    }
+
+    // …and the human-sacred check still resolves first: a person's decision is not re-stated by a
+    // rule about the merge state, exactly as it is not by the rule about the draft flag.
+    #[test]
+    fn a_human_decision_beats_the_conflict_demotion() {
+        assert_eq!(
+            vet_action(false, true, true, true, NO_LABELS),
+            VetAction::SkipHuman
+        );
+        assert_eq!(
+            vet_action(false, true, false, true, NO_LABELS),
+            VetAction::SkipHuman
+        );
+    }
+
+    // The demotion beats the draft arm when both grounds hold — either write lands the same
+    // `ai:needs-work`, but the conflict note is the one that names the producer's actual move.
+    #[test]
+    fn a_conflicted_ready_draft_takes_the_conflict_send_back() {
+        assert_eq!(
+            vet_action(true, false, false, true, NO_LABELS),
+            VetAction::ConflictNeedsWork
         );
     }
 
@@ -65069,7 +65310,7 @@ mod vetter_state_load_tests {
             "the SET classifies as un-vetted — which is why the guard does not ask about the set"
         );
         assert_eq!(
-            vet_action(true, false, false, &both),
+            vet_action(true, false, false, false, &both),
             VetAction::SkipDraftInState
         );
     }
@@ -65508,6 +65749,203 @@ mod vetter_state_load_tests {
             "a human-decided draft must not be written to"
         );
         assert!(row.get("sentBack").is_none());
+    }
+
+    // --- the conflict send-back: a conflicted ai:ready PR takes the one send-back state ---------
+
+    /// A conflicted `ai:ready` PR as `gh pr view` returns it — green CI, CONFLICTING merge state,
+    /// the base the work order must name.
+    fn conflicted_ready_detail(head: &str, comments: Value) -> Value {
+        json!({
+            "headRefOid": head,
+            "baseRefName": "main",
+            "labels": [{"name": "ai:ready"}],
+            "reviewDecision": null,
+            "mergeable": "CONFLICTING",
+            "statusCheckRollup": [{"status": "COMPLETED", "conclusion": "SUCCESS"}],
+            "comments": comments,
+            "isDraft": false,
+        })
+    }
+
+    #[test]
+    fn a_conflicted_ready_row_carries_the_send_back_action_and_its_base() {
+        // Vetted at head — the ready verdict is CURRENT, and the demotion still fires, because the
+        // verdict describes the code while the merge state says nobody can land it.
+        let body = verdict_comment("abc123", "ready", "fine", Some(40), "a basis", None);
+        let d = conflicted_ready_detail("abc123", trusted(&body));
+        let (action, _, row) = unvetted_row("o/r", 7, "u", "t", &d);
+        assert_eq!(action, VetAction::ConflictNeedsWork);
+        assert_eq!(row["action"], json!("conflict-needs-work"));
+        assert_eq!(row["baseRefName"], json!("main"));
+        assert_eq!(row["mergeable"], json!("CONFLICTING"));
+    }
+
+    // The conflict plan is [`send_back_plan`], so the label-before-stamp order is the draft's own
+    // safety argument, inherited rather than restated — asserted here against THIS ground's plan
+    // so a divergence between the two send-backs cannot pass.
+    #[test]
+    fn the_conflict_send_back_writes_the_label_before_the_currency_stamp() {
+        let note = conflict_send_back_note("main");
+        let plan = send_back_plan(
+            "o/r",
+            9,
+            "abc123",
+            &["ai:ready".to_string()],
+            &note,
+            CONFLICT_SEND_BACK_LENS,
+        )
+        .expect("a head sha is enough");
+        assert_eq!(plan.len(), 2, "one label edit, one comment: {plan:?}");
+        assert_eq!(plan[0][..5], ["pr", "edit", "9", "-R", "o/r"]);
+        assert!(plan[0].contains(&"--add-label".to_string()));
+        assert!(plan[0].contains(&STATE_NEEDS_WORK.key.to_string()));
+        // The verdict swap: the ready label comes off in the SAME edit, so the PR is never
+        // momentarily wearing two AI verdicts.
+        assert!(plan[0].contains(&"--remove-label".to_string()));
+        assert!(plan[0].contains(&"ai:ready".to_string()));
+        assert_eq!(plan[1][..5], ["pr", "comment", "9", "-R", "o/r"]);
+    }
+
+    // The comment is the work order and the currency stamp at once, like the draft's — and the
+    // order NAMES the base to merge in, because "merge the base" with the base left to guess is
+    // half an instruction.
+    #[test]
+    fn the_conflict_send_back_comment_is_the_work_order_and_names_the_base() {
+        let note = conflict_send_back_note("main");
+        let plan = send_back_plan("o/r", 9, "abc123", &[], &note, CONFLICT_SEND_BACK_LENS)
+            .expect("a head sha is enough");
+        let body = planned_comment(&plan);
+        assert!(pr_verdict_line(&body, "needs-work"), "{body}");
+        assert!(body.contains("Reviewed abc123: needs-work"), "{body}");
+        assert!(verdict_protocol(&body).is_current(), "{body}");
+        assert!(body.contains("origin/main"), "{body}");
+        // Merge, never rebase — stated in the order itself, where the producer reads it.
+        assert!(body.contains("never rebase"), "{body}");
+        assert!(body.contains(CONFLICT_SEND_BACK_LENS), "{body}");
+        // The producer reads it as an instruction, not as a park.
+        let d = json!({
+            "headRefOid": "abc123",
+            "labels": [{"name": "ai:needs-work"}],
+            "comments": [{"author": {"login": TRUSTED_AUTHOR}, "body": body}],
+        });
+        assert_eq!(
+            needs_work_state(&["ai:needs-work".to_string()], &d),
+            NeedsWorkState::WorkOrder
+        );
+    }
+
+    // A base the fetch could not name still produces a full instruction rather than a dangling
+    // "origin/" — the order degrades to naming the base by role.
+    #[test]
+    fn a_missing_base_ref_degrades_to_naming_the_base_by_role() {
+        let note = conflict_send_back_note("");
+        assert!(note.contains("origin/the base branch"), "{note}");
+    }
+
+    // The demotion consumes its own trigger: the plan strips `ai:ready`, so the next state-load
+    // sees `ai:needs-work` at a head its own comment pins — no conflict arm, no second write.
+    #[test]
+    fn the_conflict_send_back_is_written_once() {
+        let note = conflict_send_back_note("main");
+        let plan = send_back_plan(
+            "o/r",
+            9,
+            "abc123",
+            &["ai:ready".to_string()],
+            &note,
+            CONFLICT_SEND_BACK_LENS,
+        )
+        .expect("head sha");
+        let body = planned_comment(&plan);
+        let labels = labels_after(&plan[0], &["ai:ready".to_string()]);
+        assert_eq!(labels, vec!["ai:needs-work".to_string()]);
+        let label_json = Value::Array(labels.iter().map(|l| json!({"name": l})).collect());
+        let mut d = conflicted_ready_detail("abc123", trusted(&body));
+        d["labels"] = label_json;
+        let (action, prio, row) = unvetted_row("o/r", 9, "u", "t", &d);
+        assert_eq!(action, VetAction::SkipVetted, "not re-verdicted: {row}");
+        let called = std::cell::Cell::new(false);
+        let (_, _, row) = send_back_conflict((action, prio, row), |_, _, _| {
+            called.set(true);
+            true
+        });
+        assert!(!called.get(), "a demoted PR must not be written to again");
+        assert!(row.get("sentBack").is_none());
+    }
+
+    // The writer is handed the row's own head, labels and base — the same contract
+    // `send_back_draft` keeps, with the base as this ground's one extra input.
+    #[test]
+    fn the_conflict_write_is_driven_by_the_rows_own_head_labels_and_base() {
+        let d = conflicted_ready_detail("abc123", json!([]));
+        let row = unvetted_row("o/r", 7, "u", "t", &d);
+        let seen = std::cell::RefCell::new(None);
+        let (_, _, row) = send_back_conflict(row, |head, labels, base| {
+            *seen.borrow_mut() = Some((head.to_string(), labels.to_vec(), base.to_string()));
+            true
+        });
+        assert_eq!(
+            seen.into_inner(),
+            Some((
+                "abc123".to_string(),
+                vec!["ai:ready".to_string()],
+                "main".to_string()
+            ))
+        );
+        assert_eq!(row["sentBack"], json!(true));
+    }
+
+    // A human decision parks the PR against this write too, on the ROW and not just in the guard.
+    #[test]
+    fn a_human_decided_conflicted_pr_is_never_written_to() {
+        let mut d = conflicted_ready_detail("abc123", json!([]));
+        d["reviewDecision"] = json!("CHANGES_REQUESTED");
+        let called = std::cell::Cell::new(false);
+        let (action, _, row) =
+            send_back_conflict(unvetted_row("o/r", 7, "u", "t", &d), |_, _, _| {
+                called.set(true);
+                true
+            });
+        assert_eq!(action, VetAction::SkipHuman);
+        assert!(!called.get());
+        assert!(row.get("sentBack").is_none());
+    }
+
+    // A conflicted PR NOT in the ready state is not demoted: an un-labelled one is ordinary vet
+    // work (the vetter can judge code the base has drifted from), and the producer's fleet view
+    // already routes it as conflict work.
+    #[test]
+    fn a_conflicted_pr_without_the_ready_label_is_vetted_not_demoted() {
+        let mut d = conflicted_ready_detail("abc123", json!([]));
+        d["labels"] = json!([]);
+        let (action, _, _) = unvetted_row("o/r", 7, "u", "t", &d);
+        assert_eq!(action, VetAction::Vet);
+    }
+
+    // The doc counts the send-backs under their own key and names every row — these are PRs this
+    // call WROTE to, so they are listed unconditionally, `sentBack: false` included.
+    #[test]
+    fn conflict_send_backs_are_counted_and_named_in_the_doc() {
+        let d = conflicted_ready_detail("abc123", json!([]));
+        let landed = send_back_conflict(unvetted_row("o/r", 7, "u1", "t", &d), |_, _, _| true);
+        let failed = send_back_conflict(unvetted_row("o/r", 8, "u2", "t", &d), |_, _, _| false);
+        assert_eq!(landed.2["sentBack"], json!(true));
+        assert_eq!(failed.2["sentBack"], json!(false));
+        let doc = unvetted_doc(&[landed, failed], false, None);
+        assert_eq!(doc["counts"]["conflictNeedsWork"], json!(2));
+        assert_eq!(doc["counts"]["draftNeedsWork"], json!(0));
+        assert_eq!(doc["counts"]["skipVettedAtHead"], json!(0));
+        assert_eq!(doc["counts"]["vet"], json!(0));
+        assert_eq!(doc["prs"], json!([]));
+        assert_eq!(
+            doc["conflictNeedsWork"],
+            json!([
+                {"pr": "o/r#7", "url": "u1", "sentBack": true},
+                {"pr": "o/r#8", "url": "u2", "sentBack": false},
+            ])
+        );
+        assert_eq!(doc["moreConflictNeedsWork"], json!(0));
     }
 
     // --- vet_priority: closest-to-merge first ---------------------------------------------------

@@ -55,6 +55,7 @@ stateDiagram-v2
     unvetted --> design : vetter record-verdict
     unvetted --> iupheld : vetter record-verdict close
     ready --> unvetted : head moves (producer fix) · verdict no longer current
+    ready --> needswork : merge conflict · vetter state-load demotes (work order = merge base in)
 
     %% ready → the human merge queue
     ready --> queue : queue · green·mergeable·vetted@head
@@ -63,8 +64,10 @@ stateDiagram-v2
 
     %% the send-back state routes back to the producer, then back to un-vetted. ONE state,
     %% whoever ruled (#133) and whatever the ground: a code rework, a linkage repair (#135
-    %% retired ai:relink — a linkage error is a needs-work whose note names the reference), or a
-    %% close. It is named for what it ASKS, not for a judgement the machine never reaches (#230).
+    %% retired ai:relink — a linkage error is a needs-work whose note names the reference), a
+    %% close, or a merge conflict (a conflicted ai:ready PR is not a state of its own — the
+    %% vetter's state-load demotes it here mechanically, work order: merge the base in, never
+    %% rebase). It is named for what it ASKS, not for a judgement the machine never reaches (#230).
     needswork --> unvetted : producer reworks → head moves
     needswork --> icand : producer flag-close-candidate · judged not worth doing
     needswork --> unvetted : linkage repair · producer weaken-closes Closes→Refs
@@ -2213,23 +2216,23 @@ and evidence that answers a narrower question than the issue asked.
 
 ## Files (tracked here)
 
-| File                         | Purpose                                                                                                                                                                                                                                                                                                                                                  |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `campaign-run.sh`            | Durable runner (built as the `campaign-run` flake package): `flock` single-run lock, `DISABLED` kill-switch, `timeout`, invokes `claude --print` with the prompt + settings, logs to `campaign.log` (+ per-run JSONL traces in `runs/`). Nix builds its PATH; it sets none itself.                                                                       |
-| `campaign-prompt.txt`        | The campaign instructions fed to the model.                                                                                                                                                                                                                                                                                                              |
-| `campaign-worker-prompt.txt` | The standing brief every DISPATCHED worker starts with. `campaign-run.sh` wraps it into the `pr-worker` subagent type with `jq` and passes it as `--agents`, so the harness loads it straight into each dispatched agent and the main loop pays none of those bytes. See [Briefing a dispatched worker](#briefing-a-dispatched-worker--rules-not-state). |
-| `campaign-settings.json`     | Tool allow/deny list passed via `--settings` (the permission guardrails).                                                                                                                                                                                                                                                                                |
-| `review-run.sh`              | Vetting runner (same hardened pattern as `campaign-run.sh`): vets open PRs on the MCP surface, logs to `review.log`. Its one GitHub write is `record_verdict`. Kill-switch `review-DISABLED`.                                                                                                                                                            |
-| `review-prompt.txt`          | The AI-vetting instructions fed to the model: the judgement gates only — every `gh` recipe is a tool schema instead.                                                                                                                                                                                                                                     |
-| `review-auditor-prompt.txt`  | The standing brief every DISPATCHED auditor starts with. `review-run.sh` wraps it into the `pr-auditor` subagent type with `jq` and passes it as `--agents`, with a `tools` list that is the READ half of the vetter's surface and no write at all. See [Fanning the audit out](#fanning-the-audit-out--and-keeping-the-verdict).                        |
-| `review-settings.json`       | Tool allow/deny for the vetter: the eight `mcp__fsm__*` tools + `Read`/`Glob`/`Grep`/`Skill`/`Task`/`ToolSearch`, **Bash denied outright**. `Task` is the dispatch tool the audit fan-out needs; every write tool stays denied, and a session deny reaches inside a dispatched agent too.                                                                |
-| `review-mcp.json`            | The vetter's MCP config: one stdio server, `pr-review-report mcp`, named `fsm` (so its tools are `mcp__fsm__*`).                                                                                                                                                                                                                                         |
-| `campaign-mcp.json`          | MCP config for the producer's clone-lifecycle surface: one stdio server, `pr-review-report mcp --profile producer`, named `fsm`. Additive — the producer keeps its Bash.                                                                                                                                                                                 |
-| `cron.env.example`           | Template for deployment-specific values (PR assignee, work dir, models, run caps). Copy to `cron.env` (gitignored) and edit.                                                                                                                                                                                                                             |
-| `pr-review-report.sh`        | Thin wrapper (flake package `pr-review-report-sh`) over the binary. Reports every open PR by its pipeline stage (approved / AI-vetted / needs-producer-fix (red) / conflicting / needs-work / close / unreviewed / pending / draft), reading `ai:*`/`human:*` labels + GitHub approvals, as clickable URLs.                                              |
-| `hooks/`                     | The two bash PreToolUse guards that close deny-list bypasses. See [PreToolUse guards](#pretooluse-guards--what-a-prompt-cannot-hold).                                                                                                                                                                                                                    |
-| `.claude-plugin/`            | The marketplace listing this repo publishes. Its version must match the plugin manifest's — `pr-review-report plugin-version-lockstep` is the gate.                                                                                                                                                                                                      |
-| `plugins/human-fsm/`         | The human's slash commands as a Claude Code plugin. Prompts only: every guard is in the binary. See [The human's slash commands](#the-humans-slash-commands).                                                                                                                                                                                            |
+| File                         | Purpose                                                                                                                                                                                                                                                                                                                                                           |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `campaign-run.sh`            | Durable runner (built as the `campaign-run` flake package): `flock` single-run lock, `DISABLED` kill-switch, `timeout`, invokes `claude --print` with the prompt + settings, logs to `campaign.log` (+ per-run JSONL traces in `runs/`). Nix builds its PATH; it sets none itself.                                                                                |
+| `campaign-prompt.txt`        | The campaign instructions fed to the model.                                                                                                                                                                                                                                                                                                                       |
+| `campaign-worker-prompt.txt` | The standing brief every DISPATCHED worker starts with. `campaign-run.sh` wraps it into the `pr-worker` subagent type with `jq` and passes it as `--agents`, so the harness loads it straight into each dispatched agent and the main loop pays none of those bytes. See [Briefing a dispatched worker](#briefing-a-dispatched-worker--rules-not-state).          |
+| `campaign-settings.json`     | Tool allow/deny list passed via `--settings` (the permission guardrails).                                                                                                                                                                                                                                                                                         |
+| `review-run.sh`              | Vetting runner (same hardened pattern as `campaign-run.sh`): vets open PRs on the MCP surface, logs to `review.log`. Its one GitHub write is `record_verdict`. Kill-switch `review-DISABLED`.                                                                                                                                                                     |
+| `review-prompt.txt`          | The AI-vetting instructions fed to the model: the judgement gates only — every `gh` recipe is a tool schema instead.                                                                                                                                                                                                                                              |
+| `review-auditor-prompt.txt`  | The standing brief every DISPATCHED auditor starts with. `review-run.sh` wraps it into the `pr-auditor` subagent type with `jq` and passes it as `--agents`, with a `tools` list that is the READ half of the vetter's surface and no write at all. See [Fanning the audit out](#fanning-the-audit-out--and-keeping-the-verdict).                                 |
+| `review-settings.json`       | Tool allow/deny for the vetter: the eight `mcp__fsm__*` tools + `Read`/`Glob`/`Grep`/`Skill`/`Task`/`ToolSearch`, **Bash denied outright**. `Task` is the dispatch tool the audit fan-out needs; every write tool stays denied, and a session deny reaches inside a dispatched agent too.                                                                         |
+| `review-mcp.json`            | The vetter's MCP config: one stdio server, `pr-review-report mcp`, named `fsm` (so its tools are `mcp__fsm__*`).                                                                                                                                                                                                                                                  |
+| `campaign-mcp.json`          | MCP config for the producer's clone-lifecycle surface: one stdio server, `pr-review-report mcp --profile producer`, named `fsm`. Additive — the producer keeps its Bash.                                                                                                                                                                                          |
+| `cron.env.example`           | Template for deployment-specific values (PR assignee, work dir, models, run caps). Copy to `cron.env` (gitignored) and edit.                                                                                                                                                                                                                                      |
+| `pr-review-report.sh`        | Thin wrapper (flake package `pr-review-report-sh`) over the binary. Reports every open PR by its pipeline stage (approved / AI-vetted / needs-producer-fix (red) / needs-work / close / unreviewed / pending / draft — a conflicted ready PR reports as needs-work, the state it is owed), reading `ai:*`/`human:*` labels + GitHub approvals, as clickable URLs. |
+| `hooks/`                     | The two bash PreToolUse guards that close deny-list bypasses. See [PreToolUse guards](#pretooluse-guards--what-a-prompt-cannot-hold).                                                                                                                                                                                                                             |
+| `.claude-plugin/`            | The marketplace listing this repo publishes. Its version must match the plugin manifest's — `pr-review-report plugin-version-lockstep` is the gate.                                                                                                                                                                                                               |
+| `plugins/human-fsm/`         | The human's slash commands as a Claude Code plugin. Prompts only: every guard is in the binary. See [The human's slash commands](#the-humans-slash-commands).                                                                                                                                                                                                     |
 
 ## Briefing a dispatched worker — rules, not state
 
@@ -2823,10 +2826,12 @@ A PR moves through two distinct gates before it merges:
 `./pr-review-report.sh` prints every open PR bucketed by where it sits in that
 pipeline, all as clickable URLs: **✅ approved by you** (ready to merge) · **🤖
 AI-vetted — awaiting your approval** · **🔴 needs a producer fix** (CI red — the
-producer drives it green) · **❌ needs-work / changes-requested** · **🗑️ close
-(dup/superseded)** · **🟦 not yet reviewed** · **⚠️ conflicting** (needs rebase)
-· **🟡 pending** · **📝 drafts** · plus the issues the cron flagged
-`ai:close-candidate`. `--ready` prints only the approved-by-you set.
+producer drives it green) · **❌ needs-work / changes-requested** (including a
+conflicted ready PR — the vetter's state-load demotes it here with a
+merge-the-base-in work order; never a rebase) · **🗑️ close (dup/superseded)** ·
+**🟦 not yet reviewed** · **🟡 pending** · **📝 drafts** · plus the issues the
+cron flagged `ai:close-candidate`. `--ready` prints only the approved-by-you
+set.
 
 ### The open-threads gate
 
