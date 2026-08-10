@@ -66744,7 +66744,10 @@ mod vetter_state_load_tests {
         assert_eq!(doc["diffIncluded"], json!(0));
         assert_eq!(doc["diffTruncated"], json!(true));
         assert_eq!(doc["diffBytes"], json!(18));
-        assert!(doc["gates"]["qa"].is_object(), "gates ride the dispatcher view");
+        assert!(
+            doc["gates"]["qa"].is_object(),
+            "gates ride the dispatcher view"
+        );
     }
 
     #[test]
