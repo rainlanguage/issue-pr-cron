@@ -8628,12 +8628,148 @@ struct DeclaredAsymmetry {
 /// `closure-surface` fails on any difference that is not in this table — and equally on any entry
 /// here that is no longer true, so the declaration cannot outlive the fact and quietly license a
 /// real divergence later.
-const DECLARED_ASYMMETRY: &[DeclaredAsymmetry] = &[DeclaredAsymmetry {
-    bin: "jq",
-    only_in: "campaign-run",
-    why: "the PRODUCER's model shells out to jq from its Bash tool; the vetter has no Bash and \
-          cannot invoke anything at all (flake.nix)",
-}];
+const DECLARED_ASYMMETRY: &[DeclaredAsymmetry] = &[
+    DeclaredAsymmetry {
+        bin: "jq",
+        only_in: "campaign-run",
+        why:
+            "the PRODUCER's model shells out to jq from its Bash tool; the vetter has no Bash and \
+              cannot invoke anything at all (flake.nix)",
+    },
+    // The #251 render path. All six are one-sided for the SAME reason jq is, and it is a fact
+    // about the role rather than an oversight: the vetter denies `Bash` outright
+    // (review-settings.json), so it cannot exec a renderer even if one were in its closure — and
+    // a closure that carried one would advertise a capability the vetter does not have.
+    DeclaredAsymmetry {
+        bin: "node",
+        only_in: "campaign-run",
+        why: "`render-component` runs the CHECKOUT's own vite through it; only the producer takes \
+              screenshots (RENDER_TOOLS)",
+    },
+    DeclaredAsymmetry {
+        bin: "npm",
+        only_in: "campaign-run",
+        why: "`render-component` provisions a fresh clone with `npm ci`; only the producer \
+              renders (RENDER_TOOLS)",
+    },
+    DeclaredAsymmetry {
+        bin: "chromium",
+        only_in: "campaign-run",
+        why: "`render-component` takes the screenshot with it; only the producer renders \
+              (RENDER_TOOLS)",
+    },
+    DeclaredAsymmetry {
+        bin: "chromium-browser",
+        only_in: "campaign-run",
+        why: "the second name pkgs.chromium installs. Declared rather than hidden: the gate \
+              compares whole surfaces, and an undeclared ride-along is indistinguishable from a \
+              dependency someone added to one runner and forgot in the other",
+    },
+    DeclaredAsymmetry {
+        bin: "npx",
+        only_in: "campaign-run",
+        why: "arrives with pkgs.nodejs_22, which the producer needs for node/npm. Nothing invokes \
+              it — `render-component` execs vite's entry point directly, so a render never \
+              resolves a package at run time",
+    },
+    DeclaredAsymmetry {
+        bin: "corepack",
+        only_in: "campaign-run",
+        why: "arrives with pkgs.nodejs_22, which the producer needs for node/npm. Nothing invokes \
+              it",
+    },
+];
+
+/// A binary `render-component` execs on the model's behalf, with the evidence for needing it.
+///
+/// The same kind of dependency as [`HARNESS_TOOLS`] and invisible in the same way: no script, no
+/// prompt and no skill in this repo names `node` or `chromium`, so a walk over this repo's text
+/// cannot find them, and a producer whose closure lacks them fails at exit 12 on every screenshot
+/// item — which is a run that does its other work and quietly stops producing the evidence a UI PR
+/// is not review-ready without.
+///
+/// ONE runner, unlike `HARNESS_TOOLS`: see [`RENDER_RUNNER`].
+struct RenderTool {
+    bin: &'static str,
+    why: &'static str,
+}
+
+/// The runner that renders. The producer, and only the producer — `review-settings.json` denies the
+/// vetter `Bash`, so it cannot exec a renderer at all, and a vetter closure carrying chromium would
+/// state a capability the role does not have.
+const RENDER_RUNNER: &str = "campaign-run";
+
+const RENDER_TOOLS: &[RenderTool] = &[
+    RenderTool {
+        bin: "node",
+        why: "render-component runs the checkout's own `node_modules/vite/bin/vite.js` with it, \
+              so a render is built by the bundler and svelte version the app actually ships",
+    },
+    RenderTool {
+        bin: "npm",
+        why: "render-component runs `npm ci` when a checkout has no node_modules — the one piece \
+              of provisioning a render from a fresh clone still needs",
+    },
+    RenderTool {
+        bin: "chromium",
+        why: "render-component drives it headless twice per render: once to read the page's own \
+              measurement of itself, once to capture the PNG",
+    },
+];
+
+/// The render dependencies missing from `path`, as closure faults against `pkg`.
+///
+/// PURE apart from the filesystem probe, so the rule is testable against a fabricated PATH rather
+/// than against whatever the flake happens to build today. Runners other than [`RENDER_RUNNER`]
+/// have NO render faults by construction: absence there is the declared design, not a gap.
+fn render_tool_faults(pkg: &str, path: &std::ffi::OsStr) -> Vec<ClosureFault> {
+    if pkg != RENDER_RUNNER {
+        return Vec::new();
+    }
+    RENDER_TOOLS
+        .iter()
+        .filter(|t| resolve_in(path, t.bin).is_none())
+        .map(|t| ClosureFault::ToolMissing {
+            pkg: pkg.to_string(),
+            bin: t.bin,
+            why: t.why,
+        })
+        .collect()
+}
+
+/// Every binary a runner's closure is DECLARED to carry: the harness read-time tools, which both
+/// model runners need, plus the render tools, which only the producer does.
+///
+/// One list, so the preflight's reporting and its judgement cannot name different sets — printing
+/// a tool it does not check, or checking one it never names, is how a gate comes to look like it
+/// covers something it does not.
+fn closure_expected_bins(pkg: &str) -> Vec<&'static str> {
+    let mut bins: Vec<&'static str> = HARNESS_TOOLS.iter().map(|t| t.bin).collect();
+    if pkg == RENDER_RUNNER {
+        bins.extend(RENDER_TOOLS.iter().map(|t| t.bin));
+    }
+    bins
+}
+
+/// Every declared dependency this closure is MISSING.
+///
+/// The whole of `closure-preflight`'s judgement, in one place a test can reach: the mode itself
+/// cannot be unit tested because it shells out to `nix build`, so a check that lived only inside it
+/// would be held up by CI alone. Both halves flow through here, which is what makes "the render
+/// tools are checked at all" a property a test can assert rather than a line someone can delete.
+fn closure_tool_faults(closure: &RunnerClosure) -> Vec<ClosureFault> {
+    let mut faults: Vec<ClosureFault> = HARNESS_TOOLS
+        .iter()
+        .filter(|t| resolve_in(&closure.path, t.bin).is_none())
+        .map(|t| ClosureFault::ToolMissing {
+            pkg: closure.pkg.clone(),
+            bin: t.bin,
+            why: t.why,
+        })
+        .collect();
+    faults.extend(render_tool_faults(&closure.pkg, &closure.path));
+    faults
+}
 
 /// Why a closure gate is not satisfied.
 ///
@@ -8827,20 +8963,17 @@ fn model_runner_closures(flake: &str) -> (Vec<RunnerClosure>, Vec<ClosureFault>)
 fn closure_preflight_mode(flake: &str) -> i32 {
     let (closures, mut faults) = model_runner_closures(flake);
     for c in &closures {
-        for t in HARNESS_TOOLS {
-            match resolve_in(&c.path, t.bin) {
-                Some(p) => println!("  {:<13} {:<10} {}", c.pkg, t.bin, p.display()),
-                None => faults.push(ClosureFault::ToolMissing {
-                    pkg: c.pkg.clone(),
-                    bin: t.bin,
-                    why: t.why,
-                }),
+        for bin in closure_expected_bins(&c.pkg) {
+            if let Some(p) = resolve_in(&c.path, bin) {
+                println!("  {:<13} {:<10} {}", c.pkg, bin, p.display());
             }
         }
+        faults.extend(closure_tool_faults(c));
     }
     report_closure(
         &faults,
-        "every harness read-time dependency is in both model runners' closures",
+        "every harness read-time dependency is in both model runners' closures, and every render \
+         dependency is in the producer's",
     )
 }
 
@@ -39700,6 +39833,44 @@ mod render_component_tests {
         assert_eq!(sorted.len(), kinds.len(), "two faults share a machine name");
     }
 
+    /// A subcommand nothing routes to changes nothing. The producer's screenshot steps must name
+    /// `render-component` and must NOT still teach the hand-roll — the corpus measurement #251 is
+    /// built on is "agents write a vite config and stub modules every run", and that only goes to
+    /// zero when the instruction telling them to stops existing.
+    #[test]
+    fn the_producer_prompt_routes_screenshots_to_this_subcommand() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            prompt.contains("pr-review-report render-component"),
+            "step 5 must hand the producer the subcommand"
+        );
+        // The hand-roll instruction itself, gone. Each of these is a thing the trace corpus shows
+        // an agent writing from memory because the prompt told it to.
+        for taught in [
+            "minimal Vite+svelte harness",
+            "nix shell nixpkgs#chromium",
+            "FONTCONFIG_FILE",
+        ] {
+            assert!(
+                !prompt.contains(taught),
+                "the prompt still teaches the hand-rolled harness: {taught:?}"
+            );
+        }
+        // The exit codes are the whole routing decision, so the prompt has to distinguish them:
+        // 3 is a design question about this component, 12 is an environment failure that ends the
+        // run, and reading one as the other either parks a good PR or waives a screenshot.
+        assert!(
+            prompt.contains("unrenderable-render: <the tool's own exit-3 message, verbatim>"),
+            "3c must quote the tool's own finding rather than a stack name"
+        );
+        assert!(
+            prompt.contains("Exit 12 is NOT this"),
+            "the prompt must separate a component that cannot render from a box that cannot"
+        );
+    }
+
     #[test]
     fn the_subcommand_parses_with_its_defaults() {
         use clap::Parser;
@@ -66430,6 +66601,26 @@ mod closure_gate_tests {
         )
     }
 
+    /// The stale-declaration faults a FABRICATED surface set necessarily produces: one for every
+    /// [`DECLARED_ASYMMETRY`] entry the fixture does not exhibit, in table order.
+    ///
+    /// DERIVED FROM THE TABLE, not listed. These fixtures name three or four binaries to isolate
+    /// one rule each, so every declaration they do not mention is trivially stale against them —
+    /// and a hand-written copy of that consequence turns every new declaration into an edit of
+    /// four unrelated tests, which is the hand-maintained duplicate this repo keeps being bitten
+    /// by. The #251 render tools added six entries at once and each of these fixtures failed with
+    /// six lines of the same fact; deriving it makes them assert their own rule again.
+    fn stale_except(exhibited: &[&str]) -> Vec<ClosureFault> {
+        DECLARED_ASYMMETRY
+            .iter()
+            .filter(|d| !exhibited.contains(&d.bin))
+            .map(|d| ClosureFault::StaleAsymmetry {
+                pkg: d.only_in,
+                bin: d.bin,
+            })
+            .collect()
+    }
+
     // ---- the declaration itself ----
 
     #[test]
@@ -66439,6 +66630,191 @@ mod closure_gate_tests {
         // implements against writes a PR body asserting something it never read.
         assert!(MODEL_RUNNERS.contains(&"campaign-run"), "{MODEL_RUNNERS:?}");
         assert!(MODEL_RUNNERS.contains(&"review-run"), "{MODEL_RUNNERS:?}");
+    }
+
+    /// The producer renders and the vetter does not, and that is a fact about the ROLE: the vetter
+    /// denies `Bash` outright, so it could not exec a renderer if one were in its closure — and a
+    /// closure carrying chromium would state a capability the vetter does not have.
+    #[test]
+    fn only_the_producer_carries_the_render_tools() {
+        assert_eq!(RENDER_RUNNER, "campaign-run");
+        assert!(MODEL_RUNNERS.contains(&RENDER_RUNNER), "{MODEL_RUNNERS:?}");
+        // The vetter's inability to exec is what makes the one-sidedness correct rather than an
+        // oversight, so it is asserted here and not merely written in the reason strings.
+        let Some(settings) = repo_root_text("review-settings.json") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let denied: serde_json::Value = serde_json::from_str(&settings).expect("json");
+        assert!(
+            denied["permissions"]["deny"]
+                .as_array()
+                .expect("deny list")
+                .iter()
+                .any(|t| t == "Bash"),
+            "the vetter must deny Bash, or excluding it from the render closure is just a hole"
+        );
+    }
+
+    /// EVERY binary the render packages put on the producer's PATH is declared — not only the three
+    /// the tool calls. `closure-surface` compares whole surfaces, so an undeclared ride-along
+    /// (`npx`, `corepack`, `chromium-browser`) fails the gate exactly like a dependency somebody
+    /// added to one runner and forgot in the other.
+    #[test]
+    fn every_render_binary_is_declared_one_sided() {
+        for bin in [
+            "node",
+            "npm",
+            "npx",
+            "corepack",
+            "chromium",
+            "chromium-browser",
+        ] {
+            let d = DECLARED_ASYMMETRY
+                .iter()
+                .find(|d| d.bin == bin)
+                .unwrap_or_else(|| {
+                    panic!("{bin} rides in on the render packages and is undeclared")
+                });
+            assert_eq!(d.only_in, RENDER_RUNNER, "{bin}");
+        }
+        // …and the surface gate is satisfied by those declarations, on the real binary sets the
+        // two closures now hold.
+        let producer = surface(
+            "campaign-run",
+            &[
+                "gh",
+                "jq",
+                "git",
+                "pdftoppm",
+                "pdfinfo",
+                "node",
+                "npm",
+                "npx",
+                "corepack",
+                "chromium",
+                "chromium-browser",
+            ],
+        );
+        let vetter = surface("review-run", &["gh", "git", "pdftoppm", "pdfinfo"]);
+        assert_eq!(
+            surface_faults(&[producer, vetter]),
+            vec![],
+            "the declarations must cover the surfaces the flake actually builds"
+        );
+    }
+
+    /// Every render tool carries the fact that forces it, and the table stays the short one a
+    /// preflight can demand without blocking a run for nothing.
+    #[test]
+    fn every_render_tool_states_why_it_is_needed() {
+        for t in RENDER_TOOLS {
+            assert!(t.why.len() > 20, "{} has no reason recorded", t.bin);
+        }
+        assert!(
+            RENDER_TOOLS.iter().any(|t| t.bin == "chromium"),
+            "the renderer itself must be declared"
+        );
+    }
+
+    /// A producer closure missing a render dependency is a FAULT; the vetter missing the same
+    /// binaries is the declared design and must produce none. Without the second half, adding the
+    /// render tools to the preflight would fail the vetter's closure on every run.
+    #[test]
+    fn render_faults_are_raised_for_the_producer_and_never_for_the_vetter() {
+        let scratch = Scratch::new("render-tools");
+        let dir = scratch.bindir("bin");
+        let path = std::ffi::OsString::from(dir.to_string_lossy().to_string());
+
+        let faults = render_tool_faults("campaign-run", &path);
+        assert_eq!(faults.len(), RENDER_TOOLS.len(), "{faults:?}");
+        assert!(faults.iter().all(|f| matches!(
+            f,
+            ClosureFault::ToolMissing { pkg, .. } if pkg == "campaign-run"
+        )));
+        assert!(
+            faults[0].describe().contains("runtimeInputs"),
+            "the fault must name the repair: {}",
+            faults[0].describe()
+        );
+
+        assert_eq!(
+            render_tool_faults("review-run", &path),
+            vec![],
+            "the vetter cannot exec a renderer; absence there is the design, not a gap"
+        );
+
+        for t in RENDER_TOOLS {
+            scratch.stub(&dir, t.bin, "#!/bin/sh\nexit 0\n");
+        }
+        assert_eq!(
+            render_tool_faults("campaign-run", &path),
+            vec![],
+            "a complete producer closure has no render faults"
+        );
+    }
+
+    /// `closure-preflight`'s WHOLE judgement, on a fabricated closure. The mode itself shells out
+    /// to `nix build` and so cannot be unit tested; this is the part that decides, and it is
+    /// asserted here so "the render tools are checked at all" is a property rather than a line in
+    /// an untestable function that someone can delete and no test notices.
+    #[test]
+    fn the_preflight_checks_the_render_tools_as_well_as_the_harness_tools() {
+        let scratch = Scratch::new("preflight-both");
+        let dir = scratch.bindir("bin");
+        let closure = closure_of(&dir);
+
+        // A producer closure carrying the PDF tools and nothing else is still faulty: the render
+        // half is missing, which is exactly the state the flake was in before #251.
+        for t in HARNESS_TOOLS {
+            scratch.stub(&dir, t.bin, "#!/bin/sh\nexit 0\n");
+        }
+        let faults = closure_tool_faults(&closure);
+        assert_eq!(faults.len(), RENDER_TOOLS.len(), "{faults:?}");
+        for t in RENDER_TOOLS {
+            assert!(
+                faults.iter().any(|f| matches!(
+                    f,
+                    ClosureFault::ToolMissing { bin, .. } if *bin == t.bin
+                )),
+                "{} is declared and not checked: {faults:?}",
+                t.bin
+            );
+        }
+
+        // …and the vetter, with the same PDF tools and no renderer, is complete.
+        let vetter = RunnerClosure {
+            pkg: "review-run".to_string(),
+            path: closure.path.clone(),
+        };
+        assert_eq!(closure_tool_faults(&vetter), vec![]);
+
+        for t in RENDER_TOOLS {
+            scratch.stub(&dir, t.bin, "#!/bin/sh\nexit 0\n");
+        }
+        assert_eq!(closure_tool_faults(&closure), vec![]);
+    }
+
+    /// What the preflight PRINTS and what it CHECKS come from one list, so it cannot report a
+    /// clean closure while silently skipping a declared tool.
+    #[test]
+    fn the_preflight_reports_exactly_the_binaries_it_judges() {
+        let producer = closure_expected_bins("campaign-run");
+        let vetter = closure_expected_bins("review-run");
+        for t in HARNESS_TOOLS {
+            assert!(
+                producer.contains(&t.bin) && vetter.contains(&t.bin),
+                "{}",
+                t.bin
+            );
+        }
+        for t in RENDER_TOOLS {
+            assert!(producer.contains(&t.bin), "{}", t.bin);
+            assert!(
+                !vetter.contains(&t.bin),
+                "the vetter must not be judged on {}",
+                t.bin
+            );
+        }
     }
 
     #[test]
@@ -66951,14 +67327,9 @@ mod closure_gate_tests {
         let both = ["gh", "git", "pdftoppm", "jq"];
         let faults =
             surface_faults(&[surface("campaign-run", &both), surface("review-run", &both)]);
-        // `jq` is declared campaign-only, so having it on BOTH sides makes that declaration stale.
-        assert_eq!(
-            faults,
-            vec![ClosureFault::StaleAsymmetry {
-                pkg: "campaign-run",
-                bin: "jq"
-            }]
-        );
+        // Every declaration is campaign-only, so a surface set that gives BOTH runners the same
+        // binaries makes each of them stale — including `jq`, which this fixture names.
+        assert_eq!(faults, stale_except(&[]));
     }
 
     #[test]
@@ -66968,8 +67339,8 @@ mod closure_gate_tests {
                 surface("campaign-run", &["gh", "git", "pdftoppm", "jq"]),
                 surface("review-run", &["gh", "git", "pdftoppm"]),
             ]),
-            vec![],
-            "jq producer-only is exactly what DECLARED_ASYMMETRY says"
+            stale_except(&["jq"]),
+            "jq producer-only is exactly what DECLARED_ASYMMETRY says, and nothing else here is"
         );
     }
 
@@ -66980,13 +67351,12 @@ mod closure_gate_tests {
             surface("campaign-run", &["gh", "jq", "pdftoppm"]),
             surface("review-run", &["gh"]),
         ]);
-        assert_eq!(
-            faults,
-            vec![ClosureFault::UndeclaredAsymmetry {
-                pkg: "campaign-run".to_string(),
-                bin: "pdftoppm".to_string()
-            }]
-        );
+        let mut expected = vec![ClosureFault::UndeclaredAsymmetry {
+            pkg: "campaign-run".to_string(),
+            bin: "pdftoppm".to_string(),
+        }];
+        expected.extend(stale_except(&["jq"]));
+        assert_eq!(faults, expected);
     }
 
     #[test]
@@ -67023,10 +67393,7 @@ mod closure_gate_tests {
                 surface("producer-run", &["gh", "jq"]),
                 surface("review-run", &["gh", "jq"]),
             ]),
-            vec![ClosureFault::StaleAsymmetry {
-                pkg: "campaign-run",
-                bin: "jq"
-            }]
+            stale_except(&[]),
         );
     }
 

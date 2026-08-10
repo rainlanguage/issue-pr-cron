@@ -3419,11 +3419,34 @@ suite without an initialised submodule, two generated files, `.env` and
 `npm ci` is inherited, and the subcommand runs it. The other three are avoided
 by the stub set, which is what the stub set is for.
 
-It resolves `node` and a chromium from PATH and does not put them there: run it
-inside a shell that has them (`nix shell nixpkgs#chromium`), and an absent one
-is an exit-`12` fault naming what is missing rather than a degraded render.
-Whether they belong in the producer runner's own closure is an open question on
-#251, not a decision this took.
+**The producer's closure carries what it execs.** `node`, `npm` and a chromium
+are in `campaign-run`'s `runtimeInputs` (`render-tools` in flake.nix), declared
+in `RENDER_TOOLS` and asserted by `closure-preflight` — the same treatment
+`pdftoppm` gets, and for the same reason: no script, prompt or skill in this
+repo names them, so only a declaration checked against a closure can catch their
+absence. Without that, `render-component` exits 12 on the cron box on every
+screenshot item, which is a run that does its other work and quietly stops
+producing the evidence a UI PR is not review-ready without. `dejavu_fonts` rides
+in the closure carrying no binary at all, for its store path: a font package
+that is GC-rooted is what the trace harnesses' hand-pasted
+`/nix/store/…-dejavu-fonts-2.37` literals could not give themselves.
+
+The VETTER gets none of them, and that is a fact about the role rather than an
+oversight — `review-settings.json` denies it `Bash`, so it could not exec a
+renderer if one were in its closure, and a closure carrying chromium would state
+a capability it does not have. Every binary the render packages add is in
+`DECLARED_ASYMMETRY`, including the ride-alongs (`npx`, `corepack`,
+`chromium-browser`) that nothing invokes: `closure-surface` compares whole
+surfaces, so an undeclared ride-along is indistinguishable from a dependency
+somebody added to one runner and forgot in the other.
+
+**And the prompt routes to it.** `campaign-prompt.txt` steps 5 and 3c hand the
+producer `render-component` and no longer teach the hand-roll — the sentences
+naming a "minimal Vite+svelte harness", `nix shell nixpkgs#chromium` and
+`FONTCONFIG_FILE` are gone, which is what makes the corpus row go to zero rather
+than merely making it able to. Step 3c routes on the exit code: a `3` is a
+design question about that component and its message is the finding to quote, a
+`12` is an environment failure that ends the run.
 
 ## What a run does
 
