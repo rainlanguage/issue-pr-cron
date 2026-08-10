@@ -37486,6 +37486,9 @@ fn journal_entries(content: &str) -> (Vec<JournalEntry>, Vec<String>) {
 }
 
 /// One cron run, as the DENOMINATOR of a silence reading.
+///
+/// Identity is `(run_id, population)`, not the id alone. A run id is a second-precision timestamp
+/// and the producer and the vetter are separate crons, so the two can stamp the same one.
 #[derive(Debug, PartialEq, Eq, Clone)]
 struct JournalRun {
     run_id: String,
@@ -37502,6 +37505,10 @@ struct JournalRun {
 /// outcome, so the skip is ORed across a run's rows rather than read off whichever row was seen
 /// first. Rows with no usable `runId`/`role` are ignored rather than refused: the metrics file
 /// accumulates across schema changes, and this is a denominator, not a gate on that file.
+///
+/// Rows are keyed on `(runId, role)`. The two runners tick on separate crons against a
+/// second-precision id, so a shared id is two runs that both happened, and merging them would
+/// delete a run from the denominator and bleed one runner's skip onto the other's work.
 fn journal_runs(content: &str) -> Vec<JournalRun> {
     let mut runs: Vec<JournalRun> = Vec::new();
     for line in content.lines() {
@@ -37522,7 +37529,10 @@ fn journal_runs(content: &str) -> Vec<JournalRun> {
             continue;
         };
         let skipped = v.get("outcome").and_then(|x| x.as_str()) == Some("skipped");
-        match runs.iter_mut().find(|r| r.run_id == run_id) {
+        match runs
+            .iter_mut()
+            .find(|r| r.run_id == run_id && r.population == population)
+        {
             Some(existing) => existing.skipped |= skipped,
             None => runs.push(JournalRun {
                 run_id: run_id.to_string(),
@@ -37531,7 +37541,13 @@ fn journal_runs(content: &str) -> Vec<JournalRun> {
             }),
         }
     }
-    runs.sort_by(|a, b| a.run_id.cmp(&b.run_id));
+    // Total, so two runners sharing an id come back in a fixed order rather than in the order the
+    // metrics file happens to interleave them.
+    runs.sort_by(|a, b| {
+        a.run_id
+            .cmp(&b.run_id)
+            .then_with(|| a.population.cmp(&b.population))
+    });
     runs
 }
 
@@ -73261,11 +73277,29 @@ mod journal_tests {
         ks.iter().find(|k| k.kind == name).expect("kind")
     }
 
+    /// The seeded entry under an id. Reaching a shipped entry by ID rather than by POSITION is what
+    /// lets the assertions below survive an append: the journal is hand-appended and being appended
+    /// to is what it is for, so a fourth entry must not move the three this file makes claims
+    /// about. The lookup is itself the presence check — a seeded entry that went missing panics
+    /// here, named.
+    fn seeded<'a>(entries: &'a [JournalEntry], id: &str) -> &'a JournalEntry {
+        entries
+            .iter()
+            .find(|e| e.id == id)
+            .unwrap_or_else(|| panic!("{JOURNAL_FILE} no longer holds {id}"))
+    }
+
     // ── the shipped artifact ─────────────────────────────────────────────────────────────────
 
     /// The seeded journal is REAL — three incidents that happened, with the evidence they happened
     /// quoted out of the traces. A fixture-only journal would prove the parser works and nothing
     /// about whether the shape holds an actual incident.
+    ///
+    /// PRESENCE, not equality. The three seeded entries must be there, valid, and carrying the
+    /// evidence that makes each of them the incident it claims to be; the file having grown past
+    /// them is the artifact being used, not a regression. Exact-list assertions over a hand-append
+    /// target would fail CI on `LJ-0004` with no code change, and the first person to append is the
+    /// one they would fail.
     #[test]
     fn the_seeded_journal_holds_three_real_incidents_and_no_defects() {
         let Some(text) = repo_root_text(JOURNAL_FILE) else {
@@ -73273,11 +73307,9 @@ mod journal_tests {
         };
         let (entries, defects) = journal_entries(&text);
         assert!(defects.is_empty(), "{JOURNAL_FILE}: {defects:?}");
-        let ids: Vec<&str> = entries.iter().map(|e| e.id.as_str()).collect();
-        assert_eq!(ids, vec!["LJ-0001", "LJ-0002", "LJ-0003"]);
 
         // The stranded run: the one incident here that HAS produced a rule.
-        let strand = &entries[0];
+        let strand = seeded(&entries, "LJ-0001");
         assert_eq!(strand.run.as_deref(), Some("20260809T145150Z"));
         assert_eq!(strand.population, JournalPopulation::Producer);
         assert!(strand.rule.as_ref().is_some_and(|r| r.issue.as_deref()
@@ -73295,17 +73327,29 @@ mod journal_tests {
         );
 
         // The two with no rule are the BACKLOG, and one of them is not a runner's mistake at all.
-        assert!(entries[1].rule.is_none() && entries[2].rule.is_none());
-        assert_eq!(entries[1].run.as_deref(), Some("20260809T155241Z"));
-        assert_eq!(entries[2].population, JournalPopulation::Interactive);
-        assert_eq!(entries[2].run, None, "interactive work has no run id");
+        let brief = seeded(&entries, "LJ-0002");
+        let hook = seeded(&entries, "LJ-0003");
+        assert!(brief.rule.is_none() && hook.rule.is_none());
+        assert_eq!(brief.run.as_deref(), Some("20260809T155241Z"));
+        assert_eq!(hook.population, JournalPopulation::Interactive);
+        assert_eq!(hook.run, None, "interactive work has no run id");
         // …and it still carries evidence, though nothing forces it to: an interactive entry cites
         // no rotating trace, so the rule below cannot reach it, and the record is worth as much.
-        assert!(!entries[2].evidence.is_empty());
+        assert!(!hook.evidence.is_empty());
     }
 
-    /// The seeded journal, read: two backlog kinds, no recurrence, and one rule quiet enough to
-    /// propose cutting. This is the answer the subcommand exists to give, on the real data.
+    /// The seeded journal, read: both rule-less incidents in the backlog, the one rule that landed
+    /// measured over a real denominator, and the interactive incident measured over none. This is
+    /// the answer the subcommand exists to give, on the real data.
+    ///
+    /// Every assertion here is either CONTAINMENT or MONOTONE under use of the two files it reads.
+    /// A kind that has a rule keeps it (the rule is the newest landing among the kind's entries, so
+    /// a later entry can only replace it with another one), the backlog only gains members, and
+    /// `metrics/runs.jsonl` only ever gains rows for later run ids — so a run count taken since a
+    /// fixed instant only grows. Both files are written by using the pipeline, and neither being
+    /// used may fail this. The exact backlog ORDER and the exact deletion PICK are asserted over
+    /// fixtures, in `the_backlog_is_ordered_by_how_often_it_has_happened` and
+    /// `the_deletion_pick_is_the_longest_silence_and_never_file_order`, where the data is fixed.
     #[test]
     fn the_seeded_journal_answers_both_questions() {
         let (Some(text), Some(metrics)) = (
@@ -73314,33 +73358,54 @@ mod journal_tests {
         ) else {
             return; // not checked out (nix build sandbox) — enforced by the rs-test gate
         };
-        let (entries, _) = journal_entries(&text);
+        let (entries, defects) = journal_entries(&text);
+        assert!(defects.is_empty(), "{JOURNAL_FILE}: {defects:?}");
         let runs = journal_runs(&metrics);
         let kinds = journal_kinds(&entries, Some(&runs));
         let verdict = journal_verdict(&kinds);
 
+        // "Which incidents have no rule?" — both rule-less seeded kinds are in the backlog. A
+        // fourth incident with no rule belongs there too, so this is containment.
         let backlog: Vec<&str> = verdict.backlog.iter().map(|k| k.kind.as_str()).collect();
+        for k in [
+            "ci-failure-attributed-to-the-wrong-pre-commit-hook",
+            "fact-asserted-into-a-dispatch-brief-without-reading-it",
+        ] {
+            assert!(
+                backlog.contains(&k),
+                "{k} has produced no rule, so it is backlog: {backlog:?}"
+            );
+        }
+
+        // "Has this recurred since its rule landed?" — the #249 rule landed, and the incident that
+        // PRODUCED it is not read as a trip of it. Asserting the recurrence list stays empty would
+        // be asserting the mistake never happens again, which is the journal working, not failing.
+        let strand = kind(&kinds, "backgrounded-gate-strands-the-run");
+        assert!(strand.rule.is_some(), "the #249 rule landed");
+        assert!(
+            !strand.recurrences.contains(&"LJ-0001".to_string()),
+            "LJ-0001 is what produced the rule, not a trip of it: {:?}",
+            strand.recurrences
+        );
+        assert!(!backlog.contains(&strand.kind.as_str()), "{backlog:?}");
+
+        // …and the silence is measured over runs that actually happened: the committed metrics file
+        // records producer runs after that landing. The denominator is small, and being told so is
+        // the reading the human needs — not a recommendation that hides how thin the evidence is.
+        assert!(
+            strand.runs_since.is_some_and(|n| n > 0),
+            "the real run corpus names the runs this rule's silence is measured over: {:?}",
+            strand.runs_since
+        );
+        // Which makes it a deletion candidate exactly while nothing has tripped it. Stated as an
+        // equivalence, so it says something either way: a rule with real runs under it is
+        // deletable if and only if it has not recurred.
         assert_eq!(
-            backlog,
-            vec![
-                "ci-failure-attributed-to-the-wrong-pre-commit-hook",
-                "fact-asserted-into-a-dispatch-brief-without-reading-it",
-            ],
-            "both rule-less incidents are the backlog, newest first among equals"
+            verdict.deletable.iter().any(|k| k.kind == strand.kind),
+            strand.recurrences.is_empty(),
+            "a rule with a real, nonzero denominator is a candidate until it recurs"
         );
-        assert!(
-            verdict.recurring.is_empty(),
-            "the #249 rule has not been tripped since it landed"
-        );
-        let pick = verdict.delete_next().expect("one quiet rule");
-        assert_eq!(pick.kind, "backgrounded-gate-strands-the-run");
-        assert!(pick.recurrences.is_empty());
-        // The denominator is stated, and it is small — which is the reading the human needs, not a
-        // recommendation that hides how thin the evidence is.
-        assert!(
-            pick.runs_since.is_some_and(|n| n > 0),
-            "a deletion candidate always names the runs its silence is measured over"
-        );
+
         // The interactive kind is never a candidate, however quiet: no run count covers it.
         assert_eq!(
             kind(&kinds, "ci-failure-attributed-to-the-wrong-pre-commit-hook").runs_since,
@@ -73861,6 +73926,53 @@ mod journal_tests {
         );
         assert_eq!(mixed.len(), 1);
         assert_eq!(mixed[0].population, JournalPopulation::Vetter);
+    }
+
+    /// A run id is a second-precision timestamp and the two runners tick on separate crons, so both
+    /// can stamp the same one. That is two runs that both happened, and a run is what the
+    /// denominator counts: merged, one of them vanishes out of the divisor a deletion rests on, and
+    /// one runner's skip cancels the other's run of silence.
+    #[test]
+    fn two_runners_sharing_a_run_id_are_two_runs() {
+        // Both interleavings, because the order two runs on one id come back in is the ordering's
+        // job and not the metrics file's.
+        for rows in [
+            run_row("20260809T120000Z", "producer", Some("ok"))
+                + &run_row("20260809T120000Z", "vetter", Some("skipped")),
+            run_row("20260809T120000Z", "vetter", Some("skipped"))
+                + &run_row("20260809T120000Z", "producer", Some("ok")),
+        ] {
+            let runs = journal_runs(&rows);
+            assert_eq!(runs.len(), 2, "{runs:?}");
+            assert_eq!(
+                runs.iter()
+                    .map(|r| (r.population, r.skipped))
+                    .collect::<Vec<_>>(),
+                vec![
+                    (JournalPopulation::Producer, false),
+                    (JournalPopulation::Vetter, true),
+                ],
+                "the vetter's skipped tick is not the producer's run: {runs:?}"
+            );
+        }
+
+        // …and each population is counted the runs it actually had. The shared id here is the
+        // vetter's FIRST of two, so a merge would show up as the vetter losing a run of silence.
+        let mut p = producer("LJ-0001", "2026-08-09T10:00:00Z", "producer-only");
+        p["rule"] = rule("2026-08-09T11:00:00Z");
+        let mut v = producer("LJ-0002", "2026-08-09T10:00:00Z", "vetter-only");
+        v["population"] = json!("vetter");
+        v["rule"] = rule("2026-08-09T11:00:00Z");
+        let (entries, defects) = journal_entries(&(entry(p) + &entry(v)));
+        assert!(defects.is_empty(), "{defects:?}");
+        let shared = journal_runs(
+            &(run_row("20260809T120000Z", "producer", Some("ok"))
+                + &run_row("20260809T120000Z", "vetter", Some("ok"))
+                + &run_row("20260809T130000Z", "vetter", Some("ok"))),
+        );
+        let kinds = journal_kinds(&entries, Some(&shared));
+        assert_eq!(kind(&kinds, "producer-only").runs_since, Some(1));
+        assert_eq!(kind(&kinds, "vetter-only").runs_since, Some(2));
     }
 
     /// A producer rule's silence is measured over PRODUCER runs. Counting the vetter's would
