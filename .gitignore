@@ -63,6 +63,13 @@
 !/.github/workflows/rust.yml
 # Mutation-test scan records (committed so org health-checks can see scan freshness):
 !/mutation-test-scans.json
+# The journal of LLM mistakes (#256): one append-only JSONL entry per incident, read by
+# `pr-review-report journal-report` when someone is EDITING the prompts. Tracked because it is the
+# justification for every rule that cites it, and because deleting a rule means asking this file
+# whether the incident has recurred. Deliberately NOT wired into either runner and NOT named by any
+# prompt — `the_journal_is_never_shipped_to_a_runners_context` is what keeps it that way. The
+# prompt carries rules at per-turn cost; this carries the incidents at zero.
+!/mistake-journal.jsonl
 # Per-run pipeline metrics (accumulates across trace rotation; committed periodically):
 !/metrics/
 !/metrics/runs.jsonl
