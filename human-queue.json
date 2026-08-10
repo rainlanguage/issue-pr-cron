@@ -317,9 +317,9 @@
       },
       {
         "repo": "cyclofinance/cyclo.site",
-        "number": 400,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/400",
-        "title": "fix: receipt modal reactive bindings, balance key, and chain guard (#353, #355, #357)"
+        "number": 404,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/404",
+        "title": "fix: case-insensitive symbol lookup in AccountStats (#312)"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -805,15 +805,15 @@
       },
       {
         "repo": "cyclofinance/cyclo.site",
-        "number": 404,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/404",
-        "title": "fix: case-insensitive symbol lookup in AccountStats (#312)"
-      },
-      {
-        "repo": "cyclofinance/cyclo.site",
         "number": 403,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/403",
         "title": "fix: getCyTokenUsdPrice returns null on error instead of 0n (#317)"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 400,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/400",
+        "title": "fix: receipt modal reactive bindings, balance key, and chain guard (#353, #355, #357)"
       },
       {
         "repo": "rainlanguage/rain.flare",
@@ -969,7 +969,7 @@
         ]
       },
       "un-vetted": {
-        "count": 20,
+        "count": 18,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -1048,18 +1048,6 @@
             "number": 405,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/405",
             "title": "fix: Input.svelte sanitize external updates and tighten default validator (#328, #330)"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 404,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/404",
-            "title": "fix: case-insensitive symbol lookup in AccountStats (#312)"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 403,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/403",
-            "title": "fix: getCyTokenUsdPrice returns null on error instead of 0n (#317)"
           },
           {
             "repo": "rainlanguage/rain.flare",
@@ -1298,9 +1286,9 @@
           },
           {
             "repo": "cyclofinance/cyclo.site",
-            "number": 400,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/400",
-            "title": "fix: receipt modal reactive bindings, balance key, and chain guard (#353, #355, #357)"
+            "number": 404,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/404",
+            "title": "fix: case-insensitive symbol lookup in AccountStats (#312)"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1709,6 +1697,23 @@
             "number": 3,
             "url": "https://github.com/rainlanguage/rain.subgraph.docker/pull/3",
             "title": "2023 12 23 anvil"
+          }
+        ]
+      },
+      "ai:ready": {
+        "count": 2,
+        "prs": [
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 403,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/403",
+            "title": "fix: getCyTokenUsdPrice returns null on error instead of 0n (#317)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 400,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/400",
+            "title": "fix: receipt modal reactive bindings, balance key, and chain guard (#353, #355, #357)"
           }
         ]
       }
@@ -5570,9 +5575,9 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 20,
+    "unvetted": 18,
     "blockedOn": 19,
-    "ready": 0,
+    "ready": 2,
     "needsWork": 102,
     "relink": 0,
     "design": 0,
