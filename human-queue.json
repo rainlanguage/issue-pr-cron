@@ -981,14 +981,8 @@
         ]
       },
       "un-vetted": {
-        "count": 25,
+        "count": 24,
         "prs": [
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 254,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/254",
-            "title": "Expose the render harness as a subcommand: render-component"
-          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 26,
@@ -5576,7 +5570,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 25,
+    "unvetted": 24,
     "blockedOn": 19,
     "ready": 0,
     "needsWork": 100,
@@ -5587,18 +5581,18 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 144,
+    "totalProducerPrs": 143,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 613,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 774
+    "openIssues": 773
   },
   "ages": {
     "openIssues": {
-      "meanDays": 315.7,
+      "meanDays": 316.1,
       "medianDays": 103.9,
-      "oldestDays": 1659.4
+      "oldestDays": 1659.5
     }
   }
 }
