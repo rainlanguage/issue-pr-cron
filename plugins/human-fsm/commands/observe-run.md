@@ -44,27 +44,20 @@ filter, so what reaches you is the distiller's own lines (`·` narration, `▸`
 tool calls, `⟹` results, `!` warnings) plus the runner's lifecycle lines, and
 nothing else. Its exit code is the **run's**.
 
-Start it in a **background** `Bash` call, and read that call's output file as
+Start it in a **background** `Bash` call and **Read** that call's output file as
 the run goes. A run outlives a foreground call — the harness backgrounds one at
 its 600-second ceiling and hands back nothing of the stream when it does, so a
 foreground call buys ten minutes of blank screen and then backgrounds anyway,
 which is how a working run gets read as a hang and killed [LJ-0004].
-Backgrounded from the start it returns in seconds naming its output file, and
-the fast-forward verdict, the `log:` line and `running:` are readable there
-immediately. Read that file with the **Read** tool when you want to know where
-the run is: it accumulates the stream line by line as the run writes it. One
-read, then get on with something else — the run's exit arrives as a task
-notification.
+Backgrounded from the start it returns in seconds naming its output file, with
+the fast-forward verdict, the `log:` line and `running:` readable there at once.
+One read when you want to know where the run is, then get on with something else
+— the run's exit arrives as a task notification.
 
-**Nothing may sit between the stream and you.** `force-run` flushes every line
-as it prints it, and a pipe throws that away by one of two mechanisms. `tail`
-without `-f` reads to EOF before it prints anything, so a half-hour run is half
-an hour of nothing — in the backgrounded call's own output file too, which stays
-empty the whole time [LJ-0004]. `head -n` fails from the other end: it takes its
-lines, closes the pipe, and `force-run` stops echoing but keeps waiting on the
-run, so the call still does not return until the run ends and what it hands back
-is the first few lines rather than the stream. Pipe it into nothing at all — not
-`tail`, not `head`, not a filter of any kind — and read the file.
+**Pipe it into nothing at all** — and read the file instead. `force-run` flushes
+every line as it prints it, and a pipe throws that away: `tail` without `-f`
+reads to EOF before printing anything, so the output file stays empty for the
+whole run [LJ-0004].
 
 If that output file is gone — a restarted session, or a run you did not start —
 the `log:` line names where the same bytes are still being appended, and step
@@ -80,14 +73,10 @@ plus the stop's own line, so this observation stays distinguishable from a paced
 tick in the series it contributes to.
 
 **Killing mid-run is sometimes right** — the 2026-08-09 run was killed once.
-Stopping the background task kills the runner with it and releases the flock:
-the whole process tree that task started is killed, `force-run` holds the runner
-as its own child, and the lock is an open descriptor on that runner process, so
-it goes when the process does. Probed on 2026-08-10 against a stand-in of the
-same shape — a parent streaming a child that holds an `flock` on an open
-descriptor — and stopping the task left neither process alive with the lock free
-on the next attempt, both for a call backgrounded from the start and for one the
-600-second ceiling backgrounded.
+Stopping the background task kills the whole process tree it started, the runner
+among it, and the flock goes with the descriptor it is held on. Probed on
+2026-08-10, backgrounded both ways: neither process survived and the lock was
+free at once.
 
 ## 2. Reattach, if the stream was interrupted
 

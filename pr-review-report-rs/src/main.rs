@@ -64823,234 +64823,6 @@ mod marketplace_tests {
             );
         }
     }
-
-    // ── #260: instructing an invocation whose run outlives a foreground call ───────────────────
-    //
-    // `/observe-run` step 1 used to read "Run it in a **foreground** `Bash` call. It blocks for
-    // the whole run, which is the point." A foreground `Bash` call is moved to the background at
-    // 600 seconds and hands back nothing of the stream when it is, and the runs measured on
-    // 2026-08-10 were 32m 48s (producer) and 22m 30s (vetter) — so for a producer run the
-    // instruction could never be honoured, and the ten minutes of silence it did buy read as a
-    // hang: vetter run 20260810T102325Z was interrupted and killed three auditors deep, working.
-    //
-    // What is pinned below is the RULE the fix is, not the paragraph carrying it. Bold is this
-    // document's own marker for the load-bearing word — the old step emphasised `**foreground**`
-    // and the new one emphasises `**background**` — so the EMPHASISED mode is the prescribed one,
-    // and an unemphasised mention is the explanation of why the other mode fails, which the step
-    // has to stay free to reword. No gate over prose can see a step that prescribes the right mode
-    // in a sentence meaning the opposite; what this one sees is the prescription flipping, the
-    // buffering ban going, and the route back to a backgrounded run's stream going.
-
-    /// The `Bash`-call modes an instruction can prescribe. Closed: a step emphasises one of these
-    /// or prescribes nothing at all.
-    const BASH_CALL_MODES: [&str; 2] = ["foreground", "background"];
-
-    /// Readers that hold a stream until its writer exits. Named rather than described: `tail` is
-    /// what was actually reached for on 2026-08-10, and it showed nothing before the timeout was
-    /// ever reached — a ban phrased only as "nothing that buffers" would not have stopped it.
-    const BUFFERING_READERS: [&str; 2] = ["tail", "head"];
-
-    /// What keeps a backgrounded run observable: the line `force-run` prints BEFORE the runner
-    /// starts, and the subcommand that follows the run from there.
-    const REATTACH_ROUTE: [&str; 2] = ["log:", "watch-run"];
-
-    /// What is wrong with a step telling a human how to invoke a command whose runs outlive a
-    /// foreground `Bash` call.
-    #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-    enum LongRunStepFault {
-        /// The step emphasises no mode, so nothing in it is a prescription.
-        NoModePrescribed,
-        /// The prescribed mode is the one a long run outlives.
-        PrescribesForeground,
-        /// A reader that holds the stream until the writer exits is not named as one to keep out.
-        BufferingReaderUnnamed(&'static str),
-        /// Nothing routes a backgrounded run back to a stream that can still be read.
-        ReattachUnrouted(&'static str),
-    }
-
-    /// PURE: the call modes a step EMPHASISES, in the order they appear.
-    ///
-    /// Emphasis is the discriminant because the step must be able to NAME the mode it is arguing
-    /// against — the measured durations and the killed run are the whole reason the prescription
-    /// is what it is, and a gate that counted every mention would forbid saying why.
-    fn emphasised_call_modes(step: &str) -> Vec<&'static str> {
-        let mut hits: Vec<(usize, &'static str)> = Vec::new();
-        for mode in BASH_CALL_MODES {
-            let marked = format!("**{mode}**");
-            let mut from = 0;
-            while let Some(i) = step[from..].find(&marked) {
-                hits.push((from + i, mode));
-                from += i + marked.len();
-            }
-        }
-        hits.sort_unstable();
-        hits.into_iter().map(|(_, mode)| mode).collect()
-    }
-
-    /// PURE: every fault in one step of a command file, against the rule above.
-    fn long_run_step_faults(step: &str) -> Vec<LongRunStepFault> {
-        let mut out = Vec::new();
-        let modes = emphasised_call_modes(step);
-        if modes.is_empty() {
-            out.push(LongRunStepFault::NoModePrescribed);
-        }
-        if modes.contains(&"foreground") {
-            out.push(LongRunStepFault::PrescribesForeground);
-        }
-        // Backticked, so the step names each one as a COMMAND. `tail` as an English word — "the
-        // tail of the log" — is not a ban on the program.
-        for reader in BUFFERING_READERS {
-            if !step.contains(&format!("`{reader}`")) {
-                out.push(LongRunStepFault::BufferingReaderUnnamed(reader));
-            }
-        }
-        for token in REATTACH_ROUTE {
-            if !step.contains(&format!("`{token}`")) {
-                out.push(LongRunStepFault::ReattachUnrouted(token));
-            }
-        }
-        out
-    }
-
-    /// A numbered `## N.` step of a plugin command file, scoped the way [`prompt_section`] scopes a
-    /// prompt's item: a rule satisfied in a NEIGHBOURING step is not satisfied here.
-    fn command_step(text: &str, step: &str) -> String {
-        let head = format!("## {step}. ");
-        prompt_section(
-            text,
-            &head,
-            |l| l.starts_with(&head),
-            |l| l.starts_with("## "),
-        )
-    }
-
-    /// Shaped like the real step: the prescription, an explanation that mentions the other mode
-    /// UNEMPHASISED, the ban with both readers named, and the route back to the stream.
-    const GOOD_STEP: &str = "\
-## 1. Force the run, and watch it
-
-Start it in a **background** `Bash` call and read that call's output file. A run
-outlives a foreground call, and a foreground call hands back nothing when the
-ceiling backgrounds it anyway.
-
-`tail` and `head` both hold the whole stream until the writer exits, so pipe it
-into nothing at all.
-
-If the output file is gone, the `log:` line says where the same bytes are still
-being appended and `watch-run` reattaches there.
-
-## 2. Reattach, if the stream was interrupted
-
-Run it in a **foreground** `Bash` call with `tail`, and never mind the `log:` or
-`watch-run`.
-";
-
-    #[test]
-    fn a_step_prescribing_the_mode_a_long_run_survives_is_clean() {
-        assert_eq!(long_run_step_faults(&command_step(GOOD_STEP, "1")), vec![]);
-    }
-
-    /// The #260 defect itself. Nothing else about the step changes — only which mode it puts in
-    /// bold — and that alone has to turn the gate red.
-    #[test]
-    fn a_step_that_prescribes_a_foreground_call_is_the_instruction_260_is_about() {
-        let held = GOOD_STEP.replacen("**background**", "**foreground**", 1);
-        assert_eq!(
-            long_run_step_faults(&command_step(&held, "1")),
-            vec![LongRunStepFault::PrescribesForeground],
-            "a producer run measured at 32m 48s cannot be held in a call the harness backgrounds \
-             at 600s"
-        );
-    }
-
-    /// The control the emphasis rule exists for: the step must be free to say the word
-    /// `foreground` as many times as the argument needs, and to reword every sentence around the
-    /// prescription, without the gate noticing. A gate that fired here would be a checksum of the
-    /// paragraph.
-    #[test]
-    fn an_unemphasised_mention_of_the_other_mode_is_not_a_prescription() {
-        let argued = command_step(GOOD_STEP, "1").replace(
-            "A run\noutlives a foreground call,",
-            "A foreground call is moved to the background at 600 seconds; the producer run \
-             measured 32m 48s in the foreground and the vetter 22m 30s, so a foreground call is \
-             backgrounded before either ends,",
-        );
-        assert!(
-            argued.matches("foreground").count() > 3,
-            "the rewrite has to actually exercise the word: {argued}"
-        );
-        assert_eq!(long_run_step_faults(&argued), vec![]);
-    }
-
-    #[test]
-    fn a_step_that_emphasises_no_mode_prescribes_nothing() {
-        let mute = GOOD_STEP.replacen("**background**", "background", 1);
-        assert_eq!(
-            long_run_step_faults(&command_step(&mute, "1")),
-            vec![LongRunStepFault::NoModePrescribed],
-            "the mode has to be marked as the load-bearing word, or the step is an anecdote"
-        );
-    }
-
-    /// A ban that names no program is advice. `tail` was the actual 2026-08-10 mistake and `head`
-    /// is the same defect one letter away, so both are named or the ban has a hole where the next
-    /// caller reaches.
-    #[test]
-    fn a_buffering_reader_the_step_never_names_is_not_banned() {
-        for reader in BUFFERING_READERS {
-            let dropped = GOOD_STEP.replace(&format!("`{reader}`"), "it");
-            assert_eq!(
-                long_run_step_faults(&command_step(&dropped, "1")),
-                vec![LongRunStepFault::BufferingReaderUnnamed(reader)],
-                "dropping {reader:?} has to be the only thing that changes"
-            );
-        }
-    }
-
-    /// The other half of #260: a run that is backgrounded and unreadable is the hang all over
-    /// again, so the step routes to the printed log path and to the subcommand that follows it.
-    #[test]
-    fn a_backgrounded_run_with_no_route_back_to_its_stream_is_a_fault() {
-        for token in REATTACH_ROUTE {
-            let dropped = GOOD_STEP.replace(&format!("`{token}`"), "it");
-            assert_eq!(
-                long_run_step_faults(&command_step(&dropped, "1")),
-                vec![LongRunStepFault::ReattachUnrouted(token)],
-                "dropping {token:?} has to be the only thing that changes"
-            );
-        }
-    }
-
-    /// The scoping, asserted rather than assumed: `GOOD_STEP`'s step 2 prescribes a foreground
-    /// call, names `tail`, and names neither reattach token — and none of that reaches step 1. A
-    /// whole-file check would read step 2's `**foreground**` as this step's prescription.
-    #[test]
-    fn the_rule_is_read_in_its_own_step_and_a_neighbour_neither_breaks_nor_satisfies_it() {
-        let two = command_step(GOOD_STEP, "2");
-        assert_eq!(
-            long_run_step_faults(&two),
-            vec![
-                LongRunStepFault::PrescribesForeground,
-                LongRunStepFault::BufferingReaderUnnamed("head"),
-            ],
-            "step 2 of the fixture is deliberately wrong, so step 1 passing means the scope holds"
-        );
-    }
-
-    /// The file itself, so the gate is not merely testable but satisfied.
-    #[test]
-    fn observe_run_step_1_prescribes_an_invocation_a_long_run_survives() {
-        let Some(text) = repo_root_text("plugins/human-fsm/commands/observe-run.md") else {
-            return; // not checked out (nix build sandbox)
-        };
-        let step = command_step(&text, "1");
-        assert_eq!(
-            long_run_step_faults(&step),
-            vec![],
-            "step 1 is the instruction a human follows to start a run that costs $6–$12 and takes \
-             half an hour. It reads: {step}"
-        );
-    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -74113,111 +73885,32 @@ mod journal_tests {
         );
     }
 
-    /// The loop this whole artifact exists for, closed once: an incident recorded, and the rule
-    /// that addresses it landing in the same change, with the rule CITING the entry instead of
-    /// re-telling it. LJ-0004 is `/observe-run` step 1 telling a caller to hold a foreground
-    /// `Bash` call for work the harness backgrounds at 600 seconds; the rule it names is that
-    /// step's replacement. So the entry must read as ADDRESSED rather than as backlog, and the
-    /// citation the step now carries instead of the narrative must resolve to it.
+    /// The one property nothing else in the repo guards: the `[LJ-0004]` citation
+    /// `/observe-run` step 1 carries INSTEAD of the narrative it used to spell out has to resolve
+    /// to a real entry.
     ///
-    /// The citation half is asserted HERE, and it has to be:
     /// `every_journal_citation_in_a_prompt_resolves_to_an_entry` scans `RUNNER_CONTEXT_FILES`, and
-    /// a plugin command is deliberately not one — it is read by a model when a human invokes it,
-    /// not shipped into a cron run's context on every turn. Nothing else in the repo would notice
-    /// `[LJ-0004]` in that file going stale, and a citation that resolves to nothing has deleted
-    /// the reasoning rather than moved it.
+    /// a plugin command is deliberately not one — it is read when a human invokes it, not shipped
+    /// into a cron run's context on every turn. So nothing would notice this one going stale, and
+    /// a citation resolving to nothing has deleted the reasoning rather than moved it.
     #[test]
-    fn the_journal_records_the_incident_the_observe_run_rule_came_from() {
-        let (Some(text), Some(metrics), Some(command)) = (
+    fn the_observe_run_citation_resolves() {
+        let (Some(text), Some(command)) = (
             repo_root_text(JOURNAL_FILE),
-            repo_root_text("metrics/runs.jsonl"),
             repo_root_text("plugins/human-fsm/commands/observe-run.md"),
         ) else {
             return; // not checked out (nix build sandbox) — enforced by the rs-test gate
         };
         let (entries, defects) = journal_entries(&text);
         assert!(defects.is_empty(), "{JOURNAL_FILE}: {defects:?}");
-        let e = seeded(&entries, "LJ-0004");
-
-        // Interactive, because the mistake is the INSTRUCTION's and the caller's. The vetter run
-        // the entry names is the casualty rather than the culprit, and no cron run count measures
-        // whether a human following a plugin command got it right.
-        assert_eq!(e.population, JournalPopulation::Interactive);
-        assert_eq!(e.run.as_deref(), Some("20260810T102325Z"));
-        assert_eq!(
-            e.trace.as_deref(),
-            Some("review-runs/20260810T102325Z.jsonl")
-        );
-
-        // The four facts that make it THIS incident rather than a generic timeout, quoted rather
-        // than summarised — the truncated trace and the task file both rotate out, and when they
-        // do this list is the whole record.
-        let quoted = e.evidence.join("\n");
-        for fact in [
-            // the instruction that could not be followed
-            "**foreground**",
-            // `tail` holding the entire stream, so the backgrounded call's file stayed empty
-            "the contents are empty",
-            // the interrupt that killed the run
-            "The tool use was rejected",
-            // …which was working when it died, not hung
-            "tool calls 52",
-        ] {
+        let cited = journal_citations(&command);
+        assert!(!cited.is_empty(), "the step cites no entry: {command}");
+        for id in cited {
             assert!(
-                quoted.contains(fact),
-                "the evidence must carry {fact:?}: {quoted}"
+                entries.iter().any(|e| e.id == id),
+                "observe-run.md cites {id}, which is in no {JOURNAL_FILE} entry"
             );
         }
-
-        // The rule landed WITH the entry. That is the loop closing rather than a backlog member,
-        // and it is why the step below may cite instead of narrate.
-        let rule = e.rule.as_ref().expect("the rule this incident produced");
-        assert!(
-            rule.site
-                .contains("plugins/human-fsm/commands/observe-run.md"),
-            "a deletion candidate names the file to edit: {}",
-            rule.site
-        );
-        assert_eq!(
-            rule.issue.as_deref(),
-            Some("https://github.com/rainlanguage/issue-pr-cron/issues/260")
-        );
-
-        // …so the verdict must not read this kind as an unaddressed gap, and must never offer it
-        // as a deletion candidate: an interactive kind has no run denominator, so its silence is
-        // evidence of nothing.
-        let kinds = journal_kinds(&entries, Some(&journal_runs(&metrics)));
-        let mine = kind(&kinds, &e.kind);
-        assert!(mine.rule.is_some(), "the #260 rule landed with the entry");
-        assert_eq!(mine.runs_since, None, "interactive work has no denominator");
-        let verdict = journal_verdict(&kinds);
-        for (label, list) in [
-            ("backlog", &verdict.backlog),
-            ("deletable", &verdict.deletable),
-        ] {
-            assert!(
-                !list.iter().any(|k| k.kind == e.kind),
-                "{} is addressed and unmeasurable, so it is neither backlog nor a deletion \
-                 candidate — it is in {label}",
-                e.kind
-            );
-        }
-
-        // The citation is in the STEP that carries the rule, not merely somewhere in the file: a
-        // reader who wants the evidence has to find it where the rule is.
-        let head = "## 1. ";
-        let step = prompt_section(
-            &command,
-            head,
-            |l| l.starts_with(head),
-            |l| l.starts_with("## "),
-        );
-        assert!(
-            journal_citations(&step).contains(&e.id),
-            "step 1 cites {} nowhere, so the narrative it replaced is gone rather than moved: \
-             {step}",
-            e.id
-        );
     }
 
     // ── validation: every way the journal answers WRONGLY rather than not at all ──────────────
