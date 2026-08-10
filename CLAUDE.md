@@ -1,5 +1,29 @@
 # CLAUDE.md — issue-pr-cron
 
+This file is a **router**, and the routing is a cost decision. Every byte of it
+is re-read on every turn of any session whose working directory is this repo —
+which is the VETTER's (`review-run.sh` cds to the install dir) and not the
+producer's (`campaign-run.sh` cds to `$WORK_DIR`, which holds no `CLAUDE.md`).
+Measured 2026-08-10 across two forced runs: first context 48,060 for the vetter
+against 14,199 for the producer, with 41% of this file a CLI reference the
+vetter has no `Bash` to invoke (#261).
+
+So what stays here is what governs JUDGEMENT and binds EVERY reader — the FSM
+framing, the tool surface, the invariants. Reference material a role reaches for
+is a file of its own, and **every one of them is named right here**, because an
+agent that never learns a rule does not error on it: it silently violates it,
+and a file it does not know exists is one it never consults.
+
+- **[TRANSITIONS.md](TRANSITIONS.md)** — the transition function as a CLI: every
+  `pr-review-report` subcommand and the transition it effects, plus the
+  slash-command layer a human types above them. Read it before invoking one, or
+  before adding one.
+- **[WORK-CLONES.md](WORK-CLONES.md)** — the clone lifecycle (`clone_create` /
+  `clone_release` / `clone_gc` / `clone_list`), the path guards and the shared
+  release decision that make a delete outside a work root inexpressible, and the
+  one result budget every tool answers to. Read it before changing a guard or a
+  clone tool.
+
 ## The pipeline is a finite state machine
 
 This repo runs an autonomous PR pipeline (a **producer** cron and a **vetter**
@@ -94,78 +118,6 @@ an accident but is not the same thing as enforcement. Do not cite one as proof
 that a rule cannot be broken — cite it as proof that breaking it has to be
 deliberate.
 
-## Transitions (subcommands)
-
-The state diagram lives in [README.md](README.md#pipeline-state-machine). The
-transition functions:
-
-| Subcommand                                                                      | Transition it effects                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--queue`                                                                       | surfaces the presentable review queue (`ai:ready` + green + mergeable + vetted-at-head)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `--record-verdict <owner/repo> <n> <verdict> … --covered-file <p>`              | the vetter's write: apply the `ai:*` label + post the `🤖 ai:vetter` comment, bound to the head sha and stamped with the vet protocol (+ cost). Refused unless the coverage claim accounts for every changed file                                                                                                                                                                                                                                                                                                                                                                                     |
-| `--trusted-comments <owner/repo> <n> [--marker] [--issue]`                      | author-verified comment read — the only trusted way to read a comment                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `--commit-closes <owner/repo> <n>`                                              | closing-keyword vs. `closingIssuesReferences` drift check                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `--backfill-comments`                                                           | one-time completion of the ledger→GitHub migration (replays each ledger verdict as its missing comment)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `gc-clones <work-dir>...`                                                       | reclaim merged/closed work-clones across one or more clone roots (state cleanup)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `unvetted [--json] [--include-skipped] [--limit n]`                             | the VETTER's state-load: which open PRs need a verdict this run, vet-first, with each one's signals (MCP always pages; the CLI is unbounded unless `--limit`). Also runs the `ai:blocked-on` CLEARANCE (#161): all typed deps merged/closed ⇒ clear + fresh re-vet; held and manual-review flags are reported, never vetted                                                                                                                                                                                                                                                                           |
-| `already-fixed <owner/repo#n>...`                                               | has a MERGED PR referencing this issue landed SINCE it was filed? `uncovered-issues` cannot answer it: that split is computed from OPEN PRs only, so an issue fixed on `main` with no open PR reads as uncovered and gets worked. Takes ISSUE and PR refs (a PR's own closes). Exit 4 = merged-since, 1 = unreadable                                                                                                                                                                                                                                                                                  |
-| `state-load [--json] [--no-cache]`                                              | the PRODUCER's state-load: the fleet's `nextAction` histogram, the rows that name work, the approved set, and the audit backlog by severity — in ONE result, pre-grouped. The groupings are the ones the traces show runs actually asked for; the rest of the fleet is counted, not enumerated                                                                                                                                                                                                                                                                                                        |
-| `await <owner/repo#n[@sha]>... [--timeout-secs n] [--interval-secs n] [--json]` | the producer's WAIT, as one turn: poll the whole in-flight set until every PR's checks have reported and (with `@<sha>`) a push has moved its head off `<sha>`, then report each subject. Run in a FOREGROUND `Bash` call — `await` blocks, `Monitor` does not (#249). An unmoved head is never settled by the old head's checks, and an empty rollup takes a bounded grace before it counts as no-CI. Exit 3 = deadline, 4 = a subject stayed unreadable                                                                                                                                             |
-| `preflight [--gh-auth] [--sol-shell]`                                           | the run's PRE-MODEL gate: every `HARNESS_TOOLS` binary resolves, plus each opt-in CAPABILITY (a `gh` authed with the scopes the pipeline writes through; a nix that can realise rainix's `sol-shell`). Unsatisfied ⇒ exit 12, one `ToolingFailure` row, no tokens spent                                                                                                                                                                                                                                                                                                                               |
-| `sol-toolchain <dir>`                                                           | the `nix develop` prefix a CHECKOUT's OWN Solidity checks run in, so a local `forge` is the one its CI judges with (#116). Reads the checkout's push/PR workflows: a rainix reusable ⇒ the `RAINIX_SHA` the REUSABLE pins; a bare `nix develop -c rainix-sol-<task>` ⇒ the repo's own flake. Exit 3 = no single answer, discriminated by `mode:` — `absent` (nothing gates Solidity), `foreign` (a forge installed WITHOUT nix, e.g. `foundry-toolchain@v1` at nightly — something to match that no shell can enter), `conflict`, or a `repo-flake` with no flake. A fact to record, never a fallback |
-| `sol-toolchain-audit <trace>`                                                   | the CHECK on the rule above (#203): every Solidity check the run ran, against the toolchain `sol-toolchain` named for that checkout — `matched` / `skew` / `unasked` / `unmatchable`, plus the audit's own two blind spots (an invocation naming no checkout, one entering the working directory's flake without naming it). Read out of the run's OWN trace, where the answer and the `nix develop` that followed are both recorded, so it costs no network read and cannot stop a run. Exit 3 on skew or unasked; `campaign-run.sh` appends it to the run log                                       |
-| `unvetted_close_candidates` (MCP)                                               | the vetter's second state-load: which producer close-candidate flags need judging this run                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `record_close_candidate_verdict` (MCP)                                          | the vetter's issue write: uphold (queued for the human) or reject (strips the flag → producer's queue)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `human-rule <owner/repo> <n> <ruling> "<note>"`                                 | the HUMAN's PR ruling: `ai:needs-work` + a head-sha-pinned `👤 human` comment (supersedes any prior human ruling; the comment records which verb ruled). Both verbs are send-backs (#133/#219) and REQUIRE `--rework "<order>"` / `--rework-file <path>`, which emits the trusted `Rework note` work order in the same call; a bare needs-work/design refuses; there is no park and no close verb — a question still open is already `ai:design`, and deciding a close IS executing one, which is `human-close` (#213)                                                                                |
-| `human-rule-issue <owner/repo> <n> <ruling> "<note>"`                           | the HUMAN's issue ruling: adds `keep-open`; pinned to the live close-candidate flag, or to the issue as filed. `needs-work` / `design` both REQUIRE `--rework` on the same terms as the PR side, but `design` writes NO LABEL at all (#219) — the pinned `Ruled …: design — <answer>` comment is the whole record and the issue stays the producer's to work; `keep-open` refuses the flag (the verb is its own disposition)                                                                                                                                                                          |
-| `human-close <owner/repo> <n> "<note>"`                                         | the HUMAN's TERMINAL edge on either subject: record the `close-candidate` ruling comment, close, retire the pending `ai:close-candidate` — ONE transition, in that tear-safe order (#94, #213)                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `record-close-candidate-verdict <owner/repo> <n> <v> …`                         | the vetter's flag verdict, also as a subcommand — `human-rule-issue`'s stranded-flag refusal names it, and a terminal has no MCP                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `require-qa-block`                                                              | the QA-GUIDE §8 gate on PR-open: refuses a `gh pr create` whose body lacks the evidence block. Wired as a PreToolUse `Bash` hook, so it binds every session — including the ones with no MCP surface, which is the only population still reaching for `gh pr create` now `open_pr` exists                                                                                                                                                                                                                                                                                                             |
-| `open_pr` (MCP)                                                                 | the PRODUCER'S OUTPUT EDGE: open the PR for a pushed branch, assigned, with a typed `closes` linkage and a body `carries_qa_block` has already accepted — and a RESULT carrying the PR number, so the trace holds `{agent, repo, issue, PR}` as typed data                                                                                                                                                                                                                                                                                                                                            |
-| `push` (MCP)                                                                    | the PRODUCER'S REWORK EDGE: fast-forward a work clone's branch onto origin — no force spelling is expressible — and RECORD the PR whose head it moved, named only when an open PR on that branch is at exactly the commit just pushed                                                                                                                                                                                                                                                                                                                                                                 |
-| `work-tokens <metrics/runs.jsonl> [--json]`                                     | TOKENS TO LAND WORK: per-actor spend joined to the work items `open_pr` and `push` recorded, bucketed landed / delivered-awaiting-human / churn. Only churn is waste; an actor with no typed item is churn and nothing is inferred from a label or a branch name. The main loop carries items but no per-item cost                                                                                                                                                                                                                                                                                    |
-| `repair-qa-block <owner/repo> <n> --block-file <path>`                          | the RETROFIT of the same rule on an ALREADY-open PR: appends the §8 block to the body, every other byte identical, validated with `require-qa-block`'s predicate                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `weaken-closes <owner/repo> <n> <issue>`                                        | the LINKAGE repair a linkage `needs-work` names: `Closes #issue` → `Refs #issue`, every other byte identical, `## QA` untouched, DIRECTION-LOCKED so it can only ever remove a closing reference                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `mcp [--profile vetter\|producer\|human]`                                       | serve a role's transitions over MCP (stdio) — the FSM as a tool surface, not as prose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `plugin-version-lockstep [--root <dir>]`                                        | CI gate: every plugin `.claude-plugin/marketplace.json` lists resolves to a manifest of the same name carrying the same version                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-
-## The layer a human types: slash commands as a plugin
-
-The transitions above are what a tool call reaches. What a HUMAN types is a
-Claude Code plugin published from this repo's own marketplace
-(`.claude-plugin/marketplace.json` → `./plugins/human-fsm`), installed with
-`/plugin marketplace add rainlanguage/issue-pr-cron`. The org already
-distributes assets this way (`claude-audit-skills`, `adversarial-mutation-test`,
-`rain-org-health`); `rain-org-health` is the shape followed, publishing from a
-subdirectory so a repo that is primarily something else need not pretend to be a
-skills repo.
-
-**The commands are prompts and nothing else.** Every guard lives in the binary;
-a command that re-derived a transition, or reached for `gh` to do what a
-subcommand already does, is a loose transition by another name. A test reads
-each shipped command's fenced blocks and requires every runnable line to be a
-`pr-review-report` invocation — asserted on the fenced blocks specifically,
-because the prose says `gh issue close` in order to FORBID it and a substring
-scan cannot tell a prohibition from an instruction.
-
-`/observe-run` is the one command whose subject is the MACHINE rather than a PR
-or an issue (#252): fast-forward the install dir, force a run, watch it, profile
-what its context cost, and read the retained trace corpus for what a run is
-still hand-rolling. Its three measurements are subcommands — `watch-run`,
-`token-profile`, `corpus-report` — for the reason above, and because each was
-hand-written during one 2026-08-09 session, two of them twice. It **gathers and
-measures without deciding**: naming the next subcommand to build is the human's
-call, which is what makes it a human command rather than a cron. The forced run
-itself is the runner's own `nix run …#campaign-run -- --force` entry point,
-named in prose rather than fenced, because the fenced-block rule admits only
-this binary's transitions.
-
-A plugin's version is stored TWICE (the marketplace listing installers read, and
-the manifest it points at) and `/plugin` compares version strings, so a stale
-listing serves stale content silently. `plugin-version-lockstep` makes agreement
-a gate; it is a subcommand rather than a CI shell script for the same reason
-`require-qa-block` is — everything it does is parsing.
-
 ## The FSM as a tool surface (MCP)
 
 `pr-review-report mcp` speaks MCP over stdio. `--profile` picks the role, and a
@@ -220,107 +172,6 @@ Clean-by-construction work clones are the producer's obligation
 `rainix-copy-artifacts` workflow's `git diff --exit-code`; re-running a PR's
 tests is CI's job. The vetter's QA gate checks that the evidence block exists
 and holds against the diff it reads, nothing more.
-
-## Work-clone lifecycle
-
-A work clone is created and destroyed through **tools**, never through shell.
-`clone_create` clones or re-syncs `<root>/<name>`; `clone_release` disposes of
-one; `clone_gc` is the end-of-run backstop sweep; `clone_list` reports what is
-on the box. The roots come from the environment (`WORK_DIR`, plus `INSTALL_DIR`
-because stranded `vet-*` clones live there) and **never** from a tool argument —
-a model-supplied root would make every guard vacuous.
-
-Why a tool: `campaign-settings.json` denies `Bash(rm -rf /:*)`, deny rules are
-**prefix-matched**, and so it also denied `rm -rf $WORK_DIR/<clone>` — the exact
-deletion `campaign-prompt.txt` mandated. The instruction was impossible to
-follow for months and the box grew to 195 GB of clones (#56). Widening the rule
-would fix that instance and keep the shape of the problem; moving the delete
-behind a tool means "remove something outside the work roots" is not
-expressible.
-
-The path guards, in `clone_name_in_root` + `resolve_existing_clone`:
-
-- exactly **one path component** directly under a configured root — a bare name
-  or the full path of a direct child, nothing else;
-- **no `..`** in any position, checked before any prefix arithmetic;
-- **no absolute path outside the root**, including the sibling-prefix trick
-  (`/home/gildlab/codeEVIL` shares a string prefix with `/home/gildlab/code` —
-  the same class of bug as the deny rule itself);
-- **never the root itself**, an ancestor of it, or a `.`-prefixed entry;
-- **never a symlink**, and the canonical path must still be a direct child, so a
-  symlinked component cannot smuggle the target elsewhere;
-- **must contain `.git`** — only a git work clone is ever deletable, so no
-  malformed argument reaches ordinary data.
-
-And the release decision, in `release_decision` (shared with the sweep, so the
-attended release and the unattended sweep never disagree about whether a clone
-still holds work):
-
-- commits that exist **only** in the clone refuse **unconditionally** — there is
-  no override flag, because a flag is a thing a model under time pressure sets;
-- an unknown push state is treated as unpushed (fail safe) — except an **unborn
-  HEAD**, which is not unknown: a clone with no commits has nothing to lose, and
-  reading it as unknown made every interrupted clone immortal;
-- uncommitted changes refuse too, but `discard_uncommitted: true` overrides,
-  because in practice that dirt is build output and refusing it outright is what
-  leaves the clone on disk forever.
-
-One rule the unattended sweep does **not** share with release: an **audit-lens
-checkout** (`vet-<repo>-<n>`, made by `pr_checkout`) is disposable on **age
-alone** — one day, ignoring its PR state. The vetter checks out the PR it is
-JUDGING, so that PR is always OPEN, and "open PR → active work" made every
-leaked checkout immortal: 83 of them, 349 MB, under a sweep that had been
-running nightly the whole time (#81). The dirt/unpushed guards still run first.
-The sweep is also the ONLY thing that reclaims one — a run that dies is exactly
-the run that leaks, so an end-of-run `clone_release` cannot be the mechanism —
-which means the midnight `gc` line must name **every** clone root (`WORK_DIR`
-_and_ the install dir), not just the first.
-
-**A refusal must be a move the caller can make.** The over-budget error names
-the argument that shrinks the result, and that argument is **declared on the
-tool's own table entry** next to the schema advertising it, so the two cannot
-disagree; a tool that declares none is told "NO argument makes this call
-smaller" instead. It used to be a match over the call whose catch-all answered
-`Some("limit")` for everything that was not `pr_context` — two of the seventeen
-variants reaching it actually had one. `clone_list`, whose input schema was
-`{}`, was told to lower a `limit` it did not accept, so the producer improvised
-`ls -d …/*/ | wc -l` and reported a **count** where a state load belonged (#117)
-— the same shape as #78, arriving through the guard written to stop #78. **The
-advice a caller cannot follow is worse than a stated truncation**, because the
-substitute it provokes is unstated; so both branches now forbid improvising, and
-the "each refusal names a real argument" test walks the advertised tool table
-instead of naming tools by hand.
-
-**So an unbounded read is fixed in the read.** A tool whose result grows with
-the box fits itself to the budget rather than waiting to be refused.
-`clone_list` and `clone_gc` state the whole population as **counts that never
-truncate** and offer their per-clone rows to the budget in the order a caller
-acts on them — unreadable state, then unpushed commits, then dirty trees, then
-releasable; for the sweep, errors and deletions before anything it kept — with
-`listed`/`omitted` saying how many rows were taken. The sample shrinks; the
-accounting does not.
-
-**One result budget, and it must be under the harness's ceiling.** Every tool
-result is checked against the same 36,000 bytes — `pr_context` included, which
-used to get `max_diff_bytes + 32,000` (up to 332,000, about six times what the
-harness accepts, so its guard never fired). Ordering is the mechanism: if the
-harness speaks first the caller gets an untyped message with `is_error`
-**unset**, and "a tool error is an instruction" stops applying exactly when it
-is needed. The ceiling is measured against the running harness, never derived by
-halving a payload that was refused; 2.1.220 has TWO untyped gates (a byte gate
-around 50,011–50,176 bytes, not governed by `MAX_MCP_OUTPUT_TOKENS`, and a token
-gate governed by it) and the budget sits ~28% under both. One budget for every
-tool is also what makes narrowing CONVERGE — while the allowance scaled with
-`max_diff_bytes`, lowering the argument lowered both sides equally. `pr_context`
-fits itself to the budget rather than waiting to be refused, and reports
-`diffBytes` / `diffIncluded` / `diffTruncated` so the shortfall is visible.
-
-`pr_checkout` itself holds a binary postcondition: **the PR head at `dir`, or no
-`dir`**. It fetches `refs/pull/<n>/head` into `refs/remotes/origin/pr/<n>`
-(works on a shallow clone, works for forks, keeps the head provably pushed),
-returns the `dir` and the `head` sha, and deletes what it made if any step
-fails. Nothing downstream may search the filesystem for a checkout: the leftover
-it finds is a different PR's code.
 
 ## Invariants
 
