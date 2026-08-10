@@ -2221,7 +2221,8 @@ and evidence that answers a narrower question than the issue asked.
 | `campaign-settings.json`     | Tool allow/deny list passed via `--settings` (the permission guardrails).                                                                                                                                                                                                                                                                                |
 | `review-run.sh`              | Vetting runner (same hardened pattern as `campaign-run.sh`): vets open PRs on the MCP surface, logs to `review.log`. Its one GitHub write is `record_verdict`. Kill-switch `review-DISABLED`.                                                                                                                                                            |
 | `review-prompt.txt`          | The AI-vetting instructions fed to the model: the judgement gates only — every `gh` recipe is a tool schema instead.                                                                                                                                                                                                                                     |
-| `review-settings.json`       | Tool allow/deny for the vetter: the five `mcp__fsm__*` tools + `Read`/`Glob`/`Grep`/`Skill`/`ToolSearch`, **Bash denied outright**.                                                                                                                                                                                                                      |
+| `review-auditor-prompt.txt`  | The standing brief every DISPATCHED auditor starts with. `review-run.sh` wraps it into the `pr-auditor` subagent type with `jq` and passes it as `--agents`, with a `tools` list that is the READ half of the vetter's surface and no write at all. See [Fanning the audit out](#fanning-the-audit-out--and-keeping-the-verdict).                        |
+| `review-settings.json`       | Tool allow/deny for the vetter: the eight `mcp__fsm__*` tools + `Read`/`Glob`/`Grep`/`Skill`/`Task`/`ToolSearch`, **Bash denied outright**. `Task` is the dispatch tool the audit fan-out needs; every write tool stays denied, and a session deny reaches inside a dispatched agent too.                                                                |
 | `review-mcp.json`            | The vetter's MCP config: one stdio server, `pr-review-report mcp`, named `fsm` (so its tools are `mcp__fsm__*`).                                                                                                                                                                                                                                         |
 | `campaign-mcp.json`          | MCP config for the producer's clone-lifecycle surface: one stdio server, `pr-review-report mcp --profile producer`, named `fsm`. Additive — the producer keeps its Bash.                                                                                                                                                                                 |
 | `cron.env.example`           | Template for deployment-specific values (PR assignee, work dir, models, run caps). Copy to `cron.env` (gitignored) and edit.                                                                                                                                                                                                                             |
@@ -2283,6 +2284,73 @@ idiom needs a local file, and there is none for "have the checks reported" — s
 a rule stating only "waiting is `Monitor`" is a rule a worker meets a dead end
 at and improvises around, which is the $12.60 line. $0.87 to make $12.60 of
 instruction executable is the whole trade.
+
+## Fanning the audit out — and keeping the verdict
+
+The vetter had no fan-out at all. `campaign-prompt.txt` argues the asymmetry
+nine times over; `review-prompt.txt` mentioned it nowhere, so everything the
+vetter did happened in its main loop and every file opened to audit the first PR
+was still being re-read while it audited the third. Two forced runs an hour
+apart on 2026-08-10, same box, same model, same 3-item budget:
+
+|                   | producer `20260810T083614Z` | vetter `20260810T091521Z` |
+| ----------------- | --------------------------: | ------------------------: |
+| tool calls        |                         116 |                        72 |
+| context peak      |                      84,879 |               **417,832** |
+| cache read / call |                     ~30,000 |               **223,804** |
+| cost              |                       $5.95 |                **$27.97** |
+
+Fewer than two-thirds the tool calls for 4.7× the cost. `campaign-prompt.txt`
+records 75,000 per call as the dispatching benchmark and 264,000 as the inline
+one; 224k is the inline pathology. The reads themselves were legitimate — a real
+audit of a real diff — so the defect is **where they accumulate**, not that they
+happen.
+
+So the audit's source reading moves into a dispatched **`pr-auditor`**, briefed
+the same way `pr-worker` is: `review-run.sh` wraps `review-auditor-prompt.txt`
+into a `--agents` type, the harness loads it straight into each auditor, and the
+main loop pays none of those bytes. The dispatch prompt carries the PR's
+`owner/repo#number`, the `dir` and `head` `pr_checkout` returned, and the
+changed-file list — and **never the `unvetted` page**, which is the vetter's
+version of the fleet state the producer is forbidden to paste.
+
+**Three things the fan-out is not allowed to move, and what holds each:**
+
+- **The verdict stays the vetter's own act.** An auditor returns evidence;
+  `record_verdict` is a main-loop transition. Structurally, not just stated: the
+  `--agents` definition's `tools` array is `Read`/`Glob`/`Grep`/`Skill`/
+  `ToolSearch`/`mcp__fsm__pr_checkout` and names no write. Verified against
+  claude 2.1.226 — a probe defined with `"tools":["Read","Glob"]` reported
+  exactly those two.
+- **The vetter has no write grant, and neither does an auditor.**
+  `review-settings.json` denies `Bash`/`Write`/`Edit`/`NotebookEdit` and a CI
+  job asserts it; the same harness answers a sub-agent's Bash attempt with "Bash
+  is disabled for this session, **in subagents as well as here**". The only
+  permission that changed is `Task`, which moved from `deny` to `allow` — the
+  dispatch tool itself, and nothing a role is defined not to have.
+- **Trust boundaries do not move.** `pr_context` and `trusted-comments` stay in
+  the main loop, so who authored a comment is never an auditor's judgement call.
+  The auditor has no GitHub read of any kind.
+
+`clone_release` is **withheld** from the auditor on purpose. The tree the
+verdict is checked against must not be disposable by the agent reading it, and a
+released tree is a verdict refused. Dependency checkouts an auditor makes to
+follow a callee are reclaimed by the nightly `vet-*` age sweep, which
+[is the only thing that reclaims one](#work-clone-lifecycle) anyway.
+
+**The harness fact the whole thing rests on:** a dispatched sub-agent's tool
+calls are written into the run's own stream-json trace, tagged with
+`parent_tool_use_id` and `subagent_type`, and the lens ledger `record_verdict`
+reads is built from that stream — so an `audit` invocation made inside an
+auditor credits its PR exactly as an inline one does. `lens_invocation` reads
+neither key, and
+`an_invocation_made_inside_a_dispatched_auditor_is_credited_to_its_pr` pins
+that: a filter on either one would refuse every verdict on every fanned-out run.
+
+**What is not claimed.** No forced vetter run has been made since the change —
+that costs real money and is the human's call — so the improvement is
+**unmeasured**. `token-profile` on the next forced run answers it directly, and
+the numbers to beat are 223,804 per call, a 417,832 peak, and $27.97.
 
 ## PreToolUse guards — what a prompt cannot hold
 

@@ -328,6 +328,45 @@ PROMPT="$(sed -e "s#{{ASSIGNEE}}#$PR_ASSIGNEE#g" \
               -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
               "$PROMPT_FILE")"
 
+# --- the STANDING BRIEF every dispatched AUDITOR starts with (#257) ----------------------------
+# The vetter's audit lens is deep source reading, and until now every byte of it landed in the ONE
+# main-loop context that is re-read on every turn. Measured on 20260810T091521Z: 72 tool calls,
+# 223,804 cached tokens read PER CALL, a context peaking at 417,832, $27.97 — against the producer's
+# $5.95 for the same 3-item budget over 116 calls, because the producer dispatches. 63% of that
+# run's tool-result bytes were Read/Grep/Glob of one PR still being re-read while the next was
+# judged. A sub-agent carries its own context and that context dies with it, so the reads go there.
+#
+# Same channel and same reasoning as campaign-run.sh's `--agents` block: a dispatched sub-agent
+# starts with no prompt, so the standing rules reach it only if something puts them there, and the
+# harness loads a `--agents` type's prompt straight into the agent — which is why the main loop pays
+# none of those bytes and cannot paraphrase them away. Built with jq rather than committed as JSON
+# so the brief stays PLAIN TEXT a human edits and a conformance test greps.
+#
+# `tools` is what keeps this inside the vetter's role. The auditor gets the READ half of the
+# surface and nothing else: no `record_verdict`, no `record_close_candidate_verdict`, no
+# `clone_release`. Verified against claude 2.1.226 that the key is honoured — a probe defined with
+# `"tools":["Read","Glob"]` reported exactly those two — and that the session deny-list reaches
+# inside a sub-agent as well ("Bash is disabled for this session, in subagents as well as here"),
+# so review-settings.json's Bash/Write/Edit/NotebookEdit denials cover the auditor unchanged.
+# `mcp__fsm__pr_checkout` is granted because the audit lens follows callees into DEPENDENCY repos
+# and an auditor that cannot reach that source is a NARROWER lens wearing a cheaper price;
+# `clone_release` is deliberately withheld, so an auditor can never dispose of the tree the
+# main loop's verdict is about (the nightly `vet-*` age sweep is what reclaims the rest).
+#
+# The guard is CONTENT, not existence, for campaign-run.sh's reason: an empty or whitespace-only
+# brief builds perfectly valid JSON carrying an empty prompt, which registers the type and briefs
+# nobody — the silent degradation, one truncated file away. `-f` would pass it and so would `-s`.
+if ! grep -q '[^[:space:]]' "$DIR/review-auditor-prompt.txt" 2>/dev/null; then
+  echo "$(date -u +%FT%TZ) review run ABORT: no review-auditor-prompt.txt in '$DIR'" | _log
+  exit 1
+fi
+AUDITOR_JSON="$(jq -nc --rawfile brief "$DIR/review-auditor-prompt.txt" \
+  '{"pr-auditor":{"description":"Vetter auditor: runs the audit lens over ONE PR and reports findings, recording nothing.","prompt":$brief,"tools":["Read","Glob","Grep","Skill","ToolSearch","mcp__fsm__pr_checkout"]}}')"
+if [ -z "$AUDITOR_JSON" ]; then
+  echo "$(date -u +%FT%TZ) review run ABORT: could not build the auditor brief from review-auditor-prompt.txt" | _log
+  exit 1
+fi
+
 {
   echo "================================================================="
   echo "$(date -u +%FT%TZ) review run START (model=$REVIEW_MODEL, host=$(uname -n)) trace=$RUNLOG"
@@ -335,8 +374,10 @@ PROMPT="$(sed -e "s#{{ASSIGNEE}}#$PR_ASSIGNEE#g" \
 
 # `gh` is on PATH as a bare executable, put there by nix from the flake's runtimeInputs, for the MCP
 # SERVER — it shells out to gh for every GitHub read and for its one write. The vetter model itself
-# has no Bash and never invokes it. No `jq` here: the vetter's only jq uses were the trace distiller
-# and the metrics merge, both now `pr-review-report` subcommands.
+# has no Bash and never invokes it. `jq` is on PATH for THIS SCRIPT and only for it — the auditor
+# `--agents` block above is its one use, exactly as it is on the producer side. The vetter MODEL
+# still cannot reach it: with `Bash` denied there is nothing for it to invoke jq from, which is why
+# the binary can ride in the closure without stating a capability the role does not have.
 # Model fallback: try $REVIEW_MODEL, then each $FALLBACK_MODELS in order, advancing ONLY on a
 # quota/usage limit so one model's exhausted quota can't stall vetting. Any other outcome (success,
 # auth/startup failure, real error) is final.
@@ -358,6 +399,7 @@ for USED_MODEL in $REVIEW_MODEL $FALLBACK_MODELS; do
   timeout "$REVIEW_MAXTIME" claude --print "$PROMPT" \
     --model "$USED_MODEL" \
     --settings "$SETTINGS_FILE" \
+    --agents "$AUDITOR_JSON" \
     "${MCP_ARGS[@]}" \
     --permission-mode default \
     --verbose --output-format stream-json \

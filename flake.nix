@@ -150,6 +150,10 @@
           runtimeInputs = [
             pr-review-report
             pkgs.gh
+            # Builds the `--agents` JSON that briefs every dispatched auditor (#257), exactly as it
+            # does on the producer side. The SCRIPT's, never the model's: `Bash` is denied outright
+            # in review-settings.json, so the vetter has nothing to invoke it from.
+            pkgs.jq
             pkgs.git
             pkgs.coreutils
             pkgs.findutils
