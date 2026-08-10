@@ -36759,8 +36759,10 @@ fn is_interpreter_call(cmd: &str) -> bool {
 /// component, so `/w/vet-cyclo.site-394/src/App.svelte` is one and a directory named
 /// `velvet-x` is not. A bare `vet-` component names no clone and does not match.
 fn is_vet_clone_path(path: &str) -> bool {
-    path.split('/')
-        .any(|c| c.strip_prefix(VET_CLONE_PREFIX).is_some_and(|rest| !rest.is_empty()))
+    path.split('/').any(|c| {
+        c.strip_prefix(VET_CLONE_PREFIX)
+            .is_some_and(|rest| !rest.is_empty())
+    })
 }
 
 /// One retained trace's hand-roll counts. Every count is per TOOL CALL — one `Bash` block that
@@ -73845,6 +73847,13 @@ mod observation_run_tests {
         let row = corpus_row("r", &s);
         assert_eq!(row.dispatcher_source, 3);
         assert_eq!(row.tool_calls, 6, "every call still counts as a call");
+        // And the metric reads that same count off the row — the table, summary and JSON all go
+        // through the CORPUS_METRICS closure, so a closure that stops reading the field would
+        // silently zero the report while this row still counted.
+        let metrics = corpus_metrics(&[row]);
+        let m = metrics.iter().find(|m| m.key == "dispatcherSource").unwrap();
+        assert_eq!((m.first, m.peak, m.latest, m.runs_seen_in), (3, 3, 3, 1));
+        assert_eq!(m.shape, DecayShape::Holding);
     }
 
     /// The `vet-*` match is per path component, not a substring scan.
@@ -73857,7 +73866,12 @@ mod observation_run_tests {
         ] {
             assert!(is_vet_clone_path(p), "missed {p:?}");
         }
-        for p in ["/w/velvet-crate/src/lib.rs", "/w/install/vet-", "/w/covet-1/x", ""] {
+        for p in [
+            "/w/velvet-crate/src/lib.rs",
+            "/w/install/vet-",
+            "/w/covet-1/x",
+            "",
+        ] {
             assert!(!is_vet_clone_path(p), "counted {p:?}");
         }
     }
