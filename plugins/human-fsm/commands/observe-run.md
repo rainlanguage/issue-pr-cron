@@ -57,11 +57,14 @@ read, then get on with something else — the run's exit arrives as a task
 notification.
 
 **Nothing may sit between the stream and you.** `force-run` flushes every line
-as it prints it, and a pipe throws that away: `tail` and `head` both hold the
-whole stream until the writer exits, which for a half-hour run is half an hour
-of nothing — including in the backgrounded call's own output file, which stays
-empty [LJ-0004]. So pipe it into nothing at all — not `tail`, not `head`, not a
-filter of any kind — and read the file.
+as it prints it, and a pipe throws that away by one of two mechanisms. `tail`
+without `-f` reads to EOF before it prints anything, so a half-hour run is half
+an hour of nothing — in the backgrounded call's own output file too, which stays
+empty the whole time [LJ-0004]. `head -n` fails from the other end: it takes its
+lines, closes the pipe, and `force-run` stops echoing but keeps waiting on the
+run, so the call still does not return until the run ends and what it hands back
+is the first few lines rather than the stream. Pipe it into nothing at all — not
+`tail`, not `head`, not a filter of any kind — and read the file.
 
 If that output file is gone — a restarted session, or a run you did not start —
 the `log:` line names where the same bytes are still being appended, and step
