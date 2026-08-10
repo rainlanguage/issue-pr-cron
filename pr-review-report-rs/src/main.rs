@@ -53035,6 +53035,152 @@ mod settings_tests {
         }
     }
 
+    /// #261. WHERE EACH DOCUMENTED SECTION LIVES — the whole rule of the router, as data.
+    ///
+    /// `CLAUDE.md` is the one file a model receives without asking for it: `review-run.sh` cds to
+    /// the install dir, so the repo root is the vetter's project memory and every byte here is
+    /// re-read on every one of its turns. (`campaign-run.sh` cds to `$WORK_DIR`, which holds no
+    /// `CLAUDE.md`, which is why the producer's first context measured 14,199 against the vetter's
+    /// 48,060 on 2026-08-10.) So the split is: what governs JUDGEMENT stays and auto-loads; a
+    /// role's reference material is a file of its own and the router POINTS at it.
+    ///
+    /// A section named here is asserted to be in its home and in NO other home, so the two ways
+    /// this split can rot both fail loudly: moving a section back into the router (its cost
+    /// returns silently, which is #261) and moving one out of the router while losing it (an agent
+    /// that never learns a rule does not error on it — it violates it).
+    const DOC_SECTIONS: &[(&str, &str)] = &[
+        // Judgement, and what binds every reader. These are what the vetter's verdicts rest on.
+        ("## The pipeline is a finite state machine", "CLAUDE.md"),
+        ("## The FSM as a tool surface (MCP)", "CLAUDE.md"),
+        ("## Invariants", "CLAUDE.md"),
+        // The CLI, and the human layer above it. The vetter has no `Bash` and cannot invoke one;
+        // the producer never receives `CLAUDE.md` and is handed each transition at the point of
+        // use by `campaign-prompt.txt`.
+        ("## Transitions (subcommands)", "TRANSITIONS.md"),
+        (
+            "## The layer a human types: slash commands as a plugin",
+            "TRANSITIONS.md",
+        ),
+        // The clone tools' guards: the producer's and the dispatched auditor's, neither of which
+        // loads this file. The one rule here that decides a verdict — never search for a checkout
+        // — is stated in `review-prompt.txt`, where the vetter actually meets it.
+        ("## Work-clone lifecycle", "WORK-CLONES.md"),
+    ];
+
+    /// TEST HELPER: the files the router NAMES — the bullet list in its preamble, above the first
+    /// section heading. Parsed rather than listed, so the assertion is about what a reader is
+    /// actually told, not about a list kept in step by hand. A wrapped bullet's continuation lines
+    /// carry no `- **[`, so one pointer is one file however it wraps.
+    fn router_pointers(router: &str) -> Vec<String> {
+        router
+            .lines()
+            .take_while(|l| !l.starts_with("## "))
+            .filter_map(|l| l.trim_start().strip_prefix("- **["))
+            .filter_map(|rest| rest.split_once("](").map(|(_, target)| target))
+            .filter_map(|target| target.split_once(')').map(|(path, _)| path.to_string()))
+            .collect()
+    }
+
+    /// The pointer is the whole reason this is a split and not a deletion, so it is the thing
+    /// asserted: every file the router names is a file that is there, with something in it. A
+    /// dangling pointer is worse than the section it replaced — the reference is now gone AND the
+    /// reader has been told where it is.
+    #[test]
+    fn every_router_pointer_resolves_to_a_file_that_exists() {
+        let Some(router) = repo_root_text("CLAUDE.md") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let pointers = router_pointers(&router);
+        assert!(
+            !pointers.is_empty(),
+            "CLAUDE.md names no file at all. The router's preamble bullets ARE the mechanism that \
+             keeps a moved reference discoverable; with none, every assertion below about them \
+             passes against nothing"
+        );
+        for p in &pointers {
+            let target = repo_root_text(p);
+            assert!(
+                target.is_some(),
+                "CLAUDE.md points at {p}, which does not exist. Every reader is told to go there"
+            );
+            assert!(
+                !target.unwrap_or_default().trim().is_empty(),
+                "CLAUDE.md points at {p}, which is empty — a pointer that resolves to nothing is \
+                 a dangling pointer that passes an existence check"
+            );
+        }
+    }
+
+    /// Both halves of the split, from [`DOC_SECTIONS`]: a section is in its home, and in no other
+    /// home; and a home that is not the router is one the router points at.
+    #[test]
+    fn every_documented_section_is_in_exactly_one_home_and_a_moved_one_is_pointed_at() {
+        let Some(router) = repo_root_text("CLAUDE.md") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let pointers = router_pointers(&router);
+        let homes: Vec<&str> = {
+            let mut h: Vec<&str> = DOC_SECTIONS.iter().map(|(_, home)| *home).collect();
+            h.sort_unstable();
+            h.dedup();
+            h
+        };
+        for home in &homes {
+            let text = repo_root_text(home)
+                .unwrap_or_else(|| panic!("{home} is a documented home and must exist"));
+            for (section, owner) in DOC_SECTIONS {
+                let present = text.lines().any(|l| l == *section);
+                if owner == home {
+                    assert!(
+                        present,
+                        "{home} must carry `{section}` as a heading of its own. A section that is \
+                         in no home has been deleted, not moved"
+                    );
+                } else {
+                    assert!(
+                        !present,
+                        "`{section}` lives in {owner}, but {home} carries it too. Two copies drift \
+                         apart, and a copy in CLAUDE.md is paid for on every vetter turn"
+                    );
+                }
+            }
+            assert!(
+                *home == "CLAUDE.md" || pointers.iter().any(|p| p == home),
+                "{home} holds a section moved out of the router, so the router must name it. A \
+                 file no reader is told about is one no reader consults"
+            );
+        }
+    }
+
+    /// The cost property the split exists for, and the only one a reader cannot see by reading.
+    ///
+    /// Every byte of `CLAUDE.md` is re-read on every turn of the vetter's main loop. Run
+    /// `20260810T103008Z` took 48 turns, and `20260810T091521Z` implies $1.736/MTok of cache read,
+    /// so one byte here costs 48/4 tokens x $1.736/MTok = $2.1e-5 per run, and the vetter ticks
+    /// six times a day: ~$1.3e-4 per byte per day. The 47,797-byte file this replaced was standing
+    /// at roughly $5.70 a day of pure re-reading.
+    ///
+    /// The ceiling is DERIVED from the split rather than picked: it sits below the router plus the
+    /// SMALLEST section that moved out (2,304 bytes), so any reference section coming back in
+    /// fails here — whichever one it is — while genuine growth of a rule has room. Raising it is
+    /// then a deliberate act with this arithmetic in front of whoever does it, which is exactly
+    /// what the old file never made anyone do.
+    #[test]
+    fn the_router_stays_a_router() {
+        const ROUTER_BYTE_CEILING: usize = 22_528;
+        let Some(router) = repo_root_text("CLAUDE.md") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            router.len() <= ROUTER_BYTE_CEILING,
+            "CLAUDE.md is {} bytes, over the {ROUTER_BYTE_CEILING}-byte ceiling. It auto-loads \
+             into every vetter turn, so growth here is a standing cost nothing else reports. \
+             Move the reference material into a file and point at it — or raise the ceiling \
+             deliberately, having done the arithmetic above",
+            router.len()
+        );
+    }
+
     #[test]
     fn both_crons_deny_scheduling_tools() {
         for f in ["campaign-settings.json", "review-settings.json"] {
