@@ -66671,6 +66671,8 @@ mod vetter_state_load_tests {
             "files": [{"path": "src/lib.rs", "additions": 1, "deletions": 0}],
             "comments": [
                 {"author": {"login": TRUSTED_AUTHOR}, "body": "🤖 ai:producer screenshot pending (manual): mounted A.svelte, throws without a query context"},
+                // Prose NAMING the branch is not a shot — only a URL whose path ends in .png is.
+                {"author": {"login": TRUSTED_AUTHOR}, "body": "🤖 ai:producer see the pr-screenshots/shots/ directory for earlier renders"},
             ],
             "labels": [],
         });
