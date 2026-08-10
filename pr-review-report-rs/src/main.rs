@@ -21228,7 +21228,11 @@ fn send_back_plan(
 /// rebase — the branch's history is shared state — and the full suite on the merge commit, because
 /// a semantic conflict hides outside the conflict markers.
 fn conflict_send_back_note(base: &str) -> String {
-    let base = if base.is_empty() { "the base branch" } else { base };
+    let base = if base.is_empty() {
+        "the base branch"
+    } else {
+        base
+    };
     format!(
         "this PR's merge state is CONFLICTING: the base has moved and GitHub can no longer merge \
          it, so an ai:ready verdict describes code nobody can land. Merge origin/{base} into the \
@@ -21505,8 +21509,7 @@ fn unvetted_row(
     // verdict's currency — a stale ready label is still the ready state) plus the typed
     // CONFLICTING answer from GitHub's own mergeable field. CI does not gate it: red or green,
     // the base has moved and the producer's move is the same.
-    let conflicted_ready =
-        labels.iter().any(|l| l == "ai:ready") && merge == Merge::Conflicting;
+    let conflicted_ready = labels.iter().any(|l| l == "ai:ready") && merge == Merge::Conflicting;
     let action = vet_action(is_draft, human_sacred, vetted, conflicted_ready, &labels);
     let review_decision = detail
         .get("reviewDecision")
@@ -48545,7 +48548,13 @@ diff --git a/a.c b/a.c
 
     // --- render_queue: header breakdown + rows + cap --------------------------------------------
 
-    fn qc(raw: usize, needs_work: usize, red: usize, pending: usize, approved: usize) -> QueueCounts {
+    fn qc(
+        raw: usize,
+        needs_work: usize,
+        red: usize,
+        pending: usize,
+        approved: usize,
+    ) -> QueueCounts {
         QueueCounts {
             raw,
             excluded: 0,
@@ -65038,7 +65047,10 @@ mod vetter_state_load_tests {
 
     #[test]
     fn un_vetted_pr_is_vetted() {
-        assert_eq!(vet_action(false, false, false, false, NO_LABELS), VetAction::Vet);
+        assert_eq!(
+            vet_action(false, false, false, false, NO_LABELS),
+            VetAction::Vet
+        );
     }
 
     #[test]
@@ -65048,7 +65060,10 @@ mod vetter_state_load_tests {
             VetAction::SkipVetted
         );
         // head moved past the last verdict (vetted_at_head false) -> back in the vet queue.
-        assert_eq!(vet_action(false, false, false, false, NO_LABELS), VetAction::Vet);
+        assert_eq!(
+            vet_action(false, false, false, false, NO_LABELS),
+            VetAction::Vet
+        );
     }
 
     #[test]
