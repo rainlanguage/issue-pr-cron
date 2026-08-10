@@ -74015,7 +74015,10 @@ mod observation_run_tests {
         // through the CORPUS_METRICS closure, so a closure that stops reading the field would
         // silently zero the report while this row still counted.
         let metrics = corpus_metrics(&[row]);
-        let m = metrics.iter().find(|m| m.key == "dispatcherSource").unwrap();
+        let m = metrics
+            .iter()
+            .find(|m| m.key == "dispatcherSource")
+            .unwrap();
         assert_eq!((m.first, m.peak, m.latest, m.runs_seen_in), (3, 3, 3, 1));
         assert_eq!(m.shape, DecayShape::Holding);
     }
