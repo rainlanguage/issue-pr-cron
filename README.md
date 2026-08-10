@@ -55,6 +55,7 @@ stateDiagram-v2
     unvetted --> design : vetter record-verdict
     unvetted --> iupheld : vetter record-verdict close
     ready --> unvetted : head moves (producer fix) · verdict no longer current
+    ready --> needswork : merge conflict · vetter state-load demotes (work order = merge base in)
 
     %% ready → the human merge queue
     ready --> queue : queue · green·mergeable·vetted@head
@@ -63,8 +64,10 @@ stateDiagram-v2
 
     %% the send-back state routes back to the producer, then back to un-vetted. ONE state,
     %% whoever ruled (#133) and whatever the ground: a code rework, a linkage repair (#135
-    %% retired ai:relink — a linkage error is a needs-work whose note names the reference), or a
-    %% close. It is named for what it ASKS, not for a judgement the machine never reaches (#230).
+    %% retired ai:relink — a linkage error is a needs-work whose note names the reference), a
+    %% close, or a merge conflict (a conflicted ai:ready PR is not a state of its own — the
+    %% vetter's state-load demotes it here mechanically, work order: merge the base in, never
+    %% rebase). It is named for what it ASKS, not for a judgement the machine never reaches (#230).
     needswork --> unvetted : producer reworks → head moves
     needswork --> icand : producer flag-close-candidate · judged not worth doing
     needswork --> unvetted : linkage repair · producer weaken-closes Closes→Refs
@@ -2226,7 +2229,7 @@ and evidence that answers a narrower question than the issue asked.
 | `review-mcp.json`            | The vetter's MCP config: one stdio server, `pr-review-report mcp`, named `fsm` (so its tools are `mcp__fsm__*`).                                                                                                                                                                                                                                         |
 | `campaign-mcp.json`          | MCP config for the producer's clone-lifecycle surface: one stdio server, `pr-review-report mcp --profile producer`, named `fsm`. Additive — the producer keeps its Bash.                                                                                                                                                                                 |
 | `cron.env.example`           | Template for deployment-specific values (PR assignee, work dir, models, run caps). Copy to `cron.env` (gitignored) and edit.                                                                                                                                                                                                                             |
-| `pr-review-report.sh`        | Thin wrapper (flake package `pr-review-report-sh`) over the binary. Reports every open PR by its pipeline stage (approved / AI-vetted / needs-producer-fix (red) / conflicting / needs-work / close / unreviewed / pending / draft), reading `ai:*`/`human:*` labels + GitHub approvals, as clickable URLs.                                              |
+| `pr-review-report.sh`        | Thin wrapper (flake package `pr-review-report-sh`) over the binary. Reports every open PR by its pipeline stage (approved / AI-vetted / needs-producer-fix (red) / needs-work / close / unreviewed / pending / draft — a conflicted ready PR reports as needs-work, the state it is owed), reading `ai:*`/`human:*` labels + GitHub approvals, as clickable URLs.                                              |
 | `hooks/`                     | The two bash PreToolUse guards that close deny-list bypasses. See [PreToolUse guards](#pretooluse-guards--what-a-prompt-cannot-hold).                                                                                                                                                                                                                    |
 | `.claude-plugin/`            | The marketplace listing this repo publishes. Its version must match the plugin manifest's — `pr-review-report plugin-version-lockstep` is the gate.                                                                                                                                                                                                      |
 | `plugins/human-fsm/`         | The human's slash commands as a Claude Code plugin. Prompts only: every guard is in the binary. See [The human's slash commands](#the-humans-slash-commands).                                                                                                                                                                                            |
@@ -2823,8 +2826,10 @@ A PR moves through two distinct gates before it merges:
 `./pr-review-report.sh` prints every open PR bucketed by where it sits in that
 pipeline, all as clickable URLs: **✅ approved by you** (ready to merge) · **🤖
 AI-vetted — awaiting your approval** · **🔴 needs a producer fix** (CI red — the
-producer drives it green) · **❌ needs-work / changes-requested** · **🗑️ close
-(dup/superseded)** · **🟦 not yet reviewed** · **⚠️ conflicting** (needs rebase)
+producer drives it green) · **❌ needs-work / changes-requested** (including a
+conflicted ready PR — the vetter's state-load demotes it here with a
+merge-the-base-in work order; never a rebase) · **🗑️ close
+(dup/superseded)** · **🟦 not yet reviewed**
 · **🟡 pending** · **📝 drafts** · plus the issues the cron flagged
 `ai:close-candidate`. `--ready` prints only the approved-by-you set.
 
