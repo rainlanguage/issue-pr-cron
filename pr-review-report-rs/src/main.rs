@@ -37062,6 +37062,922 @@ fn corpus_report_mode(dir: &str, json: bool) -> i32 {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// journal-report (#256): the QUALITATIVE sibling of `corpus-report`.
+//
+// `corpus-report` counts the hand-rolled SHAPES a run leaves in its trace, because those are
+// mechanically countable. Most of what a model gets wrong here is not: a fact asserted into a
+// dispatch brief without reading it, a wait arranged so that it never happens, a CI failure
+// blamed on the wrong pre-commit hook. Those need a RECORD, not a counter.
+//
+// The record lives in `mistake-journal.jsonl`, and the one property it must have is that NO
+// RUNNER EVER READS IT. `campaign-prompt.txt` is the system prompt, so every incident narrated
+// inline beside a rule is re-read on every main-loop turn, forever — 95KB of it, about two-thirds
+// of a run's whole context bill. Runtime needs the RULE; authoring needs the INCIDENT. Split them
+// and the incident costs nothing per turn, while a rule that wants its evidence cites an entry id
+// in a few characters. `the_journal_is_never_shipped_to_a_runners_context` is what holds the
+// split: no prompt and no runner script may name the journal file.
+//
+// Two questions become answerable that nothing here could answer before:
+//
+//   * HAS THIS RECURRED SINCE ITS RULE LANDED? Silence over a STATED number of runs is a deletion
+//     candidate — the first mechanism this repo has had for shrinking the prompt rather than only
+//     growing it. Recurrence is the opposite reading: the rule is not working, and what fixes that
+//     is usually a tool (probes went 365 → 92 → 7 → 3 when `await` shipped, not when the rule did).
+//   * WHICH INCIDENTS HAVE NO RULE? The backlog of what the prompt does not yet address, which is
+//     as interesting as a rule nothing has tripped.
+//
+// Both answers are wrong in silence if the journal itself is wrong, and it is hand-appended, so it
+// is VALIDATED on every read instead of trusted: a duplicate id makes a citation ambiguous, a
+// malformed instant breaks the ordering recurrence is computed from, and a rule dated before the
+// incident it came from turns its own producing incident into a recurrence. Defects refuse the
+// report (exit 3) rather than degrading it.
+//
+// `KEEP_RUNS` is why `evidence` is mandatory on any entry that cites a run or a trace: the trace
+// it points at WILL rotate out, and a citation with nothing quoted under it stops being a record
+// on the day that happens. That is enforced, not advised.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The journal, at its one canonical location in the install dir.
+///
+/// Named ONCE, here, because two things have to agree about it and they pull in opposite
+/// directions: the default the CLI resolves, and the file that
+/// `the_journal_is_never_shipped_to_a_runners_context` proves no prompt names. A second spelling
+/// would let the gate pass while guarding a filename nothing uses.
+const JOURNAL_FILE: &str = "mistake-journal.jsonl";
+
+/// Whose mistake an entry records.
+///
+/// The population is deliberately WIDER than the two cron runners. The journal exists to make the
+/// repo's prompts editable, and the producer prompt is not the only prompt here: `CLAUDE.md`, the
+/// worker brief, the vetter prompt and the plugin commands are all read by models, and an
+/// interactive agent working in this repo is the same model doing the same work against the same
+/// documents. Excluding it would leave the backlog question answerable for two prompts out of six.
+///
+/// What the field then buys is that the arithmetic stays honest: a run is the unit "silence" is
+/// measured in, and interactive work contributes no runs. So a kind seen only in interactive work
+/// reports its runs-since as UNKNOWN and can never become a deletion candidate on a count of runs
+/// it was never at risk in.
+#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
+enum JournalPopulation {
+    Producer,
+    Vetter,
+    /// A human-driven session in this repo — no run id, because no runner started it.
+    Interactive,
+}
+
+impl JournalPopulation {
+    fn parse(s: &str) -> Option<Self> {
+        match s {
+            "producer" => Some(JournalPopulation::Producer),
+            "vetter" => Some(JournalPopulation::Vetter),
+            "interactive" => Some(JournalPopulation::Interactive),
+            _ => None,
+        }
+    }
+
+    /// The two the RUNNERS write, and the only two a metrics row can be. `interactive` is
+    /// unreachable here on purpose: it is what a role field can never say.
+    fn runner(s: &str) -> Option<Self> {
+        match JournalPopulation::parse(s) {
+            Some(JournalPopulation::Interactive) | None => None,
+            other => other,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            JournalPopulation::Producer => "producer",
+            JournalPopulation::Vetter => "vetter",
+            JournalPopulation::Interactive => "interactive",
+        }
+    }
+
+    /// Does a run of this population exist to be counted? Only a cron run does, which is what
+    /// makes "no recurrence over N runs" mean anything.
+    fn has_runs(self) -> bool {
+        self != JournalPopulation::Interactive
+    }
+}
+
+/// Every population, in the order they print. ONE list, so the text breakdown and the JSON one
+/// cannot come apart and a population added later cannot be reported by only one of them.
+const JOURNAL_POPULATIONS: &[JournalPopulation] = &[
+    JournalPopulation::Producer,
+    JournalPopulation::Vetter,
+    JournalPopulation::Interactive,
+];
+
+/// The rule an incident produced, and WHEN it landed — the instant recurrence is measured from.
+#[derive(Debug, PartialEq, Eq, Clone)]
+struct JournalRule {
+    landed_at: String,
+    /// Which document carries the rule, so a deletion candidate names the file to edit.
+    site: String,
+    /// The issue whose fix landed it, as a full URL. Optional: not every rule comes from an issue.
+    issue: Option<String>,
+}
+
+/// One incident.
+#[derive(Debug, PartialEq, Eq, Clone)]
+struct JournalEntry {
+    /// `LJ-0001`. What a rule cites, so it must be greppable and it must be unique.
+    id: String,
+    /// ISO-8601 UTC, second precision. The ordering key, across every population.
+    at: String,
+    population: JournalPopulation,
+    /// The stable slug for the CLASS of mistake. Recurrence groups on this and on nothing else:
+    /// two entries are the same mistake exactly when they say they are.
+    kind: String,
+    /// The run it is visible in.
+    run: Option<String>,
+    /// The trace path, when the run id alone does not locate it.
+    trace: Option<String>,
+    what: String,
+    /// Verbatim excerpts. Mandatory whenever a run or trace is cited — see `KEEP_RUNS`.
+    evidence: Vec<String>,
+    rule: Option<JournalRule>,
+}
+
+/// PURE: `LJ-` followed by at least four digits, and nothing else. The form exists so that
+/// `grep -o 'LJ-[0-9]\+'` over the prompts finds every citation.
+fn is_journal_id(s: &str) -> bool {
+    let Some(digits) = s.strip_prefix("LJ-") else {
+        return false;
+    };
+    digits.len() >= 4 && digits.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// PURE: every journal id a document CITES, in order, deduped.
+///
+/// The whole citation mechanism is "a rule names an entry id and stops there", so this is the
+/// reader of that mechanism: it takes any document a model sees and hands back the ids it claims.
+/// The scan is deliberately literal — an `LJ-` prefix followed by digits, wherever it appears —
+/// because a rule cites inline, mid-sentence, inside whatever brackets its paragraph is using, and
+/// a format that only matched one bracketing would silently stop resolving the day someone used
+/// another.
+///
+/// Test-only, and that is the point rather than an omission: a citation is resolved when someone
+/// is AUTHORING the prompt, by `every_journal_citation_in_a_prompt_resolves_to_an_entry` in CI.
+/// Nothing resolves one at runtime, because resolving one at runtime would mean a run reading the
+/// journal — which is exactly the per-turn cost the whole split exists to remove.
+#[cfg(test)]
+fn journal_citations(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while let Some(rel) = text[i..].find("LJ-") {
+        let start = i + rel;
+        let mut end = start + 3;
+        while end < bytes.len() && bytes[end].is_ascii_digit() {
+            end += 1;
+        }
+        let id = &text[start..end];
+        if is_journal_id(id) && !out.iter().any(|o| o == id) {
+            out.push(id.to_string());
+        }
+        i = start + 3;
+    }
+    out
+}
+
+/// PURE: `YYYY-MM-DDThh:mm:ssZ`, and nothing else.
+///
+/// Strict because everything downstream orders on it. A local-time or fractional-second spelling
+/// still SORTS, just not chronologically against the run ids it is compared with, and a recurrence
+/// reading that is quietly out of order is worse than one that refuses.
+fn is_journal_instant(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 20
+        && b[4] == b'-'
+        && b[7] == b'-'
+        && b[10] == b'T'
+        && b[13] == b':'
+        && b[16] == b':'
+        && b[19] == b'Z'
+        && [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18]
+            .iter()
+            .all(|i| b[*i].is_ascii_digit())
+}
+
+/// PURE: `YYYYMMDDThhmmssZ` — the runner's own timestamp, which is what a trace is named after.
+fn is_journal_run_id(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 16
+        && b[8] == b'T'
+        && b[15] == b'Z'
+        && b.iter()
+            .enumerate()
+            .all(|(i, c)| i == 8 || i == 15 || c.is_ascii_digit())
+}
+
+/// PURE: both spellings reduced to the ONE comparable form.
+///
+/// A run id is already `YYYYMMDDThhmmssZ`; an ISO-8601 instant becomes it by dropping the
+/// separators. Both are UTC by construction and both are fixed-width, so lexicographic order IS
+/// chronological order and no date library is needed to answer "since".
+fn journal_instant(s: &str) -> String {
+    s.chars().filter(|c| *c != '-' && *c != ':').collect()
+}
+
+/// PURE: a required non-blank string field.
+fn journal_str(v: &Value, key: &str) -> Option<String> {
+    v.get(key)
+        .and_then(|x| x.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+/// PURE: parse ONE journal line, reporting every defect it has rather than the first.
+///
+/// Every branch below is a way the journal answers the two questions WRONGLY while looking fine,
+/// which is why each is a refusal and not a warning.
+fn journal_entry(line_no: usize, line: &str) -> Result<JournalEntry, Vec<String>> {
+    let at_line = |m: String| format!("line {line_no}: {m}");
+    let v: Value = match serde_json::from_str(line) {
+        Ok(v) => v,
+        Err(e) => return Err(vec![at_line(format!("not JSON: {e}"))]),
+    };
+    if !v.is_object() {
+        return Err(vec![at_line("not a JSON object".to_string())]);
+    }
+    let mut defects = Vec::new();
+
+    let id = journal_str(&v, "id").unwrap_or_default();
+    if !is_journal_id(&id) {
+        defects.push(at_line(format!(
+            "id {id:?} is not `LJ-<4+ digits>` — a rule cites this id, so it has to be a token a \
+             grep over the prompts finds"
+        )));
+    }
+    let at = journal_str(&v, "at").unwrap_or_default();
+    if !is_journal_instant(&at) {
+        defects.push(at_line(format!(
+            "at {at:?} is not an ISO-8601 UTC instant (YYYY-MM-DDThh:mm:ssZ) — recurrence is \
+             ordered on it"
+        )));
+    }
+    let population = match journal_str(&v, "population")
+        .as_deref()
+        .map(|p| JournalPopulation::parse(p).ok_or_else(|| p.to_string()))
+    {
+        Some(Ok(p)) => Some(p),
+        Some(Err(bad)) => {
+            defects.push(at_line(format!(
+                "population {bad:?} is not producer | vetter | interactive"
+            )));
+            None
+        }
+        None => {
+            defects.push(at_line(
+                "no population — without it there is no telling whether a run count can measure \
+                 this kind's silence at all"
+                    .to_string(),
+            ));
+            None
+        }
+    };
+    let kind = journal_str(&v, "kind").unwrap_or_else(|| {
+        defects.push(at_line(
+            "no kind — the kind is the only thing that makes two entries the same mistake, so an \
+             entry without one can never be a recurrence of anything"
+                .to_string(),
+        ));
+        String::new()
+    });
+    let what = journal_str(&v, "what").unwrap_or_else(|| {
+        defects.push(at_line(
+            "no what — an entry is an account of an incident".to_string(),
+        ));
+        String::new()
+    });
+
+    let run = journal_str(&v, "run");
+    if let Some(r) = run.as_deref() {
+        if !is_journal_run_id(r) {
+            defects.push(at_line(format!(
+                "run {r:?} is not a run id (YYYYMMDDThhmmssZ) — it names no trace"
+            )));
+        }
+    }
+    let trace = journal_str(&v, "trace");
+    if population.is_some_and(JournalPopulation::has_runs) && run.is_none() {
+        defects.push(at_line(
+            "a producer/vetter entry names no run — the run id is where the incident is visible"
+                .to_string(),
+        ));
+    }
+
+    let evidence: Vec<String> = match v.get("evidence") {
+        Some(Value::Array(items)) => {
+            let mut out = Vec::new();
+            for item in items {
+                match item.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+                    Some(s) => out.push(s.to_string()),
+                    None => defects.push(at_line(
+                        "an evidence item is not a non-empty string".to_string(),
+                    )),
+                }
+            }
+            out
+        }
+        Some(_) => {
+            defects.push(at_line("evidence is not an array of strings".to_string()));
+            Vec::new()
+        }
+        None => Vec::new(),
+    };
+    if evidence.is_empty() && (run.is_some() || trace.is_some()) {
+        defects.push(at_line(
+            "cites a run or a trace and quotes no evidence — KEEP_RUNS rotates traces out, and a \
+             citation with nothing under it stops being a record the day that happens"
+                .to_string(),
+        ));
+    }
+
+    let rule = match v.get("rule") {
+        None | Some(Value::Null) => None,
+        Some(r) if r.is_object() => {
+            let landed_at = journal_str(r, "landedAt").unwrap_or_default();
+            if !is_journal_instant(&landed_at) {
+                defects.push(at_line(format!(
+                    "rule.landedAt {landed_at:?} is not an ISO-8601 UTC instant — it is the \
+                     instant \"since\" is measured from"
+                )));
+            } else if is_journal_instant(&at) && journal_instant(&landed_at) < journal_instant(&at)
+            {
+                defects.push(at_line(format!(
+                    "rule.landedAt {landed_at} precedes the incident at {at} — a rule cannot land \
+                     before the incident that produced it, and dated this way the entry counts as \
+                     a recurrence of its own rule"
+                )));
+            }
+            let site = journal_str(r, "site").unwrap_or_else(|| {
+                defects.push(at_line(
+                    "rule.site is missing — a deletion candidate has to name the file to edit"
+                        .to_string(),
+                ));
+                String::new()
+            });
+            Some(JournalRule {
+                landed_at,
+                site,
+                issue: journal_str(r, "issue"),
+            })
+        }
+        Some(_) => {
+            defects.push(at_line(
+                "rule is neither an object nor null — an entry with no rule says `null`, or omits \
+                 the key"
+                    .to_string(),
+            ));
+            None
+        }
+    };
+
+    if !defects.is_empty() {
+        return Err(defects);
+    }
+    Ok(JournalEntry {
+        id,
+        at,
+        population: population.expect("checked above"),
+        kind,
+        run,
+        trace,
+        what,
+        evidence,
+        rule,
+    })
+}
+
+/// PURE: read the whole journal, oldest first, with every defect in it.
+fn journal_entries(content: &str) -> (Vec<JournalEntry>, Vec<String>) {
+    let mut entries: Vec<JournalEntry> = Vec::new();
+    let mut defects = Vec::new();
+    for (i, line) in content.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        match journal_entry(i + 1, line) {
+            Ok(e) => entries.push(e),
+            Err(d) => defects.extend(d),
+        }
+    }
+    // Ids are what rules cite. Two entries under one id means a citation resolves to two different
+    // incidents, and whichever one the reader picks is a coin toss.
+    let mut seen: Vec<&str> = Vec::new();
+    for e in &entries {
+        if seen.contains(&e.id.as_str()) {
+            defects.push(format!(
+                "id {} appears more than once — a rule citing it resolves to two incidents",
+                e.id
+            ));
+        }
+        seen.push(&e.id);
+    }
+    // Chronological, then by id, so the order is total and a report never depends on file order.
+    entries.sort_by(|a, b| {
+        journal_instant(&a.at)
+            .cmp(&journal_instant(&b.at))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    (entries, defects)
+}
+
+/// One cron run, as the DENOMINATOR of a silence reading.
+#[derive(Debug, PartialEq, Eq, Clone)]
+struct JournalRun {
+    run_id: String,
+    population: JournalPopulation,
+    /// A tick the pipeline deliberately did not run. A model that never started cannot exhibit a
+    /// mistake, so counting one as a run of silence manufactures evidence out of a pause — which
+    /// matters here, because the pipeline spent 2026-08-02 onward paused.
+    skipped: bool,
+}
+
+/// PURE: the DISTINCT runs a metrics file records, oldest first.
+///
+/// One run writes several rows (`boot`, `usage`, `ttl`, `final`) and only the last carries an
+/// outcome, so the skip is ORed across a run's rows rather than read off whichever row was seen
+/// first. Rows with no usable `runId`/`role` are ignored rather than refused: the metrics file
+/// accumulates across schema changes, and this is a denominator, not a gate on that file.
+fn journal_runs(content: &str) -> Vec<JournalRun> {
+    let mut runs: Vec<JournalRun> = Vec::new();
+    for line in content.lines() {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let Some(run_id) = v.get("runId").and_then(|x| x.as_str()) else {
+            continue;
+        };
+        if !is_journal_run_id(run_id) {
+            continue;
+        }
+        let Some(population) = v
+            .get("role")
+            .and_then(|x| x.as_str())
+            .and_then(JournalPopulation::runner)
+        else {
+            continue;
+        };
+        let skipped = v.get("outcome").and_then(|x| x.as_str()) == Some("skipped");
+        match runs.iter_mut().find(|r| r.run_id == run_id) {
+            Some(existing) => existing.skipped |= skipped,
+            None => runs.push(JournalRun {
+                run_id: run_id.to_string(),
+                population,
+                skipped,
+            }),
+        }
+    }
+    runs.sort_by(|a, b| a.run_id.cmp(&b.run_id));
+    runs
+}
+
+/// One CLASS of mistake, read across the whole journal.
+#[derive(Debug, PartialEq, Eq, Clone)]
+struct JournalKind {
+    kind: String,
+    /// Every entry id of this kind, oldest first.
+    entries: Vec<String>,
+    /// Every population it has been seen in, deduped.
+    populations: Vec<JournalPopulation>,
+    first_at: String,
+    latest_at: String,
+    /// The NEWEST rule landing among this kind's entries. `None` is the backlog.
+    ///
+    /// Newest and not first: a rule that was strengthened is a different rule, and measuring
+    /// silence from the original wording would credit the new one with runs it never saw.
+    rule: Option<JournalRule>,
+    /// Entries of this kind that happened AFTER that landing — the rule is not working.
+    recurrences: Vec<String>,
+    /// Runs of this kind's runner populations that actually ran since the rule landed.
+    ///
+    /// `None` means the question cannot be answered — no metrics file was given, or the kind has
+    /// only ever been seen in interactive work, which no run count covers. It is deliberately not
+    /// zero: "silence over an unknown number of runs" and "silence over zero runs" are both
+    /// non-evidence, and neither may read as the evidence a deletion needs.
+    runs_since: Option<usize>,
+}
+
+/// PURE: group the journal into kinds and answer both questions for each.
+fn journal_kinds(entries: &[JournalEntry], runs: Option<&[JournalRun]>) -> Vec<JournalKind> {
+    let mut names: Vec<&str> = Vec::new();
+    for e in entries {
+        if !names.contains(&e.kind.as_str()) {
+            names.push(&e.kind);
+        }
+    }
+    names.sort_unstable();
+    names
+        .into_iter()
+        .map(|kind| {
+            let mine: Vec<&JournalEntry> = entries.iter().filter(|e| e.kind == kind).collect();
+            let mut populations: Vec<JournalPopulation> =
+                mine.iter().map(|e| e.population).collect();
+            populations.sort_unstable();
+            populations.dedup();
+            // The newest landing wins, and ties go to the newest ENTRY, which the chronological
+            // ordering already puts last.
+            let rule = mine
+                .iter()
+                .filter_map(|e| e.rule.clone())
+                .max_by(|a, b| journal_instant(&a.landed_at).cmp(&journal_instant(&b.landed_at)));
+            let recurrences: Vec<String> = match &rule {
+                Some(r) => mine
+                    .iter()
+                    .filter(|e| journal_instant(&e.at) > journal_instant(&r.landed_at))
+                    .map(|e| e.id.clone())
+                    .collect(),
+                None => Vec::new(),
+            };
+            let runs_since = match (&rule, runs) {
+                (Some(r), Some(all))
+                    if populations.iter().copied().any(JournalPopulation::has_runs) =>
+                {
+                    let since = journal_instant(&r.landed_at);
+                    Some(
+                        all.iter()
+                            .filter(|run| {
+                                !run.skipped
+                                    && populations.contains(&run.population)
+                                    && run.run_id > since
+                            })
+                            .count(),
+                    )
+                }
+                _ => None,
+            };
+            JournalKind {
+                kind: kind.to_string(),
+                entries: mine.iter().map(|e| e.id.clone()).collect(),
+                populations,
+                first_at: mine.first().map(|e| e.at.clone()).unwrap_or_default(),
+                latest_at: mine.last().map(|e| e.at.clone()).unwrap_or_default(),
+                rule,
+                recurrences,
+                runs_since,
+            }
+        })
+        .collect()
+}
+
+/// What the journal says about the prompt, computed rather than left to the reader.
+#[derive(Debug, PartialEq, Eq, Clone)]
+struct JournalVerdict {
+    /// Kinds with no rule at all — what the prompt does not yet address, loudest first.
+    backlog: Vec<JournalKind>,
+    /// Kinds that recurred after their rule landed — the rule is not working, and what usually
+    /// fixes that is a tool rather than more prose.
+    recurring: Vec<JournalKind>,
+    /// Kinds whose rule has been silent over a KNOWN, nonzero number of runs, best first.
+    deletable: Vec<JournalKind>,
+}
+
+impl JournalVerdict {
+    /// The rule whose inline reasoning is safest to cut, or `None` when the journal holds no case
+    /// for cutting anything.
+    fn delete_next(&self) -> Option<&JournalKind> {
+        self.deletable.first()
+    }
+}
+
+/// PURE: rank the journal into a verdict.
+///
+/// Three clauses, and the third is the one that stops this from licensing a deletion the evidence
+/// does not support:
+///
+/// 1. **No rule → backlog**, ordered by how many times it has happened. A class seen three times
+///    with nothing addressing it is a louder gap than one seen once, and that is the same
+///    frequency-over-novelty rule `corpus_recommendation` uses for the same reason.
+/// 2. **A recurrence disqualifies deletion outright.** A rule that has been tripped since it
+///    landed is evidence FOR keeping it, however few runs ago that was.
+/// 3. **Silence is only evidence when it is silence over runs that happened.** `runs_since: None`
+///    (no metrics file, or an interactive-only kind) and `Some(0)` (the rule landed after the
+///    newest run) are both refused as candidates. Zero runs of silence is not a quiet rule; it is
+///    a rule nothing has had the chance to trip, and deleting on it would be deleting on nothing.
+fn journal_verdict(kinds: &[JournalKind]) -> JournalVerdict {
+    let mut backlog: Vec<JournalKind> =
+        kinds.iter().filter(|k| k.rule.is_none()).cloned().collect();
+    backlog.sort_by(|a, b| {
+        b.entries
+            .len()
+            .cmp(&a.entries.len())
+            .then_with(|| b.latest_at.cmp(&a.latest_at))
+            .then_with(|| a.kind.cmp(&b.kind))
+    });
+    let mut recurring: Vec<JournalKind> = kinds
+        .iter()
+        .filter(|k| !k.recurrences.is_empty())
+        .cloned()
+        .collect();
+    recurring.sort_by(|a, b| {
+        b.recurrences
+            .len()
+            .cmp(&a.recurrences.len())
+            .then_with(|| b.latest_at.cmp(&a.latest_at))
+            .then_with(|| a.kind.cmp(&b.kind))
+    });
+    let mut deletable: Vec<JournalKind> = kinds
+        .iter()
+        .filter(|k| {
+            k.rule.is_some() && k.recurrences.is_empty() && k.runs_since.is_some_and(|n| n > 0)
+        })
+        .cloned()
+        .collect();
+    deletable.sort_by(|a, b| {
+        b.runs_since
+            .cmp(&a.runs_since)
+            // Longest-standing first among equals: the rule that has been silent for the same
+            // number of runs AND has been in the prompt longer is the better-tested one.
+            .then_with(|| {
+                a.rule
+                    .as_ref()
+                    .map(|r| r.landed_at.clone())
+                    .cmp(&b.rule.as_ref().map(|r| r.landed_at.clone()))
+            })
+            // Total, so the pick never depends on the order kinds happen to appear in the file.
+            .then_with(|| a.kind.cmp(&b.kind))
+    });
+    JournalVerdict {
+        backlog,
+        recurring,
+        deletable,
+    }
+}
+
+/// One kind rendered as the evidence a reader disagrees with: how often, how recently, and the
+/// entry ids themselves.
+fn journal_kind_line(k: &JournalKind) -> String {
+    format!(
+        "{} — {} entr(ies), latest {}, ids: {}",
+        k.kind,
+        k.entries.len(),
+        &k.latest_at,
+        k.entries.join(", ")
+    )
+}
+
+/// The date half of an instant, for the table. The whole instant is in `--json`.
+fn journal_day(at: &str) -> &str {
+    at.get(..10).unwrap_or(at)
+}
+
+/// `journal-report <journal> [--runs <metrics>] [--json]`.
+fn journal_report_mode(journal: &str, runs_path: Option<&str>, json: bool) -> i32 {
+    let content = match std::fs::read_to_string(journal) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: cannot read journal {journal}: {e}");
+            return 2;
+        }
+    };
+    let (entries, defects) = journal_entries(&content);
+    if !defects.is_empty() {
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string(&serde_json::json!({
+                    "journal": journal,
+                    "defects": defects,
+                }))
+                .unwrap()
+            );
+        } else {
+            println!("journal: {journal}");
+            for d in &defects {
+                println!("! {d}");
+            }
+            println!(
+                "\nREFUSED: {} defect(s). Every reading below rests on ids being unique and \
+                 instants being ordered, so a defective journal answers \"has this recurred\" and \
+                 \"what has no rule\" WRONGLY rather than not at all.",
+                defects.len()
+            );
+        }
+        return 3;
+    }
+    // A denominator that was ASKED for and cannot be read is an invocation error. Falling back to
+    // "unknown" would turn a typo in the path into a report that says nothing is deletable, which
+    // reads like an answer.
+    let runs = match runs_path {
+        Some(p) => match std::fs::read_to_string(p) {
+            Ok(c) => Some(journal_runs(&c)),
+            Err(e) => {
+                eprintln!("error: cannot read runs metrics {p}: {e}");
+                return 2;
+            }
+        },
+        None => None,
+    };
+    let kinds = journal_kinds(&entries, runs.as_deref());
+    let verdict = journal_verdict(&kinds);
+    let counted = runs
+        .as_ref()
+        .map(|r| r.iter().filter(|r| !r.skipped).count());
+
+    if json {
+        let kind_json = |k: &JournalKind| {
+            serde_json::json!({
+                "kind": k.kind,
+                "entries": k.entries,
+                "populations": k.populations.iter().map(|p| p.label()).collect::<Vec<&str>>(),
+                "firstAt": k.first_at,
+                "latestAt": k.latest_at,
+                "rule": k.rule.as_ref().map(|r| serde_json::json!({
+                    "landedAt": r.landed_at,
+                    "site": r.site,
+                    "issue": r.issue,
+                })),
+                "recurrences": k.recurrences,
+                "runsSince": k.runs_since,
+            })
+        };
+        let names = |ks: &[JournalKind]| {
+            ks.iter()
+                .map(|k| serde_json::json!(k.kind))
+                .collect::<Vec<Value>>()
+        };
+        let populations: Vec<Value> = JOURNAL_POPULATIONS
+            .iter()
+            .map(|p| {
+                serde_json::json!({
+                    "population": p.label(),
+                    "entries": entries.iter().filter(|e| e.population == *p).count(),
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "journal": journal,
+                "entryCount": entries.len(),
+                "oldest": entries.first().map(|e| e.at.clone()),
+                "newest": entries.last().map(|e| e.at.clone()),
+                "populations": populations,
+                "runsCorpus": runs_path.map(|p| serde_json::json!({
+                    "path": p,
+                    "runsCounted": counted,
+                    "newest": runs.as_ref().and_then(|r| r.last().map(|r| r.run_id.clone())),
+                })),
+                "entriesById": entries.iter().map(|e| serde_json::json!({
+                    "id": e.id,
+                    "at": e.at,
+                    "population": e.population.label(),
+                    "kind": e.kind,
+                    "run": e.run,
+                    "trace": e.trace,
+                    "evidenceItems": e.evidence.len(),
+                    "hasRule": e.rule.is_some(),
+                })).collect::<Vec<Value>>(),
+                "kinds": kinds.iter().map(kind_json).collect::<Vec<Value>>(),
+                "verdict": {
+                    "deleteNext": verdict.delete_next().map(|k| k.kind.clone()),
+                    "noRuleYet": names(&verdict.backlog),
+                    "recurredSinceItsRule": names(&verdict.recurring),
+                    "deletionCandidates": names(&verdict.deletable),
+                },
+            }))
+            .unwrap()
+        );
+        return 0;
+    }
+
+    println!("journal: {journal}");
+    println!(
+        "entries: {}{}",
+        entries.len(),
+        match (entries.first(), entries.last()) {
+            (Some(a), Some(b)) => format!(" — {} … {}", a.at, b.at),
+            _ => String::new(),
+        }
+    );
+    let by_pop: Vec<String> = JOURNAL_POPULATIONS
+        .iter()
+        .map(|p| {
+            format!(
+                "{} {}",
+                p.label(),
+                entries.iter().filter(|e| e.population == *p).count()
+            )
+        })
+        .collect();
+    println!("population: {}", by_pop.join(", "));
+    match (runs_path, counted) {
+        (Some(p), Some(n)) => println!(
+            "runs corpus: {p} — {n} run(s) that actually ran, newest {}",
+            runs.as_ref()
+                .and_then(|r| r.last().map(|r| r.run_id.clone()))
+                .unwrap_or_else(|| "—".to_string())
+        ),
+        _ => println!(
+            "runs corpus: none given (--runs metrics/runs.jsonl) — \"runs since\" is UNKNOWN, and \
+             silence over an unknown number of runs is not evidence of anything."
+        ),
+    }
+    println!(
+        "This file is NOT shipped to any runner's context. That is what makes an incident free to \
+         keep and a rule free to cite it.\n"
+    );
+
+    // A kind is a slug a human wrote, so its width is not knowable in advance — and a fixed column
+    // that a slug overruns does not truncate, it SHIFTS every column after it, which is how a
+    // table stops being readable at exactly the moment it has something to say.
+    let kind_w = kinds.iter().map(|k| k.kind.len()).max().unwrap_or(0).max(4) + 2;
+    let pop_w = kinds
+        .iter()
+        .map(|k| k.populations.len() * 12)
+        .max()
+        .unwrap_or(0)
+        .max(12);
+    println!(
+        "{:<kind_w$}{:<pop_w$}{:>5}{:>12}{:>12}{:>13}{:>7}{:>11}",
+        "kind", "population", "n", "first", "latest", "rule landed", "recur", "runs since"
+    );
+    for k in &kinds {
+        let pops: Vec<&str> = k.populations.iter().map(|p| p.label()).collect();
+        println!(
+            "{:<kind_w$}{:<pop_w$}{:>5}{:>12}{:>12}{:>13}{:>7}{:>11}",
+            k.kind,
+            pops.join("+"),
+            k.entries.len(),
+            journal_day(&k.first_at),
+            journal_day(&k.latest_at),
+            k.rule.as_ref().map_or("—", |r| journal_day(&r.landed_at)),
+            k.rule
+                .as_ref()
+                .map_or("—".to_string(), |_| k.recurrences.len().to_string()),
+            k.runs_since.map_or("—".to_string(), |n| n.to_string()),
+        );
+    }
+
+    println!("\nNO RULE YET — the backlog of what the prompt does not address:");
+    if verdict.backlog.is_empty() {
+        println!("  none — every kind in this journal has produced a rule");
+    } else {
+        for k in &verdict.backlog {
+            println!("  {}", journal_kind_line(k));
+        }
+    }
+
+    println!(
+        "\nRECURRED SINCE ITS RULE LANDED — the rule is not working; the fix is usually a tool:"
+    );
+    if verdict.recurring.is_empty() {
+        println!("  none");
+    } else {
+        for k in &verdict.recurring {
+            let r = k.rule.as_ref().expect("a recurrence implies a rule");
+            println!(
+                "  {} — rule landed {} in {}, tripped since by: {}",
+                k.kind,
+                r.landed_at,
+                r.site,
+                k.recurrences.join(", ")
+            );
+        }
+    }
+
+    match verdict.delete_next() {
+        Some(k) => {
+            let r = k.rule.as_ref().expect("a candidate implies a rule");
+            println!("\nDELETE NEXT: the inline reasoning under {}", k.kind);
+            println!("  rule landed {} in {}", r.landed_at, r.site);
+            println!(
+                "  0 recurrences over {} run(s) since",
+                k.runs_since.unwrap_or_default()
+            );
+            println!("  {}", journal_kind_line(k));
+            let runners_up = verdict.deletable.get(1..).unwrap_or_default();
+            if runners_up.is_empty() {
+                println!("  no other rule here has a silence long enough to read");
+            } else {
+                println!("  it beat, on runs of silence:");
+                for other in runners_up {
+                    println!(
+                        "    {} — 0 over {} run(s)",
+                        other.kind,
+                        other.runs_since.unwrap_or_default()
+                    );
+                }
+            }
+            println!(
+                "  DELETE THE INLINE REASONING, NOT THE RULE, and leave the entry id in its place: \
+                 the incident stays readable here at zero per-turn cost, and the next run's \
+                 behaviour is what says whether the reasoning was load-bearing."
+            );
+        }
+        None => println!(
+            "\nDELETE NEXT: nothing — no rule here has been silent over a known, nonzero number of \
+             runs. Silence over zero runs, or over a number this invocation was not given, is not \
+             a rule earning its deletion; it is a rule nothing has had the chance to trip."
+        ),
+    }
+    0
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // force-run (#252): the observation run itself, as a typed call.
 //
 // The first cut of the `/observe-run` command told the caller to type the fast-forward
@@ -41414,6 +42330,28 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// What the JOURNAL of LLM mistakes says about the prompt (#256): which incidents have produced
+    /// no rule (the backlog), which rules have been tripped since they landed (the rule is not
+    /// working), and which rules have been SILENT long enough that their inline reasoning is safe
+    /// to cut. The qualitative sibling of `corpus-report` — that one counts the hand-rolled shapes
+    /// a trace leaves behind, this one reads the incidents nothing can count.
+    ///
+    /// The journal is NOT shipped to any runner's context, which is the whole point: an incident
+    /// costs nothing per turn, and a rule that wants its justification cites an entry id instead of
+    /// carrying a paragraph the system prompt re-reads on every turn.
+    JournalReport {
+        /// The journal (`mistake-journal.jsonl`).
+        #[arg(default_value = JOURNAL_FILE)]
+        journal: String,
+        /// The metrics file whose runs are the DENOMINATOR of a silence reading
+        /// (`metrics/runs.jsonl`). Deliberately not defaulted: without it every "runs since" reads
+        /// UNKNOWN and nothing is proposed for deletion, because silence over an unstated number
+        /// of runs is not evidence. Naming the file is the act of asserting the denominator.
+        #[arg(long)]
+        runs: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Attribute a run's token spend to the agent that incurred it, dearest first. `run-metrics`
     /// reports whole-run COST beside main-thread-only TOKENS; this splits the same trace by
     /// `parent_tool_use_id` so a run's cost can be read per dispatched task.
@@ -45246,6 +46184,11 @@ fn main() {
         Cmd::WatchRun { log, timeout_secs } => watch_run_mode(&log, timeout_secs),
         Cmd::TokenProfile { trace, json } => token_profile_mode(&trace, json),
         Cmd::CorpusReport { dir, json } => corpus_report_mode(&dir, json),
+        Cmd::JournalReport {
+            journal,
+            runs,
+            json,
+        } => journal_report_mode(&journal, runs.as_deref(), json),
         Cmd::TokenReport { trace, json } => token_report_mode(&trace, json),
         Cmd::WorkTokens { path, json } => work_tokens_mode(&path, json),
         Cmd::BackfillMetrics { path, write } => backfill_metrics_mode(&path, write),
@@ -50308,7 +51251,10 @@ ONE-SHOT, NOT A LOOP
 
 #[cfg(test)]
 mod settings_tests {
-    use super::{producer_preamble, producer_step, repo_root_text, vetter_bullet};
+    use super::{
+        journal_citations, journal_entries, producer_preamble, producer_step, repo_root_text,
+        vetter_bullet, JOURNAL_FILE,
+    };
     use serde_json::Value;
 
     // The producer AND vetter are one-shot crons that must never park themselves — ScheduleWakeup and
@@ -51794,6 +52740,109 @@ mod settings_tests {
                 "{f}: must deny CronCreate (one-shot crons must not park)"
             );
         }
+    }
+
+    // ── the mistake journal is an AUTHORING artifact, not a runtime one (#256) ────────────────
+
+    /// Every file whose bytes a model actually receives, and how each one gets there.
+    ///
+    /// The producer's prompt and the worker brief and the vetter's prompt are passed to `claude`
+    /// directly. `CLAUDE.md` is the one IMPLICIT channel: `review-run.sh` cds to the install dir
+    /// before invoking the model, so the repo root is that run's project memory. `--add-dir`
+    /// appears on both runners and is NOT in this list on purpose — it confers read membership,
+    /// which makes a file reachable on request, not shipped on every turn.
+    const RUNNER_CONTEXT_FILES: &[&str] = &[
+        "campaign-prompt.txt",
+        "campaign-worker-prompt.txt",
+        "review-prompt.txt",
+        "CLAUDE.md",
+    ];
+
+    /// The whole premise of #256: the journal costs nothing at runtime BECAUSE nothing loads it.
+    ///
+    /// This is the property that can be lost silently. Naming `mistake-journal.jsonl` in a prompt
+    /// — even helpfully, even as "the journal is at …" — is enough: a run that is told the file
+    /// exists inside a readable `--add-dir` root will read it, and a 6KB artifact that grows
+    /// without bound then enters the context of every run that thinks to look. At that point the
+    /// journal is just more prompt, and the split it exists to make is gone with nothing failing.
+    ///
+    /// The runner scripts are checked with COMMENTS STRIPPED, the same way the `vetter has no
+    /// write grant` CI job strips them: the reason a runner does not read this file belongs in a
+    /// comment beside the invocation, and a gate that cannot tell a comment from code would fire
+    /// on its own documentation.
+    #[test]
+    fn the_journal_is_never_shipped_to_a_runners_context() {
+        for f in RUNNER_CONTEXT_FILES {
+            let Some(text) = repo_root_text(f) else {
+                continue; // not checked out (nix build sandbox) — enforced by the rs-test gate
+            };
+            assert!(
+                !text.contains(JOURNAL_FILE),
+                "{f} names {JOURNAL_FILE}. That file is read by models, so naming the journal in \
+                 it puts the journal one Read away from every run — which is the per-turn cost \
+                 #256 exists to remove. Cite an entry id (LJ-0001) instead: the id is what a rule \
+                 needs, and it resolves offline."
+            );
+        }
+        for f in ["campaign-run.sh", "review-run.sh"] {
+            let Some(text) = repo_root_text(f) else {
+                continue; // not checked out (nix build sandbox) — enforced by the rs-test gate
+            };
+            let code: String = text
+                .lines()
+                .filter(|l| !l.trim_start().starts_with('#'))
+                .collect::<Vec<&str>>()
+                .join("\n");
+            assert!(
+                !code.contains(JOURNAL_FILE),
+                "{f} reads or passes {JOURNAL_FILE}. A runner that touches the journal at all is \
+                 how it ends up in a prompt; `journal-report` is run by a human editing the \
+                 prompts, never by a cron tick."
+            );
+        }
+    }
+
+    /// The other half of the split: a rule may cite an entry, and the citation must RESOLVE.
+    ///
+    /// A citation is worth building only because it is cheap — `[LJ-0001]` against the thousands
+    /// of tokens the paragraph it replaces costs on every turn. What makes it cheap also makes it
+    /// unverifiable by a reader: `LJ-0001` looks exactly as authoritative whether or not anything
+    /// is behind it, and a dangling citation is worse than the inline paragraph it replaced,
+    /// because the reasoning is now gone AND unrecoverable. So every id any model-visible file
+    /// cites is resolved here, against the journal itself.
+    #[test]
+    fn every_journal_citation_in_a_prompt_resolves_to_an_entry() {
+        let Some(journal) = repo_root_text(JOURNAL_FILE) else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let (entries, defects) = journal_entries(&journal);
+        assert!(
+            defects.is_empty(),
+            "{JOURNAL_FILE} has defects, so no citation into it can be trusted: {defects:?}"
+        );
+        let mut cited = 0usize;
+        for f in RUNNER_CONTEXT_FILES {
+            let Some(text) = repo_root_text(f) else {
+                continue; // not checked out (nix build sandbox) — enforced by the rs-test gate
+            };
+            for id in journal_citations(&text) {
+                cited += 1;
+                assert!(
+                    entries.iter().any(|e| e.id == id),
+                    "{f} cites {id}, which is in no {JOURNAL_FILE} entry. The citation IS the \
+                     justification now — one that resolves to nothing has deleted the reasoning \
+                     rather than moved it."
+                );
+            }
+        }
+        // …and the mechanism is DEMONSTRATED, not merely permitted. With no citation anywhere the
+        // loop above passes over an empty set, which is the vacuous pass #143 left in four prompt
+        // tests for months.
+        assert!(
+            cited > 0,
+            "no prompt cites a journal entry, so this test asserts nothing. The worked example in \
+             campaign-prompt.txt step 2 is what makes it real."
+        );
     }
 }
 
@@ -72162,5 +73211,724 @@ mod observation_recommendation_tests {
     fn a_stream_that_ends_mid_line_is_not_fatal() {
         assert!(streamed("  · a killed run's last half-line").contains("half-line"));
         assert_eq!(streamed(""), "");
+    }
+}
+
+/// The journal of LLM mistakes (#256): the artifact, its validation, and the two questions it
+/// exists to answer.
+#[cfg(test)]
+mod journal_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// One entry, as the JSONL line a human would append.
+    fn entry(v: Value) -> String {
+        format!("{v}\n")
+    }
+
+    /// A minimal VALID producer entry, for tests that vary one field.
+    fn producer(id: &str, at: &str, kind: &str) -> Value {
+        json!({
+            "id": id,
+            "at": at,
+            "population": "producer",
+            "kind": kind,
+            "run": "20260809T145150Z",
+            "what": "it did the thing",
+            "evidence": ["the trace says so"],
+        })
+    }
+
+    /// A rule object landing at `at`.
+    fn rule(at: &str) -> Value {
+        json!({"landedAt": at, "site": "campaign-prompt.txt"})
+    }
+
+    /// One metrics row, as the runners write it.
+    fn run_row(run_id: &str, role: &str, outcome: Option<&str>) -> String {
+        let mut o = json!({"runId": run_id, "role": role});
+        if let Some(outcome) = outcome {
+            o["outcome"] = json!(outcome);
+        }
+        format!("{o}\n")
+    }
+
+    fn defects_of(journal: &str) -> Vec<String> {
+        journal_entries(journal).1
+    }
+
+    fn kind<'a>(ks: &'a [JournalKind], name: &str) -> &'a JournalKind {
+        ks.iter().find(|k| k.kind == name).expect("kind")
+    }
+
+    // ── the shipped artifact ─────────────────────────────────────────────────────────────────
+
+    /// The seeded journal is REAL — three incidents that happened, with the evidence they happened
+    /// quoted out of the traces. A fixture-only journal would prove the parser works and nothing
+    /// about whether the shape holds an actual incident.
+    #[test]
+    fn the_seeded_journal_holds_three_real_incidents_and_no_defects() {
+        let Some(text) = repo_root_text(JOURNAL_FILE) else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let (entries, defects) = journal_entries(&text);
+        assert!(defects.is_empty(), "{JOURNAL_FILE}: {defects:?}");
+        let ids: Vec<&str> = entries.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, vec!["LJ-0001", "LJ-0002", "LJ-0003"]);
+
+        // The stranded run: the one incident here that HAS produced a rule.
+        let strand = &entries[0];
+        assert_eq!(strand.run.as_deref(), Some("20260809T145150Z"));
+        assert_eq!(strand.population, JournalPopulation::Producer);
+        assert!(strand.rule.as_ref().is_some_and(|r| r.issue.as_deref()
+            == Some("https://github.com/rainlanguage/issue-pr-cron/issues/249")));
+        // The two facts that make it that incident and not a generic timeout, quoted rather than
+        // summarised — this is what has to survive `KEEP_RUNS` deleting the trace.
+        let quoted = strand.evidence.join("\n");
+        assert!(
+            quoted.contains("moved to the background") && quoted.contains("Monitor started"),
+            "the evidence must carry the backgrounding AND the watcher: {quoted}"
+        );
+        assert!(
+            quoted.contains("\"subtype\":\"success\""),
+            "the whole point of #249 is that it reported success: {quoted}"
+        );
+
+        // The two with no rule are the BACKLOG, and one of them is not a runner's mistake at all.
+        assert!(entries[1].rule.is_none() && entries[2].rule.is_none());
+        assert_eq!(entries[1].run.as_deref(), Some("20260809T155241Z"));
+        assert_eq!(entries[2].population, JournalPopulation::Interactive);
+        assert_eq!(entries[2].run, None, "interactive work has no run id");
+        // …and it still carries evidence, though nothing forces it to: an interactive entry cites
+        // no rotating trace, so the rule below cannot reach it, and the record is worth as much.
+        assert!(!entries[2].evidence.is_empty());
+    }
+
+    /// The seeded journal, read: two backlog kinds, no recurrence, and one rule quiet enough to
+    /// propose cutting. This is the answer the subcommand exists to give, on the real data.
+    #[test]
+    fn the_seeded_journal_answers_both_questions() {
+        let (Some(text), Some(metrics)) = (
+            repo_root_text(JOURNAL_FILE),
+            repo_root_text("metrics/runs.jsonl"),
+        ) else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let (entries, _) = journal_entries(&text);
+        let runs = journal_runs(&metrics);
+        let kinds = journal_kinds(&entries, Some(&runs));
+        let verdict = journal_verdict(&kinds);
+
+        let backlog: Vec<&str> = verdict.backlog.iter().map(|k| k.kind.as_str()).collect();
+        assert_eq!(
+            backlog,
+            vec![
+                "ci-failure-attributed-to-the-wrong-pre-commit-hook",
+                "fact-asserted-into-a-dispatch-brief-without-reading-it",
+            ],
+            "both rule-less incidents are the backlog, newest first among equals"
+        );
+        assert!(
+            verdict.recurring.is_empty(),
+            "the #249 rule has not been tripped since it landed"
+        );
+        let pick = verdict.delete_next().expect("one quiet rule");
+        assert_eq!(pick.kind, "backgrounded-gate-strands-the-run");
+        assert!(pick.recurrences.is_empty());
+        // The denominator is stated, and it is small — which is the reading the human needs, not a
+        // recommendation that hides how thin the evidence is.
+        assert!(
+            pick.runs_since.is_some_and(|n| n > 0),
+            "a deletion candidate always names the runs its silence is measured over"
+        );
+        // The interactive kind is never a candidate, however quiet: no run count covers it.
+        assert_eq!(
+            kind(&kinds, "ci-failure-attributed-to-the-wrong-pre-commit-hook").runs_since,
+            None
+        );
+    }
+
+    // ── validation: every way the journal answers WRONGLY rather than not at all ──────────────
+
+    /// `KEEP_RUNS` deletes traces. An entry that points at one and quotes nothing from it becomes
+    /// a dangling reference the day that happens, and a dangling reference is not a record.
+    #[test]
+    fn an_entry_citing_a_trace_must_quote_its_evidence() {
+        let mut e = producer("LJ-0001", "2026-08-09T14:51:50Z", "k");
+        e["evidence"] = json!([]);
+        let defects = defects_of(&entry(e.clone()));
+        assert_eq!(defects.len(), 1, "{defects:?}");
+        assert!(defects[0].contains("KEEP_RUNS"), "{defects:?}");
+
+        // The rule is about the CITATION, not about the run field: a trace path alone triggers it.
+        let mut t = e.clone();
+        t["population"] = json!("interactive");
+        t.as_object_mut().unwrap().remove("run");
+        assert!(
+            defects_of(&entry(t.clone())).is_empty(),
+            "no citation, no requirement"
+        );
+        t["trace"] = json!("runs/20260809T145150Z.jsonl");
+        assert!(
+            defects_of(&entry(t))[0].contains("KEEP_RUNS"),
+            "a trace path is a citation too"
+        );
+
+        // …and evidence present clears it.
+        e["evidence"] = json!(["the trace says so"]);
+        assert!(defects_of(&entry(e)).is_empty());
+    }
+
+    /// A rule cites ONE id. Two entries under it means the citation resolves to two incidents and
+    /// whichever the reader lands on is a coin toss.
+    #[test]
+    fn a_duplicate_id_is_refused() {
+        let j = entry(producer("LJ-0001", "2026-08-09T14:51:50Z", "a"))
+            + &entry(producer("LJ-0001", "2026-08-09T15:00:00Z", "b"));
+        let defects = defects_of(&j);
+        assert_eq!(defects.len(), 1, "{defects:?}");
+        assert!(defects[0].contains("LJ-0001") && defects[0].contains("more than once"));
+        // Distinct ids on the same two incidents are fine.
+        let ok = entry(producer("LJ-0001", "2026-08-09T14:51:50Z", "a"))
+            + &entry(producer("LJ-0002", "2026-08-09T15:00:00Z", "b"));
+        assert!(defects_of(&ok).is_empty());
+    }
+
+    /// A rule dated before the incident that produced it turns its own producing entry into a
+    /// recurrence — the journal would then report the rule as broken on the strength of the very
+    /// incident that motivated it.
+    #[test]
+    fn a_rule_cannot_land_before_the_incident_that_produced_it() {
+        let mut e = producer("LJ-0001", "2026-08-09T14:51:50Z", "k");
+        e["rule"] = rule("2026-08-09T14:00:00Z");
+        let defects = defects_of(&entry(e.clone()));
+        assert_eq!(defects.len(), 1, "{defects:?}");
+        assert!(defects[0].contains("precedes the incident"), "{defects:?}");
+
+        // Landing in the same second is allowed: the fix and the incident can share a timestamp,
+        // and refusing equality would refuse a true record over a rounding.
+        e["rule"] = rule("2026-08-09T14:51:50Z");
+        assert!(defects_of(&entry(e.clone())).is_empty());
+        // …and the entry is still not a recurrence of the rule it produced. Read inclusively, an
+        // incident and its same-second fix make every rule land already-broken.
+        let (entries, _) = journal_entries(&entry(e.clone()));
+        assert!(journal_kinds(&entries, None)[0].recurrences.is_empty());
+        e["rule"] = rule("2026-08-09T15:14:58Z");
+        assert!(defects_of(&entry(e)).is_empty());
+    }
+
+    /// The run boundary, fail-safe. A run that started in the same second the rule landed may or
+    /// may not have had it, and the two errors are not symmetric: counting it inflates the silence
+    /// that argues FOR deleting a rule, while not counting it only makes the case for deletion one
+    /// run weaker. So the ambiguous run is excluded.
+    #[test]
+    fn a_run_that_started_as_the_rule_landed_is_not_counted_as_silence() {
+        let mut e = producer("LJ-0001", "2026-08-09T10:00:00Z", "k");
+        e["rule"] = rule("2026-08-09T11:00:00Z");
+        let (entries, _) = journal_entries(&entry(e));
+        let same = journal_runs(&run_row("20260809T110000Z", "producer", Some("ok")));
+        assert_eq!(
+            kind(&journal_kinds(&entries, Some(&same)), "k").runs_since,
+            Some(0)
+        );
+        let after = journal_runs(&run_row("20260809T110001Z", "producer", Some("ok")));
+        assert_eq!(
+            kind(&journal_kinds(&entries, Some(&after)), "k").runs_since,
+            Some(1)
+        );
+    }
+
+    /// Ordering is the whole of "since", and it is done lexicographically on a fixed-width UTC
+    /// spelling. A different spelling still sorts — just not chronologically against a run id.
+    #[test]
+    fn an_instant_must_be_the_one_comparable_spelling() {
+        for bad in [
+            "2026-08-09T14:51:50+00:00",
+            "2026-08-09T14:51:50.123Z",
+            "2026-08-09 14:51:50Z",
+            "2026-8-9T14:51:50Z",
+            "20260809T145150Z",
+            "",
+        ] {
+            let mut e = producer("LJ-0001", bad, "k");
+            e["at"] = json!(bad);
+            let defects = defects_of(&entry(e));
+            assert!(
+                defects.iter().any(|d| d.contains("ISO-8601")),
+                "{bad:?} must be refused: {defects:?}"
+            );
+        }
+        assert!(is_journal_instant("2026-08-09T14:51:50Z"));
+        // A run id and an instant reduce to the SAME comparable form, which is what lets a rule's
+        // landing be compared against a run without a date library.
+        assert_eq!(
+            journal_instant("2026-08-09T14:51:50Z"),
+            journal_instant("20260809T145150Z")
+        );
+        assert!(journal_instant("2026-08-09T15:14:58Z") > journal_instant("20260809T145150Z"));
+        assert!(journal_instant("2026-08-09T15:14:58Z") < journal_instant("20260809T155241Z"));
+    }
+
+    /// A run id names the trace. Anything else names nothing.
+    #[test]
+    fn a_run_must_be_a_run_id() {
+        for bad in [
+            "2026-08-09T14:51:50Z",
+            "20260809T145150",
+            "20260809t145150Z",
+            "latest",
+        ] {
+            let mut e = producer("LJ-0001", "2026-08-09T14:51:50Z", "k");
+            e["run"] = json!(bad);
+            assert!(
+                defects_of(&entry(e))
+                    .iter()
+                    .any(|d| d.contains("is not a run id")),
+                "{bad:?} must be refused"
+            );
+        }
+        assert!(is_journal_run_id("20260809T145150Z"));
+    }
+
+    /// A cron mistake with no run id is not locatable, and the run id is the cheapest thing about
+    /// the record.
+    #[test]
+    fn a_runner_entry_must_name_its_run() {
+        for pop in ["producer", "vetter"] {
+            let mut e = producer("LJ-0001", "2026-08-09T14:51:50Z", "k");
+            e["population"] = json!(pop);
+            e.as_object_mut().unwrap().remove("run");
+            e["evidence"] = json!(["quoted"]);
+            assert!(
+                defects_of(&entry(e))
+                    .iter()
+                    .any(|d| d.contains("names no run")),
+                "{pop} without a run must be refused"
+            );
+        }
+        // Interactive work has no run to name, so the same omission is correct there.
+        let mut i = producer("LJ-0001", "2026-08-09T14:51:50Z", "k");
+        i["population"] = json!("interactive");
+        i.as_object_mut().unwrap().remove("run");
+        assert!(defects_of(&entry(i)).is_empty());
+    }
+
+    /// The population decides whether a run count can measure this kind's silence at all, so an
+    /// unknown one is not a cosmetic defect.
+    #[test]
+    fn the_population_must_be_one_of_the_three() {
+        assert_eq!(
+            JOURNAL_POPULATIONS,
+            &[
+                JournalPopulation::Producer,
+                JournalPopulation::Vetter,
+                JournalPopulation::Interactive
+            ]
+        );
+        let mut e = producer("LJ-0001", "2026-08-09T14:51:50Z", "k");
+        e["population"] = json!("worker");
+        assert!(defects_of(&entry(e.clone()))
+            .iter()
+            .any(|d| d.contains("producer | vetter | interactive")));
+        e.as_object_mut().unwrap().remove("population");
+        assert!(defects_of(&entry(e))
+            .iter()
+            .any(|d| d.contains("no population")));
+        // `interactive` is a population but never a metrics `role`, so a run row can never claim it.
+        assert_eq!(JournalPopulation::runner("interactive"), None);
+        assert_eq!(
+            JournalPopulation::runner("producer"),
+            Some(JournalPopulation::Producer)
+        );
+        assert!(!JournalPopulation::Interactive.has_runs());
+        assert!(JournalPopulation::Producer.has_runs() && JournalPopulation::Vetter.has_runs());
+    }
+
+    /// An id is what a rule cites, so it has to be a token a grep over the prompts finds.
+    #[test]
+    fn an_id_is_a_greppable_token() {
+        for good in ["LJ-0001", "LJ-00042", "LJ-9999"] {
+            assert!(is_journal_id(good), "{good}");
+        }
+        for bad in [
+            "LJ-1", "LJ-001", "lj-0001", "LJ0001", "LJ-", "LJ-0001a", "0001", "",
+        ] {
+            assert!(!is_journal_id(bad), "{bad}");
+        }
+    }
+
+    /// One line reports EVERY defect it has. A parser that stops at the first turns fixing a
+    /// hand-written journal into a round trip per mistake.
+    #[test]
+    fn a_line_reports_every_defect_it_has() {
+        let broken = json!({
+            "id": "nope",
+            "at": "yesterday",
+            "population": "robot",
+            "run": "soon",
+        });
+        let defects = defects_of(&entry(broken));
+        assert!(defects.len() >= 6, "{defects:?}");
+        for want in [
+            "id",
+            "ISO-8601",
+            "producer | vetter | interactive",
+            "no kind",
+            "no what",
+            "is not a run id",
+        ] {
+            assert!(
+                defects.iter().any(|d| d.contains(want)),
+                "missing {want:?} in {defects:?}"
+            );
+        }
+        // Every one names its line, so a 200-entry journal says where to look.
+        assert!(
+            defects.iter().all(|d| d.starts_with("line 1:")),
+            "{defects:?}"
+        );
+    }
+
+    /// A blank string is not a value. `"kind": ""` and `"kind": "   "` both parse, both read as
+    /// present to anything that only checks the key, and both group every entry that has them
+    /// into one nameless class — which is the recurrence answer being wrong rather than absent.
+    #[test]
+    fn a_blank_field_is_the_same_as_a_missing_one() {
+        for blank in ["", "   ", "\t"] {
+            let mut e = producer("LJ-0001", "2026-08-09T14:51:50Z", blank);
+            e["kind"] = json!(blank);
+            assert!(
+                defects_of(&entry(e.clone()))
+                    .iter()
+                    .any(|d| d.contains("no kind")),
+                "kind {blank:?} must be refused"
+            );
+            e["kind"] = json!("k");
+            e["what"] = json!(blank);
+            assert!(
+                defects_of(&entry(e)).iter().any(|d| d.contains("no what")),
+                "what {blank:?} must be refused"
+            );
+        }
+        // …and surrounding whitespace on a real value is forgiven, not refused: this file is
+        // hand-appended, and refusing a true record over a stray space buys nothing.
+        let mut e = producer("LJ-0001", "2026-08-09T14:51:50Z", "  k  ");
+        e["id"] = json!(" LJ-0001 ");
+        let (entries, defects) = journal_entries(&entry(e));
+        assert!(defects.is_empty(), "{defects:?}");
+        assert_eq!(entries[0].id, "LJ-0001");
+        assert_eq!(entries[0].kind, "k");
+    }
+
+    /// Structural defects that would otherwise parse into a plausible-looking entry.
+    #[test]
+    fn a_malformed_line_is_refused_rather_than_read_past() {
+        assert!(defects_of("{not json}")[0].contains("not JSON"));
+        assert!(defects_of("[1,2]")[0].contains("not a JSON object"));
+        let mut e = producer("LJ-0001", "2026-08-09T14:51:50Z", "k");
+        e["evidence"] = json!("a string, not an array");
+        assert!(defects_of(&entry(e.clone()))
+            .iter()
+            .any(|d| d.contains("not an array")));
+        e["evidence"] = json!(["", "  "]);
+        assert!(defects_of(&entry(e.clone()))
+            .iter()
+            .any(|d| d.contains("not a non-empty string")));
+        e["evidence"] = json!(["quoted"]);
+        e["rule"] = json!("landed sometime");
+        assert!(defects_of(&entry(e.clone()))
+            .iter()
+            .any(|d| d.contains("neither an object nor null")));
+        e["rule"] = json!({"landedAt": "2026-08-10T00:00:00Z"});
+        assert!(defects_of(&entry(e.clone()))
+            .iter()
+            .any(|d| d.contains("rule.site is missing")));
+        // …and `null` is the spelling for "no rule", not a defect.
+        e["rule"] = Value::Null;
+        assert!(defects_of(&entry(e)).is_empty());
+    }
+
+    /// Blank lines are formatting, not entries, and the line numbers a defect reports must still
+    /// be the file's own.
+    #[test]
+    fn blank_lines_are_not_entries() {
+        let j = format!(
+            "\n{}\n\n{}",
+            producer("LJ-0001", "2026-08-09T14:51:50Z", "a"),
+            json!({"id": "LJ-0002"})
+        );
+        let (entries, defects) = journal_entries(&j);
+        assert_eq!(entries.len(), 1);
+        assert!(
+            defects.iter().all(|d| d.starts_with("line 4:")),
+            "{defects:?}"
+        );
+    }
+
+    // ── has it recurred since its rule landed? ────────────────────────────────────────────────
+
+    /// The reading the whole artifact exists for, in both directions at once.
+    #[test]
+    fn a_recurrence_is_an_entry_after_the_rule_landed_and_nothing_else() {
+        let mut first = producer("LJ-0001", "2026-08-09T10:00:00Z", "k");
+        first["rule"] = rule("2026-08-09T12:00:00Z");
+        let before = producer("LJ-0002", "2026-08-09T11:00:00Z", "k");
+        let after = producer("LJ-0003", "2026-08-09T13:00:00Z", "k");
+        let j = entry(first) + &entry(before) + &entry(after);
+        let (entries, defects) = journal_entries(&j);
+        assert!(defects.is_empty(), "{defects:?}");
+        let kinds = journal_kinds(&entries, None);
+        assert_eq!(kind(&kinds, "k").recurrences, vec!["LJ-0003"]);
+        // The entry that PRODUCED the rule is not a recurrence of it, and neither is one that
+        // happened in the window between the incident and the fix landing.
+        assert!(!kind(&kinds, "k")
+            .recurrences
+            .contains(&"LJ-0001".to_string()));
+        assert!(!kind(&kinds, "k")
+            .recurrences
+            .contains(&"LJ-0002".to_string()));
+        // Recurrence is evidence FOR the rule, so it can never also be a deletion candidate.
+        let verdict = journal_verdict(&kinds);
+        assert_eq!(verdict.recurring.len(), 1);
+        assert_eq!(verdict.delete_next(), None);
+    }
+
+    /// A rule that was strengthened is a different rule. Measuring from the ORIGINAL landing would
+    /// credit the new wording with every run the old one was already failing.
+    #[test]
+    fn a_strengthened_rule_is_measured_from_its_newest_landing() {
+        let mut weak = producer("LJ-0001", "2026-08-09T10:00:00Z", "k");
+        weak["rule"] = rule("2026-08-09T11:00:00Z");
+        let mut tripped = producer("LJ-0002", "2026-08-09T12:00:00Z", "k");
+        tripped["rule"] = rule("2026-08-09T13:00:00Z");
+        let (entries, _) = journal_entries(&(entry(weak) + &entry(tripped)));
+        let kinds = journal_kinds(&entries, None);
+        let k = kind(&kinds, "k");
+        assert_eq!(
+            k.rule.as_ref().map(|r| r.landed_at.as_str()),
+            Some("2026-08-09T13:00:00Z")
+        );
+        // Measured from the newest landing nothing has recurred; from the oldest, LJ-0002 would
+        // read as a recurrence of a rule it was itself the reason for.
+        assert!(k.recurrences.is_empty());
+    }
+
+    /// A kind nothing has ruled on is the backlog, loudest first — how many times it has happened,
+    /// not how recently. The same frequency-over-novelty rule the corpus reading uses, for the
+    /// same reason: a vivid one-off outranking a thrice-repeated class is the wrong answer.
+    #[test]
+    fn the_backlog_is_ordered_by_how_often_it_has_happened() {
+        let j = entry(producer("LJ-0001", "2026-08-09T10:00:00Z", "twice"))
+            + &entry(producer("LJ-0002", "2026-08-09T11:00:00Z", "twice"))
+            + &entry(producer(
+                "LJ-0003",
+                "2026-08-09T23:00:00Z",
+                "once-but-newest",
+            ));
+        let (entries, _) = journal_entries(&j);
+        let verdict = journal_verdict(&journal_kinds(&entries, None));
+        let names: Vec<&str> = verdict.backlog.iter().map(|k| k.kind.as_str()).collect();
+        assert_eq!(names, vec!["twice", "once-but-newest"]);
+        assert_eq!(verdict.backlog[0].entries, vec!["LJ-0001", "LJ-0002"]);
+        assert!(verdict.recurring.is_empty() && verdict.deletable.is_empty());
+    }
+
+    // ── the denominator: silence over WHAT? ───────────────────────────────────────────────────
+
+    /// Silence is only evidence when it is silence over runs that happened. Both non-answers —
+    /// "no metrics file given" and "zero runs since" — are refused as deletion candidates, because
+    /// deleting on either is deleting on nothing.
+    #[test]
+    fn silence_over_zero_or_unknown_runs_is_not_a_deletion_candidate() {
+        let mut e = producer("LJ-0001", "2026-08-09T10:00:00Z", "k");
+        e["rule"] = rule("2026-08-09T11:00:00Z");
+        let (entries, _) = journal_entries(&entry(e));
+
+        // No corpus at all: UNKNOWN, and deliberately not zero.
+        let unknown = journal_kinds(&entries, None);
+        assert_eq!(kind(&unknown, "k").runs_since, None);
+        assert_eq!(journal_verdict(&unknown).delete_next(), None);
+
+        // A corpus whose newest run PREDATES the rule: zero, and still not a candidate.
+        let old = journal_runs(&run_row("20260809T090000Z", "producer", Some("ok")));
+        let none_since = journal_kinds(&entries, Some(&old));
+        assert_eq!(kind(&none_since, "k").runs_since, Some(0));
+        assert_eq!(journal_verdict(&none_since).delete_next(), None);
+
+        // One run after it, and the reading becomes a real, if thin, one.
+        let after = journal_runs(
+            &(run_row("20260809T090000Z", "producer", Some("ok"))
+                + &run_row("20260809T120000Z", "producer", Some("ok"))),
+        );
+        let kinds = journal_kinds(&entries, Some(&after));
+        assert_eq!(kind(&kinds, "k").runs_since, Some(1));
+        assert_eq!(
+            journal_verdict(&kinds)
+                .delete_next()
+                .map(|k| k.kind.as_str()),
+            Some("k")
+        );
+    }
+
+    /// A tick the pipeline chose not to run had no model in it, so it cannot have exhibited a
+    /// mistake. Counting one as a run of silence manufactures evidence out of a pause — and this
+    /// pipeline has spent long stretches paused.
+    #[test]
+    fn a_skipped_tick_is_not_a_run_of_silence() {
+        let mut e = producer("LJ-0001", "2026-08-09T10:00:00Z", "k");
+        e["rule"] = rule("2026-08-09T11:00:00Z");
+        let (entries, _) = journal_entries(&entry(e));
+        let runs = journal_runs(
+            &(run_row("20260809T120000Z", "producer", Some("skipped"))
+                + &run_row("20260809T130000Z", "producer", Some("skipped"))
+                + &run_row("20260809T140000Z", "producer", Some("ok"))),
+        );
+        assert_eq!(
+            kind(&journal_kinds(&entries, Some(&runs)), "k").runs_since,
+            Some(1)
+        );
+    }
+
+    /// One run writes several metrics rows and only the last carries an outcome, so a run is
+    /// counted once and its skip is read across all of its rows rather than off whichever came
+    /// first.
+    #[test]
+    fn a_run_is_counted_once_however_many_rows_it_wrote() {
+        let runs = journal_runs(
+            &(run_row("20260809T120000Z", "producer", None)
+                + &run_row("20260809T120000Z", "producer", None)
+                + &run_row("20260809T120000Z", "producer", Some("skipped"))),
+        );
+        assert_eq!(runs.len(), 1);
+        assert!(
+            runs[0].skipped,
+            "the skip arrives on the LAST row, not the first"
+        );
+        // Rows a denominator cannot use are ignored rather than refused: the metrics file
+        // accumulates across schema changes and this is not a gate on it.
+        let mixed = journal_runs(
+            &("not json\n".to_string()
+                + "{\"role\":\"producer\"}\n"
+                + &run_row("nope", "producer", None)
+                + &run_row("20260809T120000Z", "human", None)
+                + &run_row("20260809T130000Z", "vetter", Some("ok"))),
+        );
+        assert_eq!(mixed.len(), 1);
+        assert_eq!(mixed[0].population, JournalPopulation::Vetter);
+    }
+
+    /// A producer rule's silence is measured over PRODUCER runs. Counting the vetter's would
+    /// inflate the denominator with runs that were never at risk of the mistake.
+    #[test]
+    fn the_denominator_is_the_kinds_own_populations() {
+        let mut p = producer("LJ-0001", "2026-08-09T10:00:00Z", "producer-only");
+        p["rule"] = rule("2026-08-09T11:00:00Z");
+        let mut i = producer("LJ-0002", "2026-08-09T10:00:00Z", "interactive-only");
+        i["population"] = json!("interactive");
+        i.as_object_mut().unwrap().remove("run");
+        i["rule"] = rule("2026-08-09T11:00:00Z");
+        let (entries, defects) = journal_entries(&(entry(p) + &entry(i)));
+        assert!(defects.is_empty(), "{defects:?}");
+        let runs = journal_runs(
+            &(run_row("20260809T120000Z", "producer", Some("ok"))
+                + &run_row("20260809T130000Z", "vetter", Some("ok"))
+                + &run_row("20260809T140000Z", "vetter", Some("ok"))),
+        );
+        let kinds = journal_kinds(&entries, Some(&runs));
+        assert_eq!(kind(&kinds, "producer-only").runs_since, Some(1));
+        // …and an interactive-only kind has no denominator at all, so it can never be deleted on
+        // a count of runs it was never exposed to.
+        assert_eq!(kind(&kinds, "interactive-only").runs_since, None);
+        assert_eq!(
+            journal_verdict(&kinds)
+                .delete_next()
+                .map(|k| k.kind.as_str()),
+            Some("producer-only")
+        );
+    }
+
+    /// The pick is the LONGEST silence, and the ordering is total so it never depends on the order
+    /// entries happen to sit in the file.
+    #[test]
+    fn the_deletion_pick_is_the_longest_silence_and_never_file_order() {
+        let mut quiet = producer("LJ-0001", "2026-08-09T10:00:00Z", "quiet");
+        quiet["rule"] = rule("2026-08-09T11:00:00Z");
+        let mut recent = producer("LJ-0002", "2026-08-09T10:00:00Z", "recent");
+        recent["rule"] = rule("2026-08-09T13:00:00Z");
+        let runs = journal_runs(
+            &(run_row("20260809T120000Z", "producer", Some("ok"))
+                + &run_row("20260809T140000Z", "producer", Some("ok"))),
+        );
+        let forwards = entry(quiet.clone()) + &entry(recent.clone());
+        let backwards = entry(recent) + &entry(quiet);
+        for j in [forwards, backwards] {
+            let (entries, _) = journal_entries(&j);
+            let verdict = journal_verdict(&journal_kinds(&entries, Some(&runs)));
+            let order: Vec<&str> = verdict.deletable.iter().map(|k| k.kind.as_str()).collect();
+            assert_eq!(order, vec!["quiet", "recent"], "2 runs of silence beats 1");
+            assert_eq!(
+                verdict.delete_next().map(|k| k.kind.as_str()),
+                Some("quiet")
+            );
+        }
+    }
+
+    /// A journal with nothing in it says so, rather than proposing the least-bad row.
+    #[test]
+    fn an_empty_journal_proposes_nothing() {
+        let (entries, defects) = journal_entries("");
+        assert!(entries.is_empty() && defects.is_empty());
+        let verdict = journal_verdict(&journal_kinds(&entries, Some(&[])));
+        assert_eq!(verdict.delete_next(), None);
+        assert!(verdict.backlog.is_empty() && verdict.recurring.is_empty());
+    }
+
+    // ── the citation, which is the cheap half of the split ────────────────────────────────────
+
+    /// A rule cites inline, mid-sentence, inside whatever brackets its paragraph already uses, so
+    /// the scan is on the token and not on any bracketing around it.
+    #[test]
+    fn a_citation_is_read_wherever_it_appears() {
+        assert_eq!(
+            journal_citations("NEVER background it [LJ-0001]. See also (LJ-0002) and LJ-0003,"),
+            vec!["LJ-0001", "LJ-0002", "LJ-0003"]
+        );
+        // Deduped, because a rule stated twice cites the same entry twice.
+        assert_eq!(
+            journal_citations("LJ-0001 … LJ-0001"),
+            vec!["LJ-0001".to_string()]
+        );
+        // A near-miss is not a citation: it would resolve to nothing, and reporting it as an
+        // unresolvable id is more useful than silently matching a prefix of it.
+        assert!(journal_citations("LJ-1 LJ- LJx-0001 lj-0001").is_empty());
+        assert!(journal_citations("").is_empty());
+        // …and a longer id is read WHOLE rather than clipped to its first four digits.
+        assert_eq!(journal_citations("LJ-00012"), vec!["LJ-00012".to_string()]);
+    }
+
+    /// The worked example: step 2 of the producer prompt now carries the RULE and cites the
+    /// incident, instead of narrating the incident inline on every turn of every run.
+    ///
+    /// One rule, deliberately — the migration of the other 93 lines is its own job with its own
+    /// risk. What this pins is that the mechanism is exercised end to end by something real: a
+    /// live prompt, a live citation, a live entry.
+    #[test]
+    fn the_worked_example_keeps_the_rule_and_moves_the_incident() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let step2 = producer_step(&prompt, "2");
+        assert!(
+            step2.contains("NEVER background it") && step2.contains("FOREGROUND"),
+            "the RULE stays — it is what runtime needs: {step2}"
+        );
+        assert!(
+            step2.contains("LJ-0001"),
+            "…and it names the entry the reasoning moved to: {step2}"
+        );
+        assert!(
+            !step2.contains("168 seconds"),
+            "the narration is what moved out; leaving it beside the citation pays for both: {step2}"
+        );
     }
 }
