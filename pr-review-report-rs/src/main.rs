@@ -74113,6 +74113,112 @@ mod journal_tests {
         );
     }
 
+    /// The loop this whole artifact exists for, closed once: an incident recorded, and the rule
+    /// that addresses it landing in the same change, with the rule CITING the entry instead of
+    /// re-telling it. LJ-0004 is `/observe-run` step 1 telling a caller to hold a foreground
+    /// `Bash` call for work the harness backgrounds at 600 seconds; the rule it names is that
+    /// step's replacement. So the entry must read as ADDRESSED rather than as backlog, and the
+    /// citation the step now carries instead of the narrative must resolve to it.
+    ///
+    /// The citation half is asserted HERE, and it has to be:
+    /// `every_journal_citation_in_a_prompt_resolves_to_an_entry` scans `RUNNER_CONTEXT_FILES`, and
+    /// a plugin command is deliberately not one — it is read by a model when a human invokes it,
+    /// not shipped into a cron run's context on every turn. Nothing else in the repo would notice
+    /// `[LJ-0004]` in that file going stale, and a citation that resolves to nothing has deleted
+    /// the reasoning rather than moved it.
+    #[test]
+    fn the_journal_records_the_incident_the_observe_run_rule_came_from() {
+        let (Some(text), Some(metrics), Some(command)) = (
+            repo_root_text(JOURNAL_FILE),
+            repo_root_text("metrics/runs.jsonl"),
+            repo_root_text("plugins/human-fsm/commands/observe-run.md"),
+        ) else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let (entries, defects) = journal_entries(&text);
+        assert!(defects.is_empty(), "{JOURNAL_FILE}: {defects:?}");
+        let e = seeded(&entries, "LJ-0004");
+
+        // Interactive, because the mistake is the INSTRUCTION's and the caller's. The vetter run
+        // the entry names is the casualty rather than the culprit, and no cron run count measures
+        // whether a human following a plugin command got it right.
+        assert_eq!(e.population, JournalPopulation::Interactive);
+        assert_eq!(e.run.as_deref(), Some("20260810T102325Z"));
+        assert_eq!(
+            e.trace.as_deref(),
+            Some("review-runs/20260810T102325Z.jsonl")
+        );
+
+        // The four facts that make it THIS incident rather than a generic timeout, quoted rather
+        // than summarised — the truncated trace and the task file both rotate out, and when they
+        // do this list is the whole record.
+        let quoted = e.evidence.join("\n");
+        for fact in [
+            // the instruction that could not be followed
+            "**foreground**",
+            // `tail` holding the entire stream, so the backgrounded call's file stayed empty
+            "the contents are empty",
+            // the interrupt that killed the run
+            "The tool use was rejected",
+            // …which was working when it died, not hung
+            "tool calls 52",
+        ] {
+            assert!(
+                quoted.contains(fact),
+                "the evidence must carry {fact:?}: {quoted}"
+            );
+        }
+
+        // The rule landed WITH the entry. That is the loop closing rather than a backlog member,
+        // and it is why the step below may cite instead of narrate.
+        let rule = e.rule.as_ref().expect("the rule this incident produced");
+        assert!(
+            rule.site.contains("plugins/human-fsm/commands/observe-run.md"),
+            "a deletion candidate names the file to edit: {}",
+            rule.site
+        );
+        assert_eq!(
+            rule.issue.as_deref(),
+            Some("https://github.com/rainlanguage/issue-pr-cron/issues/260")
+        );
+
+        // …so the verdict must not read this kind as an unaddressed gap, and must never offer it
+        // as a deletion candidate: an interactive kind has no run denominator, so its silence is
+        // evidence of nothing.
+        let kinds = journal_kinds(&entries, Some(&journal_runs(&metrics)));
+        let mine = kind(&kinds, &e.kind);
+        assert!(mine.rule.is_some(), "the #260 rule landed with the entry");
+        assert_eq!(mine.runs_since, None, "interactive work has no denominator");
+        let verdict = journal_verdict(&kinds);
+        for (label, list) in [
+            ("backlog", &verdict.backlog),
+            ("deletable", &verdict.deletable),
+        ] {
+            assert!(
+                !list.iter().any(|k| k.kind == e.kind),
+                "{} is addressed and unmeasurable, so it is neither backlog nor a deletion \
+                 candidate — it is in {label}",
+                e.kind
+            );
+        }
+
+        // The citation is in the STEP that carries the rule, not merely somewhere in the file: a
+        // reader who wants the evidence has to find it where the rule is.
+        let head = "## 1. ";
+        let step = prompt_section(
+            &command,
+            head,
+            |l| l.starts_with(head),
+            |l| l.starts_with("## "),
+        );
+        assert!(
+            journal_citations(&step).contains(&e.id),
+            "step 1 cites {} nowhere, so the narrative it replaced is gone rather than moved: \
+             {step}",
+            e.id
+        );
+    }
+
     // ── validation: every way the journal answers WRONGLY rather than not at all ──────────────
 
     /// `KEEP_RUNS` deletes traces. An entry that points at one and quotes nothing from it becomes

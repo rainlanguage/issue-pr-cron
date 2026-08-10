@@ -45,12 +45,10 @@ tool calls, `⟹` results, `!` warnings) plus the runner's lifecycle lines, and
 nothing else. Its exit code is the **run's**.
 
 Start it in a **background** `Bash` call, and read that call's output file as
-the run goes. A run outlives a foreground call: one is moved to the background
-at the 600-second ceiling and hands back nothing of the stream when it is, while
-the runs measured on 2026-08-10 took 32m 48s (producer) and 22m 30s (vetter). So
-a foreground call buys ten minutes of blank screen and then backgrounds anyway,
-which is how vetter run `20260810T102325Z` — fast-forwarded, both stops walked,
-three auditors dispatched and working — came to be read as a hang and killed.
+the run goes. A run outlives a foreground call — the harness backgrounds one at
+its 600-second ceiling and hands back nothing of the stream when it does, so a
+foreground call buys ten minutes of blank screen and then backgrounds anyway,
+which is how a working run gets read as a hang and killed [LJ-0004].
 Backgrounded from the start it returns in seconds naming its output file, and
 the fast-forward verdict, the `log:` line and `running:` are readable there
 immediately. Read that file with the **Read** tool when you want to know where
@@ -61,9 +59,9 @@ notification.
 **Nothing may sit between the stream and you.** `force-run` flushes every line
 as it prints it, and a pipe throws that away: `tail` and `head` both hold the
 whole stream until the writer exits, which for a half-hour run is half an hour
-of nothing. That was the first thing tried on 2026-08-10 and it showed nothing,
-well before any timeout was reached. So pipe it into nothing at all — not
-`tail`, not `head`, not a filter of any kind — and read the file.
+of nothing — including in the backgrounded call's own output file, which stays
+empty [LJ-0004]. So pipe it into nothing at all — not `tail`, not `head`, not a
+filter of any kind — and read the file.
 
 If that output file is gone — a restarted session, or a run you did not start —
 the `log:` line names where the same bytes are still being appended, and step
