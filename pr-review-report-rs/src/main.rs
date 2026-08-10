@@ -36727,6 +36727,16 @@ struct CorpusMetric {
     /// The newest active run that exhibited it, or `None`.
     last_seen: Option<String>,
     shape: DecayShape,
+    /// Every active run that exhibited it at all, oldest first, as `(run, count)`.
+    ///
+    /// The SIGHTINGS are what the recommendation reasons over, and they are a different series
+    /// from the one `shape` reads. A run that had no occasion for a hand-roll contributes a zero
+    /// to the full series and nothing at all here — which is the whole of "the render harness is
+    /// rebuilt by every run that takes a screenshot item": across the runs that DID take one, the
+    /// count did not shrink, while the full series ends in a zero because the newest run had no
+    /// visual item. `runs_seen_in` and `last_seen` are read off this, so the frequency, the
+    /// recency and the counts a recommendation cites cannot disagree.
+    sightings: Vec<(String, usize)>,
 }
 
 /// PURE: read every metric across the corpus's ACTIVE rows, oldest first.
@@ -36736,22 +36746,120 @@ fn corpus_metrics(rows: &[CorpusRow]) -> Vec<CorpusMetric> {
         .iter()
         .map(|(label, key, read)| {
             let series: Vec<usize> = active.iter().map(|r| read(r)).collect();
+            let sightings: Vec<(String, usize)> = active
+                .iter()
+                .filter(|r| read(r) > 0)
+                .map(|r| (r.run.clone(), read(r)))
+                .collect();
             CorpusMetric {
                 label,
                 key,
                 first: series.first().copied().unwrap_or(0),
                 peak: series.iter().copied().max().unwrap_or(0),
                 latest: series.last().copied().unwrap_or(0),
-                runs_seen_in: series.iter().filter(|n| **n > 0).count(),
-                last_seen: active
-                    .iter()
-                    .rev()
-                    .find(|r| read(r) > 0)
-                    .map(|r| r.run.clone()),
+                runs_seen_in: sightings.len(),
+                last_seen: sightings.last().map(|(run, _)| run.clone()),
                 shape: decay_shape(&series),
+                sightings,
             }
         })
         .collect()
+}
+
+impl CorpusMetric {
+    /// The count in the most recent active run that exhibited this at all.
+    ///
+    /// NOT `latest`, which is the newest active run's count whether or not that run had any
+    /// occasion for the hand-roll. Reading `latest` here would call the render-harness rebuild
+    /// dead on the strength of one run that shipped no visual PR.
+    fn latest_sighting(&self) -> usize {
+        self.sightings.last().map_or(0, |(_, n)| *n)
+    }
+
+    /// Is this hand-roll SHRINKING among the runs that still do it?
+    ///
+    /// The signature of a pathology some landed tool is already killing: not that the newest run
+    /// shows fewer, but that the runs still doing it do less of it than they used to. Measured on
+    /// the 2026-08-09 corpus the two populations are nowhere near this line — the shrinking ones
+    /// sit at 1%, 7% and 3% of their peaks (probe-shaped reads after `await`, interpreters and
+    /// helper scripts after the scratch-dir rules), the holding ones at 64% and 100% — so half is
+    /// a threshold in the middle of a wide empty band rather than a tuned number.
+    ///
+    /// A metric no run exhibited has a peak of zero and reads as not-shrinking, which is why
+    /// [`corpus_recommendation`] drops those BEFORE asking: "never seen" is not a candidate for
+    /// anything, and answering it here as well would be a second place holding the same rule.
+    fn shrinking(&self) -> bool {
+        self.latest_sighting() * 2 < self.peak
+    }
+}
+
+/// What the corpus says is worth tooling next, and everything that says it.
+///
+/// The recommendation the user asked for, computed rather than left to the reader: a table is not
+/// an answer, and the reasoning that turns one into an answer is exactly what a tool should hold.
+#[derive(Debug, PartialEq, Clone)]
+struct CorpusVerdict {
+    /// Still-holding hand-rolls, best first. The head is the recommendation.
+    candidates: Vec<CorpusMetric>,
+    /// Hand-rolls ruled out because they are shrinking among the runs that still do them.
+    shrinking: Vec<CorpusMetric>,
+}
+
+impl CorpusVerdict {
+    /// The hand-roll to tool next, or `None` when the corpus holds no evidence of one.
+    fn pick(&self) -> Option<&CorpusMetric> {
+        self.candidates.first()
+    }
+}
+
+/// PURE: rank the corpus into a recommendation.
+///
+/// Two clauses, in order, and the second is the one that stops this being the mistake it was built
+/// to prevent:
+///
+/// 1. **A shrinking hand-roll is not a candidate.** Something already landed and is killing it;
+///    building a second tool for it buys the tail of a curve that is going to zero anyway.
+/// 2. **Among what is left, the one seen in the MOST runs wins** — ties broken by the most recent
+///    sighting. Frequency is the discriminant because the alternative is recommending the newest
+///    run's most visible waste, and on 2026-08-09 that was a worker downloading a tarball and
+///    writing a Python script to read it: vivid, expensive, and present in ONE trace out of
+///    twenty-one. The answer it lost to was seen in every run that took a screenshot item. The two
+///    differ by a factor of ten in frequency and a `holding`-shape rule alone picks the wrong one.
+fn corpus_recommendation(metrics: &[CorpusMetric]) -> CorpusVerdict {
+    let (shrinking, mut candidates): (Vec<CorpusMetric>, Vec<CorpusMetric>) = metrics
+        .iter()
+        .filter(|m| m.runs_seen_in > 0)
+        .cloned()
+        .partition(CorpusMetric::shrinking);
+    candidates.sort_by(|a, b| {
+        b.runs_seen_in
+            .cmp(&a.runs_seen_in)
+            .then_with(|| b.last_seen.cmp(&a.last_seen))
+            // Total, so the pick never depends on the order the metrics happen to be declared in.
+            .then_with(|| b.peak.cmp(&a.peak))
+            .then_with(|| a.key.cmp(b.key))
+    });
+    CorpusVerdict {
+        candidates,
+        shrinking,
+    }
+}
+
+/// One metric rendered as the evidence a reader disagrees with: how often, how recently, and the
+/// per-run counts themselves.
+fn corpus_sighting_line(m: &CorpusMetric) -> String {
+    let counts: Vec<String> = m
+        .sightings
+        .iter()
+        .map(|(run, n)| format!("{run} {n}"))
+        .collect();
+    format!(
+        "{} — {} trace(s), last {}, counts: {}",
+        m.label,
+        m.runs_seen_in,
+        m.last_seen.as_deref().unwrap_or("—"),
+        counts.join(", ")
+    )
 }
 
 /// `corpus-report <runs-dir> [--json]`: what every retained trace still hand-rolls.
@@ -36788,6 +36896,7 @@ fn corpus_report_mode(dir: &str, json: bool) -> i32 {
         }
     }
     let metrics = corpus_metrics(&rows);
+    let verdict = corpus_recommendation(&metrics);
     let active = rows.iter().filter(|r| r.active()).count();
 
     if json {
@@ -36816,9 +36925,18 @@ fn corpus_report_mode(dir: &str, json: bool) -> i32 {
                     "runsSeenIn": m.runs_seen_in,
                     "lastSeen": m.last_seen,
                     "shape": m.shape.label(),
+                    "latestSighting": m.latest_sighting(),
+                    "sightings": m.sightings.iter()
+                        .map(|(run, n)| serde_json::json!({"run": run, "count": n}))
+                        .collect::<Vec<Value>>(),
                 })
             })
             .collect();
+        let names = |ms: &[CorpusMetric]| {
+            ms.iter()
+                .map(|m| serde_json::json!(m.key))
+                .collect::<Vec<Value>>()
+        };
         println!(
             "{}",
             serde_json::to_string(&serde_json::json!({
@@ -36830,6 +36948,16 @@ fn corpus_report_mode(dir: &str, json: bool) -> i32 {
                 "unreadable": unreadable,
                 "runs": rows_json,
                 "metrics": metrics_json,
+                "recommendation": {
+                    "build": verdict.pick().map(|m| m.key),
+                    "seenInRuns": verdict.pick().map(|m| m.runs_seen_in),
+                    "lastSeen": verdict.pick().and_then(|m| m.last_seen.clone()),
+                    "counts": verdict.pick().map(|m| m.sightings.iter()
+                        .map(|(run, n)| serde_json::json!({"run": run, "count": n}))
+                        .collect::<Vec<Value>>()),
+                    "runnersUp": names(verdict.candidates.get(1..).unwrap_or_default()),
+                    "ruledOutAsShrinking": names(&verdict.shrinking),
+                },
             }))
             .unwrap()
         );
@@ -36880,11 +37008,268 @@ fn corpus_report_mode(dir: &str, json: bool) -> i32 {
         println!("! unreadable trace {u}");
     }
     println!(
-        "\nshape is a fact about the series over the {active} active traces, not a recommendation: \
-         a zero can mean a landed tool retired the hand-roll or that this run had no occasion for \
-         it, and only a reader who knows which can say."
+        "\nshape reads the FULL series over the {active} active traces, so a zero in it can mean a \
+         landed tool retired the hand-roll or that this run had no occasion for one. The \
+         recommendation below reads the runs that exhibited each hand-roll AT ALL, which is what \
+         tells those two apart."
     );
+
+    match verdict.pick() {
+        Some(m) => {
+            println!("\nBUILD NEXT: {}", m.label);
+            println!("  {}", corpus_sighting_line(m));
+            println!(
+                "  latest sighting {} against a peak of {} — the runs that still do it are not \
+                 shrinking, so nothing landed is killing it",
+                m.latest_sighting(),
+                m.peak
+            );
+            let runners_up = verdict.candidates.get(1..).unwrap_or_default();
+            if runners_up.is_empty() {
+                println!("  no other hand-roll here is holding its ground");
+            } else {
+                println!("  it beat, on how many traces still do it:");
+                for m in runners_up {
+                    println!("    {}", corpus_sighting_line(m));
+                }
+            }
+            if !verdict.shrinking.is_empty() {
+                println!("  ruled out as already shrinking (a landed tool is killing these):");
+                for m in &verdict.shrinking {
+                    println!(
+                        "    {} — latest sighting {} against a peak of {}",
+                        m.label,
+                        m.latest_sighting(),
+                        m.peak
+                    );
+                }
+            }
+            println!(
+                "  DISAGREE FROM THE COUNTS ABOVE, not from this line: the pick is the hand-roll \
+                 that is not shrinking and is seen in the most traces. A newer, vivid waste seen \
+                 in ONE trace is the answer this rule exists to refuse."
+            );
+        }
+        None => {
+            println!(
+                "\nBUILD NEXT: nothing — every hand-rolled shape this corpus measures is either \
+                 absent from it or already shrinking, so there is no evidence here for a next \
+                 tool."
+            );
+        }
+    }
     0
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// force-run (#252): the observation run itself, as a typed call.
+//
+// The first cut of the `/observe-run` command told the caller to type the fast-forward
+// and the runner invocation by hand, because the plugin's fenced-block contract admits
+// only this binary's transitions. That is the same defect the rest of #252 fixes with
+// an extra step: a mechanic written as prose for the caller to retype. So the two steps
+// become one subcommand, and the command's step 2 is a typed call like the other three.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Which runner a forced run starts.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum RunnerRole {
+    Producer,
+    Vetter,
+}
+
+impl RunnerRole {
+    fn parse(s: &str) -> Result<Self, String> {
+        match s {
+            "producer" => Ok(RunnerRole::Producer),
+            "vetter" => Ok(RunnerRole::Vetter),
+            other => Err(format!(
+                "unknown role {other:?} — force-run takes `producer` or `vetter`"
+            )),
+        }
+    }
+
+    /// The flake output the crontab itself invokes. Named here rather than passed in, so a role
+    /// can never be pointed at the other role's runner.
+    fn flake_attr(self) -> &'static str {
+        match self {
+            RunnerRole::Producer => "campaign-run",
+            RunnerRole::Vetter => "review-run",
+        }
+    }
+
+    /// The log this role's runner tees into — where `watch-run` reattaches if the stream here is
+    /// interrupted.
+    fn log_file(self) -> &'static str {
+        match self {
+            RunnerRole::Producer => "campaign.log",
+            RunnerRole::Vetter => "review.log",
+        }
+    }
+}
+
+/// PURE: exactly what a forced run runs, in order.
+///
+/// Built as data so the argv a human is trusting is testable rather than assembled inside the
+/// call that executes it.
+#[derive(Debug, PartialEq, Clone)]
+struct ForceRunPlan {
+    /// The fast-forward, first. `git+file://` builds the runner from the install dir's own git
+    /// HEAD, so a run started against a stale checkout silently exercises old code — which
+    /// happened twice on 2026-08-09, both times costing a whole run.
+    fast_forward: Vec<String>,
+    /// The runner, with the one argument it takes.
+    runner: Vec<String>,
+    /// Where the same bytes are also being appended, for `watch-run` to reattach to.
+    log: String,
+}
+
+/// PURE: the plan for one role against one ABSOLUTE install dir.
+fn force_run_plan(role: RunnerRole, install_dir: &str) -> ForceRunPlan {
+    ForceRunPlan {
+        fast_forward: ["git", "-C", install_dir, "pull", "--ff-only"]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect(),
+        // `--` separates nix's own arguments from the runner's, and `--force` is the only argument
+        // either runner takes.
+        runner: vec![
+            "nix".into(),
+            "run".into(),
+            format!("git+file://{install_dir}#{}", role.flake_attr()),
+            "--".into(),
+            "--force".into(),
+        ],
+        log: format!("{install_dir}/{}", role.log_file()),
+    }
+}
+
+/// Pass a live run's own stdout through the watch filter.
+///
+/// The SAME filter `watch-run` applies to the log, against the child's stdout instead of a file.
+/// Streaming the child rather than handing off to `watch-run` is deliberate, and the reason is the
+/// bug class #252 is about: a run started in one call and watched in the next has a gap between
+/// the two, and every lifecycle line the runner writes inside that gap (`FORCED past …`,
+/// `usage-gate: …`, `run START`) belongs to this run and would be missed. A child's stdout has no
+/// gap and carries nothing but this run, so neither half of the attribution can go wrong.
+///
+/// No terminal-line check either: the stream ends when the RUN ends, and the run's exit code is
+/// then the answer. `watch-run` needs a terminal marker only because it is following a file
+/// nothing ever closes.
+fn stream_run_output<R: std::io::BufRead, W: std::io::Write>(src: R, out: &mut W) {
+    for line in src.lines() {
+        let Ok(line) = line else { break };
+        if watch_line_signal(&line) {
+            if writeln!(out, "{line}").is_err() {
+                return;
+            }
+            let _ = out.flush();
+        }
+    }
+}
+
+/// `force-run <producer|vetter> [--install-dir <dir>] [--no-run]`.
+///
+/// Exit 3 when the install dir will not fast-forward — a stale or diverged checkout is a STOP, not
+/// a thing to force past, and it is the one refusal this subcommand owns. `--force` itself walks
+/// POLICY stops only (the kill switch, a usage-gate pause) and that split stays entirely the
+/// runner's; nothing here weakens the flock or a gate config refusal. Otherwise the exit code is
+/// the RUN's.
+fn force_run_mode(role: &str, install_dir: Option<&str>, no_run: bool) -> i32 {
+    let role = match RunnerRole::parse(role) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    };
+    let Some(dir) = install_dir
+        .map(str::to_string)
+        .or_else(|| std::env::var("INSTALL_DIR").ok())
+        .filter(|d| !d.is_empty())
+    else {
+        eprintln!(
+            "error: force-run needs --install-dir <dir> (or INSTALL_DIR in the environment) — \
+             a run forced against a guessed install dir spends real money somewhere nobody is watching"
+        );
+        return 2;
+    };
+    // Absolute, because it lands verbatim inside a `git+file://` URL: a relative path there
+    // resolves against nothing.
+    let dir = match std::fs::canonicalize(&dir) {
+        Ok(p) => p.to_string_lossy().to_string(),
+        Err(e) => {
+            eprintln!("error: cannot resolve install dir {dir}: {e}");
+            return 2;
+        }
+    };
+    let plan = force_run_plan(role, &dir);
+
+    let head = |when: &str| {
+        Command::new("git")
+            .args(["-C", &dir, "rev-parse", "--short", "HEAD"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_else(|| format!("<unreadable {when} HEAD>"))
+    };
+    let before = head("pre-pull");
+    let ff = Command::new(&plan.fast_forward[0])
+        .args(&plan.fast_forward[1..])
+        .output();
+    match ff {
+        Ok(out) if out.status.success() => {}
+        Ok(out) => {
+            eprint!("{}", String::from_utf8_lossy(&out.stderr));
+            eprintln!(
+                "force-run: {dir} will not fast-forward — a stale or diverged install dir is a \
+                 STOP, not something to force past. Fix the checkout, then force the run."
+            );
+            return 3;
+        }
+        Err(e) => {
+            eprintln!("error: cannot run {:?}: {e}", plan.fast_forward.join(" "));
+            return 2;
+        }
+    }
+    let after = head("post-pull");
+    if before == after {
+        println!("install dir {dir} already current at {after}");
+    } else {
+        println!("install dir {dir} fast-forwarded {before} -> {after}");
+    }
+    println!("log: {} (watch-run reattaches here)", plan.log);
+    if no_run {
+        println!("would run: {}", plan.runner.join(" "));
+        return 0;
+    }
+
+    println!("running: {}", plan.runner.join(" "));
+    // stderr is INHERITED, not filtered: nix's build output belongs on a human's terminal
+    // unfiltered, and the watch filter is about the run's own trail.
+    let child = Command::new(&plan.runner[0])
+        .args(&plan.runner[1..])
+        .stdout(std::process::Stdio::piped())
+        .spawn();
+    let mut child = match child {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: cannot start {:?}: {e}", plan.runner.join(" "));
+            return 2;
+        }
+    };
+    if let Some(out) = child.stdout.take() {
+        let mut stdout = std::io::stdout();
+        stream_run_output(std::io::BufReader::new(out), &mut stdout);
+    }
+    match child.wait() {
+        Ok(status) => status.code().unwrap_or(1),
+        Err(e) => {
+            eprintln!("error: waiting for the runner failed: {e}");
+            2
+        }
+    }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -40979,6 +41364,22 @@ enum Cmd {
     },
     /// Read a stream-json trace on stdin, write the human-readable run log on stdout.
     DistillTrace,
+    /// Force a producer or vetter run and stream it. Fast-forwards the install dir FIRST — the
+    /// runner builds from that dir's own git HEAD, so a run started against a stale checkout
+    /// silently exercises old code — and REFUSES (exit 3) if it will not fast-forward. Then
+    /// invokes the runner with `--force`, printing only the lines a human watching needs. Exit
+    /// code is the run's.
+    ForceRun {
+        /// producer | vetter.
+        role: String,
+        /// The cron install dir. Falls back to `INSTALL_DIR`; never guessed, because a run forced
+        /// against the wrong dir spends real money somewhere nobody is watching.
+        #[arg(long)]
+        install_dir: Option<String>,
+        /// Fast-forward and print the runner invocation, but do not start it.
+        #[arg(long)]
+        no_run: bool,
+    },
     /// Follow a LIVE run log from NOW, printing only what a human watching the run needs: the
     /// distiller's own lines (`·` narration, `▸` tool calls, `⟹` results, `!` warnings) and the
     /// runner's lifecycle/abort lines. Never replays the log's existing tail — the previous run's
@@ -44837,6 +45238,11 @@ fn main() {
         Cmd::TraceOutcome { trace, exit_code } => trace_outcome_mode(&trace, exit_code),
         Cmd::QueueHistoryLine { snapshot, ts } => queue_history_line_mode(snapshot.as_deref(), &ts),
         Cmd::DistillTrace => distill_trace_mode(),
+        Cmd::ForceRun {
+            role,
+            install_dir,
+            no_run,
+        } => force_run_mode(&role, install_dir.as_deref(), no_run),
         Cmd::WatchRun { log, timeout_secs } => watch_run_mode(&log, timeout_secs),
         Cmd::TokenProfile { trace, json } => token_profile_mode(&trace, json),
         Cmd::CorpusReport { dir, json } => corpus_report_mode(&dir, json),
@@ -71378,5 +71784,383 @@ mod observation_run_tests {
         let rows = vec![corpus_row("a", &bash("gh api repos/a/b"))];
         let read: Vec<&str> = corpus_metrics(&rows).iter().map(|m| m.key).collect();
         assert_eq!(read, keys, "the summary reads exactly the printed set");
+    }
+}
+
+/// Behavioural tests for the two halves of #252 that the first cut left out: the forced run as a
+/// typed call, and the RECOMMENDATION the corpus reading ends on.
+///
+/// The user asked for a command that forces a run, watches it, reviews the tool corpus and then
+/// makes an optimization recommendation. A table is not a recommendation, so the reasoning that
+/// turns one into an answer is tested here rather than left to whoever reads the output.
+#[cfg(test)]
+mod observation_recommendation_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn bash(cmd: &str) -> String {
+        format!(
+            "{}\n",
+            json!({"type":"assistant","message":{"content":[
+                {"type":"tool_use","name":"Bash","input":{"command":cmd}}]}})
+        )
+    }
+
+    fn write_file(path: &str) -> String {
+        format!(
+            "{}\n",
+            json!({"type":"assistant","message":{"content":[
+                {"type":"tool_use","name":"Write","input":{"file_path":path,"content":"x"}}]}})
+        )
+    }
+
+    /// One trace's worth of tool calls, exhibiting exactly the counts asked for.
+    ///
+    /// `scripts` is the NON-scaffold helper scripts; the scaffold writes are helper scripts too,
+    /// so a run's `helperScripts` count is `scripts + harness`. Getting that relationship wrong is
+    /// what a thin fixture hides: with no plain helper scripts at all, `helperScripts` becomes a
+    /// duplicate of `harnessScaffold` and the ranking has a tie the live corpus does not have.
+    #[allow(clippy::too_many_arguments)]
+    fn trace(
+        probes: usize,
+        gh_api: usize,
+        tarball: usize,
+        interpreters: usize,
+        scripts: usize,
+        harness: usize,
+    ) -> String {
+        let mut s = String::new();
+        for _ in 0..probes {
+            s.push_str(&bash("gh pr view 1 -R a/b --json headRefOid"));
+        }
+        for _ in 0..gh_api {
+            s.push_str(&bash("gh api repos/a/b/pulls/1"));
+        }
+        for _ in 0..tarball {
+            s.push_str(&bash("tar -tzf pkg.tgz"));
+        }
+        for _ in 0..interpreters {
+            s.push_str(&bash("python3 /work/scratch/probe.py"));
+        }
+        for _ in 0..scripts {
+            s.push_str(&write_file("/work/scratch/probe.sh"));
+        }
+        for _ in 0..harness {
+            s.push_str(&write_file("/work/harness/vite.config.js"));
+        }
+        // Every fixture run must issue at least one call, or it is not an active run at all.
+        if probes + gh_api + tarball + interpreters + scripts + harness == 0 {
+            s.push_str(&bash("true"));
+        }
+        s
+    }
+
+    /// The 2026-08-09 corpus, reproducing every column `corpus-report` reads off the live traces —
+    /// probes, raw `gh api`, tarball, interpreters, helper scripts and harness scaffold — for the
+    /// four runs that did work.
+    fn measured_corpus() -> Vec<CorpusRow> {
+        [
+            // run, probes, ghApi, tarball, interpreters, helperScripts, harnessScaffold
+            ("20260729T170004Z", 365, 48, 0, 32, 34, 11),
+            ("20260802T130003Z", 92, 85, 0, 42, 19, 7),
+            ("20260804T114433Z", 7, 0, 0, 0, 10, 7),
+            ("20260809T155241Z", 3, 0, 2, 3, 1, 0),
+        ]
+        .iter()
+        .map(|(run, p, g, t, i, helpers, h)| {
+            corpus_row(run, &trace(*p, *g, *t, *i, helpers - h, *h))
+        })
+        .collect()
+    }
+
+    /// The fixture IS the live corpus on every column, or nothing built on it means anything.
+    #[test]
+    fn the_fixture_reproduces_the_live_per_run_counts() {
+        let want = [
+            ("20260729T170004Z", 365, 48, 0, 32, 34, 11),
+            ("20260802T130003Z", 92, 85, 0, 42, 19, 7),
+            ("20260804T114433Z", 7, 0, 0, 0, 10, 7),
+            ("20260809T155241Z", 3, 0, 2, 3, 1, 0),
+        ];
+        for (row, (run, p, g, t, i, helpers, h)) in measured_corpus().iter().zip(want.iter()) {
+            assert_eq!(&row.run, run);
+            assert_eq!(row.probes, *p, "{run} probes");
+            assert_eq!(row.gh_api, *g, "{run} gh api");
+            assert_eq!(row.tarball, *t, "{run} tarball");
+            assert_eq!(row.interpreters, *i, "{run} interpreters");
+            assert_eq!(row.helper_scripts, *helpers, "{run} helper scripts");
+            assert_eq!(row.harness_scaffold, *h, "{run} harness scaffold");
+        }
+    }
+
+    fn metric<'a>(ms: &'a [CorpusMetric], key: &str) -> &'a CorpusMetric {
+        ms.iter().find(|m| m.key == key).expect("metric")
+    }
+
+    /// The answer the whole corpus step exists to produce, on the data it was derived from.
+    ///
+    /// The render-harness rebuild wins, and it wins over the two things that could plausibly have
+    /// beaten it: the tarball extraction (newer and more vivid, seen in ONE trace) and raw
+    /// `gh api` (a bigger peak, but not seen since 20260802).
+    #[test]
+    fn the_corpus_names_the_hand_roll_worth_tooling_next() {
+        let metrics = corpus_metrics(&measured_corpus());
+        let verdict = corpus_recommendation(&metrics);
+        let pick = verdict
+            .pick()
+            .expect("a corpus this rich recommends something");
+        assert_eq!(pick.key, "harnessScaffold");
+        // The recommendation cites the per-run counts it rests on, so a human can disagree with it.
+        assert_eq!(
+            pick.sightings,
+            vec![
+                ("20260729T170004Z".to_string(), 11),
+                ("20260802T130003Z".to_string(), 7),
+                ("20260804T114433Z".to_string(), 7),
+            ]
+        );
+        // The recency it is ranked on is the NEWEST sighting. Read off the oldest, `gh api` and
+        // the harness both date from 20260729 and the tie-break that separates them is gone.
+        assert_eq!(pick.last_seen.as_deref(), Some("20260804T114433Z"));
+        // The printed evidence, whole — a line that lost its counts, or ran them into the run id
+        // beside them, is a recommendation nobody can check.
+        assert_eq!(
+            corpus_sighting_line(pick),
+            "harness scaffold — 3 trace(s), last 20260804T114433Z, counts: \
+             20260729T170004Z 11, 20260802T130003Z 7, 20260804T114433Z 7"
+        );
+        // Beaten, in order: `gh api` on 2 traces, then the tarball on 1.
+        let runners_up: Vec<&str> = verdict.candidates[1..].iter().map(|m| m.key).collect();
+        assert_eq!(runners_up, vec!["ghApi", "tarball"]);
+        // Ruled out because a landed tool is already killing them.
+        let mut shrinking: Vec<&str> = verdict.shrinking.iter().map(|m| m.key).collect();
+        shrinking.sort_unstable();
+        assert_eq!(shrinking, vec!["helperScripts", "interpreters", "probes"]);
+    }
+
+    /// The exact mistake the corpus step exists to refuse. The tarball extraction is in the NEWEST
+    /// run, it is the most expensive single thing in it, and it is seen once — so a rule that
+    /// looked at the newest run, or at which metric is still rising, recommends it.
+    #[test]
+    fn the_newest_runs_most_visible_waste_does_not_win_on_novelty() {
+        let metrics = corpus_metrics(&measured_corpus());
+        let tarball = metric(&metrics, "tarball");
+        // It really is the shape that looks most alive: last seen newest, and at its peak.
+        assert_eq!(tarball.shape, DecayShape::Holding);
+        assert_eq!(tarball.last_seen.as_deref(), Some("20260809T155241Z"));
+        assert!(!tarball.shrinking());
+        // …and it still loses, on frequency, to something last seen five days earlier.
+        let pick = corpus_recommendation(&metrics).pick().unwrap().key;
+        assert_eq!(pick, "harnessScaffold");
+        assert!(tarball.runs_seen_in < metric(&metrics, "harnessScaffold").runs_seen_in);
+    }
+
+    /// The normalisation that makes the render harness legible: a hand-roll is shrinking when the
+    /// runs that STILL DO IT do less of it, not when the newest run had no occasion for it.
+    ///
+    /// Read off `latest` instead of `latest_sighting`, the harness scaffold's 11 → 7 → 7 → 0 reads
+    /// as a collapse to zero and the recommendation goes to the tarball — the documented wrong
+    /// answer.
+    #[test]
+    fn shrinking_is_read_over_the_runs_that_still_do_it() {
+        let metrics = corpus_metrics(&measured_corpus());
+        let harness = metric(&metrics, "harnessScaffold");
+        assert_eq!(harness.latest, 0, "the newest run had no screenshot item");
+        assert_eq!(harness.latest_sighting(), 7, "the runs that did, did seven");
+        assert!(!harness.shrinking());
+        // Against a genuine collapse: probes fell 365 -> 3 among the runs still making them.
+        let probes = metric(&metrics, "probes");
+        assert_eq!(probes.latest_sighting(), 3);
+        assert!(probes.shrinking());
+    }
+
+    /// A corpus with no evidence recommends NOTHING rather than the least-bad row. An empty
+    /// recommendation is a real answer — it says the retained window holds no case for a next tool.
+    #[test]
+    fn a_corpus_with_no_evidence_recommends_nothing() {
+        assert_eq!(corpus_recommendation(&corpus_metrics(&[])).pick(), None);
+        // Traces that ran but hand-rolled nothing: still no candidate, and nothing ruled out.
+        let quiet = vec![corpus_row("a", &trace(0, 0, 0, 0, 0, 0))];
+        let verdict = corpus_recommendation(&corpus_metrics(&quiet));
+        assert_eq!(verdict.pick(), None);
+        assert!(verdict.shrinking.is_empty());
+    }
+
+    /// Everything shrinking is a GOOD state and must not be reported as a recommendation: the
+    /// tools that landed are working, and the corpus has nothing to point at.
+    #[test]
+    fn a_corpus_where_everything_is_shrinking_recommends_nothing() {
+        let rows = vec![
+            corpus_row("a", &trace(100, 100, 100, 100, 100, 100)),
+            corpus_row("b", &trace(1, 1, 1, 1, 1, 1)),
+        ];
+        let verdict = corpus_recommendation(&corpus_metrics(&rows));
+        assert_eq!(verdict.pick(), None);
+        let mut shrinking: Vec<&str> = verdict.shrinking.iter().map(|m| m.key).collect();
+        shrinking.sort_unstable();
+        assert_eq!(
+            shrinking,
+            vec![
+                "ghApi",
+                "harnessScaffold",
+                "helperScripts",
+                "interpreters",
+                "probes",
+                "tarball"
+            ]
+        );
+    }
+
+    /// The ranking is TOTAL. A pick that depended on the order [`CORPUS_METRICS`] happens to
+    /// declare would move the day someone adds a metric above another.
+    #[test]
+    fn the_ranking_never_depends_on_declaration_order() {
+        let m = |key: &'static str, runs: usize, last: &str, peak: usize| CorpusMetric {
+            label: key,
+            key,
+            first: peak,
+            peak,
+            latest: peak,
+            runs_seen_in: runs,
+            last_seen: Some(last.to_string()),
+            shape: DecayShape::Holding,
+            sightings: (0..runs).map(|i| (format!("{last}-{i}"), peak)).collect(),
+        };
+        // Frequency first.
+        let by_runs = corpus_recommendation(&[m("a", 1, "r9", 900), m("b", 2, "r1", 1)]);
+        assert_eq!(by_runs.pick().unwrap().key, "b");
+        // Then recency.
+        let by_recency = corpus_recommendation(&[m("a", 2, "r1", 900), m("b", 2, "r9", 1)]);
+        assert_eq!(by_recency.pick().unwrap().key, "b");
+        // Then volume.
+        let by_peak = corpus_recommendation(&[m("a", 2, "r1", 1), m("b", 2, "r1", 900)]);
+        assert_eq!(by_peak.pick().unwrap().key, "b");
+        // Then the name, so a full tie is still deterministic — and the same answer whichever way
+        // the two are handed in.
+        let tie = corpus_recommendation(&[m("b", 2, "r1", 5), m("a", 2, "r1", 5)]);
+        assert_eq!(tie.pick().unwrap().key, "a");
+        let tie_reversed = corpus_recommendation(&[m("a", 2, "r1", 5), m("b", 2, "r1", 5)]);
+        assert_eq!(tie_reversed.pick().unwrap().key, "a");
+    }
+
+    /// `runs_seen_in` and `last_seen` are READ OFF the sightings, so the frequency a
+    /// recommendation ranks on, the recency it breaks ties on, and the counts it prints cannot
+    /// describe different runs.
+    #[test]
+    fn the_frequency_the_recency_and_the_counts_are_one_series() {
+        for m in corpus_metrics(&measured_corpus()) {
+            assert_eq!(m.runs_seen_in, m.sightings.len(), "{}", m.key);
+            assert_eq!(
+                m.last_seen,
+                m.sightings.last().map(|(r, _)| r.clone()),
+                "{}",
+                m.key
+            );
+            assert!(m.sightings.iter().all(|(_, n)| *n > 0), "{}", m.key);
+        }
+    }
+
+    // ── the forced run as a typed call ────────────────────────────────────────────────────────
+
+    #[test]
+    fn a_role_is_producer_or_vetter_and_nothing_else() {
+        assert_eq!(RunnerRole::parse("producer"), Ok(RunnerRole::Producer));
+        assert_eq!(RunnerRole::parse("vetter"), Ok(RunnerRole::Vetter));
+        for bad in ["Producer", "prod", "", "campaign-run", "human"] {
+            assert!(RunnerRole::parse(bad).is_err(), "{bad:?} was accepted");
+        }
+    }
+
+    /// The argv a human is trusting, exactly. `git+file://` is what makes the fast-forward
+    /// load-bearing — the runner is built from the install dir's own git HEAD, not its worktree —
+    /// so the dir in the URL and the dir that was pulled have to be the same one.
+    #[test]
+    fn the_plan_pulls_the_dir_it_then_builds_the_runner_from() {
+        let p = force_run_plan(RunnerRole::Producer, "/home/gildlab/issue-pr-cron");
+        assert_eq!(
+            p.fast_forward,
+            vec![
+                "git",
+                "-C",
+                "/home/gildlab/issue-pr-cron",
+                "pull",
+                "--ff-only"
+            ]
+        );
+        assert_eq!(
+            p.runner,
+            vec![
+                "nix",
+                "run",
+                "git+file:///home/gildlab/issue-pr-cron#campaign-run",
+                "--",
+                "--force"
+            ]
+        );
+        assert_eq!(p.log, "/home/gildlab/issue-pr-cron/campaign.log");
+        // The vetter differs in exactly two places, and a role can never reach the other runner.
+        let v = force_run_plan(RunnerRole::Vetter, "/home/gildlab/issue-pr-cron");
+        assert_eq!(v.fast_forward, p.fast_forward);
+        assert!(v.runner[2].ends_with("#review-run"));
+        assert_eq!(v.log, "/home/gildlab/issue-pr-cron/review.log");
+        assert_eq!(v.runner.last().unwrap(), "--force");
+    }
+
+    fn streamed(src: &str) -> String {
+        let mut out = Vec::new();
+        stream_run_output(std::io::BufReader::new(src.as_bytes()), &mut out);
+        String::from_utf8(out).expect("utf-8")
+    }
+
+    /// The child's stdout gets the SAME filter the log follower applies — one rule, so a run
+    /// watched through `force-run` and a run watched through `watch-run` cannot show a human
+    /// different things.
+    #[test]
+    fn the_forced_runs_own_stdout_is_filtered_by_the_same_rule() {
+        let out = streamed(concat!(
+            "2026-08-09T15:52:41Z FORCED past the DISABLED kill switch (--force)\n",
+            "  ok=gh,jq,forge,cargo\n",
+            "  · loading the pipeline state\n",
+            "  ▸ Bash  pr-review-report state-load --json\n",
+            "  {\"outage\":false}\n",
+            "  ⟹ SUCCESS: opened a PR\n",
+        ));
+        assert!(
+            out.contains("FORCED past the DISABLED kill switch"),
+            "{out}"
+        );
+        assert!(out.contains("loading the pipeline state"), "{out}");
+        assert!(out.contains("▸ Bash"), "{out}");
+        assert!(out.contains("⟹ SUCCESS"), "{out}");
+        assert!(!out.contains("ok=gh,jq"), "{out}");
+        assert!(!out.contains("outage"), "{out}");
+    }
+
+    /// Where this DIFFERS from `watch-run`, deliberately. The log follower stops on the run's END
+    /// line because nothing ever closes a file; a child's stdout closes when the run does, so
+    /// stopping early here would truncate a run that still had lines to write — and the exit code
+    /// that follows is the real answer anyway.
+    #[test]
+    fn the_forced_stream_does_not_stop_at_the_runs_end_line() {
+        let out = streamed(concat!(
+            "2026-08-09T16:06:26Z campaign run END (exit=0, trace=runs/x.jsonl)\n",
+            "2026-08-09T16:06:27Z campaign run ENDED EARLY: infrastructure down\n",
+        ));
+        assert!(out.contains("campaign run END "), "{out}");
+        assert!(
+            out.contains("ENDED EARLY"),
+            "the line after END was truncated:\n{out}"
+        );
+        assert!(watch_line_terminal(
+            "2026-08-09T16:06:26Z campaign run END (exit=0, trace=runs/x.jsonl)"
+        ));
+    }
+
+    /// A torn final line — the runner killed mid-write — is passed through if it is signal and
+    /// never panics the stream.
+    #[test]
+    fn a_stream_that_ends_mid_line_is_not_fatal() {
+        assert!(streamed("  · a killed run's last half-line").contains("half-line"));
+        assert_eq!(streamed(""), "");
     }
 }
