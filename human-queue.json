@@ -116,26 +116,18 @@
         "title": "Add \"remove and withdraw all\" option to order removal (#2024)"
       }
     ],
-    "ai:close-candidate": [
-      {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 392,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/392",
-        "title": "fix(component): sanitize href schemes and auto-add noopener in HrefButton"
-      },
-      {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 391,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/391",
-        "title": "fix(store): add callId guard to refreshBalances to discard stale results"
-      }
-    ],
     "ai:needs-work": [
       {
         "repo": "rainlanguage/rain.deploy",
         "number": 23,
         "url": "https://github.com/rainlanguage/rain.deploy/pull/23",
         "title": "chore(pragma): pin the three concrete .sol files to =0.8.25"
+      },
+      {
+        "repo": "rainlanguage/rain.solmem",
+        "number": 103,
+        "url": "https://github.com/rainlanguage/rain.solmem/pull/103",
+        "title": "Discriminate the underflow-reverts-via-gas guarantee instead of accepting any revert"
       },
       {
         "repo": "rainlanguage/rain.deploy",
@@ -735,12 +727,6 @@
       },
       {
         "repo": "rainlanguage/rain.solmem",
-        "number": 103,
-        "url": "https://github.com/rainlanguage/rain.solmem/pull/103",
-        "title": "Discriminate the underflow-reverts-via-gas guarantee instead of accepting any revert"
-      },
-      {
-        "repo": "rainlanguage/rain.solmem",
         "number": 102,
         "url": "https://github.com/rainlanguage/rain.solmem/pull/102",
         "title": "test: pin truncate's accept/reject boundary in both array libs"
@@ -983,20 +969,8 @@
         ]
       },
       "un-vetted": {
-        "count": 25,
+        "count": 22,
         "prs": [
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 266,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/266",
-            "title": "conflict is not a state: demote conflicted ai:ready to the needs-work send-back"
-          },
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 262,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/262",
-            "title": "observe-run: prescribe a backgrounded force-run, so a long run reads as a long run"
-          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 26,
@@ -1008,12 +982,6 @@
             "number": 104,
             "url": "https://github.com/rainlanguage/rain.solmem/pull/104",
             "title": "Derive array differential expectations from pre-call input snapshots"
-          },
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 103,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/103",
-            "title": "Discriminate the underflow-reverts-via-gas guarantee instead of accepting any revert"
           },
           {
             "repo": "rainlanguage/rain.solmem",
@@ -1140,13 +1108,19 @@
     },
     "vetter-verdicts": {
       "ai:needs-work": {
-        "count": 99,
+        "count": 100,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 23,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/23",
             "title": "chore(pragma): pin the three concrete .sol files to =0.8.25"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 103,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/103",
+            "title": "Discriminate the underflow-reverts-via-gas guarantee instead of accepting any revert"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -1863,27 +1837,8 @@
   ],
   "closeCandidateIssues": [],
   "closeCandidateUnvetted": [],
-  "closeCandidateUpheld": [
-    {
-      "repo": "cyclofinance/cyclo.site",
-      "number": 392,
-      "url": "https://github.com/cyclofinance/cyclo.site/pull/392",
-      "title": "fix(component): sanitize href schemes and auto-add noopener in HrefButton"
-    },
-    {
-      "repo": "cyclofinance/cyclo.site",
-      "number": 391,
-      "url": "https://github.com/cyclofinance/cyclo.site/pull/391",
-      "title": "fix(store): add callId guard to refreshBalances to discard stale results"
-    }
-  ],
+  "closeCandidateUpheld": [],
   "uncoveredIssues": [
-    {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 265,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/265",
-      "title": "Move review-prompt line 5's inline-cost exposition (941B) to mistake-journal.jsonl, leaving an LJ pointer"
-    },
     {
       "repo": "rainlanguage/issue-pr-cron",
       "number": 264,
@@ -3659,6 +3614,24 @@
       "number": 103,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/103",
       "title": "Prod deploy tests: enumerate from chain, fail CI on uncovered deployments"
+    },
+    {
+      "repo": "cyclofinance/cyclo.site",
+      "number": 326,
+      "url": "https://github.com/cyclofinance/cyclo.site/issues/326",
+      "title": "[A13-2] [LOW] HrefButton does not enforce rel=noopener for target=_blank"
+    },
+    {
+      "repo": "cyclofinance/cyclo.site",
+      "number": 323,
+      "url": "https://github.com/cyclofinance/cyclo.site/issues/323",
+      "title": "[A13-1] Adopt framework-native href/link safety (SvelteKit CSP + single sanitized <SafeLink>)"
+    },
+    {
+      "repo": "cyclofinance/cyclo.site",
+      "number": 319,
+      "url": "https://github.com/cyclofinance/cyclo.site/issues/319",
+      "title": "[A01-5] Migrate cyclo.site data-fetching to @tanstack/svelte-query (fixes refreshBalances race + status flicker)"
     },
     {
       "repo": "S01-Issuer/st0x.deploy",
@@ -5597,28 +5570,28 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 25,
+    "unvetted": 22,
     "blockedOn": 19,
     "ready": 0,
-    "needsWork": 99,
+    "needsWork": 100,
     "relink": 0,
     "design": 0,
     "blockedInfra": 0,
     "closeCandidateIssues": 0,
     "closeCandidateUnvetted": 0,
-    "closeCandidateUpheld": 2,
+    "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 145,
+    "totalProducerPrs": 141,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 615,
+    "uncoveredIssues": 617,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 776
+    "openIssues": 774
   },
   "ages": {
     "openIssues": {
-      "meanDays": 315.1,
-      "medianDays": 104.1,
+      "meanDays": 315.9,
+      "medianDays": 104.2,
       "oldestDays": 1659.7
     }
   }
