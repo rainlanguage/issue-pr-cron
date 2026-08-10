@@ -3,8 +3,9 @@
 //! NO RUN IS EVER STARTED HERE. A producer or vetter run costs real money and both `DISABLED`
 //! flags are in place; what these drive is the half of the subcommand that decides whether a run
 //! may start at all — the fast-forward, its refusal, and the argv that would follow — through
-//! `--no-run`. The streaming half is a pure function over bytes and is unit-tested beside its own
-//! code.
+//! `--no-run`. The one test that spawns for real does so against a PATH where `nix` does not
+//! exist, so the runner still cannot start. The streaming half is a pure function over bytes and
+//! is unit-tested beside its own code.
 //!
 //! The fixtures are REAL git repositories against `file://` remotes, for the reason the crate's
 //! flake already states about its clone tests: fast-forwardability is a property of git's own
@@ -93,6 +94,7 @@ fn force_run(args: &[&str], install: Option<&Path>) -> Output {
         // Never inherited: the whole point of the refusal below is that an install dir is named,
         // not guessed, so the test must not be handed one by the environment it runs in.
         .env_remove("INSTALL_DIR")
+        .env_remove("CRON_DIR")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_NOSYSTEM", "1");
     if let Some(dir) = install {
@@ -103,48 +105,30 @@ fn force_run(args: &[&str], install: Option<&Path>) -> Output {
 
 /// The install dir lands verbatim inside a `git+file://` URL, where a `..` component resolves
 /// against nothing — so what the plan names must be the CANONICAL path, not the string handed in.
+/// The same canonical dir rides to the runner as `CRON_DIR`: both runner scripts resolve
+/// `DIR="${CRON_DIR:-$PWD}"`, so a child without it inherits the caller's cwd instead — silently
+/// starting a PAID run against the wrong dir when that cwd is some checkout of this repo, and
+/// refusing at startup anywhere else (#264).
 #[test]
 fn the_dir_in_the_flake_ref_is_canonical() {
     let (install, _seed) = install_dir_with_remote("canonical");
     let indirect = install.join("..").join("install");
     let out = force_run(&["producer", "--no-run"], Some(&indirect));
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(out.status.code(), Some(0), "{stdout}");
-    let flake_ref = stdout
-        .lines()
-        .find(|l| l.contains("git+file://"))
-        .unwrap_or_else(|| panic!("no flake ref printed:\n{stdout}"));
-    assert!(!flake_ref.contains(".."), "{flake_ref}");
-    assert!(
-        flake_ref.contains(&format!(
-            "git+file://{}#campaign-run",
-            install.canonicalize().unwrap().display()
-        )),
-        "{flake_ref}"
-    );
-}
-
-/// Both runners resolve their install dir as `DIR="${CRON_DIR:-$PWD}"`, so a runner spawned
-/// without `CRON_DIR` reads the CALLER's working directory and refuses at startup — force-run only
-/// worked when invoked from inside the install dir, the one place the hand-typed invocation never
-/// needed help (#264). The plan carries the variable in its own argv via `env(1)`, canonical like
-/// the flake ref beside it, so the command previewed here is the command that runs.
-#[test]
-fn the_runner_is_handed_the_canonical_install_dir_as_cron_dir() {
-    let (install, _seed) = install_dir_with_remote("cron-dir");
-    let indirect = install.join("..").join("install");
-    let out = force_run(&["vetter", "--no-run"], Some(&indirect));
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(out.status.code(), Some(0), "{stdout}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stdout}{stderr}");
     let would_run = stdout
         .lines()
-        .find(|l| l.contains("would run:"))
-        .unwrap_or_else(|| panic!("no runner printed:\n{stdout}"));
+        .find(|l| l.contains("git+file://"))
+        .unwrap_or_else(|| panic!("no flake ref printed:\n{stdout}{stderr}"));
+    assert!(!would_run.contains(".."), "{would_run}");
+    let canonical = install.canonicalize().unwrap();
     assert!(
-        would_run.contains(&format!(
-            "env CRON_DIR={} nix run",
-            install.canonicalize().unwrap().display()
-        )),
+        would_run.contains(&format!("git+file://{}#campaign-run", canonical.display())),
+        "{would_run}"
+    );
+    assert!(
+        would_run.contains(&format!("CRON_DIR={} nix run", canonical.display())),
         "{would_run}"
     );
 }
@@ -157,13 +141,127 @@ fn the_install_dir_may_come_from_the_environment() {
     let out = Command::new(env!("CARGO_BIN_EXE_pr-review-report"))
         .args(["force-run", "vetter", "--no-run"])
         .env("INSTALL_DIR", &install)
+        .env_remove("CRON_DIR")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .output()
         .expect("spawn force-run");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(out.status.code(), Some(0), "{stdout}");
-    assert!(stdout.contains("#review-run"), "{stdout}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stdout}{stderr}");
+    assert!(stdout.contains("#review-run"), "{stdout}{stderr}");
+}
+
+/// `CRON_DIR` names the same dir under the convention every runner script resolves, so it works
+/// as the fallback too — after `INSTALL_DIR`, whose more specific name wins when both are set.
+/// The second invocation proves the precedence: its `CRON_DIR` points at a dir that does not
+/// exist, so were it read first, resolution would fail instead of exiting 0.
+#[test]
+fn cron_dir_is_an_install_dir_fallback_but_install_dir_wins() {
+    let (install, _seed) = install_dir_with_remote("cron-dir-env");
+    let run = |envs: &[(&str, &std::ffi::OsStr)]| {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_pr-review-report"));
+        cmd.args(["force-run", "vetter", "--no-run"])
+            .env_remove("INSTALL_DIR")
+            .env_remove("CRON_DIR")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1");
+        for (k, v) in envs {
+            cmd.env(k, v);
+        }
+        cmd.output().expect("spawn force-run")
+    };
+
+    let out = run(&[("CRON_DIR", install.as_os_str())]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stdout}{stderr}");
+    assert!(stdout.contains("#review-run"), "{stdout}{stderr}");
+
+    let bogus = install.join("not-here");
+    let out = run(&[
+        ("INSTALL_DIR", install.as_os_str()),
+        ("CRON_DIR", bogus.as_os_str()),
+    ]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stdout}{stderr}");
+    assert!(stdout.contains("#review-run"), "{stdout}{stderr}");
+}
+
+/// The plan exports its own `CRON_DIR` to the child, so an exported `CRON_DIR` that disagrees
+/// with the resolved dir loses — and the override is SAID, not silent. An exported `CRON_DIR`
+/// that is the same dir spelled differently is not a disagreement.
+#[test]
+fn an_overridden_ambient_cron_dir_is_said_out_loud() {
+    let (install, _seed) = install_dir_with_remote("cron-dir-note");
+    let elsewhere = tmp_dir("cron-dir-note-elsewhere");
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_pr-review-report"));
+    cmd.args(["force-run", "vetter", "--no-run"])
+        .arg("--install-dir")
+        .arg(&install)
+        .env_remove("INSTALL_DIR")
+        .env("CRON_DIR", &elsewhere)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    let out = cmd.output().expect("spawn force-run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("is overridden by CRON_DIR="),
+        "{stdout}{stderr}"
+    );
+
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_pr-review-report"));
+    cmd.args(["force-run", "vetter", "--no-run"])
+        .arg("--install-dir")
+        .arg(&install)
+        .env_remove("INSTALL_DIR")
+        .env("CRON_DIR", install.join("..").join("install"))
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    let out = cmd.output().expect("spawn force-run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stdout}{stderr}");
+    assert!(!stdout.contains("overridden"), "{stdout}{stderr}");
+}
+
+/// A runner that cannot START is the tool's own diagnostic — exit 2, the failure named — never a
+/// run result. Nothing ran, so nothing may exit looking like a run that ran and failed, and the
+/// `log:` line must not be the last word on a log the runner never wrote.
+#[test]
+fn a_runner_that_cannot_start_is_a_diagnostic_not_a_run_result() {
+    let (install, _seed) = install_dir_with_remote("no-nix");
+    // A PATH holding git alone: the fast-forward works, and `nix` cannot resolve — so the spawn
+    // fails and no run can start.
+    let bin = tmp_dir("no-nix-bin");
+    let real_git = std::env::var_os("PATH")
+        .into_iter()
+        .flat_map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
+        .map(|d| d.join("git"))
+        .find(|g| g.is_file())
+        .expect("git on PATH");
+    std::os::unix::fs::symlink(real_git, bin.join("git")).expect("symlink git");
+
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_pr-review-report"));
+    cmd.args(["force-run", "vetter"])
+        .arg("--install-dir")
+        .arg(&install)
+        .env("PATH", &bin)
+        .env_remove("INSTALL_DIR")
+        .env_remove("CRON_DIR")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    let out = cmd.output().expect("spawn force-run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stdout}{stderr}");
+    assert!(stderr.contains("cannot start"), "{stdout}{stderr}");
+    // It got PAST the fast-forward: the failure is the runner's absence, not the checkout's
+    // state.
+    assert!(stdout.contains("already current at"), "{stdout}{stderr}");
 }
 
 /// An EMPTY `INSTALL_DIR` is not an install dir. Taken literally it canonicalises to the process's
