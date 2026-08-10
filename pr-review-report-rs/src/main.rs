@@ -36788,6 +36788,16 @@ fn is_interpreter_call(cmd: &str) -> bool {
     })
 }
 
+/// PURE: a path inside a `vet-*` audit checkout — [`VET_CLONE_PREFIX`] matched per path
+/// component, so `/w/vet-cyclo.site-394/src/App.svelte` is one and a directory named
+/// `velvet-x` is not. A bare `vet-` component names no clone and does not match.
+fn is_vet_clone_path(path: &str) -> bool {
+    path.split('/').any(|c| {
+        c.strip_prefix(VET_CLONE_PREFIX)
+            .is_some_and(|rest| !rest.is_empty())
+    })
+}
+
 /// One retained trace's hand-roll counts. Every count is per TOOL CALL — one `Bash` block that
 /// probes twice counts once, because what a run pays for is the call.
 #[derive(Debug, Default, PartialEq, Clone)]
@@ -36800,6 +36810,12 @@ struct CorpusRow {
     interpreters: usize,
     helper_scripts: usize,
     harness_scaffold: usize,
+    /// Main-thread `Read`/`Grep`/`Glob` calls aimed into a `vet-*` checkout — the dispatcher
+    /// re-reading source the fan-out pays a `pr-auditor` to read (#269: 37 Reads + 18 Greps +
+    /// 10 Globs of ~200k bytes in one run's main loop, on the same files its three dispatched
+    /// auditors were auditing). A dispatched agent's events carry `parent_tool_use_id` and its
+    /// reads are where source contact belongs, so they never count here.
+    dispatcher_source: usize,
 }
 
 impl CorpusRow {
@@ -36831,6 +36847,13 @@ fn corpus_row(run: &str, content: &str) -> CorpusRow {
         else {
             continue;
         };
+        // `parent_tool_use_id` is null on the main thread and a dispatching `Agent` tool_use's id
+        // on a sub-agent's events — the one discriminant between the dispatcher's own source
+        // contact and the pr-auditor reads that belong off the main loop.
+        let main_thread = ev
+            .get("parent_tool_use_id")
+            .and_then(Value::as_str)
+            .is_none();
         for b in blocks {
             if b.get("type").and_then(|t| t.as_str()) != Some("tool_use") {
                 continue;
@@ -36868,6 +36891,16 @@ fn corpus_row(run: &str, content: &str) -> CorpusRow {
                     }
                     if is_interpreter_call(cmd) {
                         row.interpreters += 1;
+                    }
+                }
+                "Read" | "Grep" | "Glob" if main_thread => {
+                    let key = if name == "Read" { "file_path" } else { "path" };
+                    let path = input
+                        .and_then(|i| i.get(key))
+                        .and_then(|p| p.as_str())
+                        .unwrap_or("");
+                    if is_vet_clone_path(path) {
+                        row.dispatcher_source += 1;
                     }
                 }
                 _ => {}
@@ -36936,6 +36969,9 @@ const CORPUS_METRICS: &[(&str, &str, fn(&CorpusRow) -> usize)] = &[
     ("helper scripts", "helperScripts", |r| r.helper_scripts),
     ("harness scaffold", "harnessScaffold", |r| {
         r.harness_scaffold
+    }),
+    ("dispatcher source", "dispatcherSource", |r| {
+        r.dispatcher_source
     }),
 ];
 
@@ -73927,12 +73963,84 @@ mod observation_run_tests {
                 "tarball",
                 "interpreters",
                 "helperScripts",
-                "harnessScaffold"
+                "harnessScaffold",
+                "dispatcherSource"
             ]
         );
         let rows = vec![corpus_row("a", &bash("gh api repos/a/b"))];
         let read: Vec<&str> = corpus_metrics(&rows).iter().map(|m| m.key).collect();
         assert_eq!(read, keys, "the summary reads exactly the printed set");
+    }
+
+    /// One `Read`/`Grep`/`Glob` tool call, on the main thread or tagged as a dispatched agent's.
+    fn source_read(name: &str, path: &str, parent: Option<&str>) -> String {
+        let key = if name == "Read" { "file_path" } else { "path" };
+        let mut ev = json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","name":name,"input":{key:path}}]}});
+        if let Some(p) = parent {
+            ev["parent_tool_use_id"] = json!(p);
+        }
+        format!("{ev}\n")
+    }
+
+    /// The dispatcher-source count is main-thread source contact with a `vet-*` checkout and
+    /// nothing else: the same read tagged as a dispatched agent's is the fan-out WORKING, and a
+    /// main-thread read outside a checkout is not a re-audit.
+    #[test]
+    fn dispatcher_source_counts_main_thread_reads_into_vet_clones_only() {
+        let mut s = String::new();
+        s.push_str(&source_read(
+            "Read",
+            "/w/vet-cyclo.site-394/src/lib/components/ReceiptsTable.svelte",
+            None,
+        ));
+        s.push_str(&source_read("Grep", "/w/vet-cyclo.site-395", None));
+        s.push_str(&source_read("Glob", "/w/vet-cyclo.site-398/src", None));
+        s.push_str(&source_read(
+            "Read",
+            "/w/vet-cyclo.site-394/src/x.ts",
+            Some("toolu_dispatch_1"),
+        ));
+        s.push_str(&source_read("Read", "/w/install/review-prompt.txt", None));
+        // A Grep with no `path` names no tree; nothing attributable is counted.
+        s.push_str(&format!(
+            "{}\n",
+            json!({"type":"assistant","message":{"content":[
+                {"type":"tool_use","name":"Grep","input":{"pattern":"vet-"}}]}})
+        ));
+        let row = corpus_row("r", &s);
+        assert_eq!(row.dispatcher_source, 3);
+        assert_eq!(row.tool_calls, 6, "every call still counts as a call");
+        // And the metric reads that same count off the row — the table, summary and JSON all go
+        // through the CORPUS_METRICS closure, so a closure that stops reading the field would
+        // silently zero the report while this row still counted.
+        let metrics = corpus_metrics(&[row]);
+        let m = metrics
+            .iter()
+            .find(|m| m.key == "dispatcherSource")
+            .unwrap();
+        assert_eq!((m.first, m.peak, m.latest, m.runs_seen_in), (3, 3, 3, 1));
+        assert_eq!(m.shape, DecayShape::Holding);
+    }
+
+    /// The `vet-*` match is per path component, not a substring scan.
+    #[test]
+    fn a_vet_clone_path_is_matched_per_component() {
+        for p in [
+            "/w/vet-cyclo.site-394/src/App.svelte",
+            "vet-a-1",
+            "/x/vet-r-12/.git/HEAD",
+        ] {
+            assert!(is_vet_clone_path(p), "missed {p:?}");
+        }
+        for p in [
+            "/w/velvet-crate/src/lib.rs",
+            "/w/install/vet-",
+            "/w/covet-1/x",
+            "",
+        ] {
+            assert!(!is_vet_clone_path(p), "counted {p:?}");
+        }
     }
 }
 
