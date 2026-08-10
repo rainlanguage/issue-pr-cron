@@ -329,6 +329,12 @@
       },
       {
         "repo": "cyclofinance/cyclo.site",
+        "number": 398,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/398",
+        "title": "fix(component): wire validators and fix disableDeploy gates in DsfStrategy"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
         "number": 396,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/396",
         "title": "fix(component): switch wallet before committing activeNetworkKey in NetworkSelector"
@@ -338,6 +344,12 @@
         "number": 395,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/395",
         "title": "fix(component): fix NavButtons active-route detection; remove spurious toggleMenu from desktop"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 394,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/394",
+        "title": "fix(component): guard zero/invalid tokenId in ReceiptsTable; use BigInt exponentiation"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -804,18 +816,6 @@
         "title": "fix: getCyTokenUsdPrice returns null on error instead of 0n (#317)"
       },
       {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 398,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/398",
-        "title": "fix(component): wire validators and fix disableDeploy gates in DsfStrategy"
-      },
-      {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 394,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/394",
-        "title": "fix(component): guard zero/invalid tokenId in ReceiptsTable; use BigInt exponentiation"
-      },
-      {
         "repo": "rainlanguage/rain.flare",
         "number": 196,
         "url": "https://github.com/rainlanguage/rain.flare/pull/196",
@@ -969,8 +969,26 @@
         ]
       },
       "un-vetted": {
-        "count": 22,
+        "count": 23,
         "prs": [
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 272,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/272",
+            "title": "vetter dispatcher never touches PR source; corpus-report counts dispatcher-source reads"
+          },
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 271,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/271",
+            "title": "pr_context: typed mechanical gates + max_diff_bytes=0 dispatcher view"
+          },
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 268,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/268",
+            "title": "force-run: hand the runner the install dir as CRON_DIR"
+          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 26,
@@ -1062,18 +1080,6 @@
             "title": "fix: getCyTokenUsdPrice returns null on error instead of 0n (#317)"
           },
           {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 398,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/398",
-            "title": "fix(component): wire validators and fix disableDeploy gates in DsfStrategy"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 394,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/394",
-            "title": "fix(component): guard zero/invalid tokenId in ReceiptsTable; use BigInt exponentiation"
-          },
-          {
             "repo": "rainlanguage/rain.flare",
             "number": 196,
             "url": "https://github.com/rainlanguage/rain.flare/pull/196",
@@ -1108,7 +1114,7 @@
     },
     "vetter-verdicts": {
       "ai:needs-work": {
-        "count": 100,
+        "count": 102,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -1322,6 +1328,12 @@
           },
           {
             "repo": "cyclofinance/cyclo.site",
+            "number": 398,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/398",
+            "title": "fix(component): wire validators and fix disableDeploy gates in DsfStrategy"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
             "number": 396,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/396",
             "title": "fix(component): switch wallet before committing activeNetworkKey in NetworkSelector"
@@ -1331,6 +1343,12 @@
             "number": 395,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/395",
             "title": "fix(component): fix NavButtons active-route detection; remove spurious toggleMenu from desktop"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 394,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/394",
+            "title": "fix(component): guard zero/invalid tokenId in ReceiptsTable; use BigInt exponentiation"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1840,10 +1858,10 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 264,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/264",
-      "title": "force-run does not propagate --install-dir into CRON_DIR, so the runner refuses unless invoked from inside the install dir"
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 297,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/297",
+      "title": "Nothing verifies the token tables are COMPLETE — enumerate deployments from chain, not from the pins"
     },
     {
       "repo": "rainlanguage/issue-pr-cron",
@@ -5570,10 +5588,10 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 22,
+    "unvetted": 23,
     "blockedOn": 19,
     "ready": 0,
-    "needsWork": 100,
+    "needsWork": 102,
     "relink": 0,
     "design": 0,
     "blockedInfra": 0,
@@ -5581,18 +5599,18 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 141,
+    "totalProducerPrs": 144,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 617,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 774
+    "openIssues": 777
   },
   "ages": {
     "openIssues": {
-      "meanDays": 315.9,
+      "meanDays": 314.8,
       "medianDays": 104.2,
-      "oldestDays": 1659.7
+      "oldestDays": 1659.8
     }
   }
 }

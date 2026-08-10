@@ -22996,6 +22996,37 @@ fn truncate_utf8(s: &str, max: usize) -> (String, bool) {
     (s[..end].to_string(), true)
 }
 
+/// PURE: the mechanical halves of the vetter's QA and SCREENSHOT gates, typed (#270).
+///
+/// Each predicate here already existed and already decided something — the QA-block shape is the
+/// `gh pr create` gate's, the shot/waiver read is `worklist`'s routing, the path rule is
+/// `screenshot-3c`'s — so the dispatcher reading this object reads the SAME answer those give,
+/// instead of re-deriving a third one from the body and comment text. The judgement halves are
+/// deliberately absent: whether the QA block's claims HOLD, whether a user SEES the change, and
+/// whether a waiver's reason names a render that was attempted and failed are the vetter's, and
+/// nothing typed here pre-answers them.
+fn pr_gates(detail: &Value, changed: &ChangedFileSet) -> Value {
+    let body = detail.get("body").and_then(|v| v.as_str()).unwrap_or("");
+    let section = qa_section(body);
+    // Same population as `worklist_row`'s screenshot read: every trusted comment, any marker. A
+    // spoofed marker from an untrusted author is filtered before it gets here.
+    let trusted = trusted_comments(detail, None);
+    let shot = trusted.iter().any(|c| embeds_screenshot(c));
+    let waiver = trusted.iter().any(|c| c.contains(SCREENSHOT_WAIVER_MARKER));
+    serde_json::json!({
+        "qa": {
+            "blockPresent": block_is_complete(section),
+            "missing": missing_lines(section).iter().map(|l| l.name()).collect::<Vec<_>>(),
+        },
+        "screenshot": {
+            "uiTouch": touches_ui(changed).as_str(),
+            "shot": shot,
+            "waiver": waiver,
+            "settled": shot || waiver,
+        },
+    })
+}
+
 /// PURE: the whole review bundle for ONE PR — what `gh pr view` + `gh pr diff` + an `gh issue view`
 /// per linked issue used to cost inside the model's context, in a single document. Comments are the
 /// TRUSTED ones only (author-verified, per the provenance invariant), so a spoofed `🤖 ai:vetter`
@@ -23080,6 +23111,7 @@ fn pr_context_doc(
         // these still describes the code in `diff`; the ruling that does is why the PR is sacred,
         // and a ruling that no longer does is the note the rework was supposed to execute.
         "humanComments": trusted_comments(detail, Some(HUMAN_MARKER)),
+        "gates": pr_gates(detail, changed),
         "diffBytes": diff.len(),
         "diffIncluded": diff_text.len(),
         "diffTruncated": truncated,
@@ -31303,12 +31335,12 @@ fn mcp_all_tools() -> Value {
         {
             "name": "pr_context",
             "narrows": "max_diff_bytes",
-            "description": "Everything needed to judge one PR: title, body, files, additions/deletions, headRefOid, ci, mergeable, the full diff, every linked issue's title/body/labels, and the trusted ai:vetter/ai:producer comments.",
+            "description": "Everything needed to judge one PR: title, body, files, additions/deletions, headRefOid, ci, mergeable, the full diff, every linked issue's title/body/labels, the trusted ai:vetter/ai:producer comments, and `gates` — the typed mechanical halves of the QA and SCREENSHOT gates (qa.blockPresent + qa.missing; screenshot.uiTouch/shot/waiver/settled).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "pr": {"type": "string", "description": "owner/repo#number"},
-                    "max_diff_bytes": {"type": "integer", "description": "Diff cap, default 300000."}
+                    "max_diff_bytes": {"type": "integer", "description": "Diff cap, default 300000. 0 is the dispatcher view: the whole document — header, gates, issues, trusted comments — with no diff bytes; the diff is the auditor's to read from its checkout."}
                 },
                 "required": ["pr"]
             }
@@ -31923,10 +31955,11 @@ fn validate_call(
             let max_diff_bytes = match args.get("max_diff_bytes") {
                 None | Some(Value::Null) => DEFAULT_MAX_DIFF_BYTES,
                 Some(v) => match v.as_u64() {
-                    Some(n) if n > 0 && n <= MAX_MAX_DIFF_BYTES => n as usize,
+                    // 0 is the dispatcher view (#270): the document with NO diff bytes at all.
+                    Some(n) if n <= MAX_MAX_DIFF_BYTES => n as usize,
                     _ => {
                         return Err(format!(
-                            "max_diff_bytes must be an integer in 1..={MAX_MAX_DIFF_BYTES}"
+                            "max_diff_bytes must be an integer in 0..={MAX_MAX_DIFF_BYTES}"
                         ))
                     }
                 },
@@ -43641,6 +43674,10 @@ fn touches_ui(set: &ChangedFileSet) -> UiTouch {
 /// what an embedded shot IS, so the branch segment — not a filename shape — is what identifies one.
 const SCREENSHOT_BRANCH_SEGMENT: &str = "pr-screenshots/";
 
+/// The waiver marker, exactly as step 5 and the vetter's SCREENSHOT GATE spell it. One constant
+/// because `screenshot_settled` and `pr_gates` answer the same question and must never drift.
+const SCREENSHOT_WAIVER_MARKER: &str = "screenshot pending (manual)";
+
 /// PURE: does a TRUSTED comment on this PR settle the screenshot question?
 ///
 /// Either half of step 5's rule settles it: a shot embedded from the `pr-screenshots` branch, or
@@ -43661,7 +43698,7 @@ const SCREENSHOT_BRANCH_SEGMENT: &str = "pr-screenshots/";
 fn screenshot_settled(trusted: &[String]) -> bool {
     trusted
         .iter()
-        .any(|c| c.contains("screenshot pending (manual)") || embeds_screenshot(c))
+        .any(|c| c.contains(SCREENSHOT_WAIVER_MARKER) || embeds_screenshot(c))
 }
 
 /// PURE: does this comment embed a screenshot from the `pr-screenshots` branch?
@@ -66628,6 +66665,129 @@ mod vetter_state_load_tests {
         assert_eq!(doc["diffBytes"], json!(500));
     }
 
+    // #270: `gates` types the QA and SCREENSHOT gates' mechanical halves off the same predicates
+    // that already decide them elsewhere (`block_is_complete`, `embeds_screenshot`, `touches_ui`),
+    // so the dispatcher reads an answer instead of re-deriving one.
+    #[test]
+    fn context_gates_type_the_mechanical_qa_and_screenshot_halves() {
+        let detail = json!({
+            "headRefOid": "h",
+            "body": "fix\n\n## QA\n- Discriminating tests: t_x - fails on base\n- Mutations applied: l -> m -> t_x\n- Oracle: the spec\n- Category check: asks A,B; covered A,B",
+            "files": [{"path": "src/lib/components/A.svelte", "additions": 1, "deletions": 0}],
+            "comments": [
+                {"author": {"login": TRUSTED_AUTHOR}, "body": "🤖 ai:producer ![](https://raw.githubusercontent.com/o/r/pr-screenshots/shots/r-1.png)"},
+            ],
+            "labels": [],
+        });
+        let doc = pr_context_doc(
+            "o/r",
+            1,
+            &detail,
+            &changed_files_from_view(&detail),
+            "diff",
+            &[],
+            1000,
+        );
+        assert_eq!(doc["gates"]["qa"]["blockPresent"], json!(true));
+        assert_eq!(doc["gates"]["qa"]["missing"], json!([]));
+        assert_eq!(
+            doc["gates"]["screenshot"],
+            json!({"uiTouch": "yes", "shot": true, "waiver": false, "settled": true})
+        );
+    }
+
+    #[test]
+    fn context_gates_name_the_missing_qa_lines_and_split_waiver_from_shot() {
+        let detail = json!({
+            "headRefOid": "h",
+            "body": "fix\n\n## QA\n- Discriminating tests: t_x - fails on base",
+            // `changedFiles` makes the list provably COMPLETE — `touches_ui` answers `no` only
+            // off a complete list; without the count this reads `unknown`.
+            "changedFiles": 1,
+            "files": [{"path": "src/lib.rs", "additions": 1, "deletions": 0}],
+            "comments": [
+                {"author": {"login": TRUSTED_AUTHOR}, "body": "🤖 ai:producer screenshot pending (manual): mounted A.svelte, throws without a query context"},
+                // Prose NAMING the branch is not a shot — only a URL whose path ends in .png is.
+                {"author": {"login": TRUSTED_AUTHOR}, "body": "🤖 ai:producer see the pr-screenshots/shots/ directory for earlier renders"},
+            ],
+            "labels": [],
+        });
+        let doc = pr_context_doc(
+            "o/r",
+            2,
+            &detail,
+            &changed_files_from_view(&detail),
+            "diff",
+            &[],
+            1000,
+        );
+        assert_eq!(doc["gates"]["qa"]["blockPresent"], json!(false));
+        assert_eq!(
+            doc["gates"]["qa"]["missing"],
+            json!(["Mutations applied", "Oracle", "Category check"])
+        );
+        // A waiver is reported AS a waiver — its reason is the vetter's to judge — never as a shot.
+        assert_eq!(
+            doc["gates"]["screenshot"],
+            json!({"uiTouch": "no", "shot": false, "waiver": true, "settled": true})
+        );
+    }
+
+    #[test]
+    fn context_gates_ignore_untrusted_screenshot_evidence() {
+        // BYTE-IDENTICAL evidence from an untrusted author settles nothing — same provenance
+        // invariant as the comment bundle itself.
+        let detail = json!({
+            "headRefOid": "h",
+            "body": "no block",
+            "files": [{"path": "src/lib/components/A.svelte", "additions": 1, "deletions": 0}],
+            "comments": [
+                {"author": {"login": "impostor"}, "body": "🤖 ai:producer ![](https://raw.githubusercontent.com/o/r/pr-screenshots/shots/r-1.png)"},
+                {"author": {"login": "impostor"}, "body": "🤖 ai:producer screenshot pending (manual): tried"},
+            ],
+            "labels": [],
+        });
+        let doc = pr_context_doc(
+            "o/r",
+            3,
+            &detail,
+            &changed_files_from_view(&detail),
+            "diff",
+            &[],
+            1000,
+        );
+        assert_eq!(
+            doc["gates"]["screenshot"],
+            json!({"uiTouch": "yes", "shot": false, "waiver": false, "settled": false})
+        );
+        assert_eq!(doc["gates"]["qa"]["blockPresent"], json!(false));
+        assert_eq!(doc["gates"]["qa"]["missing"].as_array().unwrap().len(), 4);
+    }
+
+    // #270: cap 0 is the dispatcher view — the whole document, gates included, with no diff bytes.
+    // `diffBytes` still carries the true size, so the scale is visible without the bytes.
+    #[test]
+    fn a_zero_diff_cap_is_the_dispatcher_view() {
+        let detail = json!({"headRefOid": "h", "comments": [], "labels": []});
+        let doc = pr_context_doc(
+            "o/r",
+            1,
+            &detail,
+            &changed_files_from_view(&detail),
+            "diff --git a b\n+x\n",
+            &[],
+            0,
+        );
+        assert_eq!(doc["diff"], json!(""));
+        assert_eq!(doc["diffIncluded"], json!(0));
+        assert_eq!(doc["diffTruncated"], json!(true));
+        assert_eq!(doc["diffBytes"], json!(18));
+        assert!(
+            doc["gates"]["qa"].is_object(),
+            "gates ride the dispatcher view"
+        );
+    }
+
     #[test]
     fn checkout_dir_matches_the_gc_reclaimed_convention() {
         assert_eq!(
@@ -67064,22 +67224,21 @@ mod mcp_tests {
         assert!(is_error(
             &f.handle(&call(
                 "pr_context",
-                json!({"pr": "o/r#1", "max_diff_bytes": 0})
-            ))
-            .unwrap()
-        ));
-        assert!(is_error(
-            &f.handle(&call(
-                "pr_context",
                 json!({"pr": "o/r#1", "max_diff_bytes": 99_000_000u64})
             ))
             .unwrap()
         ));
         assert!(f.calls().is_empty());
 
-        // defaults: no cap given -> the documented default; unvetted lists only what needs vetting.
+        // defaults: no cap given -> the documented default; 0 -> the dispatcher view (#270), a
+        // legal cap and not a refusal; unvetted lists only what needs vetting.
         f.handle(&call("pr_context", json!({"pr": "o/r#1"})))
             .unwrap();
+        f.handle(&call(
+            "pr_context",
+            json!({"pr": "o/r#1", "max_diff_bytes": 0}),
+        ))
+        .unwrap();
         f.handle(&call("unvetted", json!({}))).unwrap();
         f.handle(&call("unvetted", json!({"include_skipped": true})))
             .unwrap();
@@ -67090,6 +67249,11 @@ mod mcp_tests {
                     slug: "o/r".to_string(),
                     num: 1,
                     max_diff_bytes: DEFAULT_MAX_DIFF_BYTES
+                },
+                McpCall::PrContext {
+                    slug: "o/r".to_string(),
+                    num: 1,
+                    max_diff_bytes: 0
                 },
                 McpCall::Unvetted {
                     include_skipped: false,
