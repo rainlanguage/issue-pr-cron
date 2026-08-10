@@ -1865,6 +1865,12 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/issue-pr-cron",
+      "number": 256,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/256",
+      "title": "Journal LLM mistakes separately from the prompt, so rules can be deleted and the prompt can be A/B'd"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
       "number": 239,
       "url": "https://github.com/rainlanguage/issue-pr-cron/issues/239",
       "title": "/ndd should relabel obvious close-candidates to ai:close-candidate, not ask a design question"
@@ -5583,15 +5589,15 @@
     "leaks": 0,
     "totalProducerPrs": 143,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 613,
+    "uncoveredIssues": 614,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 773
+    "openIssues": 774
   },
   "ages": {
     "openIssues": {
-      "meanDays": 316.1,
-      "medianDays": 103.9,
+      "meanDays": 315.7,
+      "medianDays": 104.0,
       "oldestDays": 1659.5
     }
   }
