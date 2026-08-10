@@ -5902,6 +5902,14 @@ fn pr_refs_in(text: &str) -> Vec<String> {
 /// condition here: an invocation that declares no scope, or the wrong one, still HAPPENED, and the
 /// two facts are refused by two different gates with two different repairs. Folding the scope into
 /// this predicate would report "the skill was never invoked" to a vetter that invoked it.
+///
+/// WHO made the call is likewise not a condition, and since #257 it is load-bearing that it is not.
+/// The harness writes a DISPATCHED sub-agent's tool calls into the same stream-json trace as the
+/// main loop's, distinguished only by a `parent_tool_use_id` and a `subagent_type` this predicate
+/// never reads, so an `audit` invocation made inside the vetter's `pr-auditor` credits its PR
+/// exactly as an inline one does. That is what lets the vetter move the audit's source reads out of
+/// its own context without losing its verdict — adding a filter on either key here would refuse
+/// every verdict on every fanned-out run.
 fn lens_invocation(ev: &Value) -> Option<LensInvocation> {
     let content = ev.get("message")?.get("content")?.as_array()?;
     for block in content {
@@ -8628,15 +8636,15 @@ struct DeclaredAsymmetry {
 /// `closure-surface` fails on any difference that is not in this table — and equally on any entry
 /// here that is no longer true, so the declaration cannot outlive the fact and quietly license a
 /// real divergence later.
+///
+/// `jq` used to be the first entry here, declared one-sided because "the producer's model shells
+/// out to jq and the vetter has no Bash". #257 made it SYMMETRIC and the entry had to go: both
+/// runners now build a `--agents` brief with it, and both do so from the SCRIPT rather than from a
+/// model. That reading is what makes the symmetry safe rather than a widened grant — the vetter's
+/// model still cannot invoke jq, because `Bash` is denied outright, so the binary in its closure
+/// states a capability of the RUNNER and none of the role.
 const DECLARED_ASYMMETRY: &[DeclaredAsymmetry] = &[
-    DeclaredAsymmetry {
-        bin: "jq",
-        only_in: "campaign-run",
-        why:
-            "the PRODUCER's model shells out to jq from its Bash tool; the vetter has no Bash and \
-              cannot invoke anything at all (flake.nix)",
-    },
-    // The #251 render path. All six are one-sided for the SAME reason jq is, and it is a fact
+    // The #251 render path. All six are one-sided for the same KIND of reason, and it is a fact
     // about the role rather than an oversight: the vetter denies `Bash` outright
     // (review-settings.json), so it cannot exec a renderer even if one were in its closure — and
     // a closure that carried one would advertise a capability the vetter does not have.
@@ -51779,6 +51787,292 @@ mod settings_tests {
         );
     }
 
+    /// The auditor type the VETTER's runner registers: the sole key of its `--agents` object.
+    /// Read out of the file for [`worker_type_defined`]'s reason — a rename touching only one side
+    /// leaves the run dispatching a type the harness never registered, and `Agent` with an unknown
+    /// `subagent_type` is a failed dispatch rather than an unbriefed one.
+    fn auditor_type_defined(sh: &str) -> Option<String> {
+        type_between(sh, "'{\"", "\":{\"description\"")
+    }
+
+    /// #257: the vetter had no fan-out at all, so every source read its audit lens took stayed in
+    /// the one context re-read on every turn — 223,804 cached tokens per call against the
+    /// producer's ~30,000, for FEWER tool calls. The channel is the producer's: a `--agents` type
+    /// whose prompt the harness loads straight into each dispatched auditor, so the main loop pays
+    /// none of those bytes. Assert the whole chain, because any one link missing degrades silently
+    /// into an unbriefed auditor or no dispatch at all: the brief file is read as raw text, it
+    /// becomes the `prompt` of a defined type, that JSON reaches `claude`, and the type is the one
+    /// `review-prompt.txt` actually dispatches.
+    #[test]
+    fn the_vetter_runner_hands_every_dispatched_auditor_the_standing_brief() {
+        let (Some(sh), Some(prompt)) = (
+            repo_root_text("review-run.sh"),
+            repo_root_text("review-prompt.txt"),
+        ) else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            sh.contains("review-auditor-prompt.txt"),
+            "the runner must build the auditor brief from review-auditor-prompt.txt"
+        );
+        assert!(
+            repo_root_text("review-auditor-prompt.txt").is_some(),
+            "review-run.sh names review-auditor-prompt.txt, which must exist"
+        );
+        assert!(
+            sh.contains("--rawfile brief"),
+            "the brief must be read as RAW TEXT into the JSON — hand-escaping prompt prose into a \
+             JSON string literal is what keeps it unreadable and undiffable"
+        );
+        assert!(
+            sh.contains("--agents \"$AUDITOR_JSON\""),
+            "the built brief must reach `claude` — without the flag the JSON is computed and \
+             thrown away, and the vetter has no type to dispatch at all"
+        );
+        let (Some(in_runner), Some(in_prompt)) =
+            (auditor_type_defined(&sh), worker_type_dispatched(&prompt))
+        else {
+            panic!(
+                "both the vetter runner's `--agents` JSON and review-prompt.txt must name the \
+                 auditor type; a type defined but never dispatched briefs nobody"
+            );
+        };
+        assert_eq!(
+            in_runner, in_prompt,
+            "the type the runner DEFINES and the type the prompt DISPATCHES must be the same \
+             string: an `Agent` call naming an unregistered type is a failed dispatch"
+        );
+    }
+
+    /// A brief that cannot be built must END the vetter run, for campaign-run.sh's reason: dispatch
+    /// would still work without it, and an unbriefed auditor is exactly the thing nothing in the
+    /// trace would report. The condition is CONTENT — a whitespace-only file passes `-f` and `-s`
+    /// and then builds valid JSON carrying an empty prompt, registering the type and briefing
+    /// nobody.
+    #[test]
+    fn a_missing_auditor_brief_aborts_the_vetter_run_rather_than_dispatching_without_one() {
+        let Some(sh) = repo_root_text("review-run.sh") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            sh.contains("no review-auditor-prompt.txt in"),
+            "an absent brief must abort with a message naming the file, not fall through"
+        );
+        assert!(
+            sh.contains("grep -q '[^[:space:]]' \"$DIR/review-auditor-prompt.txt\""),
+            "the guard's condition must be CONTENT, not existence"
+        );
+        assert!(
+            sh.contains("could not build the auditor brief"),
+            "a jq failure must abort too — an empty --agents value registers no type at all"
+        );
+    }
+
+    /// THE CONSTRAINT THAT COMES FROM WHAT THE VETTER IS: a dispatched auditor gets the READ half
+    /// of the vetter's surface and no write of any kind. `tools` on the `--agents` definition is
+    /// what makes that structural rather than stated — verified against claude 2.1.226, where a
+    /// probe defined with `"tools":["Read","Glob"]` reported exactly those two and answered a Bash
+    /// attempt with "Bash is disabled for this session, in subagents as well as here" (so
+    /// review-settings.json's own denials reach inside an auditor unchanged).
+    ///
+    /// The two exclusions are the ones that would move a boundary rather than a cost.
+    /// `record_verdict` / `record_close_candidate_verdict`: the verdict is the vetter's own act and
+    /// a sub-agent must not write GitHub state. `clone_release`: the tree the main loop's verdict
+    /// is checked against must not be disposable by the agent reading it — a released tree is a
+    /// verdict REFUSED, so the failure direction is a gap the next run closes rather than a lie.
+    #[test]
+    fn the_dispatched_auditor_gets_the_read_surface_and_no_write() {
+        let Some(sh) = repo_root_text("review-run.sh") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let at = sh
+            .find("\"pr-auditor\":{\"description\"")
+            .expect("the runner must define the auditor type");
+        let def = &sh[at..at + sh[at..].find('\n').expect("the jq program is one line")];
+        assert!(
+            def.contains("\"tools\":["),
+            "the auditor definition must RESTRICT its tools; omitting the key inherits everything \
+             the session grants, `record_verdict` included: {def}"
+        );
+        for tool in [
+            "\"Read\"",
+            "\"Glob\"",
+            "\"Grep\"",
+            "\"Skill\"",
+            "\"mcp__fsm__pr_checkout\"",
+        ] {
+            assert!(
+                def.contains(tool),
+                "the auditor needs {tool}: without it the lens is narrower than the one the \
+                 vetter is held to, which is a review regression bought with a cost saving: {def}"
+            );
+        }
+        for write in [
+            "record_verdict",
+            "record_close_candidate_verdict",
+            "clone_release",
+        ] {
+            assert!(
+                !def.contains(write),
+                "the auditor must not be able to call {write}: {def}"
+            );
+        }
+    }
+
+    /// The brief is bytes in EVERY auditor's context on EVERY one of its turns, so it is the one
+    /// part of this change that could silently cost more than it saves.
+    ///
+    /// The ceiling is NOT a break-even bound here, and saying so is the point. On
+    /// 20260810T091521Z's numbers ($27.97 over 16.11M cached tokens read = $1.736/MTok; 54
+    /// source-reading calls across 3 PRs) a byte present in every auditor turn costs about
+    /// $0.000026, against roughly $6.24 of main-loop re-reading the fan-out removes — break-even
+    /// sits near 240,000 bytes, two orders of magnitude above anything worth writing. So the
+    /// binding constraint is the OTHER one: a brief that outgrows the producer's has started
+    /// carrying STATE instead of RULES, which is the failure this whole change is about. It is
+    /// held at the producer's own number for exactly that reason.
+    #[test]
+    fn the_auditor_brief_stays_inside_its_context_budget() {
+        const BRIEF_BYTE_CEILING: usize = 4096;
+        let Some(brief) = repo_root_text("review-auditor-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            brief.len() <= BRIEF_BYTE_CEILING,
+            "the auditor brief is {} bytes, over the {BRIEF_BYTE_CEILING}-byte ceiling",
+            brief.len()
+        );
+    }
+
+    /// The brief carries the RULES the dispatch prompt is now forbidden to retype, and each one is
+    /// the answer to a way a cheap audit could be a wrong one.
+    #[test]
+    fn the_auditor_brief_records_nothing_and_reads_only_the_tree_it_was_handed() {
+        let Some(brief) = repo_root_text("review-auditor-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            brief.contains("YOU RECORD NOTHING"),
+            "the brief must state that the verdict is not the auditor's"
+        );
+        assert!(
+            brief.contains("ZERO GitHub writes"),
+            "the tool list is the structural half; the brief is the stated one, and a rule the \
+             auditor cannot read is a rule it can talk itself around"
+        );
+        // The #151/2026-07-27 defect, one level down: an auditor that hunts for a checkout finds a
+        // DIFFERENT PR's leftover and reports confidently about code this PR never touched.
+        assert!(
+            brief.contains("NEVER go looking for a checkout"),
+            "the brief must forbid searching for a tree"
+        );
+        assert!(
+            brief.contains("head") && brief.contains("report that and stop"),
+            "a tree at the wrong head is not this PR's source, and the auditor must say so rather \
+             than audit it"
+        );
+        // The lens gate reads exactly one invocation naming exactly one PR at exactly one scope,
+        // and the auditor is now the party that has to get all three right.
+        assert!(
+            brief.contains("EXACTLY ONCE as `owner/repo#number`")
+                && brief.contains(super::LENS_SCOPE_PR_PREFIX),
+            "the brief must state the invocation the ledger credits, since the vetter no longer \
+             makes it"
+        );
+        assert!(
+            brief.contains("costs this PR its verdict"),
+            "the rule must carry its consequence, or a second scope reads as a stylistic choice"
+        );
+        assert!(
+            brief.contains("RELEASE NOTHING"),
+            "the tree the verdict is checked against is the main loop's to dispose of"
+        );
+        // The producer brief's most expensive rule, and it transfers unchanged: the result is
+        // re-read on every remaining main-loop turn.
+        assert!(
+            brief.contains("REPORT FINDINGS, NOT THE TRANSCRIPT"),
+            "the auditor's report is the most expensive text it writes"
+        );
+        assert!(
+            brief.contains("No verdict word"),
+            "a returned verdict word is the boundary crossing that survives having no write tool"
+        );
+    }
+
+    /// The vetter's half of #257, and the rule it REUSES rather than restates: only the item goes
+    /// into a dispatch. The producer's version of the prohibition names fleet state; the vetter's
+    /// fleet is its `unvetted` page, so that is what this one has to name — and the measurement
+    /// has to travel with it, or the next run reads the rule as stinginess and talks itself out.
+    #[test]
+    fn the_review_prompt_fans_the_audit_out_and_pastes_no_queue_state() {
+        let Some(prompt) = repo_root_text("review-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            prompt.contains("subagent_type: \"pr-auditor\""),
+            "the FAN OUT rule must name the briefed type in the form the `Agent` call takes"
+        );
+        assert!(
+            prompt.contains("223,804"),
+            "the rule must carry the measurement that forces it"
+        );
+        assert!(
+            prompt.contains("DO NOT PASTE THE QUEUE INTO A DISPATCH"),
+            "the prompt must forbid the obvious kindness, which measures as a loss"
+        );
+        assert!(
+            prompt.contains("PUT ONLY THE PR IN THE DISPATCH PROMPT"),
+            "the prompt must say what a dispatch DOES carry, or dropping the boilerplate just \
+             drops the rules"
+        );
+        // The constraint that comes from what the vetter IS, stated where the vetter reads it.
+        assert!(
+            prompt.contains("THE VERDICT IS NOT THE AUDITOR'S TO TAKE OR TO NAME"),
+            "recording stays a main-loop transition; the auditor returns evidence"
+        );
+        // …and the non-obvious harness fact without which a vetter cannot trust its own fan-out:
+        // the ledger `record_verdict` reads is built from the run's event stream, which carries a
+        // sub-agent's `Skill` call as readily as the main loop's.
+        assert!(
+            prompt.contains("THE LENS GATE IS SATISFIED BY THE AUDITOR'S OWN INVOCATION"),
+            "without this the vetter has to guess whether dispatching forfeits its verdict"
+        );
+        // The old shape must be GONE from the prompt, not shadowed by a later sentence.
+        assert!(
+            !prompt.contains("Run the audit INLINE + serial"),
+            "the inline instruction must be removed, not overridden further down"
+        );
+    }
+
+    /// The dispatch tool has to be REACHABLE, and it was denied outright until #257. Deny beats
+    /// allow, so the two halves are one fact and are asserted together — and the write denials
+    /// stay, because they are what the fan-out is allowed to rest on: they reach inside a
+    /// dispatched agent, so an auditor is a reader for the same reason the vetter is.
+    #[test]
+    fn the_vetter_can_dispatch_but_still_cannot_write() {
+        let (Some(allow), Some(deny)) = (
+            perm_list("review-settings.json", "allow"),
+            deny_list("review-settings.json"),
+        ) else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            allow.iter().any(|a| a == "Task"),
+            "the vetter must be allowed the sub-agent dispatch tool, or the fan-out never runs"
+        );
+        assert!(
+            !deny.iter().any(|d| d == "Task"),
+            "deny beats allow: leaving `Task` denied makes the allow rule inert and the FAN OUT \
+             paragraph unexecutable"
+        );
+        for write in ["Bash", "Write", "Edit", "NotebookEdit"] {
+            assert!(
+                deny.iter().any(|d| d == write),
+                "{write} must stay denied: the session deny-list is what makes a DISPATCHED \
+                 auditor a reader too"
+            );
+        }
+    }
+
     #[test]
     fn both_crons_deny_scheduling_tools() {
         for f in ["campaign-settings.json", "review-settings.json"] {
@@ -53396,6 +53690,35 @@ mod lens_gate_tests {
             lens_invocation(&skill("audit:audit", REAL_ARGS)),
             inv(PR, "audit:audit", None),
             "the one real invocation in the trace must credit its own PR"
+        );
+    }
+
+    /// #257: the credited invocation may be made by a DISPATCHED `pr-auditor`, and the vetter's
+    /// whole fan-out rests on that. The harness writes a sub-agent's tool calls into the SAME
+    /// stream-json trace as the main loop's, tagged with `parent_tool_use_id` and `subagent_type`
+    /// — verified against claude 2.1.226, where a probe dispatched through `--agents` produced
+    /// `Skill | parent=toolu_018eX7bm… | subagent_type=pr-auditor` in the parent's own stream —
+    /// and `run-timings` builds the ledger out of that stream. So an `audit` invocation inside an
+    /// auditor credits its PR exactly as an inline one does, and `record_verdict` is satisfied by
+    /// work the main loop never did itself.
+    ///
+    /// Asserted on the EVENT rather than taken on trust: a filter on either key would stop
+    /// crediting every dispatched audit at once, and the failure would be a pipeline that refuses
+    /// every verdict — silently, and only on the runs that fanned out.
+    #[test]
+    fn an_invocation_made_inside_a_dispatched_auditor_is_credited_to_its_pr() {
+        let mut ev = skill("audit:audit", &format!("audit {PR} at {PR_SCOPE}"));
+        let obj = ev.as_object_mut().expect("the event is an object");
+        obj.insert(
+            "parent_tool_use_id".to_string(),
+            json!("toolu_018eX7bmYxCU9hzZx3aJJHTJ"),
+        );
+        obj.insert("subagent_type".to_string(), json!("pr-auditor"));
+        assert_eq!(
+            lens_invocation(&ev),
+            inv(PR, "audit:audit", Some(LensScope::Pr(386))),
+            "a dispatched auditor's invocation must credit its PR: fan-out has no other way to \
+             satisfy the lens gate"
         );
     }
 
@@ -67918,7 +68241,9 @@ mod closure_gate_tests {
                 "chromium-browser",
             ],
         );
-        let vetter = surface("review-run", &["gh", "git", "pdftoppm", "pdfinfo"]);
+        // `jq` is on BOTH sides since #257 — each runner builds its `--agents` brief with it — so
+        // it needs no declaration, and an entry claiming it is one-sided would now be stale.
+        let vetter = surface("review-run", &["gh", "jq", "git", "pdftoppm", "pdfinfo"]);
         assert_eq!(
             surface_faults(&[producer, vetter]),
             vec![],
@@ -68551,7 +68876,8 @@ mod closure_gate_tests {
         let faults =
             surface_faults(&[surface("campaign-run", &both), surface("review-run", &both)]);
         // Every declaration is campaign-only, so a surface set that gives BOTH runners the same
-        // binaries makes each of them stale — including `jq`, which this fixture names.
+        // binaries makes each of them stale. `jq` is in the fixture and in NO declaration since
+        // #257 — symmetric is what it is now, and symmetric raises nothing either way.
         assert_eq!(faults, stale_except(&[]));
     }
 
@@ -68559,11 +68885,11 @@ mod closure_gate_tests {
     fn the_declared_asymmetry_is_the_only_difference_allowed() {
         assert_eq!(
             surface_faults(&[
-                surface("campaign-run", &["gh", "git", "pdftoppm", "jq"]),
+                surface("campaign-run", &["gh", "git", "pdftoppm", "node"]),
                 surface("review-run", &["gh", "git", "pdftoppm"]),
             ]),
-            stale_except(&["jq"]),
-            "jq producer-only is exactly what DECLARED_ASYMMETRY says, and nothing else here is"
+            stale_except(&["node"]),
+            "node producer-only is exactly what DECLARED_ASYMMETRY says, and nothing else here is"
         );
     }
 
@@ -68571,36 +68897,36 @@ mod closure_gate_tests {
     fn an_undeclared_one_sided_binary_is_a_fault() {
         // #85's shape from the other side: a tool lands in one closure and not the other.
         let faults = surface_faults(&[
-            surface("campaign-run", &["gh", "jq", "pdftoppm"]),
+            surface("campaign-run", &["gh", "node", "pdftoppm"]),
             surface("review-run", &["gh"]),
         ]);
         let mut expected = vec![ClosureFault::UndeclaredAsymmetry {
             pkg: "campaign-run".to_string(),
             bin: "pdftoppm".to_string(),
         }];
-        expected.extend(stale_except(&["jq"]));
+        expected.extend(stale_except(&["node"]));
         assert_eq!(faults, expected);
     }
 
     #[test]
     fn an_asymmetry_declared_for_one_runner_does_not_excuse_the_other() {
-        // `jq` present ONLY to the vetter is not what the declaration says, and must not pass by
+        // `node` present ONLY to the vetter is not what the declaration says, and must not pass by
         // matching on the binary name alone.
         let faults = surface_faults(&[
             surface("campaign-run", &["gh"]),
-            surface("review-run", &["gh", "jq"]),
+            surface("review-run", &["gh", "node"]),
         ]);
         assert!(
             faults.contains(&ClosureFault::UndeclaredAsymmetry {
                 pkg: "review-run".to_string(),
-                bin: "jq".to_string()
+                bin: "node".to_string()
             }),
             "{faults:?}"
         );
         assert!(
             faults.contains(&ClosureFault::StaleAsymmetry {
                 pkg: "campaign-run",
-                bin: "jq"
+                bin: "node"
             }),
             "{faults:?}"
         );

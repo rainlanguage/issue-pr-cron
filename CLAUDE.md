@@ -198,6 +198,15 @@ guards — verdict vocabulary, mandatory in-range cost, well-formed PR ref,
 human-sacred refusal — live in `validate_call` / `verdict_plan`, tested once,
 instead of being re-asserted in prose.
 
+The vetter also **dispatches**, and that adds no transition (#257). Its audit
+lens is deep source reading, and a main loop re-reads its whole history on every
+turn, so the reading happens in a `pr-auditor` sub-agent whose context dies with
+it — briefed from `review-auditor-prompt.txt` through `--agents`, exactly as the
+producer briefs `pr-worker`. What comes back is EVIDENCE: the auditor's `tools`
+list is the read half of this surface and names no write, the session deny-list
+reaches inside it, and `record_verdict` stays a main-loop move. See
+[Fanning the audit out](README.md#fanning-the-audit-out--and-keeping-the-verdict).
+
 The vetter's surface **replaces** its Bash, so it is `--strict-mcp-config` and
 there is no non-MCP prompt or settings file to fall back to. The producer's
 server (`campaign-mcp.json`) is **additive** — no `--strict-mcp-config`, it

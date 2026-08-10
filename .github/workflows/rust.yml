@@ -202,7 +202,7 @@ jobs:
           check campaign-run campaign-run \
             date uname getent id flock timeout find sort cut tail rm mkdir tee sed grep gh jq pr-review-report
           check review-run review-run \
-            date uname getent id flock timeout find sort cut tail rm mkdir tee sed grep gh pr-review-report
+            date uname getent id flock timeout find sort cut tail rm mkdir tee sed grep gh jq pr-review-report
           check refresh-human-queue refresh-human-queue \
             date getent id flock mktemp mv rm git pr-review-report
           check design-doctor design-doctor \

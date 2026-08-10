@@ -16,7 +16,7 @@
 //!   * `preflight` — a probe of the BOX (gh's token scopes, whether nix can realise a Solidity
 //!     shell). Its answer is about the machine the test happens to run on, not about forcing.
 //!   * `claude` and `jq` — only in the two whole-run fixtures. `claude` stands in for the model
-//!     (which would cost money and need credentials); `jq` builds the worker brief, whose bytes go
+//!     (which would cost money and need credentials); `jq` builds the sub-agent brief, whose bytes go
 //!     straight to the stubbed `claude` and are read by nothing this file asserts on.
 //!
 //! Everything else is the REAL binary cargo just built — `run-metrics` above all, because the
@@ -68,6 +68,10 @@ struct Role {
     script: &'static str,
     /// The install-dir file each runner probes for before doing anything else.
     prompt: &'static str,
+    /// The STANDING BRIEF this runner wraps into its `--agents` sub-agent type. Both roles have
+    /// one now (#200 for the producer's worker, #257 for the vetter's auditor) and both ABORT on
+    /// an empty file, so it belongs in the table rather than beside one script.
+    brief: &'static str,
     /// The kill switch. Deliberately DIFFERENT files: the two crons stop independently.
     disabled: &'static str,
     lock: &'static str,
@@ -80,6 +84,7 @@ const PRODUCER: Role = Role {
     name: "producer",
     script: "campaign-run.sh",
     prompt: "campaign-prompt.txt",
+    brief: "campaign-worker-prompt.txt",
     disabled: "DISABLED",
     lock: "campaign.lock",
     log: "campaign.log",
@@ -90,6 +95,7 @@ const VETTER: Role = Role {
     name: "vetter",
     script: "review-run.sh",
     prompt: "review-prompt.txt",
+    brief: "review-auditor-prompt.txt",
     disabled: "review-DISABLED",
     lock: "review.lock",
     log: "review.log",
@@ -119,8 +125,9 @@ impl Fixture {
         // The runner's install-dir probe. On a gated run the gate exits long before it is read; on
         // a whole-run fixture it IS read, substituted, and handed to the stubbed `claude`.
         std::fs::write(install.join(role.prompt), "prompt body\n").unwrap();
-        // The producer refuses to start without a non-empty worker brief (#200).
-        std::fs::write(install.join("campaign-worker-prompt.txt"), "worker brief\n").unwrap();
+        // Either runner refuses to start without a non-empty standing brief for the sub-agent
+        // type it registers (#200 / #257).
+        std::fs::write(install.join(role.brief), "standing brief\n").unwrap();
 
         // The stub: `usage-gate` answers with the fixture's verdict and `preflight` succeeds;
         // EVERYTHING else is the real binary, so the emitted row is the real contract and not this
@@ -169,11 +176,13 @@ impl Fixture {
              \"duration_ms\":1200,\"total_cost_usd\":0.02,\"usage\":{\"input_tokens\":100,\
              \"output_tokens\":20,\"cache_read_input_tokens\":0,\"cache_creation_input_tokens\":0}}'\n",
         );
-        // The producer's `--agents` brief. Its content reaches only the stubbed model.
+        // The `--agents` brief either runner builds. Its content reaches only the stubbed model,
+        // so one stub serves both roles — what the runners are held to here is that they ABORT
+        // when the JSON comes back empty, which this stub deliberately never does.
         write_exe(
             &bin.join("jq"),
             "#!/usr/bin/env bash\n\
-             printf '%s\\n' '{\"pr-worker\":{\"description\":\"stub\",\"prompt\":\"stub\"}}'\n",
+             printf '%s\\n' '{\"stub-agent\":{\"description\":\"stub\",\"prompt\":\"stub\"}}'\n",
         );
         self
     }

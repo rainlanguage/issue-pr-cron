@@ -13,6 +13,7 @@
       "Glob",
       "Grep",
       "Skill",
+      "Task",
       "ToolSearch"
     ],
     "deny": [
@@ -22,7 +23,6 @@
       "NotebookEdit",
       "WebFetch",
       "WebSearch",
-      "Task",
       "Workflow",
       "Monitor",
       "EnterWorktree",

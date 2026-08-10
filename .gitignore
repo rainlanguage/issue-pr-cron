@@ -21,6 +21,9 @@
 !/review-run.sh
 # The vetter runs on the FSM MCP surface only (issue #52): prompt, tool allow/deny, server config.
 !/review-prompt.txt
+# The standing brief `--agents` loads into every DISPATCHED auditor (#257), tracked as PLAIN TEXT
+# for the same reasons the producer's worker brief is.
+!/review-auditor-prompt.txt
 !/review-settings.json
 !/review-mcp.json
 # Producer's clone-lifecycle MCP surface (additive; the producer keeps its Bash):
