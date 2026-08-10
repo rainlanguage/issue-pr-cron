@@ -8628,12 +8628,148 @@ struct DeclaredAsymmetry {
 /// `closure-surface` fails on any difference that is not in this table — and equally on any entry
 /// here that is no longer true, so the declaration cannot outlive the fact and quietly license a
 /// real divergence later.
-const DECLARED_ASYMMETRY: &[DeclaredAsymmetry] = &[DeclaredAsymmetry {
-    bin: "jq",
-    only_in: "campaign-run",
-    why: "the PRODUCER's model shells out to jq from its Bash tool; the vetter has no Bash and \
-          cannot invoke anything at all (flake.nix)",
-}];
+const DECLARED_ASYMMETRY: &[DeclaredAsymmetry] = &[
+    DeclaredAsymmetry {
+        bin: "jq",
+        only_in: "campaign-run",
+        why:
+            "the PRODUCER's model shells out to jq from its Bash tool; the vetter has no Bash and \
+              cannot invoke anything at all (flake.nix)",
+    },
+    // The #251 render path. All six are one-sided for the SAME reason jq is, and it is a fact
+    // about the role rather than an oversight: the vetter denies `Bash` outright
+    // (review-settings.json), so it cannot exec a renderer even if one were in its closure — and
+    // a closure that carried one would advertise a capability the vetter does not have.
+    DeclaredAsymmetry {
+        bin: "node",
+        only_in: "campaign-run",
+        why: "`render-component` runs the CHECKOUT's own vite through it; only the producer takes \
+              screenshots (RENDER_TOOLS)",
+    },
+    DeclaredAsymmetry {
+        bin: "npm",
+        only_in: "campaign-run",
+        why: "`render-component` provisions a fresh clone with `npm ci`; only the producer \
+              renders (RENDER_TOOLS)",
+    },
+    DeclaredAsymmetry {
+        bin: "chromium",
+        only_in: "campaign-run",
+        why: "`render-component` takes the screenshot with it; only the producer renders \
+              (RENDER_TOOLS)",
+    },
+    DeclaredAsymmetry {
+        bin: "chromium-browser",
+        only_in: "campaign-run",
+        why: "the second name pkgs.chromium installs. Declared rather than hidden: the gate \
+              compares whole surfaces, and an undeclared ride-along is indistinguishable from a \
+              dependency someone added to one runner and forgot in the other",
+    },
+    DeclaredAsymmetry {
+        bin: "npx",
+        only_in: "campaign-run",
+        why: "arrives with pkgs.nodejs_22, which the producer needs for node/npm. Nothing invokes \
+              it — `render-component` execs vite's entry point directly, so a render never \
+              resolves a package at run time",
+    },
+    DeclaredAsymmetry {
+        bin: "corepack",
+        only_in: "campaign-run",
+        why: "arrives with pkgs.nodejs_22, which the producer needs for node/npm. Nothing invokes \
+              it",
+    },
+];
+
+/// A binary `render-component` execs on the model's behalf, with the evidence for needing it.
+///
+/// The same kind of dependency as [`HARNESS_TOOLS`] and invisible in the same way: no script, no
+/// prompt and no skill in this repo names `node` or `chromium`, so a walk over this repo's text
+/// cannot find them, and a producer whose closure lacks them fails at exit 12 on every screenshot
+/// item — which is a run that does its other work and quietly stops producing the evidence a UI PR
+/// is not review-ready without.
+///
+/// ONE runner, unlike `HARNESS_TOOLS`: see [`RENDER_RUNNER`].
+struct RenderTool {
+    bin: &'static str,
+    why: &'static str,
+}
+
+/// The runner that renders. The producer, and only the producer — `review-settings.json` denies the
+/// vetter `Bash`, so it cannot exec a renderer at all, and a vetter closure carrying chromium would
+/// state a capability the role does not have.
+const RENDER_RUNNER: &str = "campaign-run";
+
+const RENDER_TOOLS: &[RenderTool] = &[
+    RenderTool {
+        bin: "node",
+        why: "render-component runs the checkout's own `node_modules/vite/bin/vite.js` with it, \
+              so a render is built by the bundler and svelte version the app actually ships",
+    },
+    RenderTool {
+        bin: "npm",
+        why: "render-component runs `npm ci` when a checkout has no node_modules — the one piece \
+              of provisioning a render from a fresh clone still needs",
+    },
+    RenderTool {
+        bin: "chromium",
+        why: "render-component drives it headless twice per render: once to read the page's own \
+              measurement of itself, once to capture the PNG",
+    },
+];
+
+/// The render dependencies missing from `path`, as closure faults against `pkg`.
+///
+/// PURE apart from the filesystem probe, so the rule is testable against a fabricated PATH rather
+/// than against whatever the flake happens to build today. Runners other than [`RENDER_RUNNER`]
+/// have NO render faults by construction: absence there is the declared design, not a gap.
+fn render_tool_faults(pkg: &str, path: &std::ffi::OsStr) -> Vec<ClosureFault> {
+    if pkg != RENDER_RUNNER {
+        return Vec::new();
+    }
+    RENDER_TOOLS
+        .iter()
+        .filter(|t| resolve_in(path, t.bin).is_none())
+        .map(|t| ClosureFault::ToolMissing {
+            pkg: pkg.to_string(),
+            bin: t.bin,
+            why: t.why,
+        })
+        .collect()
+}
+
+/// Every binary a runner's closure is DECLARED to carry: the harness read-time tools, which both
+/// model runners need, plus the render tools, which only the producer does.
+///
+/// One list, so the preflight's reporting and its judgement cannot name different sets — printing
+/// a tool it does not check, or checking one it never names, is how a gate comes to look like it
+/// covers something it does not.
+fn closure_expected_bins(pkg: &str) -> Vec<&'static str> {
+    let mut bins: Vec<&'static str> = HARNESS_TOOLS.iter().map(|t| t.bin).collect();
+    if pkg == RENDER_RUNNER {
+        bins.extend(RENDER_TOOLS.iter().map(|t| t.bin));
+    }
+    bins
+}
+
+/// Every declared dependency this closure is MISSING.
+///
+/// The whole of `closure-preflight`'s judgement, in one place a test can reach: the mode itself
+/// cannot be unit tested because it shells out to `nix build`, so a check that lived only inside it
+/// would be held up by CI alone. Both halves flow through here, which is what makes "the render
+/// tools are checked at all" a property a test can assert rather than a line someone can delete.
+fn closure_tool_faults(closure: &RunnerClosure) -> Vec<ClosureFault> {
+    let mut faults: Vec<ClosureFault> = HARNESS_TOOLS
+        .iter()
+        .filter(|t| resolve_in(&closure.path, t.bin).is_none())
+        .map(|t| ClosureFault::ToolMissing {
+            pkg: closure.pkg.clone(),
+            bin: t.bin,
+            why: t.why,
+        })
+        .collect();
+    faults.extend(render_tool_faults(&closure.pkg, &closure.path));
+    faults
+}
 
 /// Why a closure gate is not satisfied.
 ///
@@ -8827,20 +8963,17 @@ fn model_runner_closures(flake: &str) -> (Vec<RunnerClosure>, Vec<ClosureFault>)
 fn closure_preflight_mode(flake: &str) -> i32 {
     let (closures, mut faults) = model_runner_closures(flake);
     for c in &closures {
-        for t in HARNESS_TOOLS {
-            match resolve_in(&c.path, t.bin) {
-                Some(p) => println!("  {:<13} {:<10} {}", c.pkg, t.bin, p.display()),
-                None => faults.push(ClosureFault::ToolMissing {
-                    pkg: c.pkg.clone(),
-                    bin: t.bin,
-                    why: t.why,
-                }),
+        for bin in closure_expected_bins(&c.pkg) {
+            if let Some(p) = resolve_in(&c.path, bin) {
+                println!("  {:<13} {:<10} {}", c.pkg, bin, p.display());
             }
         }
+        faults.extend(closure_tool_faults(c));
     }
     report_closure(
         &faults,
-        "every harness read-time dependency is in both model runners' closures",
+        "every harness read-time dependency is in both model runners' closures, and every render \
+         dependency is in the producer's",
     )
 }
 
@@ -37139,6 +37272,3831 @@ fn force_run_mode(role: &str, install_dir: Option<&str>, no_run: bool) -> i32 {
     }
 }
 
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// render-component — the screenshot harness, as a subcommand.
+//
+// Every producer run that took a screenshot item rebuilt this harness from scratch (#251). Across
+// the retained trace corpus: 11 harness file writes in one run, 7 in each of two others, the same
+// ten files — `vite.config.js`, `main.js`, `svelte-wagmi.js`, `stores.js`, `wagmi-core.js`,
+// `transactionStore.js`, `balancesStore.js`, `tailwind.config.js`, `shoot.sh`, `shoot.mjs` —
+// re-derived from memory by a fresh agent each time. Unlike the probe-per-turn and raw `gh api`
+// pathologies, which decayed to zero once `await` and the tool-only I/O rule existed, this one
+// cannot decay on its own: screenshots are mandatory on every visual PR, so the frequency is
+// structural.
+//
+// Three properties decide the shape, and each is answered by a mechanism rather than by care:
+//
+//   THE STUB SET IS THE TOOL'S. An agent re-deriving `svelte-wagmi.js` from memory is how a render
+//   silently diverges from the real component between runs — the 20260729 and 20260804 copies of
+//   that same file already differ. So the stubs are a TABLE here ([`RENDER_STUBS`]), the alias
+//   order that makes them resolve is a property of that table rather than a hand-kept sequence
+//   ([`render_alias_order_is_specific_before_general`]), and the set is kept as SMALL as it can be:
+//   a module that loads in a bare checkout is used REAL. `$lib/stores` is the case that matters —
+//   the traces stubbed it with 7 of its 20 exports, and it needs no stub at all.
+//
+//   AN UNRENDERABLE COMPONENT SAYS SO. Silence and a blank PNG are the failure modes designed
+//   against, so every way this can fail is a variant of [`ComponentRenderFault`] with its own
+//   sentence, and the two that a screenshot cannot show — a component that mounted into zero
+//   pixels, and text the same colour as what is behind it — are MEASURED in the page and refused
+//   before an image is written.
+//
+//   IT WORKS FROM A FRESH CLONE. A fresh cyclo.site clone cannot run its vitest suite without an
+//   initialised submodule, two generated files, `.env` and `npm ci`. A render that inherited that
+//   would pay it every run. Only `npm ci` is inherited (and run automatically); the other three are
+//   avoided because nothing the harness mounts reaches them — `$lib/pyth`'s `cyclo.sol/out/**`
+//   imports come in through `balancesStore`/`transactionStore`, which are stubbed, and
+//   `$env/static/public` is stubbed outright.
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+/// A stub module the harness substitutes for one the checkout cannot load, or must not run.
+///
+/// `why` is the FACT that makes the substitution necessary, not a preference. A stub with no such
+/// fact behind it is a divergence from the real component for nothing, which is what this table
+/// exists to keep out.
+struct RenderStub {
+    /// File name under `stubs/`.
+    name: &'static str,
+    /// Why the real module cannot be used.
+    why: &'static str,
+    source: &'static str,
+}
+
+/// Where an alias sends a specifier.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum AliasTarget {
+    /// A [`RENDER_STUBS`] entry, by file name.
+    Stub(&'static str),
+    /// The checkout's own `src/lib`, so `$lib/...` with no stub resolves to the REAL module.
+    CheckoutLib,
+    /// The component under render, by absolute path.
+    Component,
+    /// The caller's fixture module (or the empty one, when `--fixture` is absent).
+    Fixture,
+}
+
+/// One entry of the harness's vite `resolve.alias` ARRAY.
+///
+/// An array and not an object because vite tries array entries IN ORDER and takes the first whose
+/// `find` matches as a prefix. That makes order load-bearing: `$lib` placed ahead of
+/// `$lib/balancesStore` swallows it, and the component then imports the real store, which cannot
+/// load. [`render_alias_order_is_specific_before_general`] holds the order as a property of this
+/// table rather than as a comment nobody re-checks.
+struct RenderAlias {
+    find: &'static str,
+    /// Match the specifier EXACTLY (emitted as an anchored regex) rather than as a prefix.
+    ///
+    /// `@wagmi/core` is the case: prefix-matching it also captures `@wagmi/core/chains`, which is
+    /// pure chain data with no network in it and is what the REAL `$lib/stores` builds its network
+    /// table from. The 20260804 trace has this exact correction applied as an Edit, one build after
+    /// the prefix version.
+    exact: bool,
+    target: AliasTarget,
+    why: &'static str,
+}
+
+const STUB_SVELTE_WAGMI: &str = r#"// Tool-owned stub — see RENDER_STUBS in pr-review-report.
+// The wallet-connection surface, as writable stores a fixture can set. Every export the real
+// package has is present: a missing one is a rollup "is not exported by" build error, which is
+// how divergence surfaces here instead of as a wrong picture.
+import { writable, readable } from "svelte/store";
+
+export const signerAddress = writable(
+  "0x1234567890123456789012345678901234567890",
+);
+export const connected = writable(true);
+export const chainId = writable(14);
+export const loading = writable(false);
+export const wagmiLoaded = writable(true);
+export const wagmiConfig = writable({});
+export const web3Modal = readable({ open: () => {}, close: () => {} });
+export const configuredConnectors = writable([]);
+export const WC = writable(null);
+
+export const init = async () => true;
+export const defaultConfig = () => ({ init });
+export const disconnectWagmi = async () => {};
+"#;
+
+const STUB_WAGMI_CORE: &str = r#"// Tool-owned stub — see RENDER_STUBS in pr-review-report.
+// Chain reads, which in a render must not reach the network. Each returns the SHAPE its callers
+// destructure, so a component's own error path is not what gets rendered: the 20260804 trace lost
+// a whole button state because `readContract` threw and the component's catch zeroed the amount.
+export const readContract = async () => 10000000000000000n;
+export const readContracts = async () => [];
+export const simulateContract = async () => ({ request: {} });
+export const writeContract = async () => "0x";
+export const sendTransaction = async () => "0x";
+export const waitForTransactionReceipt = async () => ({ status: "success" });
+export const estimateGas = async () => 0n;
+export const getAccount = () => ({ address: undefined, isConnected: true });
+export const getBalance = async () => ({ value: 0n, decimals: 18 });
+export const getPublicClient = () => ({});
+export const getBlockNumber = async () => 0n;
+export const switchChain = async () => ({});
+export const switchNetwork = async () => {};
+export const watchAccount = () => () => {};
+export const watchChainId = () => () => {};
+export const createConfig = () => ({});
+export const http = () => ({});
+"#;
+
+const STUB_BALANCES_STORE: &str = r#"// Tool-owned stub — see RENDER_STUBS in pr-review-report.
+// The real module imports `$lib/pyth`, which statically imports `cyclo.sol/out/**` JSON from an
+// uninitialised submodule, so it cannot load in a fresh clone at all.
+//
+// The initial value MIRRORS the real `createInitialState`: same keys, keyed by `token.name`, built
+// from the checkout's OWN token table (`$lib/stores`, used real). A hand-listed token set would go
+// stale the first time a token is added.
+import { writable } from "svelte/store";
+import { supportedNetworks } from "$lib/stores";
+
+const initialState = () => {
+  const stats = {};
+  const balances = {};
+  for (const network of supportedNetworks) {
+    for (const token of network.tokens) {
+      stats[token.name] = {
+        supply: 0n,
+        price: 0n,
+        lockPrice: 0n,
+        underlyingTvl: 0n,
+        usdTvl: 0n,
+      };
+      balances[token.name] = {
+        signerBalance: 0n,
+        signerUnderlyingBalance: 0n,
+      };
+    }
+  }
+  return {
+    status: "Ready",
+    statsLoading: false,
+    stats,
+    balances,
+    swapQuotes: { cyTokenOutput: 0n, cusdxOutput: 0n },
+  };
+};
+
+const store = writable(initialState());
+
+export default {
+  subscribe: store.subscribe,
+  set: store.set,
+  update: store.update,
+  reset: () => store.set(initialState()),
+  refreshBalances: async () => {},
+  refreshPrices: async () => {},
+  refreshDepositPreviewSwapValue: async () => {},
+  refreshFooterStats: async () => {},
+};
+"#;
+
+const STUB_TRANSACTION_STORE: &str = r#"// Tool-owned stub — see RENDER_STUBS in pr-review-report.
+// The real module imports the stubbed balancesStore, `$lib/queries/*` (which reach the generated
+// GraphQL types) and `@rainlanguage/orderbook`, and every method it exposes signs or sends.
+import { writable } from "svelte/store";
+
+const store = writable({ status: "IDLE" });
+
+const noop = async () => {};
+
+export default {
+  subscribe: store.subscribe,
+  set: store.set,
+  update: store.update,
+  reset: () => store.set({ status: "IDLE" }),
+  handleLockTransaction: noop,
+  handleUnlockTransaction: noop,
+  checkingWalletAllowance: noop,
+  awaitWalletConfirmation: noop,
+  handlePythPriceUpdate: noop,
+  awaitApprovalTx: noop,
+  awaitLockTx: noop,
+  awaitUnlockTx: noop,
+  transactionSuccess: noop,
+  transactionError: noop,
+  handleDeployDca: noop,
+  handleDeployDsf: noop,
+};
+"#;
+
+const STUB_APP_PATHS: &str = r#"// Tool-owned stub — see RENDER_STUBS in pr-review-report.
+// SvelteKit ambient module. Its real implementation is generated into `.svelte-kit/` by
+// `svelte-kit sync`, which a bare checkout has not run.
+export const base = "";
+export const assets = "";
+export const resolveRoute = (id) => id;
+"#;
+
+const STUB_APP_NAVIGATION: &str = r#"// Tool-owned stub — see RENDER_STUBS in pr-review-report.
+// SvelteKit ambient module; generated by `svelte-kit sync`. Navigation in a one-component render
+// has nowhere to go, so each entry point is a no-op rather than an error.
+export const goto = async () => {};
+export const invalidate = async () => {};
+export const invalidateAll = async () => {};
+export const preloadData = async () => {};
+export const preloadCode = async () => {};
+export const beforeNavigate = () => {};
+export const afterNavigate = () => {};
+export const onNavigate = () => {};
+export const pushState = () => {};
+export const replaceState = () => {};
+export const disableScrollHandling = () => {};
+"#;
+
+const STUB_APP_STORES: &str = r#"// Tool-owned stub — see RENDER_STUBS in pr-review-report.
+// SvelteKit ambient module; generated by `svelte-kit sync`.
+import { readable } from "svelte/store";
+
+export const page = readable({
+  url: new URL(window.location.href),
+  params: {},
+  route: { id: null },
+  status: 200,
+  error: null,
+  data: {},
+  form: null,
+});
+export const navigating = readable(null);
+export const updated = { ...readable(false), check: async () => false };
+export const getStores = () => ({ page, navigating, updated });
+"#;
+
+const STUB_APP_ENVIRONMENT: &str = r#"// Tool-owned stub — see RENDER_STUBS in pr-review-report.
+// SvelteKit ambient module; generated by `svelte-kit sync`. `browser` is true because this render
+// IS a browser: a component that guards its mount on it must take that branch.
+export const browser = true;
+export const dev = true;
+export const building = false;
+export const version = "render-component";
+"#;
+
+const STUB_ENV_STATIC_PUBLIC: &str = r#"// Tool-owned stub — see RENDER_STUBS in pr-review-report.
+// SvelteKit reads `$env/static/public` out of `.env`, which is untracked and absent from a fresh
+// clone. A Proxy answers every PUBLIC_* name, so a checkout that adds one needs no change here —
+// and the value is visibly a placeholder rather than something mistakable for real config.
+export default new Proxy(
+  {},
+  { get: (_t, name) => (typeof name === "string" ? "render-component-stub" : undefined) },
+);
+"#;
+
+const STUB_ENV_DYNAMIC_PUBLIC: &str = r#"// Tool-owned stub — see RENDER_STUBS in pr-review-report.
+// The dynamic half of the same absent `.env`.
+export const env = new Proxy(
+  {},
+  { get: (_t, name) => (typeof name === "string" ? "render-component-stub" : undefined) },
+);
+"#;
+
+const STUB_EMPTY_FIXTURE: &str = r#"// Tool-owned stub — see RENDER_STUBS in pr-review-report.
+// The `--fixture` module when none was given: a component that needs no props and no store state.
+export const props = {};
+"#;
+
+/// Every module the harness substitutes, with the fact that forces the substitution.
+///
+/// SHORT ON PURPOSE. The traces also stubbed `$lib/stores` — 7 exports out of the 20 the real
+/// module has, so `activeNetworkConfig`, `targetNetwork`, `tokens`, `myReceipts`,
+/// `getDexScreenerChainName` and `isFlareNetwork` were simply absent, and the token table the whole
+/// app is configured from was a hand-copied duplicate of one entry. It is NOT stubbed here: it
+/// imports only `svelte/store`, `svelte-wagmi`, `@wagmi/core/chains`, `viem` and two local modules,
+/// and every one of those either loads in a bare checkout or is stubbed above it, so the real
+/// module loads. A fixture that needs different network or token state sets the real store.
+const RENDER_STUBS: &[RenderStub] = &[
+    RenderStub {
+        name: "svelte-wagmi.js",
+        why: "the real package builds a WalletConnect config at import time and every store it \
+              exports is a live connection; a render has no wallet",
+        source: STUB_SVELTE_WAGMI,
+    },
+    RenderStub {
+        name: "wagmi-core.js",
+        why: "every export is an RPC round trip; a render must reach no network",
+        source: STUB_WAGMI_CORE,
+    },
+    RenderStub {
+        name: "balancesStore.js",
+        why: "imports `$lib/pyth`, which statically imports `cyclo.sol/out/**` from an \
+              uninitialised submodule — it cannot load in a fresh clone",
+        source: STUB_BALANCES_STORE,
+    },
+    RenderStub {
+        name: "transactionStore.js",
+        why: "imports the stubbed balancesStore and `$lib/queries/*`, which import the gitignored \
+              generated GraphQL types; every method signs or sends",
+        source: STUB_TRANSACTION_STORE,
+    },
+    RenderStub {
+        name: "app-paths.js",
+        why: "SvelteKit ambient module, generated by `svelte-kit sync`",
+        source: STUB_APP_PATHS,
+    },
+    RenderStub {
+        name: "app-navigation.js",
+        why: "SvelteKit ambient module, generated by `svelte-kit sync`",
+        source: STUB_APP_NAVIGATION,
+    },
+    RenderStub {
+        name: "app-stores.js",
+        why: "SvelteKit ambient module, generated by `svelte-kit sync`",
+        source: STUB_APP_STORES,
+    },
+    RenderStub {
+        name: "app-environment.js",
+        why: "SvelteKit ambient module, generated by `svelte-kit sync`",
+        source: STUB_APP_ENVIRONMENT,
+    },
+    RenderStub {
+        name: "env-static-public.js",
+        why: "reads `.env`, which is untracked and absent from a fresh clone",
+        source: STUB_ENV_STATIC_PUBLIC,
+    },
+    RenderStub {
+        name: "env-dynamic-public.js",
+        why: "reads the same absent `.env`",
+        source: STUB_ENV_DYNAMIC_PUBLIC,
+    },
+    RenderStub {
+        name: "empty-fixture.js",
+        why: "stands in for `--fixture` when the component needs no props and no store state",
+        source: STUB_EMPTY_FIXTURE,
+    },
+];
+
+/// The alias array, in the order vite evaluates it.
+///
+/// Every `$lib/...` stub precedes the bare `$lib` fall-through, which is the whole reason this is
+/// an ordered table; [`render_alias_order_is_specific_before_general`] asserts it rather than
+/// trusting the sequence to stay written down correctly.
+const RENDER_ALIASES: &[RenderAlias] = &[
+    RenderAlias {
+        find: "$lib/balancesStore",
+        exact: false,
+        target: AliasTarget::Stub("balancesStore.js"),
+        why: "unloadable in a fresh clone (submodule JSON)",
+    },
+    RenderAlias {
+        find: "$lib/transactionStore",
+        exact: false,
+        target: AliasTarget::Stub("transactionStore.js"),
+        why: "unloadable in a fresh clone (generated GraphQL types)",
+    },
+    RenderAlias {
+        find: "svelte-wagmi",
+        exact: true,
+        target: AliasTarget::Stub("svelte-wagmi.js"),
+        why: "live wallet connection",
+    },
+    RenderAlias {
+        find: "@wagmi/core",
+        exact: true,
+        target: AliasTarget::Stub("wagmi-core.js"),
+        why: "network reads — EXACT so `@wagmi/core/chains`, which is data the real `$lib/stores` \
+              needs, still resolves to the real package",
+    },
+    RenderAlias {
+        find: "$app/paths",
+        exact: false,
+        target: AliasTarget::Stub("app-paths.js"),
+        why: "SvelteKit ambient module",
+    },
+    RenderAlias {
+        find: "$app/navigation",
+        exact: false,
+        target: AliasTarget::Stub("app-navigation.js"),
+        why: "SvelteKit ambient module",
+    },
+    RenderAlias {
+        find: "$app/stores",
+        exact: false,
+        target: AliasTarget::Stub("app-stores.js"),
+        why: "SvelteKit ambient module",
+    },
+    RenderAlias {
+        find: "$app/environment",
+        exact: false,
+        target: AliasTarget::Stub("app-environment.js"),
+        why: "SvelteKit ambient module",
+    },
+    RenderAlias {
+        find: "$env/static/public",
+        exact: false,
+        target: AliasTarget::Stub("env-static-public.js"),
+        why: "absent .env",
+    },
+    RenderAlias {
+        find: "$env/dynamic/public",
+        exact: false,
+        target: AliasTarget::Stub("env-dynamic-public.js"),
+        why: "absent .env",
+    },
+    RenderAlias {
+        find: "@render/component",
+        exact: true,
+        target: AliasTarget::Component,
+        why: "the component under render, by absolute path, so the entry point is the same bytes \
+              whatever is being rendered",
+    },
+    RenderAlias {
+        find: "@render/fixture",
+        exact: true,
+        target: AliasTarget::Fixture,
+        why: "the caller's props/setup module, left where it is so its own relative imports still \
+              resolve",
+    },
+    // LAST. Everything above is a `$lib/...` or bare-package special case; this is the
+    // fall-through that makes every OTHER `$lib/...` import resolve to the checkout's real module.
+    RenderAlias {
+        find: "$lib",
+        exact: false,
+        target: AliasTarget::CheckoutLib,
+        why: "the fall-through: every `$lib` import with no stub above resolves REAL",
+    },
+];
+
+/// The harness page. `#app` is the mount point and the measured subject; nothing else is in it, so
+/// a measurement of `#app` is a measurement of the component.
+const RENDER_INDEX_HTML: &str = r#"<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>render-component</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: __BACKGROUND__;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/entry.js"></script>
+  </body>
+</html>
+"#;
+
+/// The harness entry point.
+///
+/// It mounts, then MEASURES, then publishes both into the DOM, because the probe pass reads the DOM
+/// and a screenshot cannot report on itself. The two measurements are the ones a PNG hides: a
+/// component that mounted into zero pixels, and text drawn in the colour of what is behind it.
+const RENDER_ENTRY_JS: &str = r#"import Component from "@render/component";
+import * as fixture from "@render/fixture";
+__APP_CSS_IMPORT__
+const status = {
+  mounted: false,
+  measured: false,
+  error: null,
+  console: [],
+  elements: 0,
+  textLength: 0,
+  width: 0,
+  height: 0,
+  scrollHeight: 0,
+  // The WCAG contrast ratio of the most legible text in #app against what is behind it. 1 means
+  // indistinguishable. -1 means there was no text to measure.
+  contrast: -1,
+};
+
+const note = (m) => {
+  if (status.console.length < 20) status.console.push(String(m).slice(0, 500));
+};
+window.addEventListener("error", (e) =>
+  note("error: " + ((e.error && e.error.stack) || e.message)),
+);
+window.addEventListener("unhandledrejection", (e) =>
+  note("unhandledrejection: " + ((e.reason && e.reason.stack) || e.reason)),
+);
+const realConsoleError = console.error.bind(console);
+console.error = (...a) => {
+  note("console.error: " + a.map(String).join(" "));
+  realConsoleError(...a);
+};
+
+const publish = () => {
+  let el = document.getElementById("render-status");
+  if (!el) {
+    el = document.createElement("script");
+    el.id = "render-status";
+    el.type = "application/json";
+    document.body.appendChild(el);
+  }
+  // `<` is escaped so an error string containing `</script>` cannot truncate the payload the
+  // probe reads back out of the dumped DOM.
+  el.textContent = JSON.stringify(status).replace(/</g, "\\u003c");
+};
+
+const channel = (c) => {
+  const v = c / 255;
+  return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+};
+const luminance = (rgb) =>
+  0.2126 * channel(rgb[0]) + 0.7152 * channel(rgb[1]) + 0.0722 * channel(rgb[2]);
+const parseColor = (s) => {
+  const m = /rgba?\(([^)]+)\)/.exec(s || "");
+  if (!m) return null;
+  const p = m[1].split(",").map((x) => parseFloat(x));
+  return { rgb: [p[0], p[1], p[2]], alpha: p.length > 3 ? p[3] : 1 };
+};
+// The colour actually painted behind `el`: the nearest ancestor with a non-transparent background,
+// falling back to the canvas, which is white when nothing paints it.
+const behind = (el) => {
+  for (let n = el; n; n = n.parentElement) {
+    const c = parseColor(getComputedStyle(n).backgroundColor);
+    if (c && c.alpha > 0) return c.rgb;
+  }
+  const c = parseColor(getComputedStyle(document.body).backgroundColor);
+  return c && c.alpha > 0 ? c.rgb : [255, 255, 255];
+};
+const contrastOf = (el) => {
+  const fg = parseColor(getComputedStyle(el).color);
+  if (!fg || fg.alpha === 0) return 1;
+  const a = luminance(fg.rgb);
+  const b = luminance(behind(el));
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+};
+
+const measure = () => {
+  const app = document.getElementById("app");
+  const rect = app.getBoundingClientRect();
+  status.elements = app.querySelectorAll("*").length;
+  status.textLength = (app.innerText || "").trim().length;
+  status.width = Math.round(rect.width);
+  status.height = Math.round(rect.height);
+  status.scrollHeight = Math.max(
+    document.documentElement.scrollHeight,
+    document.body.scrollHeight,
+    Math.ceil(rect.height),
+  );
+  // Best case across every element with its own visible text: one legible line is enough to say
+  // the image is not blank, whereas a single low-contrast label is not evidence that it is.
+  let best = -1;
+  for (const el of app.querySelectorAll("*")) {
+    let own = "";
+    for (const n of el.childNodes) if (n.nodeType === 3) own += n.textContent;
+    if (!own.trim()) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) continue;
+    if (getComputedStyle(el).visibility === "hidden") continue;
+    best = Math.max(best, contrastOf(el));
+  }
+  status.contrast = best;
+  status.measured = true;
+};
+
+(async () => {
+  try {
+    if (typeof fixture.setup === "function") await fixture.setup();
+    new Component({
+      target: document.getElementById("app"),
+      props: fixture.props || {},
+    });
+    status.mounted = true;
+  } catch (e) {
+    status.error = String(e && e.stack ? e.stack : e).slice(0, 4000);
+  }
+  // Published before the measurement so a dump that arrives early still carries the mount error,
+  // which is the fact worth having when a render dies.
+  publish();
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  await new Promise((r) => setTimeout(r, 200));
+  try {
+    measure();
+  } catch (e) {
+    note("measure: " + e);
+  }
+  publish();
+})();
+"#;
+
+/// The vite config, whose only variable part is the three absolute paths it is given.
+const RENDER_VITE_CONFIG: &str = r#"import { defineConfig } from "vite";
+import { svelte, vitePreprocess } from "@sveltejs/vite-plugin-svelte";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+
+export default defineConfig({
+  root: here,
+  // The checkout root, so postcss/tailwind config discovery and node_modules resolution walk up
+  // to the CHECKOUT rather than stopping at the harness directory.
+  envDir: __CHECKOUT__,
+  logLevel: "warn",
+  clearScreen: false,
+  build: {
+    outDir: path.join(here, "dist"),
+    emptyOutDir: true,
+    target: "esnext",
+    minify: false,
+    sourcemap: false,
+    // A chunk-size or asset-inlining warning is not a render failure; the exit code is.
+    chunkSizeWarningLimit: 100000,
+  },
+  plugins: [svelte({ preprocess: vitePreprocess() })],
+  resolve: {
+    // ORDER IS LOAD-BEARING: vite takes the FIRST entry whose `find` matches, so every specific
+    // stub precedes the general `$lib` fall-through. Generated from RENDER_ALIASES.
+    alias: __ALIASES__,
+  },
+});
+"#;
+
+/// Why a component render did not produce a PNG.
+///
+/// A TYPE, so the exit code and the sentence are both derived from the fact. The split the exit
+/// code carries is the one a caller acts on: `12` is the BOX (nothing renders here until someone
+/// installs something), `3` is THIS COMPONENT (the harness works and cannot mount this), `2` is the
+/// invocation itself.
+///
+/// `PartialEq` and not `Eq`: [`ComponentRenderFault::InvisibleText`] carries the measured contrast
+/// ratio, which is a real number.
+#[derive(Debug, PartialEq)]
+enum ComponentRenderFault {
+    /// `--checkout` is not a directory.
+    CheckoutMissing(String),
+    /// `--component` does not resolve to a file inside the checkout.
+    ComponentMissing(String),
+    /// `--fixture` does not resolve to a file.
+    FixtureMissing(String),
+    /// `--out`'s parent directory does not exist. Checked BEFORE anything expensive runs: a
+    /// three-minute build that ends in "no such file or directory" is the same information, late.
+    OutDirMissing(String),
+    /// No browser binary on PATH under any of the names Chrome ships as.
+    NoBrowser { tried: Vec<String> },
+    /// A required binary is not on PATH.
+    ToolMissing { bin: String, why: String },
+    /// Not one directory of installed fonts. Headless chromium with no fonts renders every glyph
+    /// blank — an image that looks like a render and shows nothing that was written.
+    NoFonts { tried: Vec<String> },
+    /// The checkout has no `node_modules`, and `--no-install` forbade fixing it.
+    NotProvisioned {
+        checkout: String,
+        missing: Vec<String>,
+    },
+    /// `npm ci` failed.
+    InstallFailed { code: Option<i32>, stderr: String },
+    /// A process could not be started at all.
+    Unspawnable {
+        bin: String,
+        kind: std::io::ErrorKind,
+    },
+    /// A process ran past its deadline and was killed.
+    TimedOut { what: String, secs: u64 },
+    /// `vite build` exited non-zero. `diagnosis` is the part of its output that names WHAT the
+    /// harness could not satisfy, so the common cases do not need the whole log read.
+    BuildFailed {
+        code: Option<i32>,
+        diagnosis: BuildDiagnosis,
+        stderr: String,
+    },
+    /// The probe browser exited non-zero, so there is no DOM to read.
+    ProbeFailed { code: Option<i32>, stderr: String },
+    /// The page loaded and the harness never wrote its status: the entry module did not run.
+    NoStatus { dom_bytes: usize },
+    /// The status was written and the measurement never happened — the page was still working when
+    /// the virtual-time budget expired.
+    NeverSettled { console: Vec<String> },
+    /// The component's constructor threw.
+    NeverMounted { error: String, console: Vec<String> },
+    /// It mounted and occupies nothing. THIS is the blank PNG, refused before it is written.
+    BlankRender {
+        elements: u64,
+        width: i64,
+        height: i64,
+        console: Vec<String>,
+    },
+    /// It mounted, it has size, and every piece of text in it is the colour of what is behind it.
+    /// A screenshot of this is a rectangle; the fix is `--background`, which the sentence names.
+    InvisibleText { contrast: f64, text_length: u64 },
+    /// The screenshot browser exited non-zero.
+    CaptureFailed { code: Option<i32>, stderr: String },
+    /// It exited 0 and wrote no file.
+    NoImage(String),
+    /// What it wrote is not a PNG.
+    NotPng { magic: Vec<u8> },
+    /// A PNG whose header says it has no pixels.
+    EmptyImage { width: u32, height: u32 },
+}
+
+/// The part of a failed `vite build` that names what could not be satisfied.
+#[derive(Debug, PartialEq, Eq)]
+enum BuildDiagnosis {
+    /// A module in the graph resolves to nothing. In a bare checkout this is nearly always a
+    /// GENERATED or submodule file, i.e. a component this harness genuinely cannot render.
+    Unresolved { specifier: String, importer: String },
+    /// A stub is missing an export the component imports — the divergence [`RENDER_STUBS`] exists
+    /// to make loud. Names the stub, so the repair is one file.
+    StubMissingExport { name: String, module: String },
+    /// Something else; the stderr is all there is.
+    Other,
+}
+
+impl BuildDiagnosis {
+    /// Read a failed `vite build`'s output for the two failures that have a specific repair.
+    ///
+    /// Rollup's wording is the input, but the DISCRIMINANT is which of the two shapes matched, not
+    /// the words: everything unmatched is `Other` and carries the log, so a wording change loses
+    /// the shortcut and never mis-reports a different failure as one of these.
+    fn read(output: &str) -> BuildDiagnosis {
+        for line in output.lines() {
+            // `"X" is not exported by "…/stubs/Y.js", imported by "…"`
+            if let Some((name, module)) = line
+                .split_once("\" is not exported by \"")
+                .and_then(|(a, b)| {
+                    let name = a.rsplit_once('"')?.1;
+                    let module = b.split('"').next()?;
+                    Some((name, module))
+                })
+                .filter(|(_, module)| module.contains("/stubs/"))
+            {
+                return BuildDiagnosis::StubMissingExport {
+                    name: name.to_string(),
+                    module: std::path::Path::new(module)
+                        .file_name()
+                        .map(|f| f.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| module.to_string()),
+                };
+            }
+            // The unresolved-import failure, under BOTH of the wordings this build actually
+            // produces. Rollup's own is `Could not resolve "X" from "Y"`; vite's externalisation
+            // warning, promoted to an error, is `Rollup failed to resolve import "X" from "Y".`
+            // Only the second was written from memory here, and the FIRST is what a real
+            // AccountStatus render emitted — so both are matched, and the remainder is read the
+            // same way whichever it was.
+            for marker in ["failed to resolve import \"", "Could not resolve \""] {
+                let Some(rest) = line.split_once(marker).map(|(_, b)| b) else {
+                    continue;
+                };
+                // The tail splits on the quote into [X, " from ", Y, …], so the two names are
+                // fields 0 and 2. An importer is reported even when absent, as the empty string:
+                // the specifier is the half that names what the harness cannot reach, and it is
+                // never dropped for want of the other half.
+                let fields: Vec<&str> = rest.split('"').collect();
+                if let Some(spec) = fields.first() {
+                    return BuildDiagnosis::Unresolved {
+                        specifier: (*spec).to_string(),
+                        importer: fields.get(2).copied().unwrap_or("").to_string(),
+                    };
+                }
+            }
+        }
+        BuildDiagnosis::Other
+    }
+}
+
+impl ComponentRenderFault {
+    /// What went wrong, and what to do about it. Every variant names a repair, because a render
+    /// that stops is only useful if the next move is on the line.
+    fn describe(&self) -> String {
+        match self {
+            ComponentRenderFault::CheckoutMissing(p) => {
+                format!("--checkout {p} is not a directory")
+            }
+            ComponentRenderFault::ComponentMissing(p) => {
+                format!("--component {p} is not a file")
+            }
+            ComponentRenderFault::FixtureMissing(p) => format!("--fixture {p} is not a file"),
+            ComponentRenderFault::OutDirMissing(p) => format!(
+                "--out's directory does not exist: {p}. Create it first — this is checked before \
+                 the build so a render does not spend minutes to end on a missing directory."
+            ),
+            ComponentRenderFault::NoBrowser { tried } => format!(
+                "no headless browser on PATH (tried {}). Put one there — e.g. run this inside \
+                 `nix shell nixpkgs#chromium`.",
+                tried.join(", ")
+            ),
+            ComponentRenderFault::ToolMissing { bin, why } => format!(
+                "`{bin}` is not on PATH, and {why}. Run this inside a shell that has it — e.g. \
+                 `nix develop <checkout> -c pr-review-report render-component …`, whose devShell \
+                 is the one the checkout's own CI uses."
+            ),
+            ComponentRenderFault::NoFonts { tried } => format!(
+                "not one directory of installed fonts (looked in {}). Headless chromium with no \
+                 fonts draws every glyph blank, which is an image that looks like a render and \
+                 shows nothing that was written — so this stops instead. Set FONTCONFIG_FILE to a \
+                 working fontconfig, or install a font package.",
+                tried.join(", ")
+            ),
+            ComponentRenderFault::NotProvisioned { checkout, missing } => format!(
+                "{checkout} has no installed dependencies ({}). Drop --no-install and this runs \
+                 `npm ci` itself; that is the ONLY provisioning a render needs — the submodule, \
+                 the two generated files and .env that the test suite needs are all avoided by the \
+                 stub set.",
+                missing.join(", ")
+            ),
+            ComponentRenderFault::InstallFailed { code, stderr } => format!(
+                "`npm ci` exited {}: {}",
+                exit_word(*code),
+                tail_of(stderr, 2000)
+            ),
+            ComponentRenderFault::Unspawnable { bin, kind } => {
+                format!("`{bin}` would not start ({kind:?})")
+            }
+            ComponentRenderFault::TimedOut { what, secs } => format!(
+                "{what} was still running after {secs}s and was killed. Raise --timeout-secs if \
+                 this checkout's first build is genuinely slower than that."
+            ),
+            ComponentRenderFault::BuildFailed {
+                code,
+                diagnosis,
+                stderr,
+            } => match diagnosis {
+                BuildDiagnosis::Unresolved {
+                    specifier,
+                    importer,
+                } => format!(
+                    "THIS COMPONENT CANNOT BE RENDERED BY THIS HARNESS: `{specifier}`, imported by \
+                     {importer}, resolves to nothing. In a bare checkout that is a generated or \
+                     submodule file — the render would need the provisioning the stub set exists to \
+                     avoid. Either the component reaches it directly, or a module between them does."
+                ),
+                BuildDiagnosis::StubMissingExport { name, module } => format!(
+                    "the harness stub {module} does not export `{name}`, which the component \
+                     imports. The stub has drifted from the module it stands in for: add the \
+                     export to RENDER_STUBS in pr-review-report — NOT to a copy beside the render."
+                ),
+                BuildDiagnosis::Other => format!(
+                    "`vite build` exited {}: {}",
+                    exit_word(*code),
+                    tail_of(stderr, 4000)
+                ),
+            },
+            ComponentRenderFault::ProbeFailed { code, stderr } => format!(
+                "the probe browser exited {}: {}",
+                exit_word(*code),
+                tail_of(stderr, 2000)
+            ),
+            ComponentRenderFault::NoStatus { dom_bytes } => format!(
+                "the page loaded ({dom_bytes} bytes of DOM) and the harness never wrote its \
+                 status, so its entry module did not run at all. Nothing about this component has \
+                 been established — no image is written."
+            ),
+            ComponentRenderFault::NeverSettled { console } => format!(
+                "the harness mounted and was still working when the time budget expired, so it \
+                 never measured itself. A screenshot now would be of a half-drawn page.{}",
+                console_tail(console)
+            ),
+            ComponentRenderFault::NeverMounted { error, console } => format!(
+                "the component's constructor threw, so nothing was rendered:\n{}{}",
+                tail_of(error, 2000),
+                console_tail(console)
+            ),
+            ComponentRenderFault::BlankRender {
+                elements,
+                width,
+                height,
+                console,
+            } => format!(
+                "the component mounted and occupies nothing: {elements} element(s), {width}x{height} \
+                 css px. A screenshot of this is a blank image, which is the one output worse than \
+                 no output — give it the props/store state it needs with --fixture.{}",
+                console_tail(console)
+            ),
+            ComponentRenderFault::InvisibleText {
+                contrast,
+                text_length,
+            } => format!(
+                "every one of the {text_length} characters this component renders is drawn at \
+                 {contrast:.2}:1 against what is behind it — the screenshot would be a blank \
+                 rectangle. The component's stylesheet sets a text colour and something else in \
+                 the app normally paints the background: pass `--background '<css colour>'`."
+            ),
+            ComponentRenderFault::CaptureFailed { code, stderr } => format!(
+                "the screenshot browser exited {}: {}",
+                exit_word(*code),
+                tail_of(stderr, 2000)
+            ),
+            ComponentRenderFault::NoImage(p) => {
+                format!("the browser exited 0 and wrote no file at {p}")
+            }
+            ComponentRenderFault::NotPng { magic } => {
+                format!("what was written is not a PNG (magic {magic:02x?})")
+            }
+            ComponentRenderFault::EmptyImage { width, height } => {
+                format!("the PNG header says it is {width}x{height} — it has no pixels")
+            }
+        }
+    }
+
+    /// A stable machine name, for `--json`. The enum is the vocabulary; nothing downstream reads
+    /// [`ComponentRenderFault::describe`]'s prose.
+    fn kind(&self) -> &'static str {
+        match self {
+            ComponentRenderFault::CheckoutMissing(_) => "checkout-missing",
+            ComponentRenderFault::ComponentMissing(_) => "component-missing",
+            ComponentRenderFault::FixtureMissing(_) => "fixture-missing",
+            ComponentRenderFault::OutDirMissing(_) => "out-dir-missing",
+            ComponentRenderFault::NoBrowser { .. } => "no-browser",
+            ComponentRenderFault::ToolMissing { .. } => "tool-missing",
+            ComponentRenderFault::NoFonts { .. } => "no-fonts",
+            ComponentRenderFault::NotProvisioned { .. } => "not-provisioned",
+            ComponentRenderFault::InstallFailed { .. } => "install-failed",
+            ComponentRenderFault::Unspawnable { .. } => "unspawnable",
+            ComponentRenderFault::TimedOut { .. } => "timed-out",
+            ComponentRenderFault::BuildFailed { .. } => "build-failed",
+            ComponentRenderFault::ProbeFailed { .. } => "probe-failed",
+            ComponentRenderFault::NoStatus { .. } => "no-status",
+            ComponentRenderFault::NeverSettled { .. } => "never-settled",
+            ComponentRenderFault::NeverMounted { .. } => "never-mounted",
+            ComponentRenderFault::BlankRender { .. } => "blank-render",
+            ComponentRenderFault::InvisibleText { .. } => "invisible-text",
+            ComponentRenderFault::CaptureFailed { .. } => "capture-failed",
+            ComponentRenderFault::NoImage(_) => "no-image",
+            ComponentRenderFault::NotPng { .. } => "not-png",
+            ComponentRenderFault::EmptyImage { .. } => "empty-image",
+        }
+    }
+}
+
+/// The exit code for a render fault.
+///
+/// Three answers, because there are three different people to send: `2` the caller wrote the
+/// command wrong, `12` this BOX cannot render anything until something is installed (the same code
+/// `preflight` uses for an unsatisfied dependency), `3` the harness is fine and cannot render THIS
+/// component. Collapsing 12 and 3 would put a missing chromium and an unrenderable component in
+/// the same bucket, and those route to opposite places — one to the environment, one to `flag-design`.
+fn component_render_exit_code(fault: &ComponentRenderFault) -> i32 {
+    match fault {
+        ComponentRenderFault::CheckoutMissing(_)
+        | ComponentRenderFault::ComponentMissing(_)
+        | ComponentRenderFault::FixtureMissing(_)
+        | ComponentRenderFault::OutDirMissing(_) => 2,
+        ComponentRenderFault::NoBrowser { .. }
+        | ComponentRenderFault::ToolMissing { .. }
+        | ComponentRenderFault::NoFonts { .. }
+        | ComponentRenderFault::NotProvisioned { .. }
+        | ComponentRenderFault::InstallFailed { .. }
+        | ComponentRenderFault::Unspawnable { .. } => 12,
+        ComponentRenderFault::TimedOut { .. }
+        | ComponentRenderFault::BuildFailed { .. }
+        | ComponentRenderFault::ProbeFailed { .. }
+        | ComponentRenderFault::NoStatus { .. }
+        | ComponentRenderFault::NeverSettled { .. }
+        | ComponentRenderFault::NeverMounted { .. }
+        | ComponentRenderFault::BlankRender { .. }
+        | ComponentRenderFault::InvisibleText { .. }
+        | ComponentRenderFault::CaptureFailed { .. }
+        | ComponentRenderFault::NoImage(_)
+        | ComponentRenderFault::NotPng { .. }
+        | ComponentRenderFault::EmptyImage { .. } => 3,
+    }
+}
+
+fn exit_word(code: Option<i32>) -> String {
+    code.map(|c| c.to_string())
+        .unwrap_or_else(|| "on a signal".to_string())
+}
+
+/// The LAST `n` bytes of a log, on a char boundary. The tail and not the head because a build log's
+/// error is at the end, under the summary lines nobody needs.
+fn tail_of(s: &str, n: usize) -> String {
+    let s = s.trim_end();
+    if s.len() <= n {
+        return s.to_string();
+    }
+    let mut cut = s.len() - n;
+    while cut < s.len() && !s.is_char_boundary(cut) {
+        cut += 1;
+    }
+    format!("…{}", &s[cut..])
+}
+
+fn console_tail(console: &[String]) -> String {
+    if console.is_empty() {
+        String::new()
+    } else {
+        format!("\npage console:\n  {}", console.join("\n  "))
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// The harness's own environment: the binaries, the fonts, and the checkout's node_modules.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+/// The names Chrome ships under, in the order they are tried.
+const RENDER_BROWSER_BINS: &[&str] = &[
+    "chromium",
+    "chromium-browser",
+    "google-chrome-stable",
+    "google-chrome",
+    "chrome",
+];
+
+/// What has to exist under `node_modules` before a build can run. The vite BINARY and not the
+/// directory: `node_modules` present but half-installed is the state a `git clean` leaves, and it
+/// fails inside the build with a resolution error instead of here with the `npm ci` that fixes it.
+const RENDER_NODE_MODULES_PROBES: &[&str] = &[
+    "node_modules/vite/bin/vite.js",
+    "node_modules/@sveltejs/vite-plugin-svelte/package.json",
+    "node_modules/svelte/package.json",
+];
+
+/// Which of [`RENDER_NODE_MODULES_PROBES`] the checkout does not have.
+fn missing_provisioning(checkout: &std::path::Path) -> Vec<String> {
+    RENDER_NODE_MODULES_PROBES
+        .iter()
+        .filter(|p| !checkout.join(p).exists())
+        .map(|p| (*p).to_string())
+        .collect()
+}
+
+/// Stylesheets a SvelteKit app keeps its global styles in, in convention order. Without one, a
+/// component renders with none of the app's typography or colour and the picture is of something
+/// the user never sees.
+const RENDER_APP_CSS_CANDIDATES: &[&str] = &[
+    "src/app.css",
+    "src/app.postcss",
+    "src/app.scss",
+    "src/app.pcss",
+    "src/styles/app.css",
+];
+
+fn app_css(checkout: &std::path::Path) -> Option<std::path::PathBuf> {
+    RENDER_APP_CSS_CANDIDATES
+        .iter()
+        .map(|c| checkout.join(c))
+        .find(|p| p.is_file())
+}
+
+/// File extensions fontconfig can actually load.
+const FONT_EXTENSIONS: &[&str] = &["ttf", "otf", "ttc", "pfb", "pcf", "woff2"];
+
+/// Does this directory tree hold at least one loadable font? Bounded depth, because font packages
+/// nest at most `share/fonts/<foundry>/<file>` and an unbounded walk of `/usr/share` is a way to
+/// spend a second finding out nothing.
+fn dir_has_font(dir: &std::path::Path, depth: usize) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    let mut subdirs = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            subdirs.push(path);
+        } else if path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| FONT_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+            .unwrap_or(false)
+        {
+            return true;
+        }
+    }
+    depth > 0 && subdirs.iter().any(|d| dir_has_font(d, depth - 1))
+}
+
+/// Font directories from a nix store, for a box whose fonts are only ever in one.
+///
+/// This is the box the cron runs on: no `/usr/share/fonts` at all, and the traces' harnesses each
+/// pasted a `/nix/store/…-dejavu-fonts-2.37/share/fonts` path they had found by hand — a literal
+/// that stops working the next time the store is collected. Matched on the package NAME rather
+/// than on any path a human wrote down.
+fn nix_store_font_dirs(store: &std::path::Path, limit: usize) -> Vec<std::path::PathBuf> {
+    let Ok(entries) = std::fs::read_dir(store) else {
+        return Vec::new();
+    };
+    let mut found: Vec<std::path::PathBuf> = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.contains("-fonts") {
+            continue;
+        }
+        let dir = entry.path().join("share/fonts");
+        if dir.is_dir() {
+            found.push(dir);
+        }
+    }
+    // Sorted so the same box picks the same fonts every run: an unordered readdir would let two
+    // renders of the same component differ in typeface with nothing changed.
+    found.sort();
+    found.truncate(limit);
+    found
+}
+
+/// Everywhere fonts are looked for, in order.
+fn font_candidate_dirs(
+    home: Option<&std::path::Path>,
+    nix_store: &std::path::Path,
+) -> Vec<std::path::PathBuf> {
+    let mut dirs: Vec<std::path::PathBuf> = [
+        "/usr/share/fonts",
+        "/usr/local/share/fonts",
+        "/run/current-system/sw/share/X11/fonts",
+        "/run/current-system/sw/share/fonts",
+    ]
+    .iter()
+    .map(std::path::PathBuf::from)
+    .collect();
+    if let Some(home) = home {
+        dirs.push(home.join(".local/share/fonts"));
+        dirs.push(home.join(".fonts"));
+        dirs.push(home.join(".nix-profile/share/fonts"));
+    }
+    dirs.extend(nix_store_font_dirs(nix_store, 8));
+    dirs
+}
+
+/// A fontconfig naming `dirs`, with the generic families appended WEAKLY.
+///
+/// Weak appends and not the strong prepend the traces used: a strong prepend of "DejaVu Sans"
+/// makes every render use DejaVu whatever the component asked for, so the picture is of a font the
+/// app does not ship. Appended weakly, these are only ever a fallback for a family that resolves to
+/// nothing — which is the actual failure being prevented, not the typeface.
+fn fonts_conf(dirs: &[std::path::PathBuf], cachedir: &std::path::Path) -> String {
+    let mut out = String::from(
+        "<?xml version=\"1.0\"?>\n<!DOCTYPE fontconfig SYSTEM \"urn:fontconfig:fonts.dtd\">\n<fontconfig>\n",
+    );
+    for dir in dirs {
+        out.push_str(&format!("  <dir>{}</dir>\n", dir.display()));
+    }
+    out.push_str(&format!("  <cachedir>{}</cachedir>\n", cachedir.display()));
+    for (generic, fallbacks) in [
+        (
+            "sans-serif",
+            ["DejaVu Sans", "Liberation Sans", "Noto Sans"],
+        ),
+        ("serif", ["DejaVu Serif", "Liberation Serif", "Noto Serif"]),
+        (
+            "monospace",
+            ["DejaVu Sans Mono", "Liberation Mono", "Noto Sans Mono"],
+        ),
+    ] {
+        out.push_str(&format!(
+            "  <match target=\"pattern\">\n    <test qual=\"any\" name=\"family\"><string>{generic}</string></test>\n"
+        ));
+        for f in fallbacks {
+            out.push_str(&format!(
+                "    <edit name=\"family\" mode=\"append\" binding=\"weak\"><string>{f}</string></edit>\n"
+            ));
+        }
+        out.push_str("  </match>\n");
+    }
+    // The last resort: any pattern at all gains a real family at the end of its list, so a
+    // `font-family: 'JetBrains Mono'` that never downloaded still draws glyphs.
+    out.push_str(
+        "  <match target=\"pattern\">\n    <edit name=\"family\" mode=\"append\" binding=\"weak\"><string>DejaVu Sans</string></edit>\n  </match>\n",
+    );
+    out.push_str("</fontconfig>\n");
+    out
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// Running a child with a deadline.
+//
+// `Command::output()` waits forever. A hung chromium or a vite build that sits on a lock would
+// hold the producer's whole run open, so every child here is spawned with a deadline and killed
+// on it. The pipes are drained by threads: polling `try_wait` while a child fills a pipe nobody
+// reads deadlocks, and a DOM dump is easily large enough to fill one.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+/// A finished child, or the deadline.
+struct ChildOutput {
+    status: std::process::ExitStatus,
+    stdout: String,
+    stderr: String,
+}
+
+enum ChildResult {
+    Finished(ChildOutput),
+    TimedOut,
+    Unspawnable(std::io::ErrorKind),
+}
+
+fn run_with_deadline(mut cmd: std::process::Command, timeout: std::time::Duration) -> ChildResult {
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => return ChildResult::Unspawnable(e.kind()),
+    };
+    // The readers hand their buffer back over a channel rather than through a join handle, because
+    // a killed child's GRANDCHILDREN inherit its pipes and keep them open — chromium's zygote is
+    // exactly that — so `join()` on the timeout path waits for the process the deadline exists to
+    // escape. On the timeout path nothing is collected at all and the threads are left to end when
+    // the pipes finally close.
+    let mut out = child.stdout.take();
+    let mut err = child.stderr.take();
+    let (send_out, recv_out) = std::sync::mpsc::channel();
+    let (send_err, recv_err) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(o) = out.as_mut() {
+            let _ = std::io::Read::read_to_end(o, &mut buf);
+        }
+        let _ = send_out.send(buf);
+    });
+    std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(e) = err.as_mut() {
+            let _ = std::io::Read::read_to_end(e, &mut buf);
+        }
+        let _ = send_err.send(buf);
+    });
+
+    let deadline = std::time::Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break None;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(_) => {
+                let _ = child.kill();
+                break None;
+            }
+        }
+    };
+    let Some(status) = status else {
+        return ChildResult::TimedOut;
+    };
+    // The child is gone, so EOF is due; the grace is only for a descendant still holding a pipe,
+    // and running past it costs the tail of a log rather than the whole call.
+    let grace = std::time::Duration::from_secs(30);
+    let collect = |rx: std::sync::mpsc::Receiver<Vec<u8>>| {
+        String::from_utf8_lossy(&rx.recv_timeout(grace).unwrap_or_default()).into_owned()
+    };
+    ChildResult::Finished(ChildOutput {
+        status,
+        stdout: collect(recv_out),
+        stderr: collect(recv_err),
+    })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// The static server.
+//
+// The built harness is served over http rather than opened as a `file://` URL because a vite build
+// emits `<script type="module">`, and a module script loaded from `file://` is blocked by the
+// browser's own origin rules — which presents as a page that loads and runs nothing, i.e. exactly
+// the silent blank this subcommand exists to refuse.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+struct StaticServer {
+    port: u16,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl StaticServer {
+    fn serve(root: std::path::PathBuf) -> std::io::Result<StaticServer> {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        listener.set_nonblocking(true)?;
+        let port = listener.local_addr()?.port();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop_thread = std::sync::Arc::clone(&stop);
+        let handle = std::thread::spawn(move || {
+            while !stop_thread.load(std::sync::atomic::Ordering::Relaxed) {
+                match listener.accept() {
+                    Ok((stream, _)) => {
+                        let root = root.clone();
+                        std::thread::spawn(move || {
+                            let _ = serve_one(stream, &root);
+                        });
+                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        Ok(StaticServer {
+            port,
+            stop,
+            handle: Some(handle),
+        })
+    }
+}
+
+impl Drop for StaticServer {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
+}
+
+fn content_type(path: &std::path::Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "html" => "text/html; charset=utf-8",
+        "js" | "mjs" => "text/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "json" | "map" => "application/json; charset=utf-8",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "ico" => "image/x-icon",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        "ttf" => "font/ttf",
+        "otf" => "font/otf",
+        "wasm" => "application/wasm",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Percent-decode a request target. Vite writes hashed asset names, but a component's own image
+/// import can carry a space or a non-ASCII character straight through into the URL.
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(b) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(b);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Map a request target onto a file under `root`, or `None`.
+///
+/// Separate from the socket so the traversal rule is testable without one. The rule is
+/// CANONICALISED containment, not a `..` scan: `%2e%2e`, a symlink out of the tree and an absolute
+/// target all fail the same check, and none of them are spelled `..` by the time it runs.
+fn resolve_request_path(root: &std::path::Path, target: &str) -> Option<std::path::PathBuf> {
+    let path = percent_decode(target.split(['?', '#']).next().unwrap_or(""));
+    let rel = path.trim_start_matches('/');
+    let joined = if rel.is_empty() {
+        root.join("index.html")
+    } else {
+        root.join(rel)
+    };
+    let canonical = joined.canonicalize().ok()?;
+    let root = root.canonicalize().ok()?;
+    if !canonical.starts_with(&root) || !canonical.is_file() {
+        return None;
+    }
+    Some(canonical)
+}
+
+fn serve_one(mut stream: std::net::TcpStream, root: &std::path::Path) -> std::io::Result<()> {
+    use std::io::{BufRead, Write};
+    stream.set_read_timeout(Some(std::time::Duration::from_secs(10)))?;
+    let mut reader = std::io::BufReader::new(stream.try_clone()?);
+    let mut line = String::new();
+    reader.read_line(&mut line)?;
+    let target = line.split_whitespace().nth(1).unwrap_or("/").to_string();
+    // The rest of the request is drained so the client is never left writing into a full buffer.
+    loop {
+        let mut header = String::new();
+        if reader.read_line(&mut header)? == 0 || header.trim().is_empty() {
+            break;
+        }
+    }
+    match resolve_request_path(root, &target) {
+        Some(file) => {
+            let body = std::fs::read(&file)?;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+                content_type(&file),
+                body.len()
+            )?;
+            stream.write_all(&body)?;
+        }
+        None => {
+            let body = b"not found";
+            write!(
+                stream,
+                "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            )?;
+            stream.write_all(body)?;
+        }
+    }
+    stream.flush()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// The image itself.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+/// The eight bytes every PNG starts with.
+const PNG_MAGIC: [u8; 8] = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+
+/// The declared size of a PNG, read from its IHDR.
+///
+/// Read rather than assumed: the browser exiting 0 is not proof it wrote an image, and a
+/// zero-length or truncated file is what a killed renderer leaves behind. Only the header is
+/// parsed — the pixels are not this gate's business, and decoding them would want a dependency
+/// this crate does not have.
+fn png_dimensions(bytes: &[u8]) -> Result<(u32, u32), ComponentRenderFault> {
+    if bytes.len() < 24 || bytes[..8] != PNG_MAGIC {
+        return Err(ComponentRenderFault::NotPng {
+            magic: bytes.iter().take(8).copied().collect(),
+        });
+    }
+    if &bytes[12..16] != b"IHDR" {
+        return Err(ComponentRenderFault::NotPng {
+            magic: bytes[12..16].to_vec(),
+        });
+    }
+    let width = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
+    let height = u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
+    if width == 0 || height == 0 {
+        return Err(ComponentRenderFault::EmptyImage { width, height });
+    }
+    Ok((width, height))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// Writing the harness out.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+/// A path as a JS string literal. Through `serde_json` so every character a path can legally hold
+/// is escaped by something that already knows how, rather than by a quote-doubling of our own.
+fn js_string(s: &str) -> String {
+    serde_json::Value::String(s.to_string()).to_string()
+}
+
+/// A specifier as an ANCHORED JS regex literal, for an alias that must match exactly.
+fn js_exact_regex(s: &str) -> String {
+    let mut out = String::from("/^");
+    for c in s.chars() {
+        if "\\^$.|?*+()[]{}/".contains(c) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out.push_str("$/");
+    out
+}
+
+/// Where every generated file goes.
+struct HarnessLayout {
+    /// `<checkout>/.pr-review-report-render-<pid>`.
+    root: std::path::PathBuf,
+    stubs: std::path::PathBuf,
+    dist: std::path::PathBuf,
+}
+
+impl HarnessLayout {
+    /// INSIDE the checkout, and nowhere else. Node resolves `node_modules` and vite discovers the
+    /// postcss/tailwind config by walking UP from the harness directory, so a harness in `/tmp`
+    /// would build a component with none of the checkout's styling — a picture of something the
+    /// user never sees. `<pid>` keeps two concurrent renders of the same clone apart.
+    fn under(checkout: &std::path::Path, pid: u32) -> HarnessLayout {
+        let root = checkout.join(format!(".pr-review-report-render-{pid}"));
+        HarnessLayout {
+            stubs: root.join("stubs"),
+            dist: root.join("dist"),
+            root,
+        }
+    }
+}
+
+/// The `resolve.alias` array, as JS.
+fn render_alias_js(
+    aliases: &[RenderAlias],
+    stubs: &std::path::Path,
+    checkout: &std::path::Path,
+    component: &std::path::Path,
+    fixture: &std::path::Path,
+) -> String {
+    let mut out = String::from("[\n");
+    for alias in aliases {
+        let target = match alias.target {
+            AliasTarget::Stub(name) => stubs.join(name),
+            AliasTarget::CheckoutLib => checkout.join("src/lib"),
+            AliasTarget::Component => component.to_path_buf(),
+            AliasTarget::Fixture => fixture.to_path_buf(),
+        };
+        let find = if alias.exact {
+            js_exact_regex(alias.find)
+        } else {
+            js_string(alias.find)
+        };
+        out.push_str(&format!(
+            "      // {}\n      {{ find: {find}, replacement: {} }},\n",
+            alias.why,
+            js_string(&target.to_string_lossy())
+        ));
+    }
+    out.push_str("    ]");
+    out
+}
+
+/// Write every generated file. Nothing here is a template the caller fills in: the entry point,
+/// the page and the stubs are the same bytes on every invocation, and the only thing that varies
+/// is the three absolute paths the alias table resolves.
+#[allow(clippy::too_many_arguments)]
+fn write_harness(
+    layout: &HarnessLayout,
+    checkout: &std::path::Path,
+    component: &std::path::Path,
+    fixture: &std::path::Path,
+    background: &str,
+    fonts: &str,
+) -> std::io::Result<()> {
+    std::fs::create_dir_all(&layout.stubs)?;
+    for stub in RENDER_STUBS {
+        std::fs::write(layout.stubs.join(stub.name), stub.source)?;
+    }
+    std::fs::write(layout.root.join("fonts.conf"), fonts)?;
+    std::fs::write(
+        layout.root.join("index.html"),
+        RENDER_INDEX_HTML.replace("__BACKGROUND__", background),
+    )?;
+    let css_import = match app_css(checkout) {
+        Some(css) => format!("import {};\n", js_string(&css.to_string_lossy())),
+        None => String::new(),
+    };
+    std::fs::write(
+        layout.root.join("entry.js"),
+        RENDER_ENTRY_JS.replace("__APP_CSS_IMPORT__", &css_import),
+    )?;
+    std::fs::write(
+        layout.root.join("vite.config.mjs"),
+        RENDER_VITE_CONFIG
+            .replace("__CHECKOUT__", &js_string(&checkout.to_string_lossy()))
+            .replace(
+                "__ALIASES__",
+                &render_alias_js(RENDER_ALIASES, &layout.stubs, checkout, component, fixture),
+            ),
+    )?;
+    Ok(())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// Reading the page back.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+/// What the harness page measured about itself.
+#[derive(Debug, PartialEq)]
+struct RenderStatus {
+    mounted: bool,
+    measured: bool,
+    error: Option<String>,
+    console: Vec<String>,
+    elements: u64,
+    text_length: u64,
+    width: i64,
+    height: i64,
+    scroll_height: i64,
+    contrast: f64,
+}
+
+/// The `#render-status` payload out of a dumped DOM.
+///
+/// Located by the element's id and terminated at the first `</script>`, which is safe because the
+/// page escapes `<` before writing the JSON — an error string containing a closing script tag
+/// cannot truncate what is read back.
+fn extract_render_status(dom: &str) -> Option<&str> {
+    let at = dom.find("id=\"render-status\"")?;
+    let open = dom[at..].find('>')? + at + 1;
+    let close = dom[open..].find("</script>")? + open;
+    Some(dom[open..close].trim())
+}
+
+fn parse_render_status(json: &str) -> Option<RenderStatus> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    Some(RenderStatus {
+        mounted: v.get("mounted")?.as_bool().unwrap_or(false),
+        measured: v.get("measured")?.as_bool().unwrap_or(false),
+        error: v
+            .get("error")
+            .and_then(|e| e.as_str())
+            .map(|s| s.to_string()),
+        console: v
+            .get("console")
+            .and_then(|c| c.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        elements: v.get("elements").and_then(|x| x.as_u64()).unwrap_or(0),
+        text_length: v.get("textLength").and_then(|x| x.as_u64()).unwrap_or(0),
+        width: v.get("width").and_then(|x| x.as_i64()).unwrap_or(0),
+        height: v.get("height").and_then(|x| x.as_i64()).unwrap_or(0),
+        scroll_height: v.get("scrollHeight").and_then(|x| x.as_i64()).unwrap_or(0),
+        contrast: v.get("contrast").and_then(|x| x.as_f64()).unwrap_or(-1.0),
+    })
+}
+
+/// Below this WCAG contrast ratio, a screenshot is not evidence of anything.
+///
+/// 3.0 is WCAG 2.1's own floor for large text and non-text content — the ratio below which the
+/// standard says two colours are not reliably distinguishable at all. CALIBRATED AGAINST A REAL
+/// RENDER, not chosen from the definition: this constant was first written at 1.2 on the reasoning
+/// that 1.0 means "identical", and a real `TradePrice.svelte` render measured **1.24** and passed —
+/// a 1800x1800 PNG of white with one ghost line of "Current price: 0" at the top edge, which is
+/// exactly the misleading image this check exists to refuse. A threshold that admits that admits
+/// the failure mode.
+///
+/// It is still not a legibility gate. A reviewer's judgement of a render that is merely hard to
+/// read is theirs to make from the PNG; what is refused is a PNG that carries no readable mark.
+const RENDER_MIN_CONTRAST: f64 = 3.0;
+
+/// The measured page, judged. `None` means a PNG of it is worth writing.
+///
+/// This is where "say so rather than emit a misleading image" is actually enforced, and each of
+/// the three refusals is a fact a screenshot cannot carry: nothing mounted, nothing occupies any
+/// space, or nothing that was written can be seen.
+fn judge_render_status(status: &RenderStatus) -> Option<ComponentRenderFault> {
+    if !status.mounted {
+        return Some(ComponentRenderFault::NeverMounted {
+            error: status
+                .error
+                .clone()
+                .unwrap_or_else(|| "(the page reported no error)".to_string()),
+            console: status.console.clone(),
+        });
+    }
+    if !status.measured {
+        return Some(ComponentRenderFault::NeverSettled {
+            console: status.console.clone(),
+        });
+    }
+    if status.elements == 0 || status.width <= 0 || status.height <= 0 {
+        return Some(ComponentRenderFault::BlankRender {
+            elements: status.elements,
+            width: status.width,
+            height: status.height,
+            console: status.console.clone(),
+        });
+    }
+    // `contrast < 0` is "there was no text", which is a legitimate render — an icon, a chart, a
+    // spacer. Only text that EXISTS and cannot be seen is a fault.
+    if status.text_length > 0 && status.contrast >= 0.0 && status.contrast < RENDER_MIN_CONTRAST {
+        return Some(ComponentRenderFault::InvisibleText {
+            contrast: status.contrast,
+            text_length: status.text_length,
+        });
+    }
+    None
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// Driving the browser.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+/// Flags both passes share. `--no-sandbox` because the cron user has no user-namespace sandbox
+/// available; every `--disable-*` is a background service that would otherwise reach the network
+/// from a render that is supposed to reach none.
+fn chromium_common_args(
+    profile: &std::path::Path,
+    width: u32,
+    scale: u32,
+    budget_ms: u64,
+) -> Vec<String> {
+    vec![
+        "--headless=new".to_string(),
+        "--no-sandbox".to_string(),
+        "--disable-gpu".to_string(),
+        "--disable-dev-shm-usage".to_string(),
+        "--hide-scrollbars".to_string(),
+        "--no-first-run".to_string(),
+        "--disable-background-networking".to_string(),
+        "--disable-component-update".to_string(),
+        "--disable-sync".to_string(),
+        "--disable-default-apps".to_string(),
+        "--disable-extensions".to_string(),
+        "--disable-lcd-text".to_string(),
+        format!("--user-data-dir={}", profile.display()),
+        format!("--force-device-scale-factor={scale}"),
+        format!("--virtual-time-budget={budget_ms}"),
+        format!("--window-size={width},{width}"),
+    ]
+}
+
+/// The probe: load the page and print the DOM, so the measurement the page took of itself can be
+/// read. A screenshot cannot report on itself, which is the whole reason there are two passes.
+fn chromium_probe_args(
+    profile: &std::path::Path,
+    width: u32,
+    height: u32,
+    scale: u32,
+    budget_ms: u64,
+    url: &str,
+) -> Vec<String> {
+    let mut args = chromium_common_args(profile, width, scale, budget_ms);
+    let last = args.len() - 1;
+    args[last] = format!("--window-size={width},{height}");
+    args.push("--dump-dom".to_string());
+    args.push(url.to_string());
+    args
+}
+
+/// The capture, at the height the probe measured, so the PNG is the whole component and not the
+/// part that happened to fit a viewport.
+fn chromium_shot_args(
+    profile: &std::path::Path,
+    width: u32,
+    height: u32,
+    scale: u32,
+    budget_ms: u64,
+    out: &std::path::Path,
+    url: &str,
+) -> Vec<String> {
+    let mut args = chromium_common_args(profile, width, scale, budget_ms);
+    let last = args.len() - 1;
+    args[last] = format!("--window-size={width},{height}");
+    args.push(format!("--screenshot={}", out.display()));
+    args.push(url.to_string());
+    args
+}
+
+/// The capture height: what the page measured, floored at the requested viewport and capped so a
+/// runaway layout cannot ask the browser for a gigabyte of image.
+fn capture_height(measured: i64, requested: u32) -> u32 {
+    const MAX: i64 = 12000;
+    measured.clamp(requested as i64, MAX) as u32
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// The subcommand.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+/// `render-component`'s flags, as one group.
+///
+/// A flattened `Args` struct rather than fields on the `Cmd` variant so the whole invocation moves
+/// as ONE value: the resolution step reads it, and adding a flag does not lengthen an argument list
+/// that already has to be kept in the same order in three places.
+#[derive(clap::Args, Debug, PartialEq)]
+struct RenderComponentArgs {
+    /// The repo checkout to render out of.
+    #[arg(long)]
+    checkout: String,
+    /// The component, relative to the checkout (the way a diff names it) or absolute.
+    #[arg(long)]
+    component: String,
+    /// Where to write the PNG. Its directory must already exist.
+    #[arg(long)]
+    out: String,
+    /// An ES module supplying what THIS component needs, which is the one part of a render no tool
+    /// can own: `export const props = {…}` for its props, and `export function setup()` (may be
+    /// async) to put the app's stores into the state being rendered. A FILE and not flags because
+    /// props hold bigints, nested objects and addresses. The aliases resolve inside it too, so it
+    /// imports `$lib/stores` and `svelte-wagmi` exactly as the component does.
+    #[arg(long)]
+    fixture: Option<String>,
+    /// Viewport width in css px.
+    #[arg(long, default_value_t = 620)]
+    width: u32,
+    /// Viewport height in css px. The capture itself is as tall as the component measures, so this
+    /// is the layout viewport (what `100vh` means), not a crop.
+    #[arg(long, default_value_t = 900)]
+    height: u32,
+    /// Device pixel ratio for the capture.
+    #[arg(long, default_value_t = 2)]
+    scale: u32,
+    /// The page background, as CSS. A component whose stylesheet sets a text colour and expects
+    /// the app to paint behind it renders as invisible text without this — which the tool refuses
+    /// rather than photographs.
+    #[arg(long, default_value = "transparent")]
+    background: String,
+    /// Deadline for EACH child (install, build, probe, capture).
+    #[arg(long, default_value_t = 600)]
+    timeout_secs: u64,
+    /// Fail instead of running `npm ci` when the checkout has no installed dependencies.
+    #[arg(long)]
+    no_install: bool,
+    /// Leave the generated harness in place for inspection. It is inside the checkout, so a kept
+    /// one is untracked state in a clone the producer commits from.
+    #[arg(long)]
+    keep: bool,
+    #[arg(long)]
+    json: bool,
+}
+
+/// Everything one render needs, resolved.
+#[derive(Debug)]
+struct RenderRequest {
+    checkout: std::path::PathBuf,
+    component: std::path::PathBuf,
+    fixture: Option<std::path::PathBuf>,
+    out: std::path::PathBuf,
+    width: u32,
+    height: u32,
+    scale: u32,
+    background: String,
+    timeout_secs: u64,
+    install: bool,
+    keep: bool,
+}
+
+/// Resolve and validate the caller's paths before anything expensive happens.
+fn resolve_render_request(
+    args: &RenderComponentArgs,
+) -> Result<RenderRequest, ComponentRenderFault> {
+    let checkout_path = std::path::Path::new(&args.checkout);
+    if !checkout_path.is_dir() {
+        return Err(ComponentRenderFault::CheckoutMissing(args.checkout.clone()));
+    }
+    let checkout_path = checkout_path
+        .canonicalize()
+        .map_err(|_| ComponentRenderFault::CheckoutMissing(args.checkout.clone()))?;
+
+    // Relative to the checkout first, because that is how a diff names a component
+    // (`src/lib/components/Lock.svelte`); an absolute path still works.
+    let candidate = if std::path::Path::new(&args.component).is_absolute() {
+        std::path::PathBuf::from(&args.component)
+    } else {
+        checkout_path.join(&args.component)
+    };
+    if !candidate.is_file() {
+        return Err(ComponentRenderFault::ComponentMissing(
+            args.component.clone(),
+        ));
+    }
+    let component_path = candidate
+        .canonicalize()
+        .map_err(|_| ComponentRenderFault::ComponentMissing(args.component.clone()))?;
+
+    let fixture_path = match &args.fixture {
+        None => None,
+        Some(f) => {
+            let p = std::path::Path::new(f);
+            if !p.is_file() {
+                return Err(ComponentRenderFault::FixtureMissing(f.clone()));
+            }
+            Some(
+                p.canonicalize()
+                    .map_err(|_| ComponentRenderFault::FixtureMissing(f.clone()))?,
+            )
+        }
+    };
+
+    let out_path = std::path::Path::new(&args.out);
+    let parent = out_path.parent().filter(|p| !p.as_os_str().is_empty());
+    if let Some(parent) = parent {
+        if !parent.is_dir() {
+            return Err(ComponentRenderFault::OutDirMissing(
+                parent.display().to_string(),
+            ));
+        }
+    }
+
+    Ok(RenderRequest {
+        checkout: checkout_path,
+        component: component_path,
+        fixture: fixture_path,
+        out: out_path.to_path_buf(),
+        width: args.width,
+        height: args.height,
+        scale: args.scale,
+        background: args.background.clone(),
+        timeout_secs: args.timeout_secs,
+        // The flag is the NEGATIVE (`--no-install`) so the default behaviour needs no flag: a
+        // render from a fresh clone is the ordinary case, not the opt-in.
+        install: !args.no_install,
+        keep: args.keep,
+    })
+}
+
+/// Render one component to one PNG.
+///
+/// `json` is passed separately from the request because a request that could not be RESOLVED still
+/// has to be reported in the shape the caller asked for — reading the flag back off the request
+/// would silently drop to prose exactly when the paths were wrong.
+fn render_component_mode(request: Result<RenderRequest, ComponentRenderFault>, json: bool) -> i32 {
+    let request = match request {
+        Ok(r) => r,
+        Err(fault) => return report_render_fault(&fault, json),
+    };
+    match run_render(&request) {
+        Ok(report) => {
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report.json()).unwrap());
+            } else {
+                print!("{}", report.text());
+            }
+            0
+        }
+        Err(fault) => report_render_fault(&fault, json),
+    }
+}
+
+/// A fault as the caller asked to be told about it. PURE, and separate from the printing, so the
+/// `--json` path is testable — the shape a caller parses must not depend on which branch of the
+/// render failed.
+fn render_fault_output(fault: &ComponentRenderFault, json: bool) -> String {
+    if json {
+        serde_json::json!({
+            "ok": false,
+            "fault": fault.kind(),
+            "detail": fault.describe(),
+            "exitCode": component_render_exit_code(fault),
+        })
+        .to_string()
+    } else {
+        format!("render-component: {}", fault.describe())
+    }
+}
+
+fn report_render_fault(fault: &ComponentRenderFault, json: bool) -> i32 {
+    let out = render_fault_output(fault, json);
+    // JSON on stdout, prose on stderr: a caller that asked for JSON is parsing stdout, and a
+    // diagnostic mixed into it would break the parse rather than inform anyone.
+    if json {
+        println!("{out}");
+    } else {
+        eprintln!("{out}");
+    }
+    component_render_exit_code(fault)
+}
+
+/// What a successful render is, reported.
+struct RenderReport {
+    out: std::path::PathBuf,
+    png_width: u32,
+    png_height: u32,
+    css_width: i64,
+    css_height: i64,
+    elements: u64,
+    text_length: u64,
+    contrast: f64,
+    /// Every module that was STOOD IN FOR, with the fact that forced it. Carried into the report
+    /// because a render is only as trustworthy as the modules it did not use, and nobody looking
+    /// at the PNG can see which those were unless the render says.
+    stubs: Vec<(&'static str, &'static str)>,
+    fonts: Vec<String>,
+    app_css: Option<String>,
+    installed: bool,
+    console: Vec<String>,
+    harness: Option<std::path::PathBuf>,
+}
+
+impl RenderReport {
+    fn text(&self) -> String {
+        let mut out = format!(
+            "rendered {} ({}x{} px)\n",
+            self.out.display(),
+            self.png_width,
+            self.png_height
+        );
+        out.push_str(&format!(
+            "  mounted   {} elements, {}x{} css px, {} chars of text at {:.2}:1 contrast\n",
+            self.elements, self.css_width, self.css_height, self.text_length, self.contrast
+        ));
+        out.push_str(&format!(
+            "  stubs     {} tool-owned modules stood in for real ones ({}) — --json lists why\n",
+            self.stubs.len(),
+            self.stubs
+                .iter()
+                .map(|(name, _)| *name)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+        out.push_str(&format!(
+            "  app css   {}\n",
+            self.app_css.clone().unwrap_or_else(|| {
+                "(none found — the component renders with no global stylesheet)".to_string()
+            })
+        ));
+        out.push_str(&format!("  fonts     {}\n", self.fonts.join(", ")));
+        if self.installed {
+            out.push_str("  npm ci    ran (the checkout had no node_modules)\n");
+        }
+        if let Some(h) = &self.harness {
+            out.push_str(&format!("  harness   {} (kept)\n", h.display()));
+        }
+        if !self.console.is_empty() {
+            out.push_str(&format!(
+                "  console   {} message(s), none fatal:\n    {}\n",
+                self.console.len(),
+                self.console.join("\n    ")
+            ));
+        }
+        out
+    }
+
+    fn json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "ok": true,
+            "out": self.out.display().to_string(),
+            "pngWidth": self.png_width,
+            "pngHeight": self.png_height,
+            "cssWidth": self.css_width,
+            "cssHeight": self.css_height,
+            "elements": self.elements,
+            "textLength": self.text_length,
+            "contrast": self.contrast,
+            // WHAT WAS SUBSTITUTED, and why, on every successful render. A render is only as
+            // trustworthy as the modules it did not use, and the reader of a PNG cannot see which
+            // those were unless the render says.
+            "stubs": self.stubs.iter().map(|(name, why)| serde_json::json!({"module": name, "why": why})).collect::<Vec<_>>(),
+            "fonts": self.fonts,
+            "appCss": self.app_css,
+            "installed": self.installed,
+            "console": self.console,
+            "harness": self.harness.as_ref().map(|h| h.display().to_string()),
+        })
+    }
+}
+
+/// A directory removed on the way out however the render ends. The harness is INSIDE the checkout,
+/// so leaving it behind puts untracked files in a clone the producer is about to commit from.
+struct ScopedDir {
+    path: std::path::PathBuf,
+    keep: bool,
+}
+
+impl Drop for ScopedDir {
+    fn drop(&mut self) {
+        if !self.keep {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+}
+
+fn resolve_render_bin(bin: &str, why: &str) -> Result<std::path::PathBuf, ComponentRenderFault> {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    resolve_in(&path, bin).ok_or_else(|| ComponentRenderFault::ToolMissing {
+        bin: bin.to_string(),
+        why: why.to_string(),
+    })
+}
+
+fn run_render(request: &RenderRequest) -> Result<RenderReport, ComponentRenderFault> {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let node = resolve_render_bin(
+        "node",
+        "vite is run as `node node_modules/vite/bin/vite.js`",
+    )?;
+    let browser = RENDER_BROWSER_BINS
+        .iter()
+        .find_map(|b| resolve_in(&path, b))
+        .ok_or_else(|| ComponentRenderFault::NoBrowser {
+            tried: RENDER_BROWSER_BINS.iter().map(|b| b.to_string()).collect(),
+        })?;
+
+    let layout = HarnessLayout::under(&request.checkout, std::process::id());
+    let scoped = ScopedDir {
+        path: layout.root.clone(),
+        keep: request.keep,
+    };
+    let deadline = std::time::Duration::from_secs(request.timeout_secs);
+
+    // Provisioning. Only node_modules — the submodule, the generated files and .env the vitest
+    // suite needs are all avoided by the stub set, which is the point of the stub set.
+    let missing = missing_provisioning(&request.checkout);
+    let installed = !missing.is_empty();
+    if installed {
+        if !request.install {
+            return Err(ComponentRenderFault::NotProvisioned {
+                checkout: request.checkout.display().to_string(),
+                missing,
+            });
+        }
+        let npm = resolve_render_bin("npm", "the checkout has no installed dependencies")?;
+        let mut cmd = std::process::Command::new(&npm);
+        cmd.arg("ci").current_dir(&request.checkout);
+        match run_with_deadline(cmd, deadline) {
+            ChildResult::Finished(out) if out.status.success() => {}
+            ChildResult::Finished(out) => {
+                return Err(ComponentRenderFault::InstallFailed {
+                    code: out.status.code(),
+                    stderr: format!("{}\n{}", out.stdout, out.stderr),
+                })
+            }
+            ChildResult::TimedOut => {
+                return Err(ComponentRenderFault::TimedOut {
+                    what: "`npm ci`".to_string(),
+                    secs: request.timeout_secs,
+                })
+            }
+            ChildResult::Unspawnable(kind) => {
+                return Err(ComponentRenderFault::Unspawnable {
+                    bin: npm.display().to_string(),
+                    kind,
+                })
+            }
+        }
+    }
+
+    // Fonts. An existing FONTCONFIG_FILE is honoured as-is: whoever set it knows more about this
+    // box than a search does.
+    let inherited = std::env::var("FONTCONFIG_FILE")
+        .ok()
+        .filter(|p| std::path::Path::new(p).is_file());
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let candidates = font_candidate_dirs(home.as_deref(), std::path::Path::new("/nix/store"));
+    let found: Vec<std::path::PathBuf> = candidates
+        .iter()
+        .filter(|d| d.is_dir() && dir_has_font(d, 3))
+        .cloned()
+        .collect();
+    if inherited.is_none() && found.is_empty() {
+        return Err(ComponentRenderFault::NoFonts {
+            tried: candidates.iter().map(|d| d.display().to_string()).collect(),
+        });
+    }
+    let fonts_report: Vec<String> = match &inherited {
+        Some(f) => vec![format!("{f} (inherited FONTCONFIG_FILE)")],
+        None => found.iter().map(|d| d.display().to_string()).collect(),
+    };
+
+    let fixture = request
+        .fixture
+        .clone()
+        .unwrap_or_else(|| layout.stubs.join("empty-fixture.js"));
+    write_harness(
+        &layout,
+        &request.checkout,
+        &request.component,
+        &fixture,
+        &request.background,
+        &fonts_conf(&found, &layout.root.join("fontcache")),
+    )
+    .map_err(|e| ComponentRenderFault::Unspawnable {
+        bin: layout.root.display().to_string(),
+        kind: e.kind(),
+    })?;
+
+    // Build.
+    let vite = request.checkout.join("node_modules/vite/bin/vite.js");
+    let mut cmd = std::process::Command::new(&node);
+    cmd.arg(&vite)
+        .arg("build")
+        .arg("--config")
+        .arg(layout.root.join("vite.config.mjs"))
+        .current_dir(&request.checkout);
+    let build = match run_with_deadline(cmd, deadline) {
+        ChildResult::Finished(out) => out,
+        ChildResult::TimedOut => {
+            return Err(ComponentRenderFault::TimedOut {
+                what: "`vite build`".to_string(),
+                secs: request.timeout_secs,
+            })
+        }
+        ChildResult::Unspawnable(kind) => {
+            return Err(ComponentRenderFault::Unspawnable {
+                bin: node.display().to_string(),
+                kind,
+            })
+        }
+    };
+    if !build.status.success() {
+        let log = format!("{}\n{}", build.stdout, build.stderr);
+        return Err(ComponentRenderFault::BuildFailed {
+            code: build.status.code(),
+            diagnosis: BuildDiagnosis::read(&log),
+            stderr: log,
+        });
+    }
+
+    let server = StaticServer::serve(layout.dist.clone()).map_err(|e| {
+        ComponentRenderFault::Unspawnable {
+            bin: "the harness http server".to_string(),
+            kind: e.kind(),
+        }
+    })?;
+    let url = format!("http://127.0.0.1:{}/index.html", server.port);
+    let budget_ms = (request.timeout_secs * 1000 / 4).clamp(4000, 30000);
+
+    // Probe.
+    let profile = layout.root.join("chrome-probe");
+    let mut cmd = std::process::Command::new(&browser);
+    cmd.args(chromium_probe_args(
+        &profile,
+        request.width,
+        request.height,
+        request.scale,
+        budget_ms,
+        &url,
+    ));
+    apply_browser_env(&mut cmd, &layout, inherited.as_deref());
+    let probe = match run_with_deadline(cmd, deadline) {
+        ChildResult::Finished(out) => out,
+        ChildResult::TimedOut => {
+            return Err(ComponentRenderFault::TimedOut {
+                what: "the probe browser".to_string(),
+                secs: request.timeout_secs,
+            })
+        }
+        ChildResult::Unspawnable(kind) => {
+            return Err(ComponentRenderFault::Unspawnable {
+                bin: browser.display().to_string(),
+                kind,
+            })
+        }
+    };
+    if !probe.status.success() {
+        return Err(ComponentRenderFault::ProbeFailed {
+            code: probe.status.code(),
+            stderr: tail_of(&probe.stderr, 2000),
+        });
+    }
+    let status = extract_render_status(&probe.stdout)
+        .and_then(parse_render_status)
+        .ok_or(ComponentRenderFault::NoStatus {
+            dom_bytes: probe.stdout.len(),
+        })?;
+    if let Some(fault) = judge_render_status(&status) {
+        return Err(fault);
+    }
+
+    // Capture.
+    let height = capture_height(status.scroll_height, request.height);
+    let profile = layout.root.join("chrome-shot");
+    let mut cmd = std::process::Command::new(&browser);
+    cmd.args(chromium_shot_args(
+        &profile,
+        request.width,
+        height,
+        request.scale,
+        budget_ms,
+        &request.out,
+        &url,
+    ));
+    apply_browser_env(&mut cmd, &layout, inherited.as_deref());
+    let shot = match run_with_deadline(cmd, deadline) {
+        ChildResult::Finished(out) => out,
+        ChildResult::TimedOut => {
+            return Err(ComponentRenderFault::TimedOut {
+                what: "the screenshot browser".to_string(),
+                secs: request.timeout_secs,
+            })
+        }
+        ChildResult::Unspawnable(kind) => {
+            return Err(ComponentRenderFault::Unspawnable {
+                bin: browser.display().to_string(),
+                kind,
+            })
+        }
+    };
+    if !shot.status.success() {
+        return Err(ComponentRenderFault::CaptureFailed {
+            code: shot.status.code(),
+            stderr: tail_of(&shot.stderr, 2000),
+        });
+    }
+    let bytes = std::fs::read(&request.out)
+        .map_err(|_| ComponentRenderFault::NoImage(request.out.display().to_string()))?;
+    let (png_width, png_height) = png_dimensions(&bytes)?;
+
+    drop(server);
+    let harness = request.keep.then(|| layout.root.clone());
+    drop(scoped);
+    Ok(RenderReport {
+        out: request.out.clone(),
+        png_width,
+        png_height,
+        css_width: status.width,
+        css_height: status.height,
+        elements: status.elements,
+        text_length: status.text_length,
+        contrast: status.contrast,
+        stubs: RENDER_STUBS
+            .iter()
+            .filter(|s| s.name != "empty-fixture.js")
+            .map(|s| (s.name, s.why))
+            .collect(),
+        fonts: fonts_report,
+        app_css: app_css(&request.checkout).map(|p| p.display().to_string()),
+        installed,
+        console: status.console,
+        harness,
+    })
+}
+
+/// The browser's environment: its config, cache and font cache all inside the harness directory,
+/// so a render leaves nothing in the invoking user's home and two concurrent renders share no
+/// state.
+fn apply_browser_env(
+    cmd: &mut std::process::Command,
+    layout: &HarnessLayout,
+    inherited_fontconfig: Option<&str>,
+) {
+    cmd.env(
+        "FONTCONFIG_FILE",
+        inherited_fontconfig
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| layout.root.join("fonts.conf")),
+    );
+    cmd.env("HOME", &layout.root);
+    cmd.env("XDG_CONFIG_HOME", layout.root.join("xdg-config"));
+    cmd.env("XDG_CACHE_HOME", layout.root.join("xdg-cache"));
+}
+
+#[cfg(test)]
+mod render_component_tests {
+    use super::*;
+
+    /// A throwaway directory, named for the test that owns it so the suite's threads never share one.
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("prr-render-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn touch(path: &std::path::Path, body: &str) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, body).unwrap();
+    }
+
+    /// A minimal but REAL png header: the magic, then an IHDR chunk carrying the two dimensions.
+    fn png_header(width: u32, height: u32) -> Vec<u8> {
+        let mut bytes = PNG_MAGIC.to_vec();
+        bytes.extend_from_slice(&13u32.to_be_bytes());
+        bytes.extend_from_slice(b"IHDR");
+        bytes.extend_from_slice(&width.to_be_bytes());
+        bytes.extend_from_slice(&height.to_be_bytes());
+        bytes.extend_from_slice(&[8, 6, 0, 0, 0]);
+        bytes
+    }
+
+    fn ok_status() -> RenderStatus {
+        RenderStatus {
+            mounted: true,
+            measured: true,
+            error: None,
+            console: vec![],
+            elements: 42,
+            text_length: 100,
+            width: 620,
+            height: 800,
+            scroll_height: 900,
+            contrast: 12.0,
+        }
+    }
+
+    // ── the alias table ───────────────────────────────────────────────────────────────────────
+
+    /// Vite takes the FIRST alias whose `find` matches as a prefix, so a general entry placed
+    /// ahead of a specific one silently swallows it: `$lib` before `$lib/balancesStore` sends the
+    /// component to the real store, which cannot load in a fresh clone. Held as a property of the
+    /// whole table rather than by reading the sequence, so an alias appended in the wrong place
+    /// fails here instead of in a render nobody re-checks.
+    #[test]
+    fn render_alias_order_is_specific_before_general() {
+        for (i, general) in RENDER_ALIASES.iter().enumerate() {
+            if general.exact {
+                continue;
+            }
+            for specific in &RENDER_ALIASES[i + 1..] {
+                assert!(
+                    !specific.find.starts_with(general.find),
+                    "`{}` is matched as a prefix at position {i}, so `{}` below it is unreachable",
+                    general.find,
+                    specific.find
+                );
+            }
+        }
+    }
+
+    /// Every alias that names a stub names one that exists — the table cannot point at a file
+    /// `write_harness` never writes.
+    #[test]
+    fn every_alias_stub_is_a_real_stub_file() {
+        for alias in RENDER_ALIASES {
+            if let AliasTarget::Stub(name) = alias.target {
+                assert!(
+                    RENDER_STUBS.iter().any(|s| s.name == name),
+                    "alias {} targets stub {name}, which is not in RENDER_STUBS",
+                    alias.find
+                );
+            }
+        }
+    }
+
+    /// …and every stub is reachable. `empty-fixture.js` is the one exception: it is substituted for
+    /// a missing `--fixture` by path, not by alias.
+    #[test]
+    fn every_stub_is_reachable() {
+        for stub in RENDER_STUBS {
+            if stub.name == "empty-fixture.js" {
+                continue;
+            }
+            assert!(
+                RENDER_ALIASES
+                    .iter()
+                    .any(|a| a.target == AliasTarget::Stub(stub.name)),
+                "stub {} is written and no alias resolves to it",
+                stub.name
+            );
+        }
+    }
+
+    /// `@wagmi/core` must match EXACTLY. Prefix-matched it also captures `@wagmi/core/chains`,
+    /// which is pure chain data with no network in it and is what the real `$lib/stores` builds
+    /// its whole network table from — stub that and every network, token and explorer URL in the
+    /// render becomes something this tool made up.
+    #[test]
+    fn wagmi_core_is_matched_exactly() {
+        let alias = RENDER_ALIASES
+            .iter()
+            .find(|a| a.find == "@wagmi/core")
+            .expect("@wagmi/core alias");
+        assert!(alias.exact, "@wagmi/core must be an exact match");
+        assert!(
+            js_exact_regex(alias.find).contains(r"@wagmi\/core$"),
+            "the emitted regex must be anchored and escaped"
+        );
+    }
+
+    /// `$lib/stores` is deliberately NOT stubbed. Every harness in the trace corpus stubbed it with
+    /// a hand-written copy carrying 7 of its 20 exports and one hand-copied token, and it needs no
+    /// stub at all: it imports only `svelte/store`, `svelte-wagmi`, `@wagmi/core/chains`, `viem`
+    /// and two local modules, each of which either loads in a bare checkout or is stubbed above it.
+    #[test]
+    fn lib_stores_is_used_real() {
+        assert!(
+            !RENDER_ALIASES.iter().any(|a| a.find == "$lib/stores"),
+            "$lib/stores must resolve through the $lib fall-through to the checkout's own module"
+        );
+        assert!(
+            !RENDER_STUBS.iter().any(|s| s.name == "stores.js"),
+            "there must be no `$lib/stores` stub"
+        );
+    }
+
+    /// The fall-through is last, and it is the one that reaches the checkout.
+    #[test]
+    fn the_lib_fallthrough_is_last_and_points_at_the_checkout() {
+        let last = RENDER_ALIASES.last().unwrap();
+        assert_eq!(last.find, "$lib");
+        assert_eq!(last.target, AliasTarget::CheckoutLib);
+        assert!(!last.exact);
+    }
+
+    /// Every stub carries the FACT that forces it. A stub with no such fact is a divergence from
+    /// the real component for nothing.
+    #[test]
+    fn every_stub_states_why_it_is_needed() {
+        for stub in RENDER_STUBS {
+            assert!(
+                stub.why.len() > 20,
+                "{} has no reason recorded for standing in",
+                stub.name
+            );
+            assert!(
+                stub.source.contains("Tool-owned stub"),
+                "{} does not say it belongs to the tool",
+                stub.name
+            );
+        }
+    }
+
+    // ── JS emission ───────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn js_string_escapes_what_a_path_can_hold() {
+        assert_eq!(js_string("/a/b"), "\"/a/b\"");
+        assert_eq!(js_string("a\"b"), "\"a\\\"b\"");
+        assert_eq!(js_string("a\\b"), "\"a\\\\b\"");
+        assert_eq!(js_string("a\nb"), "\"a\\nb\"");
+    }
+
+    #[test]
+    fn js_exact_regex_anchors_and_escapes() {
+        assert_eq!(js_exact_regex("svelte-wagmi"), "/^svelte-wagmi$/");
+        assert_eq!(js_exact_regex("@wagmi/core"), r"/^@wagmi\/core$/");
+        assert_eq!(js_exact_regex("a.b"), r"/^a\.b$/");
+        assert_eq!(js_exact_regex("a+b"), r"/^a\+b$/");
+    }
+
+    #[test]
+    fn the_alias_array_resolves_every_target_kind() {
+        let stubs = std::path::Path::new("/h/stubs");
+        let checkout = std::path::Path::new("/c");
+        let component = std::path::Path::new("/c/src/lib/components/Lock.svelte");
+        let fixture = std::path::Path::new("/f/fixture.js");
+        let js = render_alias_js(RENDER_ALIASES, stubs, checkout, component, fixture);
+        assert!(js.contains("\"/h/stubs/svelte-wagmi.js\""), "stub path");
+        assert!(js.contains("\"/c/src/lib\""), "the $lib fall-through");
+        assert!(
+            js.contains("\"/c/src/lib/components/Lock.svelte\""),
+            "the component"
+        );
+        assert!(js.contains("\"/f/fixture.js\""), "the fixture");
+        assert!(js.contains(r"/^@wagmi\/core$/"), "the exact regex");
+        // Order survives emission: the balancesStore stub is emitted before the $lib fall-through.
+        let stub_at = js.find("balancesStore.js").unwrap();
+        let lib_at = js.find("\"/c/src/lib\"").unwrap();
+        assert!(stub_at < lib_at, "emission must preserve table order");
+    }
+
+    // ── writing the harness ───────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn write_harness_writes_every_file_and_leaves_no_placeholder() {
+        let dir = scratch("write-harness");
+        let checkout = dir.join("checkout");
+        touch(&checkout.join("src/app.css"), "body{}");
+        touch(&checkout.join("src/lib/components/X.svelte"), "<div/>");
+        let layout = HarnessLayout::under(&checkout, 99);
+        write_harness(
+            &layout,
+            &checkout,
+            &checkout.join("src/lib/components/X.svelte"),
+            &layout.stubs.join("empty-fixture.js"),
+            "#12002b",
+            "<fontconfig/>",
+        )
+        .unwrap();
+
+        for stub in RENDER_STUBS {
+            assert!(
+                layout.stubs.join(stub.name).is_file(),
+                "{} was not written",
+                stub.name
+            );
+        }
+        let html = std::fs::read_to_string(layout.root.join("index.html")).unwrap();
+        assert!(html.contains("background: #12002b;"), "background applied");
+        let entry = std::fs::read_to_string(layout.root.join("entry.js")).unwrap();
+        assert!(
+            entry.contains(&format!("import \"{}/src/app.css\"", checkout.display())),
+            "the checkout's global stylesheet is imported"
+        );
+        let config = std::fs::read_to_string(layout.root.join("vite.config.mjs")).unwrap();
+        assert!(config.contains("root: here"));
+        for file in ["index.html", "entry.js", "vite.config.mjs"] {
+            let body = std::fs::read_to_string(layout.root.join(file)).unwrap();
+            assert!(
+                !body.contains("__"),
+                "{file} still carries an unsubstituted __PLACEHOLDER__"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A checkout with no global stylesheet still renders — and the entry point then imports
+    /// nothing rather than a path that does not exist.
+    #[test]
+    fn a_checkout_without_a_global_stylesheet_imports_none() {
+        let dir = scratch("no-app-css");
+        let checkout = dir.join("checkout");
+        touch(&checkout.join("src/lib/components/X.svelte"), "<div/>");
+        let layout = HarnessLayout::under(&checkout, 99);
+        write_harness(
+            &layout,
+            &checkout,
+            &checkout.join("src/lib/components/X.svelte"),
+            &layout.stubs.join("empty-fixture.js"),
+            "white",
+            "<fontconfig/>",
+        )
+        .unwrap();
+        let entry = std::fs::read_to_string(layout.root.join("entry.js")).unwrap();
+        assert!(!entry.contains("app.css"));
+        assert!(entry.contains("@render/component"));
+        assert!(app_css(&checkout).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The harness lives INSIDE the checkout, because node's resolution and vite's postcss
+    /// discovery both walk UP from it — a harness in /tmp builds the component with none of the
+    /// checkout's styling.
+    #[test]
+    fn the_harness_lives_inside_the_checkout() {
+        let layout = HarnessLayout::under(std::path::Path::new("/c"), 7);
+        assert_eq!(
+            layout.root,
+            std::path::Path::new("/c/.pr-review-report-render-7")
+        );
+        assert!(layout.stubs.starts_with(&layout.root));
+        assert!(layout.dist.starts_with(&layout.root));
+    }
+
+    /// …and it is removed on the way out, however the render ended: it is untracked state inside a
+    /// clone the producer commits from.
+    #[test]
+    fn the_harness_directory_is_reclaimed_unless_kept() {
+        let dir = scratch("scoped-dir");
+        let target = dir.join("harness");
+        std::fs::create_dir_all(target.join("nested")).unwrap();
+        drop(ScopedDir {
+            path: target.clone(),
+            keep: false,
+        });
+        assert!(!target.exists(), "the harness must not survive the render");
+
+        std::fs::create_dir_all(&target).unwrap();
+        drop(ScopedDir {
+            path: target.clone(),
+            keep: true,
+        });
+        assert!(target.exists(), "--keep must survive the render");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── reading the build back ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn an_unresolved_import_is_read_out_of_the_build_log() {
+        let log = "vite v5.4.10 building for production...\n\
+                   [vite]: Rollup failed to resolve import \"../../cyclo.sol/out/IPyth.sol/IPyth.json\" \
+                   from \"/c/src/lib/pyth.ts\".\nerror during build:";
+        assert_eq!(
+            BuildDiagnosis::read(log),
+            BuildDiagnosis::Unresolved {
+                specifier: "../../cyclo.sol/out/IPyth.sol/IPyth.json".to_string(),
+                importer: "/c/src/lib/pyth.ts".to_string(),
+            }
+        );
+        // The specifier is the half that names what the harness cannot reach, and it survives a
+        // line that names no importer at all.
+        assert_eq!(
+            BuildDiagnosis::read("failed to resolve import \"$lib/gone\""),
+            BuildDiagnosis::Unresolved {
+                specifier: "$lib/gone".to_string(),
+                importer: String::new(),
+            }
+        );
+    }
+
+    /// Rollup's OWN wording, verbatim from a real `AccountStatus.svelte` render against a fresh
+    /// cyclo.site clone — the component whose static import of the gitignored `generated-graphql`
+    /// is precisely the thing that makes it unrenderable. Only vite's externalisation wording was
+    /// written here from memory, and this is the one the build actually produced; a diagnosis that
+    /// matched one of the two would report the other as an unreadable log.
+    #[test]
+    fn the_wording_a_real_unrenderable_component_produced_is_read() {
+        let log = "x Build failed in 1.14s\nerror during build:\n\
+                   Could not resolve \"../../generated-graphql\" from \"src/lib/components/AccountStatus.svelte\"\n\
+                   file: /c/src/lib/components/AccountStatus.svelte\n\
+                       at getRollupError (file:///c/node_modules/rollup/dist/es/shared/parseAst.js:396:41)";
+        assert_eq!(
+            BuildDiagnosis::read(log),
+            BuildDiagnosis::Unresolved {
+                specifier: "../../generated-graphql".to_string(),
+                importer: "src/lib/components/AccountStatus.svelte".to_string(),
+            }
+        );
+    }
+
+    /// A stub that has drifted from the module it stands in for is the divergence RENDER_STUBS
+    /// exists to make loud, so it gets its own diagnosis naming the file to repair.
+    #[test]
+    fn a_stub_missing_an_export_is_named_as_such() {
+        let log = "\"disconnectWagmi\" is not exported by \"/c/.pr-review-report-render-1/stubs/svelte-wagmi.js\", \
+                   imported by \"/c/src/lib/components/Header.svelte\"";
+        assert_eq!(
+            BuildDiagnosis::read(log),
+            BuildDiagnosis::StubMissingExport {
+                name: "disconnectWagmi".to_string(),
+                module: "svelte-wagmi.js".to_string(),
+            }
+        );
+    }
+
+    /// The SAME rollup wording about a module that is not a stub is NOT the stub diagnosis — the
+    /// discriminant is which module the export is missing from, not the sentence.
+    #[test]
+    fn a_missing_export_from_a_real_module_is_not_blamed_on_a_stub() {
+        let log =
+            "\"foo\" is not exported by \"/c/src/lib/utils.ts\", imported by \"/c/src/x.svelte\"";
+        assert_eq!(BuildDiagnosis::read(log), BuildDiagnosis::Other);
+    }
+
+    #[test]
+    fn an_unrecognised_build_failure_keeps_its_log() {
+        assert_eq!(
+            BuildDiagnosis::read("Error: EACCES: permission denied"),
+            BuildDiagnosis::Other
+        );
+        assert_eq!(BuildDiagnosis::read(""), BuildDiagnosis::Other);
+    }
+
+    // ── judging the page ──────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn a_component_that_threw_is_never_mounted() {
+        let mut s = ok_status();
+        s.mounted = false;
+        s.error = Some("TypeError: x is undefined".to_string());
+        s.console = vec!["console.error: boom".to_string()];
+        assert_eq!(
+            judge_render_status(&s),
+            Some(ComponentRenderFault::NeverMounted {
+                error: "TypeError: x is undefined".to_string(),
+                console: vec!["console.error: boom".to_string()],
+            })
+        );
+    }
+
+    /// A mount failure with no error text still refuses, and says the page reported none — the
+    /// absence is stated rather than rendered as an empty message.
+    #[test]
+    fn a_mount_failure_without_an_error_still_refuses() {
+        let mut s = ok_status();
+        s.mounted = false;
+        s.error = None;
+        assert!(matches!(
+            judge_render_status(&s),
+            Some(ComponentRenderFault::NeverMounted { ref error, .. }) if error.contains("no error")
+        ));
+    }
+
+    #[test]
+    fn a_page_still_working_is_never_settled() {
+        let mut s = ok_status();
+        s.measured = false;
+        assert!(matches!(
+            judge_render_status(&s),
+            Some(ComponentRenderFault::NeverSettled { .. })
+        ));
+    }
+
+    /// The blank PNG, refused before it is written. Each of the three ways of occupying nothing is
+    /// checked, because a component can mount into an empty subtree, into zero width, or into zero
+    /// height independently.
+    #[test]
+    fn a_component_that_occupies_nothing_is_refused() {
+        for (label, mutate) in [
+            (
+                "no elements",
+                Box::new(|s: &mut RenderStatus| s.elements = 0) as Box<dyn Fn(&mut RenderStatus)>,
+            ),
+            ("no width", Box::new(|s: &mut RenderStatus| s.width = 0)),
+            ("no height", Box::new(|s: &mut RenderStatus| s.height = 0)),
+        ] {
+            let mut s = ok_status();
+            mutate(&mut s);
+            assert!(
+                matches!(
+                    judge_render_status(&s),
+                    Some(ComponentRenderFault::BlankRender { .. })
+                ),
+                "{label} must refuse the render"
+            );
+        }
+    }
+
+    /// Text drawn in the colour of what is behind it is the other picture that shows nothing. The
+    /// fault names `--background`, which is the repair.
+    #[test]
+    fn text_that_cannot_be_seen_is_refused() {
+        let mut s = ok_status();
+        s.contrast = 1.0;
+        let fault = judge_render_status(&s).expect("refused");
+        assert_eq!(
+            fault,
+            ComponentRenderFault::InvisibleText {
+                contrast: 1.0,
+                text_length: 100,
+            }
+        );
+        assert!(
+            fault.describe().contains("--background"),
+            "the fault must name the repair: {}",
+            fault.describe()
+        );
+    }
+
+    /// …and a component with NO text is not judged on contrast at all. An icon, a chart or a
+    /// spacer legitimately renders nothing to read, and a threshold that refused those would push
+    /// the next agent straight back to hand-rolling the harness.
+    #[test]
+    fn a_component_with_no_text_is_not_judged_on_contrast() {
+        let mut s = ok_status();
+        s.text_length = 0;
+        s.contrast = -1.0;
+        assert_eq!(judge_render_status(&s), None);
+
+        // The same holds when the page measured a contrast but there is no text to apply it to.
+        let mut s = ok_status();
+        s.text_length = 0;
+        s.contrast = 1.0;
+        assert_eq!(judge_render_status(&s), None);
+    }
+
+    /// TEXT THAT EXISTS AND WAS NOT MEASURED is not the same fact as text that cannot be seen.
+    /// `textLength` is `#app`'s whole `innerText`; `contrast` only measures elements carrying their
+    /// OWN text node, with a non-zero box, not `visibility: hidden` — so a component whose text
+    /// lives entirely in a collapsed or hidden element reports text with `contrast: -1`. Treating
+    /// that -1 as a ratio makes it the lowest possible value and refuses the render for a
+    /// measurement nobody took. Found by mutation: dropping the `contrast >= 0.0` guard survived
+    /// every other test here, because they all pair `-1` with zero-length text.
+    #[test]
+    fn text_that_was_never_measured_is_not_invisible_text() {
+        let mut s = ok_status();
+        s.text_length = 40;
+        s.contrast = -1.0;
+        assert_eq!(
+            judge_render_status(&s),
+            None,
+            "an unmeasured contrast is an absent measurement, not a failed one"
+        );
+    }
+
+    /// Legible text just above the threshold passes: this refuses what cannot be seen, not what is
+    /// hard to read — that judgement belongs to whoever looks at the PNG.
+    #[test]
+    fn a_readable_render_is_accepted() {
+        assert_eq!(judge_render_status(&ok_status()), None);
+        let mut s = ok_status();
+        s.contrast = RENDER_MIN_CONTRAST;
+        assert_eq!(judge_render_status(&s), None, "the threshold is inclusive");
+        s.contrast = RENDER_MIN_CONTRAST - 0.01;
+        assert!(judge_render_status(&s).is_some(), "just below is refused");
+    }
+
+    /// The measurements REAL cyclo.site renders produced, on both sides of the threshold. The
+    /// threshold was first written at 1.2 from the definition of the ratio, and `TradePrice` —
+    /// 1800x1800 px of white with one ghost line at the top edge — measured 1.24 and passed it.
+    /// A constant that is only justified by an argument is a constant that drifts back.
+    #[test]
+    fn the_contrast_threshold_is_the_one_real_renders_calibrated() {
+        for (component, contrast) in [("Lock", 8.41), ("Footer", 12.00), ("RewardsInfo", 8.41)] {
+            let mut s = ok_status();
+            s.contrast = contrast;
+            assert_eq!(
+                judge_render_status(&s),
+                None,
+                "{component} is a legible render and must not be refused"
+            );
+        }
+        let mut s = ok_status();
+        s.contrast = 1.24;
+        assert!(
+            matches!(
+                judge_render_status(&s),
+                Some(ComponentRenderFault::InvisibleText { .. })
+            ),
+            "TradePrice's measured 1.24:1 is the image this check exists to refuse"
+        );
+    }
+
+    /// A mount failure outranks everything measured after it: reporting "occupies nothing" for a
+    /// component whose constructor threw sends the reader to the props instead of the exception.
+    #[test]
+    fn the_mount_failure_outranks_the_measurements() {
+        let mut s = ok_status();
+        s.mounted = false;
+        s.elements = 0;
+        s.contrast = 1.0;
+        assert!(matches!(
+            judge_render_status(&s),
+            Some(ComponentRenderFault::NeverMounted { .. })
+        ));
+    }
+
+    // ── the status payload ────────────────────────────────────────────────────────────────────
+
+    /// The DOM this reads is a REAL vite-built page's, which always carries the bundle's own
+    /// `<script type="module">` before the status element. Searching for the closing tag from the
+    /// start of the document rather than from the status element finds THAT one — an offset before
+    /// the payload even begins. Found by mutation: every fixture here had the status script first,
+    /// so the search origin was untested until this one put a script ahead of it.
+    #[test]
+    fn the_status_is_read_out_of_a_dumped_dom() {
+        let dom = "<html><head>\
+                   <script type=\"module\" crossorigin src=\"/assets/index-DWQQom4-.js\"></script>\
+                   </head><body><div id=\"app\">x</div>\
+                   <script id=\"render-status\" type=\"application/json\">{\"mounted\":true,\"measured\":true,\
+                   \"error\":null,\"console\":[\"a\"],\"elements\":3,\"textLength\":9,\"width\":100,\
+                   \"height\":200,\"scrollHeight\":300,\"contrast\":8.5}</script></body></html>";
+        let raw = extract_render_status(dom).expect("payload");
+        let status = parse_render_status(raw).expect("parsed");
+        assert_eq!(
+            status,
+            RenderStatus {
+                mounted: true,
+                measured: true,
+                error: None,
+                console: vec!["a".to_string()],
+                elements: 3,
+                text_length: 9,
+                width: 100,
+                height: 200,
+                scroll_height: 300,
+                contrast: 8.5,
+            }
+        );
+    }
+
+    /// The page escapes `<` before writing the JSON, so an error string containing a closing
+    /// script tag cannot truncate what is read back. Without the escape this payload ends early
+    /// and the whole render reports "the entry module did not run".
+    #[test]
+    fn an_error_naming_a_script_tag_does_not_truncate_the_payload() {
+        let dom = "<script id=\"render-status\" type=\"application/json\">\
+                   {\"mounted\":false,\"measured\":false,\"error\":\"at \\u003c/script>\",\"console\":[]}\
+                   </script>";
+        let status = parse_render_status(extract_render_status(dom).unwrap()).unwrap();
+        assert_eq!(status.error.as_deref(), Some("at </script>"));
+    }
+
+    #[test]
+    fn a_page_that_never_wrote_a_status_yields_none() {
+        assert_eq!(extract_render_status("<html><body></body></html>"), None);
+        assert_eq!(parse_render_status("not json"), None);
+        assert_eq!(parse_render_status("{}"), None);
+    }
+
+    // ── the image ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn a_png_header_yields_its_dimensions() {
+        assert_eq!(
+            png_dimensions(&png_header(1240, 2210)).unwrap(),
+            (1240, 2210)
+        );
+    }
+
+    /// The browser exiting 0 is not proof it wrote an image. Each way of writing something that is
+    /// not one is refused, with what was actually found.
+    #[test]
+    fn anything_that_is_not_a_png_is_refused() {
+        assert_eq!(
+            png_dimensions(b""),
+            Err(ComponentRenderFault::NotPng { magic: vec![] })
+        );
+        let mut truncated = png_header(10, 10);
+        truncated.truncate(20);
+        assert!(matches!(
+            png_dimensions(&truncated),
+            Err(ComponentRenderFault::NotPng { .. })
+        ));
+        let mut wrong_chunk = png_header(10, 10);
+        wrong_chunk[12..16].copy_from_slice(b"IDAT");
+        assert_eq!(
+            png_dimensions(&wrong_chunk),
+            Err(ComponentRenderFault::NotPng {
+                magic: b"IDAT".to_vec()
+            })
+        );
+        let mut not_png = png_header(10, 10);
+        not_png[0] = 0x00;
+        assert!(matches!(
+            png_dimensions(&not_png),
+            Err(ComponentRenderFault::NotPng { .. })
+        ));
+    }
+
+    #[test]
+    fn a_png_with_no_pixels_is_refused() {
+        assert_eq!(
+            png_dimensions(&png_header(0, 100)),
+            Err(ComponentRenderFault::EmptyImage {
+                width: 0,
+                height: 100
+            })
+        );
+        assert_eq!(
+            png_dimensions(&png_header(100, 0)),
+            Err(ComponentRenderFault::EmptyImage {
+                width: 100,
+                height: 0
+            })
+        );
+    }
+
+    /// The capture is as tall as the page measured, floored at the viewport and capped, so a
+    /// component taller than the window is not silently cropped to it.
+    #[test]
+    fn the_capture_is_as_tall_as_the_page() {
+        assert_eq!(capture_height(2100, 900), 2100, "taller than the viewport");
+        assert_eq!(
+            capture_height(400, 900),
+            900,
+            "never shorter than asked for"
+        );
+        assert_eq!(capture_height(999_999, 900), 12000, "capped");
+        assert_eq!(capture_height(0, 900), 900);
+        assert_eq!(capture_height(-5, 900), 900, "a nonsense measurement");
+    }
+
+    // ── the browser invocation ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn the_probe_dumps_the_dom_and_the_capture_writes_the_png() {
+        let profile = std::path::Path::new("/h/p");
+        let probe =
+            chromium_probe_args(profile, 620, 900, 2, 8000, "http://127.0.0.1:1/index.html");
+        assert!(probe.contains(&"--dump-dom".to_string()));
+        assert!(!probe.iter().any(|a| a.starts_with("--screenshot")));
+        assert_eq!(probe.last().unwrap(), "http://127.0.0.1:1/index.html");
+        assert!(probe.contains(&"--window-size=620,900".to_string()));
+
+        let out = std::path::Path::new("/tmp/shot.png");
+        let shot = chromium_shot_args(
+            profile,
+            620,
+            2100,
+            2,
+            8000,
+            out,
+            "http://127.0.0.1:1/index.html",
+        );
+        assert!(shot.contains(&"--screenshot=/tmp/shot.png".to_string()));
+        assert!(!shot.contains(&"--dump-dom".to_string()));
+        assert!(
+            shot.contains(&"--window-size=620,2100".to_string()),
+            "the capture uses the MEASURED height, not the viewport"
+        );
+        for args in [&probe, &shot] {
+            assert!(args.contains(&"--headless=new".to_string()));
+            assert!(args.contains(&"--force-device-scale-factor=2".to_string()));
+            assert!(args.contains(&"--virtual-time-budget=8000".to_string()));
+            assert!(args.contains(&"--user-data-dir=/h/p".to_string()));
+            assert!(
+                args.contains(&"--disable-background-networking".to_string()),
+                "a render must reach no network"
+            );
+        }
+    }
+
+    // ── the environment ───────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn provisioning_is_the_vite_binary_not_the_directory() {
+        let dir = scratch("provisioning");
+        assert_eq!(
+            missing_provisioning(&dir).len(),
+            RENDER_NODE_MODULES_PROBES.len(),
+            "a bare clone is missing all of them"
+        );
+        // A half-installed tree — what a `git clean` leaves — is still not provisioned.
+        touch(&dir.join("node_modules/svelte/package.json"), "{}");
+        assert_eq!(missing_provisioning(&dir).len(), 2);
+        touch(&dir.join("node_modules/vite/bin/vite.js"), "");
+        touch(
+            &dir.join("node_modules/@sveltejs/vite-plugin-svelte/package.json"),
+            "{}",
+        );
+        assert!(missing_provisioning(&dir).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_global_stylesheet_is_found_in_convention_order() {
+        let dir = scratch("app-css");
+        assert_eq!(app_css(&dir), None);
+        touch(&dir.join("src/app.scss"), "");
+        assert_eq!(app_css(&dir), Some(dir.join("src/app.scss")));
+        touch(&dir.join("src/app.css"), "");
+        assert_eq!(
+            app_css(&dir),
+            Some(dir.join("src/app.css")),
+            "the conventional name wins"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_directory_holds_fonts_only_if_it_holds_a_loadable_one() {
+        let dir = scratch("fonts");
+        assert!(!dir_has_font(&dir, 3));
+        touch(&dir.join("README.txt"), "");
+        assert!(!dir_has_font(&dir, 3), "a text file is not a font");
+        touch(&dir.join("a/b/c/DejaVuSans.ttf"), "");
+        assert!(dir_has_font(&dir, 3), "found three levels down");
+        assert!(!dir_has_font(&dir, 2), "…and not beyond the bound");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The cron's box has no `/usr/share/fonts` at all — the trace harnesses each pasted a
+    /// `/nix/store/…-dejavu-fonts-2.37/share/fonts` literal they had found by hand, which stops
+    /// working the next time the store is collected. Matched on the package NAME instead.
+    #[test]
+    fn nix_store_font_packages_are_found_by_name() {
+        let dir = scratch("nix-store");
+        touch(&dir.join("bbb-dejavu-fonts-2.37/share/fonts/x.ttf"), "");
+        touch(&dir.join("aaa-liberation-fonts-2.1/share/fonts/y.ttf"), "");
+        touch(&dir.join("ccc-hello-1.0/bin/hello"), "");
+        touch(&dir.join("ddd-noto-fonts-1.0/lib/nothing"), "");
+        let found = nix_store_font_dirs(&dir, 8);
+        assert_eq!(
+            found,
+            vec![
+                dir.join("aaa-liberation-fonts-2.1/share/fonts"),
+                dir.join("bbb-dejavu-fonts-2.37/share/fonts"),
+            ],
+            "font packages only, with a share/fonts, in a stable order"
+        );
+        assert_eq!(
+            nix_store_font_dirs(&dir, 1).len(),
+            1,
+            "the limit is honoured"
+        );
+        assert!(nix_store_font_dirs(std::path::Path::new("/no/such"), 8).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The fontconfig appends fallbacks WEAKLY. The traces prepended "DejaVu Sans" strongly, which
+    /// makes every render use DejaVu whatever the component asked for — a picture of a font the app
+    /// does not ship.
+    #[test]
+    fn the_fontconfig_appends_fallbacks_weakly() {
+        let conf = fonts_conf(
+            &[std::path::PathBuf::from("/fonts/a")],
+            std::path::Path::new("/cache"),
+        );
+        assert!(conf.contains("<dir>/fonts/a</dir>"));
+        assert!(conf.contains("<cachedir>/cache</cachedir>"));
+        assert!(conf.contains("mode=\"append\" binding=\"weak\""));
+        assert!(
+            !conf.contains("mode=\"prepend\""),
+            "a strong prepend would override the component's own font choice"
+        );
+        for generic in ["sans-serif", "serif", "monospace"] {
+            assert!(conf.contains(&format!("<string>{generic}</string>")));
+        }
+    }
+
+    // ── the static server ─────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn a_request_resolves_only_inside_the_served_root() {
+        let dir = scratch("serve-paths");
+        let root = dir.join("dist");
+        touch(&root.join("index.html"), "<html/>");
+        touch(&root.join("assets/app.js"), "//");
+        touch(&root.join("a b.png"), "x");
+        touch(&dir.join("secret.txt"), "no");
+
+        assert_eq!(
+            resolve_request_path(&root, "/"),
+            Some(root.canonicalize().unwrap().join("index.html"))
+        );
+        assert_eq!(
+            resolve_request_path(&root, "/assets/app.js?v=1#x"),
+            Some(root.canonicalize().unwrap().join("assets/app.js")),
+            "the query and fragment are not part of the path"
+        );
+        assert_eq!(
+            resolve_request_path(&root, "/a%20b.png"),
+            Some(root.canonicalize().unwrap().join("a b.png"))
+        );
+        assert_eq!(resolve_request_path(&root, "/../secret.txt"), None);
+        assert_eq!(
+            resolve_request_path(&root, "/%2e%2e/secret.txt"),
+            None,
+            "an escaped traversal is the same traversal"
+        );
+        assert_eq!(resolve_request_path(&root, "/assets"), None, "a directory");
+        assert_eq!(resolve_request_path(&root, "/nope.js"), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn percent_decoding_survives_what_it_cannot_decode() {
+        assert_eq!(percent_decode("/a%20b"), "/a b");
+        assert_eq!(percent_decode("/a%zzb"), "/a%zzb");
+        assert_eq!(percent_decode("/a%2"), "/a%2");
+        assert_eq!(percent_decode("/plain"), "/plain");
+    }
+
+    /// A module script served with the wrong content type does not execute, and the page then
+    /// looks exactly like a component that renders nothing.
+    #[test]
+    fn javascript_is_served_as_javascript() {
+        assert_eq!(
+            content_type(std::path::Path::new("/a/x.js")),
+            "text/javascript; charset=utf-8"
+        );
+        assert_eq!(
+            content_type(std::path::Path::new("/a/x.html")),
+            "text/html; charset=utf-8"
+        );
+        assert_eq!(
+            content_type(std::path::Path::new("/a/x.CSS")),
+            "text/css; charset=utf-8"
+        );
+        assert_eq!(
+            content_type(std::path::Path::new("/a/x.svg")),
+            "image/svg+xml"
+        );
+        assert_eq!(
+            content_type(std::path::Path::new("/a/x")),
+            "application/octet-stream"
+        );
+    }
+
+    /// End to end over a real socket: the built harness is served over http and not `file://`
+    /// because a `<script type="module">` from `file://` is blocked by the browser's own origin
+    /// rules, which presents as a page that loads and runs nothing.
+    #[test]
+    fn the_server_answers_a_real_request() {
+        use std::io::{Read, Write};
+        let dir = scratch("serve-live");
+        let root = dir.join("dist");
+        touch(&root.join("index.html"), "<html>hello</html>");
+        let server = StaticServer::serve(root).unwrap();
+
+        let get = |target: &str| {
+            let mut s = std::net::TcpStream::connect(("127.0.0.1", server.port)).unwrap();
+            write!(s, "GET {target} HTTP/1.1\r\nHost: localhost\r\n\r\n").unwrap();
+            let mut body = String::new();
+            s.read_to_string(&mut body).unwrap();
+            body
+        };
+        let ok = get("/");
+        assert!(ok.starts_with("HTTP/1.1 200 OK"), "{ok}");
+        assert!(ok.contains("Content-Type: text/html; charset=utf-8"));
+        assert!(ok.ends_with("<html>hello</html>"));
+        assert!(get("/nope").starts_with("HTTP/1.1 404"));
+
+        drop(server);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── children with a deadline ──────────────────────────────────────────────────────────────
+
+    /// A hung browser would hold the producer's whole run open, so every child is killed on its
+    /// deadline rather than waited on.
+    #[test]
+    fn a_child_that_overruns_is_killed() {
+        let mut fast = std::process::Command::new("/bin/sh");
+        fast.args(["-c", "printf out; printf err >&2; exit 7"]);
+        match run_with_deadline(fast, std::time::Duration::from_secs(20)) {
+            ChildResult::Finished(o) => {
+                assert_eq!(o.status.code(), Some(7));
+                assert_eq!(o.stdout, "out");
+                assert_eq!(o.stderr, "err");
+            }
+            _ => panic!("a fast child must finish"),
+        }
+        // The child spawns a GRANDCHILD that outlives it and inherits its pipes — chromium's
+        // zygote is exactly this — and then exits. Reading the pipes to EOF would wait for the
+        // grandchild, i.e. for the process the deadline exists to escape, so the timeout path
+        // must not read them at all.
+        let mut slow = std::process::Command::new("/bin/sh");
+        slow.args(["-c", "sleep 60 & sleep 30"]);
+        let started = std::time::Instant::now();
+        assert!(
+            matches!(
+                run_with_deadline(slow, std::time::Duration::from_millis(300)),
+                ChildResult::TimedOut
+            ),
+            "the deadline must stop it"
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "the deadline took {:?} — a lingering grandchild is holding the pipes open",
+            started.elapsed()
+        );
+
+        assert!(matches!(
+            run_with_deadline(
+                std::process::Command::new("/no/such/binary"),
+                std::time::Duration::from_secs(5)
+            ),
+            ChildResult::Unspawnable(_)
+        ));
+    }
+
+    // ── the request ───────────────────────────────────────────────────────────────────────────
+
+    fn request_for(
+        checkout: &std::path::Path,
+        component: &str,
+        fixture: Option<&str>,
+        out: &str,
+    ) -> Result<RenderRequest, ComponentRenderFault> {
+        resolve_render_request(&RenderComponentArgs {
+            checkout: checkout.to_string_lossy().into_owned(),
+            component: component.to_string(),
+            out: out.to_string(),
+            fixture: fixture.map(|f| f.to_string()),
+            width: 620,
+            height: 900,
+            scale: 2,
+            background: "white".to_string(),
+            timeout_secs: 300,
+            no_install: false,
+            keep: false,
+            json: false,
+        })
+    }
+
+    #[test]
+    fn a_component_is_named_the_way_a_diff_names_it() {
+        let dir = scratch("request");
+        let checkout = dir.join("checkout");
+        let component = checkout.join("src/lib/components/Lock.svelte");
+        touch(&component, "<div/>");
+        let request = request_for(
+            &checkout,
+            "src/lib/components/Lock.svelte",
+            None,
+            &dir.join("shot.png").to_string_lossy(),
+        )
+        .expect("resolved");
+        assert_eq!(request.component, component.canonicalize().unwrap());
+        assert_eq!(request.fixture, None);
+
+        // …and an absolute path still works.
+        let request = request_for(
+            &checkout,
+            &component.to_string_lossy(),
+            None,
+            &dir.join("shot.png").to_string_lossy(),
+        )
+        .expect("resolved");
+        assert_eq!(request.component, component.canonicalize().unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Every input is validated BEFORE the build: a three-minute render that ends on a mistyped
+    /// output directory is the same information, late.
+    #[test]
+    fn every_bad_path_is_refused_before_anything_runs() {
+        let dir = scratch("bad-paths");
+        let checkout = dir.join("checkout");
+        touch(&checkout.join("src/lib/X.svelte"), "<div/>");
+        let out = dir.join("shot.png").to_string_lossy().to_string();
+
+        assert_eq!(
+            request_for(&dir.join("nope"), "src/lib/X.svelte", None, &out).unwrap_err(),
+            ComponentRenderFault::CheckoutMissing(dir.join("nope").to_string_lossy().to_string())
+        );
+        assert_eq!(
+            request_for(&checkout, "src/lib/Nope.svelte", None, &out).unwrap_err(),
+            ComponentRenderFault::ComponentMissing("src/lib/Nope.svelte".to_string())
+        );
+        assert_eq!(
+            request_for(&checkout, "src/lib/X.svelte", Some("/no/fixture.js"), &out).unwrap_err(),
+            ComponentRenderFault::FixtureMissing("/no/fixture.js".to_string())
+        );
+        let bad_out = dir.join("no/such/dir/shot.png");
+        assert_eq!(
+            request_for(
+                &checkout,
+                "src/lib/X.svelte",
+                None,
+                &bad_out.to_string_lossy()
+            )
+            .unwrap_err(),
+            ComponentRenderFault::OutDirMissing(
+                dir.join("no/such/dir").to_string_lossy().to_string()
+            )
+        );
+        // A bare filename has no parent directory to check, and is not refused for that.
+        assert!(request_for(&checkout, "src/lib/X.svelte", None, "shot.png").is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── the report ────────────────────────────────────────────────────────────────────────────
+
+    /// Three exit codes because there are three different people to send: the caller, whoever owns
+    /// the box, and whoever owns the component. Collapsing the last two would route a missing
+    /// chromium and an unrenderable component to the same place.
+    #[test]
+    fn the_exit_code_says_who_has_to_act() {
+        for fault in [
+            ComponentRenderFault::CheckoutMissing("x".into()),
+            ComponentRenderFault::ComponentMissing("x".into()),
+            ComponentRenderFault::FixtureMissing("x".into()),
+            ComponentRenderFault::OutDirMissing("x".into()),
+        ] {
+            assert_eq!(component_render_exit_code(&fault), 2, "{fault:?}");
+        }
+        for fault in [
+            ComponentRenderFault::NoBrowser { tried: vec![] },
+            ComponentRenderFault::ToolMissing {
+                bin: "node".into(),
+                why: "w".into(),
+            },
+            ComponentRenderFault::NoFonts { tried: vec![] },
+            ComponentRenderFault::NotProvisioned {
+                checkout: "c".into(),
+                missing: vec![],
+            },
+            ComponentRenderFault::InstallFailed {
+                code: Some(1),
+                stderr: String::new(),
+            },
+            ComponentRenderFault::Unspawnable {
+                bin: "b".into(),
+                kind: std::io::ErrorKind::NotFound,
+            },
+        ] {
+            assert_eq!(component_render_exit_code(&fault), 12, "{fault:?}");
+        }
+        for fault in [
+            ComponentRenderFault::TimedOut {
+                what: "w".into(),
+                secs: 1,
+            },
+            ComponentRenderFault::BuildFailed {
+                code: Some(1),
+                diagnosis: BuildDiagnosis::Other,
+                stderr: String::new(),
+            },
+            ComponentRenderFault::ProbeFailed {
+                code: Some(1),
+                stderr: String::new(),
+            },
+            ComponentRenderFault::NoStatus { dom_bytes: 0 },
+            ComponentRenderFault::NeverSettled { console: vec![] },
+            ComponentRenderFault::NeverMounted {
+                error: String::new(),
+                console: vec![],
+            },
+            ComponentRenderFault::BlankRender {
+                elements: 0,
+                width: 0,
+                height: 0,
+                console: vec![],
+            },
+            ComponentRenderFault::InvisibleText {
+                contrast: 1.0,
+                text_length: 1,
+            },
+            ComponentRenderFault::CaptureFailed {
+                code: Some(1),
+                stderr: String::new(),
+            },
+            ComponentRenderFault::NoImage("o".into()),
+            ComponentRenderFault::NotPng { magic: vec![] },
+            ComponentRenderFault::EmptyImage {
+                width: 0,
+                height: 0,
+            },
+        ] {
+            assert_eq!(component_render_exit_code(&fault), 3, "{fault:?}");
+        }
+    }
+
+    /// The two faults a caller has to tell apart at a glance: a component the harness genuinely
+    /// cannot render, and a stub that has drifted. Neither may read as the other.
+    #[test]
+    fn an_unrenderable_component_and_a_stale_stub_say_different_things() {
+        let unrenderable = ComponentRenderFault::BuildFailed {
+            code: Some(1),
+            diagnosis: BuildDiagnosis::Unresolved {
+                specifier: "../../cyclo.sol/out/IPyth.sol/IPyth.json".into(),
+                importer: "/c/src/lib/pyth.ts".into(),
+            },
+            stderr: String::new(),
+        };
+        let text = unrenderable.describe();
+        assert!(text.contains("CANNOT BE RENDERED"), "{text}");
+        assert!(
+            text.contains("cyclo.sol/out/IPyth.sol/IPyth.json"),
+            "{text}"
+        );
+        assert_eq!(unrenderable.kind(), "build-failed");
+
+        let stale = ComponentRenderFault::BuildFailed {
+            code: Some(1),
+            diagnosis: BuildDiagnosis::StubMissingExport {
+                name: "disconnectWagmi".into(),
+                module: "svelte-wagmi.js".into(),
+            },
+            stderr: String::new(),
+        };
+        let text = stale.describe();
+        assert!(
+            text.contains("RENDER_STUBS"),
+            "the repair is in the tool: {text}"
+        );
+        assert!(text.contains("svelte-wagmi.js"), "{text}");
+        assert!(!text.contains("CANNOT BE RENDERED"), "{text}");
+    }
+
+    /// The provisioning fault names `npm ci` and says the rest is not needed — a render that
+    /// inherited the vitest suite's submodule/generated/.env cost would pay it every run.
+    #[test]
+    fn the_provisioning_fault_names_only_the_install() {
+        let text = ComponentRenderFault::NotProvisioned {
+            checkout: "/c".into(),
+            missing: vec!["node_modules/vite/bin/vite.js".into()],
+        }
+        .describe();
+        assert!(text.contains("npm ci"), "{text}");
+        assert!(text.contains("--no-install"), "{text}");
+        assert!(text.contains("stub set"), "{text}");
+    }
+
+    /// `--json` has to hold for EVERY fault, including the ones raised before the request is even
+    /// resolved. Those are reported from a different call site, which is exactly where a caller
+    /// parsing stdout would find prose instead.
+    #[test]
+    fn a_json_caller_gets_json_for_every_fault() {
+        for fault in [
+            ComponentRenderFault::CheckoutMissing("/c".into()),
+            ComponentRenderFault::NoBrowser {
+                tried: vec!["chromium".into()],
+            },
+            ComponentRenderFault::BlankRender {
+                elements: 0,
+                width: 0,
+                height: 0,
+                console: vec![],
+            },
+        ] {
+            let out = render_fault_output(&fault, true);
+            let v: serde_json::Value = serde_json::from_str(&out)
+                .unwrap_or_else(|e| panic!("{} is not JSON ({e}): {out}", fault.kind()));
+            assert_eq!(v["ok"], serde_json::json!(false));
+            assert_eq!(v["fault"], serde_json::json!(fault.kind()));
+            assert_eq!(
+                v["exitCode"],
+                serde_json::json!(component_render_exit_code(&fault))
+            );
+            assert_eq!(v["detail"], serde_json::json!(fault.describe()));
+
+            let prose = render_fault_output(&fault, false);
+            assert!(prose.starts_with("render-component: "), "{prose}");
+            assert!(serde_json::from_str::<serde_json::Value>(&prose).is_err());
+        }
+    }
+
+    /// A successful render REPORTS WHAT IT SUBSTITUTED. Nobody looking at the PNG can see which
+    /// modules were not the app's own unless the render says so, and the count alone does not say
+    /// which or why.
+    #[test]
+    fn a_successful_render_reports_what_it_stood_in_for() {
+        let report = RenderReport {
+            out: std::path::PathBuf::from("/tmp/shot.png"),
+            png_width: 1240,
+            png_height: 2258,
+            css_width: 620,
+            css_height: 1129,
+            elements: 62,
+            text_length: 307,
+            contrast: 8.41,
+            stubs: RENDER_STUBS
+                .iter()
+                .filter(|s| s.name != "empty-fixture.js")
+                .map(|s| (s.name, s.why))
+                .collect(),
+            fonts: vec!["/fonts/dejavu".to_string()],
+            app_css: Some("/c/src/app.css".to_string()),
+            installed: true,
+            console: vec!["console.error: Error getting price".to_string()],
+            harness: None,
+        };
+
+        let json = report.json();
+        assert_eq!(json["ok"], serde_json::json!(true));
+        assert_eq!(json["pngWidth"], serde_json::json!(1240));
+        let stubs = json["stubs"].as_array().expect("stubs is a list");
+        assert_eq!(
+            stubs.len(),
+            RENDER_STUBS.len() - 1,
+            "the fixture is not one"
+        );
+        for stub in stubs {
+            assert!(stub["module"].as_str().is_some_and(|m| m.ends_with(".js")));
+            assert!(
+                stub["why"].as_str().is_some_and(|w| w.len() > 20),
+                "every substituted module reports the fact that forced it: {stub}"
+            );
+        }
+        assert!(stubs
+            .iter()
+            .any(|s| s["module"] == serde_json::json!("svelte-wagmi.js")));
+
+        let text = report.text();
+        assert!(text.contains("1240x2258 px"), "{text}");
+        assert!(text.contains("8.41:1 contrast"), "{text}");
+        assert!(text.contains("svelte-wagmi.js"), "{text}");
+        assert!(text.contains("/c/src/app.css"), "{text}");
+        assert!(text.contains("npm ci"), "an install that ran is reported");
+        // A non-fatal page error is SURFACED, not swallowed: it is the difference between a render
+        // that is complete and one that merely did not crash.
+        assert!(text.contains("Error getting price"), "{text}");
+    }
+
+    /// A checkout with no global stylesheet says so in the report rather than reporting nothing —
+    /// a component rendered with none of the app's typography is a picture of something the user
+    /// never sees, and that has to be visible to whoever reads the PNG.
+    #[test]
+    fn a_render_without_a_stylesheet_says_so() {
+        let report = RenderReport {
+            out: std::path::PathBuf::from("/tmp/shot.png"),
+            png_width: 10,
+            png_height: 10,
+            css_width: 10,
+            css_height: 10,
+            elements: 1,
+            text_length: 0,
+            contrast: -1.0,
+            stubs: vec![],
+            fonts: vec![],
+            app_css: None,
+            installed: false,
+            console: vec![],
+            harness: None,
+        };
+        assert!(report.text().contains("none found"), "{}", report.text());
+        assert!(!report.text().contains("npm ci"), "no install, no line");
+        assert_eq!(report.json()["appCss"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn a_log_is_reported_by_its_tail() {
+        assert_eq!(tail_of("short", 100), "short");
+        assert_eq!(tail_of("abcdef", 3), "…def");
+        // A multi-byte character straddling the cut must not panic, and must not be split.
+        let s = "aaaaéé";
+        let clipped = tail_of(s, 3);
+        assert!(s.ends_with(clipped.trim_start_matches('…')));
+    }
+
+    #[test]
+    fn every_fault_kind_is_distinct() {
+        let kinds = [
+            ComponentRenderFault::CheckoutMissing("x".into()).kind(),
+            ComponentRenderFault::ComponentMissing("x".into()).kind(),
+            ComponentRenderFault::FixtureMissing("x".into()).kind(),
+            ComponentRenderFault::OutDirMissing("x".into()).kind(),
+            ComponentRenderFault::NoBrowser { tried: vec![] }.kind(),
+            ComponentRenderFault::ToolMissing {
+                bin: "b".into(),
+                why: "w".into(),
+            }
+            .kind(),
+            ComponentRenderFault::NoFonts { tried: vec![] }.kind(),
+            ComponentRenderFault::NotProvisioned {
+                checkout: "c".into(),
+                missing: vec![],
+            }
+            .kind(),
+            ComponentRenderFault::InstallFailed {
+                code: None,
+                stderr: String::new(),
+            }
+            .kind(),
+            ComponentRenderFault::Unspawnable {
+                bin: "b".into(),
+                kind: std::io::ErrorKind::NotFound,
+            }
+            .kind(),
+            ComponentRenderFault::TimedOut {
+                what: "w".into(),
+                secs: 1,
+            }
+            .kind(),
+            ComponentRenderFault::BuildFailed {
+                code: None,
+                diagnosis: BuildDiagnosis::Other,
+                stderr: String::new(),
+            }
+            .kind(),
+            ComponentRenderFault::ProbeFailed {
+                code: None,
+                stderr: String::new(),
+            }
+            .kind(),
+            ComponentRenderFault::NoStatus { dom_bytes: 0 }.kind(),
+            ComponentRenderFault::NeverSettled { console: vec![] }.kind(),
+            ComponentRenderFault::NeverMounted {
+                error: String::new(),
+                console: vec![],
+            }
+            .kind(),
+            ComponentRenderFault::BlankRender {
+                elements: 0,
+                width: 0,
+                height: 0,
+                console: vec![],
+            }
+            .kind(),
+            ComponentRenderFault::InvisibleText {
+                contrast: 1.0,
+                text_length: 1,
+            }
+            .kind(),
+            ComponentRenderFault::CaptureFailed {
+                code: None,
+                stderr: String::new(),
+            }
+            .kind(),
+            ComponentRenderFault::NoImage("o".into()).kind(),
+            ComponentRenderFault::NotPng { magic: vec![] }.kind(),
+            ComponentRenderFault::EmptyImage {
+                width: 0,
+                height: 0,
+            }
+            .kind(),
+        ];
+        let mut sorted = kinds.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), kinds.len(), "two faults share a machine name");
+    }
+
+    /// A subcommand nothing routes to changes nothing. The producer's screenshot steps must name
+    /// `render-component` and must NOT still teach the hand-roll — the corpus measurement #251 is
+    /// built on is "agents write a vite config and stub modules every run", and that only goes to
+    /// zero when the instruction telling them to stops existing.
+    #[test]
+    fn the_producer_prompt_routes_screenshots_to_this_subcommand() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            prompt.contains("pr-review-report render-component"),
+            "step 5 must hand the producer the subcommand"
+        );
+        // The hand-roll instruction itself, gone. Each of these is a thing the trace corpus shows
+        // an agent writing from memory because the prompt told it to.
+        for taught in [
+            "minimal Vite+svelte harness",
+            "nix shell nixpkgs#chromium",
+            "FONTCONFIG_FILE",
+        ] {
+            assert!(
+                !prompt.contains(taught),
+                "the prompt still teaches the hand-rolled harness: {taught:?}"
+            );
+        }
+        // The exit codes are the whole routing decision, so the prompt has to distinguish them:
+        // 3 is a design question about this component, 12 is an environment failure that ends the
+        // run, and reading one as the other either parks a good PR or waives a screenshot.
+        assert!(
+            prompt.contains("unrenderable-render: <the tool's own exit-3 message, verbatim>"),
+            "3c must quote the tool's own finding rather than a stack name"
+        );
+        assert!(
+            prompt.contains("Exit 12 is NOT this"),
+            "the prompt must separate a component that cannot render from a box that cannot"
+        );
+    }
+
+    #[test]
+    fn the_subcommand_parses_with_its_defaults() {
+        use clap::Parser;
+        let cli = Cli::parse_from([
+            "pr-review-report",
+            "render-component",
+            "--checkout",
+            "/c",
+            "--component",
+            "src/lib/components/Lock.svelte",
+            "--out",
+            "/tmp/shot.png",
+        ]);
+        match cli.command {
+            Cmd::RenderComponent(args) => {
+                assert_eq!(args.checkout, "/c");
+                assert_eq!(args.component, "src/lib/components/Lock.svelte");
+                assert_eq!(args.out, "/tmp/shot.png");
+                assert_eq!(args.fixture, None);
+                assert_eq!((args.width, args.height, args.scale), (620, 900, 2));
+                assert_eq!(args.background, "transparent");
+                assert_eq!(args.timeout_secs, 600);
+                assert!(!args.no_install && !args.keep && !args.json);
+                // The install default is what makes a fresh clone work with no extra flag.
+                assert!(
+                    resolve_render_request(&args).is_err(),
+                    "/c is not a checkout"
+                );
+            }
+            other => panic!("parsed as {other:?}"),
+        }
+    }
+
+    /// `--no-install` is the negative of the behaviour the request carries, and the flip has to
+    /// happen exactly once. Inverted, a fresh clone would refuse by default and a `--no-install`
+    /// caller would get the `npm ci` it asked not to have.
+    #[test]
+    fn no_install_is_the_negative_of_install() {
+        let dir = scratch("no-install");
+        let checkout = dir.join("checkout");
+        touch(&checkout.join("src/lib/X.svelte"), "<div/>");
+        let mut args = RenderComponentArgs {
+            checkout: checkout.to_string_lossy().into_owned(),
+            component: "src/lib/X.svelte".to_string(),
+            out: "shot.png".to_string(),
+            fixture: None,
+            width: 620,
+            height: 900,
+            scale: 2,
+            background: "transparent".to_string(),
+            timeout_secs: 600,
+            no_install: false,
+            keep: false,
+            json: false,
+        };
+        assert!(resolve_render_request(&args).unwrap().install);
+        args.no_install = true;
+        assert!(!resolve_render_request(&args).unwrap().install);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
 /// The CLI surface. Each subcommand maps to one `*_mode` function; clap owns all positional/flag
 /// parsing, validation, and `--help`/usage (replacing the former hand-rolled `args.get(n)` dispatch).
 #[derive(Parser)]
@@ -37761,6 +41719,20 @@ enum Cmd {
         #[arg(required = true, num_args = 1..)]
         paths: Vec<String>,
     },
+    /// Render ONE component of a checkout to ONE PNG, with the vite config and the alias stubs as
+    /// this tool's implementation detail rather than as files an agent writes (#251).
+    ///
+    /// Every producer run that took a screenshot item rebuilt that harness from scratch — 11 file
+    /// writes in one retained trace, 7 in each of two others, the same ten files re-derived from
+    /// memory each time. It cannot decay on its own the way the probe loop did once `await`
+    /// existed, because screenshots are mandatory on every visual PR.
+    ///
+    /// A component this harness genuinely cannot mount SAYS SO and writes no file: exit 3 is "this
+    /// component", exit 12 is "this box", exit 2 is the invocation. Blank and misleading images are
+    /// refused before they are written, not after someone looks at one.
+    ///
+    /// Needs `node` and a chromium on PATH — e.g. run it inside `nix shell nixpkgs#chromium`.
+    RenderComponent(RenderComponentArgs),
     /// Speak MCP over stdio, exposing a role's FSM transitions as tools — an agent restricted to
     /// this server cannot perform a non-FSM operation. Wiring: `review-mcp.json`, `campaign-mcp.json`.
     Mcp {
@@ -41381,6 +45353,9 @@ fn main() {
             dry_run,
         } => report_apply(weaken_closes_apply(&slug, &pr, issue, dry_run)),
         Cmd::SolConventions { paths } => sol_conventions_mode(&paths),
+        Cmd::RenderComponent(args) => {
+            render_component_mode(resolve_render_request(&args), args.json)
+        }
         Cmd::Mcp { profile } => match McpProfile::parse(&profile) {
             Ok(p) => mcp_serve(p),
             Err(e) => {
@@ -63849,6 +67824,26 @@ mod closure_gate_tests {
         )
     }
 
+    /// The stale-declaration faults a FABRICATED surface set necessarily produces: one for every
+    /// [`DECLARED_ASYMMETRY`] entry the fixture does not exhibit, in table order.
+    ///
+    /// DERIVED FROM THE TABLE, not listed. These fixtures name three or four binaries to isolate
+    /// one rule each, so every declaration they do not mention is trivially stale against them —
+    /// and a hand-written copy of that consequence turns every new declaration into an edit of
+    /// four unrelated tests, which is the hand-maintained duplicate this repo keeps being bitten
+    /// by. The #251 render tools added six entries at once and each of these fixtures failed with
+    /// six lines of the same fact; deriving it makes them assert their own rule again.
+    fn stale_except(exhibited: &[&str]) -> Vec<ClosureFault> {
+        DECLARED_ASYMMETRY
+            .iter()
+            .filter(|d| !exhibited.contains(&d.bin))
+            .map(|d| ClosureFault::StaleAsymmetry {
+                pkg: d.only_in,
+                bin: d.bin,
+            })
+            .collect()
+    }
+
     // ---- the declaration itself ----
 
     #[test]
@@ -63858,6 +67853,191 @@ mod closure_gate_tests {
         // implements against writes a PR body asserting something it never read.
         assert!(MODEL_RUNNERS.contains(&"campaign-run"), "{MODEL_RUNNERS:?}");
         assert!(MODEL_RUNNERS.contains(&"review-run"), "{MODEL_RUNNERS:?}");
+    }
+
+    /// The producer renders and the vetter does not, and that is a fact about the ROLE: the vetter
+    /// denies `Bash` outright, so it could not exec a renderer if one were in its closure — and a
+    /// closure carrying chromium would state a capability the vetter does not have.
+    #[test]
+    fn only_the_producer_carries_the_render_tools() {
+        assert_eq!(RENDER_RUNNER, "campaign-run");
+        assert!(MODEL_RUNNERS.contains(&RENDER_RUNNER), "{MODEL_RUNNERS:?}");
+        // The vetter's inability to exec is what makes the one-sidedness correct rather than an
+        // oversight, so it is asserted here and not merely written in the reason strings.
+        let Some(settings) = repo_root_text("review-settings.json") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let denied: serde_json::Value = serde_json::from_str(&settings).expect("json");
+        assert!(
+            denied["permissions"]["deny"]
+                .as_array()
+                .expect("deny list")
+                .iter()
+                .any(|t| t == "Bash"),
+            "the vetter must deny Bash, or excluding it from the render closure is just a hole"
+        );
+    }
+
+    /// EVERY binary the render packages put on the producer's PATH is declared — not only the three
+    /// the tool calls. `closure-surface` compares whole surfaces, so an undeclared ride-along
+    /// (`npx`, `corepack`, `chromium-browser`) fails the gate exactly like a dependency somebody
+    /// added to one runner and forgot in the other.
+    #[test]
+    fn every_render_binary_is_declared_one_sided() {
+        for bin in [
+            "node",
+            "npm",
+            "npx",
+            "corepack",
+            "chromium",
+            "chromium-browser",
+        ] {
+            let d = DECLARED_ASYMMETRY
+                .iter()
+                .find(|d| d.bin == bin)
+                .unwrap_or_else(|| {
+                    panic!("{bin} rides in on the render packages and is undeclared")
+                });
+            assert_eq!(d.only_in, RENDER_RUNNER, "{bin}");
+        }
+        // …and the surface gate is satisfied by those declarations, on the real binary sets the
+        // two closures now hold.
+        let producer = surface(
+            "campaign-run",
+            &[
+                "gh",
+                "jq",
+                "git",
+                "pdftoppm",
+                "pdfinfo",
+                "node",
+                "npm",
+                "npx",
+                "corepack",
+                "chromium",
+                "chromium-browser",
+            ],
+        );
+        let vetter = surface("review-run", &["gh", "git", "pdftoppm", "pdfinfo"]);
+        assert_eq!(
+            surface_faults(&[producer, vetter]),
+            vec![],
+            "the declarations must cover the surfaces the flake actually builds"
+        );
+    }
+
+    /// Every render tool carries the fact that forces it, and the table stays the short one a
+    /// preflight can demand without blocking a run for nothing.
+    #[test]
+    fn every_render_tool_states_why_it_is_needed() {
+        for t in RENDER_TOOLS {
+            assert!(t.why.len() > 20, "{} has no reason recorded", t.bin);
+        }
+        assert!(
+            RENDER_TOOLS.iter().any(|t| t.bin == "chromium"),
+            "the renderer itself must be declared"
+        );
+    }
+
+    /// A producer closure missing a render dependency is a FAULT; the vetter missing the same
+    /// binaries is the declared design and must produce none. Without the second half, adding the
+    /// render tools to the preflight would fail the vetter's closure on every run.
+    #[test]
+    fn render_faults_are_raised_for_the_producer_and_never_for_the_vetter() {
+        let scratch = Scratch::new("render-tools");
+        let dir = scratch.bindir("bin");
+        let path = std::ffi::OsString::from(dir.to_string_lossy().to_string());
+
+        let faults = render_tool_faults("campaign-run", &path);
+        assert_eq!(faults.len(), RENDER_TOOLS.len(), "{faults:?}");
+        assert!(faults.iter().all(|f| matches!(
+            f,
+            ClosureFault::ToolMissing { pkg, .. } if pkg == "campaign-run"
+        )));
+        assert!(
+            faults[0].describe().contains("runtimeInputs"),
+            "the fault must name the repair: {}",
+            faults[0].describe()
+        );
+
+        assert_eq!(
+            render_tool_faults("review-run", &path),
+            vec![],
+            "the vetter cannot exec a renderer; absence there is the design, not a gap"
+        );
+
+        for t in RENDER_TOOLS {
+            scratch.stub(&dir, t.bin, "#!/bin/sh\nexit 0\n");
+        }
+        assert_eq!(
+            render_tool_faults("campaign-run", &path),
+            vec![],
+            "a complete producer closure has no render faults"
+        );
+    }
+
+    /// `closure-preflight`'s WHOLE judgement, on a fabricated closure. The mode itself shells out
+    /// to `nix build` and so cannot be unit tested; this is the part that decides, and it is
+    /// asserted here so "the render tools are checked at all" is a property rather than a line in
+    /// an untestable function that someone can delete and no test notices.
+    #[test]
+    fn the_preflight_checks_the_render_tools_as_well_as_the_harness_tools() {
+        let scratch = Scratch::new("preflight-both");
+        let dir = scratch.bindir("bin");
+        let closure = closure_of(&dir);
+
+        // A producer closure carrying the PDF tools and nothing else is still faulty: the render
+        // half is missing, which is exactly the state the flake was in before #251.
+        for t in HARNESS_TOOLS {
+            scratch.stub(&dir, t.bin, "#!/bin/sh\nexit 0\n");
+        }
+        let faults = closure_tool_faults(&closure);
+        assert_eq!(faults.len(), RENDER_TOOLS.len(), "{faults:?}");
+        for t in RENDER_TOOLS {
+            assert!(
+                faults.iter().any(|f| matches!(
+                    f,
+                    ClosureFault::ToolMissing { bin, .. } if *bin == t.bin
+                )),
+                "{} is declared and not checked: {faults:?}",
+                t.bin
+            );
+        }
+
+        // …and the vetter, with the same PDF tools and no renderer, is complete.
+        let vetter = RunnerClosure {
+            pkg: "review-run".to_string(),
+            path: closure.path.clone(),
+        };
+        assert_eq!(closure_tool_faults(&vetter), vec![]);
+
+        for t in RENDER_TOOLS {
+            scratch.stub(&dir, t.bin, "#!/bin/sh\nexit 0\n");
+        }
+        assert_eq!(closure_tool_faults(&closure), vec![]);
+    }
+
+    /// What the preflight PRINTS and what it CHECKS come from one list, so it cannot report a
+    /// clean closure while silently skipping a declared tool.
+    #[test]
+    fn the_preflight_reports_exactly_the_binaries_it_judges() {
+        let producer = closure_expected_bins("campaign-run");
+        let vetter = closure_expected_bins("review-run");
+        for t in HARNESS_TOOLS {
+            assert!(
+                producer.contains(&t.bin) && vetter.contains(&t.bin),
+                "{}",
+                t.bin
+            );
+        }
+        for t in RENDER_TOOLS {
+            assert!(producer.contains(&t.bin), "{}", t.bin);
+            assert!(
+                !vetter.contains(&t.bin),
+                "the vetter must not be judged on {}",
+                t.bin
+            );
+        }
     }
 
     #[test]
@@ -64370,14 +68550,9 @@ mod closure_gate_tests {
         let both = ["gh", "git", "pdftoppm", "jq"];
         let faults =
             surface_faults(&[surface("campaign-run", &both), surface("review-run", &both)]);
-        // `jq` is declared campaign-only, so having it on BOTH sides makes that declaration stale.
-        assert_eq!(
-            faults,
-            vec![ClosureFault::StaleAsymmetry {
-                pkg: "campaign-run",
-                bin: "jq"
-            }]
-        );
+        // Every declaration is campaign-only, so a surface set that gives BOTH runners the same
+        // binaries makes each of them stale — including `jq`, which this fixture names.
+        assert_eq!(faults, stale_except(&[]));
     }
 
     #[test]
@@ -64387,8 +68562,8 @@ mod closure_gate_tests {
                 surface("campaign-run", &["gh", "git", "pdftoppm", "jq"]),
                 surface("review-run", &["gh", "git", "pdftoppm"]),
             ]),
-            vec![],
-            "jq producer-only is exactly what DECLARED_ASYMMETRY says"
+            stale_except(&["jq"]),
+            "jq producer-only is exactly what DECLARED_ASYMMETRY says, and nothing else here is"
         );
     }
 
@@ -64399,13 +68574,12 @@ mod closure_gate_tests {
             surface("campaign-run", &["gh", "jq", "pdftoppm"]),
             surface("review-run", &["gh"]),
         ]);
-        assert_eq!(
-            faults,
-            vec![ClosureFault::UndeclaredAsymmetry {
-                pkg: "campaign-run".to_string(),
-                bin: "pdftoppm".to_string()
-            }]
-        );
+        let mut expected = vec![ClosureFault::UndeclaredAsymmetry {
+            pkg: "campaign-run".to_string(),
+            bin: "pdftoppm".to_string(),
+        }];
+        expected.extend(stale_except(&["jq"]));
+        assert_eq!(faults, expected);
     }
 
     #[test]
@@ -64442,10 +68616,7 @@ mod closure_gate_tests {
                 surface("producer-run", &["gh", "jq"]),
                 surface("review-run", &["gh", "jq"]),
             ]),
-            vec![ClosureFault::StaleAsymmetry {
-                pkg: "campaign-run",
-                bin: "jq"
-            }]
+            stale_except(&[]),
         );
     }
 

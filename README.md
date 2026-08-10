@@ -3367,6 +3367,87 @@ merge date that cannot be ordered against the filing. A shorter list is
 indistinguishable from a complete one once it is just an array, and the
 direction that matters is the one that opens a duplicate PR.
 
+### The render harness is a subcommand, not a file every run writes
+
+Every producer run that took a screenshot item **rebuilt the cyclo.site render
+harness from scratch**. Across the retained trace corpus:
+
+| file               | runs | file                  | runs |
+| ------------------ | ---- | --------------------- | ---- |
+| `vite.config.js`   | 5    | `main.js`             | 3    |
+| `svelte-wagmi.js`  | 3    | `stores.js`           | 2    |
+| `wagmi-core.js`    | 2    | `transactionStore.js` | 2    |
+| `balancesStore.js` | 2    | `tailwind.config.js`  | 2    |
+| `shoot.sh`         | 2    | `shoot.mjs`           | 2    |
+
+Eleven harness file writes in `20260729T170004`, seven in each of
+`20260802T130003` and `20260804T114433`. Unlike the probe-per-turn and raw
+`gh api` counts, which decayed to zero once `await` and the tool-only I/O rule
+existed, **this one cannot decay on its own**: screenshots are mandatory on
+every visual PR, so the frequency is structural (#251).
+
+`pr-review-report render-component` is that harness: it takes `--checkout`, a
+`--component` and an `--out` path, and returns a PNG. The vite config, the alias
+order and the stub modules are its implementation detail; the caller supplies
+only what is genuinely component-specific, through `--fixture` — an ES module
+exporting `props` and an optional `setup()`.
+
+**The stub set is the tool's, and it is deliberately short.** An agent
+reconstructing `svelte-wagmi.js` from memory is how a render silently diverges
+from the real component between runs — the 20260729 and 20260804 copies of that
+one file already differ. A module that _loads_ in a bare checkout is used real:
+`$lib/stores` is stubbed in every trace harness with 7 of its 20 exports and one
+hand-copied token entry, and it needs no stub at all, so the render's network,
+token and explorer data are the app's own. What is stubbed is only what cannot
+load (`balancesStore` → `$lib/pyth` → an uninitialised submodule's JSON) or must
+not run (`@wagmi/core`, exact-matched so `@wagmi/core/chains` stays real). A
+stub that drifts from the module it stands in for is a rollup
+`is not exported by` error naming the stub file — loud, not a wrong picture.
+
+**A component it cannot render says so.** Exit `2` is the invocation, `12` is
+the box (no `node`, no chromium, no fonts, no `node_modules`), `3` is _this
+component_ — and the two failures a PNG cannot show are measured in the page and
+refused before an image is written: a component that mounted into zero pixels,
+and text drawn at less than a 3:1 contrast ratio against what is behind it. That
+threshold is calibrated, not derived: written first at 1.2 (1.0 being
+"identical"), a real `TradePrice.svelte` render measured **1.24** and passed —
+1800x1800 px of white with one ghost line at the top edge.
+
+**It works from a fresh clone.** A fresh cyclo.site clone cannot run its vitest
+suite without an initialised submodule, two generated files, `.env` and
+`npm ci`; a render that inherited all four would pay for them every run. Only
+`npm ci` is inherited, and the subcommand runs it. The other three are avoided
+by the stub set, which is what the stub set is for.
+
+**The producer's closure carries what it execs.** `node`, `npm` and a chromium
+are in `campaign-run`'s `runtimeInputs` (`render-tools` in flake.nix), declared
+in `RENDER_TOOLS` and asserted by `closure-preflight` — the same treatment
+`pdftoppm` gets, and for the same reason: no script, prompt or skill in this
+repo names them, so only a declaration checked against a closure can catch their
+absence. Without that, `render-component` exits 12 on the cron box on every
+screenshot item, which is a run that does its other work and quietly stops
+producing the evidence a UI PR is not review-ready without. `dejavu_fonts` rides
+in the closure carrying no binary at all, for its store path: a font package
+that is GC-rooted is what the trace harnesses' hand-pasted
+`/nix/store/…-dejavu-fonts-2.37` literals could not give themselves.
+
+The VETTER gets none of them, and that is a fact about the role rather than an
+oversight — `review-settings.json` denies it `Bash`, so it could not exec a
+renderer if one were in its closure, and a closure carrying chromium would state
+a capability it does not have. Every binary the render packages add is in
+`DECLARED_ASYMMETRY`, including the ride-alongs (`npx`, `corepack`,
+`chromium-browser`) that nothing invokes: `closure-surface` compares whole
+surfaces, so an undeclared ride-along is indistinguishable from a dependency
+somebody added to one runner and forgot in the other.
+
+**And the prompt routes to it.** `campaign-prompt.txt` steps 5 and 3c hand the
+producer `render-component` and no longer teach the hand-roll — the sentences
+naming a "minimal Vite+svelte harness", `nix shell nixpkgs#chromium` and
+`FONTCONFIG_FILE` are gone, which is what makes the corpus row go to zero rather
+than merely making it able to. Step 3c routes on the exit code: a `3` is a
+design question about that component and its message is the finding to quote, a
+`12` is an environment failure that ends the run.
+
 ## What a run does
 
 1. `campaign-run.sh` asserts the environment before the model starts

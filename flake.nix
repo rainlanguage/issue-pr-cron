@@ -91,6 +91,33 @@
         # `audit/protofire/raindex.e686b4d.apr-2026.pdf`).
         pdf-tools = pkgs.poppler-utils;
 
+        # The PRODUCER's screenshot path (#251). `pr-review-report render-component`
+        # execs these on the model's behalf, so — exactly like pdf-tools above —
+        # nothing in this repo's scripts names them and no walk over script text
+        # could find them. They are declared in `RENDER_TOOLS` and asserted by
+        # `closure-preflight`.
+        #
+        # `nodejs` runs the CHECKOUT's own vite (`node node_modules/vite/bin/…`),
+        # never a vendored copy: a render has to be built by the same bundler and
+        # svelte version the app ships, or the picture is of a component nobody
+        # deploys. `npm` is how a fresh clone gets that `node_modules` at all.
+        #
+        # `dejavu_fonts` carries no binary and is here for its STORE PATH: headless
+        # chromium with no fonts draws every glyph blank — an image that looks like
+        # a render and shows nothing that was written — and the font search reads
+        # the store. In the closure, a font package is GC-rooted, which is the part
+        # the trace harnesses' hand-pasted `/nix/store/…-dejavu-fonts-2.37` literals
+        # could not give themselves.
+        #
+        # PRODUCER ONLY, and that is a fact about the role rather than an oversight:
+        # review-settings.json denies `Bash` outright, so the vetter cannot exec any
+        # of these. Each binary they add is in `DECLARED_ASYMMETRY`.
+        render-tools = [
+          pkgs.nodejs_22
+          pkgs.chromium
+          pkgs.dejavu_fonts
+        ];
+
         # The producer. `gh` and `jq` are here because the MODEL shells out to them from its
         # Bash tool — bare, so campaign-settings.json's deny-list (which matches the literal
         # command text) still applies. `git` likewise: the producer commits and pushes.
@@ -109,7 +136,8 @@
             pkgs.util-linux # flock, for the single-run lock
             pkgs.getent # resolves HOME when cron starts without it
             pdf-tools # audit evidence is PDF; see pdf-tools above
-          ];
+          ]
+          ++ render-tools; # step 5's screenshots are rendered here; see render-tools above
         };
 
         # The vetter. `gh` is for the MCP SERVER, which shells out to it for every GitHub read
