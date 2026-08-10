@@ -61,7 +61,7 @@ plus the stop's own line, so this observation stays distinguishable from a paced
 tick in the series it contributes to.
 
 **Killing mid-run is sometimes right** — the 2026-08-09 run was killed once.
-Stopping the background task kills the runner and releases the flock [LJ-0004].
+Stopping the background task kills the runner and releases the flock.
 
 ## 2. Reattach, if the stream was interrupted
 
