@@ -74173,7 +74173,8 @@ mod journal_tests {
         // and it is why the step below may cite instead of narrate.
         let rule = e.rule.as_ref().expect("the rule this incident produced");
         assert!(
-            rule.site.contains("plugins/human-fsm/commands/observe-run.md"),
+            rule.site
+                .contains("plugins/human-fsm/commands/observe-run.md"),
             "a deletion candidate names the file to edit: {}",
             rule.site
         );
