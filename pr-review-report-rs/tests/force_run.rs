@@ -124,6 +124,31 @@ fn the_dir_in_the_flake_ref_is_canonical() {
     );
 }
 
+/// Both runners resolve their install dir as `DIR="${CRON_DIR:-$PWD}"`, so a runner spawned
+/// without `CRON_DIR` reads the CALLER's working directory and refuses at startup — force-run only
+/// worked when invoked from inside the install dir, the one place the hand-typed invocation never
+/// needed help (#264). The plan carries the variable in its own argv via `env(1)`, canonical like
+/// the flake ref beside it, so the command previewed here is the command that runs.
+#[test]
+fn the_runner_is_handed_the_canonical_install_dir_as_cron_dir() {
+    let (install, _seed) = install_dir_with_remote("cron-dir");
+    let indirect = install.join("..").join("install");
+    let out = force_run(&["vetter", "--no-run"], Some(&indirect));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{stdout}");
+    let would_run = stdout
+        .lines()
+        .find(|l| l.contains("would run:"))
+        .unwrap_or_else(|| panic!("no runner printed:\n{stdout}"));
+    assert!(
+        would_run.contains(&format!(
+            "env CRON_DIR={} nix run",
+            install.canonicalize().unwrap().display()
+        )),
+        "{would_run}"
+    );
+}
+
 /// `INSTALL_DIR` is the environment the runners themselves export, so a human already inside that
 /// environment does not have to retype it.
 #[test]

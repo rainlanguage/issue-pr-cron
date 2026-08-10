@@ -38244,7 +38244,8 @@ struct ForceRunPlan {
     /// HEAD, so a run started against a stale checkout silently exercises old code — which
     /// happened twice on 2026-08-09, both times costing a whole run.
     fast_forward: Vec<String>,
-    /// The runner, with the one argument it takes.
+    /// The runner behind `env(1)`, with the one argument it takes and the `CRON_DIR` both runner
+    /// scripts resolve their install dir from.
     runner: Vec<String>,
     /// Where the same bytes are also being appended, for `watch-run` to reattach to.
     log: String,
@@ -38257,9 +38258,16 @@ fn force_run_plan(role: RunnerRole, install_dir: &str) -> ForceRunPlan {
             .iter()
             .map(|s| (*s).to_string())
             .collect(),
+        // `env(1)` carries `CRON_DIR` inside the argv rather than on the spawn call: both runners
+        // resolve `DIR="${CRON_DIR:-$PWD}"`, so a child without it reads the CALLER's working
+        // directory as the install dir and refuses at startup (#264). In the argv, the variable is
+        // part of the plan `--no-run` previews, and the printed command is the invocation the
+        // runners' own headers document.
         // `--` separates nix's own arguments from the runner's, and `--force` is the only argument
         // either runner takes.
         runner: vec![
+            "env".into(),
+            format!("CRON_DIR={install_dir}"),
             "nix".into(),
             "run".into(),
             format!("git+file://{install_dir}#{}", role.flake_attr()),
@@ -74075,6 +74083,8 @@ mod observation_recommendation_tests {
         assert_eq!(
             p.runner,
             vec![
+                "env",
+                "CRON_DIR=/home/gildlab/issue-pr-cron",
                 "nix",
                 "run",
                 "git+file:///home/gildlab/issue-pr-cron#campaign-run",
@@ -74086,7 +74096,7 @@ mod observation_recommendation_tests {
         // The vetter differs in exactly two places, and a role can never reach the other runner.
         let v = force_run_plan(RunnerRole::Vetter, "/home/gildlab/issue-pr-cron");
         assert_eq!(v.fast_forward, p.fast_forward);
-        assert!(v.runner[2].ends_with("#review-run"));
+        assert!(v.runner[4].ends_with("#review-run"));
         assert_eq!(v.log, "/home/gildlab/issue-pr-cron/review.log");
         assert_eq!(v.runner.last().unwrap(), "--force");
     }
