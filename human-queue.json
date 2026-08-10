@@ -116,6 +116,20 @@
         "title": "Add \"remove and withdraw all\" option to order removal (#2024)"
       }
     ],
+    "ai:close-candidate": [
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 392,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/392",
+        "title": "fix(component): sanitize href schemes and auto-add noopener in HrefButton"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 391,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/391",
+        "title": "fix(store): add callId guard to refreshBalances to discard stale results"
+      }
+    ],
     "ai:needs-work": [
       {
         "repo": "rainlanguage/rain.deploy",
@@ -332,18 +346,6 @@
         "number": 395,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/395",
         "title": "fix(component): fix NavButtons active-route detection; remove spurious toggleMenu from desktop"
-      },
-      {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 392,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/392",
-        "title": "fix(component): sanitize href schemes and auto-add noopener in HrefButton"
-      },
-      {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 391,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/391",
-        "title": "fix(store): add callId guard to refreshBalances to discard stale results"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -981,8 +983,14 @@
         ]
       },
       "un-vetted": {
-        "count": 24,
+        "count": 25,
         "prs": [
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 266,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/266",
+            "title": "conflict is not a state: demote conflicted ai:ready to the needs-work send-back"
+          },
           {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 262,
@@ -1132,7 +1140,7 @@
     },
     "vetter-verdicts": {
       "ai:needs-work": {
-        "count": 101,
+        "count": 99,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -1349,18 +1357,6 @@
             "number": 395,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/395",
             "title": "fix(component): fix NavButtons active-route detection; remove spurious toggleMenu from desktop"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 392,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/392",
-            "title": "fix(component): sanitize href schemes and auto-add noopener in HrefButton"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 391,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/391",
-            "title": "fix(store): add callId guard to refreshBalances to discard stale results"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1867,8 +1863,33 @@
   ],
   "closeCandidateIssues": [],
   "closeCandidateUnvetted": [],
-  "closeCandidateUpheld": [],
+  "closeCandidateUpheld": [
+    {
+      "repo": "cyclofinance/cyclo.site",
+      "number": 392,
+      "url": "https://github.com/cyclofinance/cyclo.site/pull/392",
+      "title": "fix(component): sanitize href schemes and auto-add noopener in HrefButton"
+    },
+    {
+      "repo": "cyclofinance/cyclo.site",
+      "number": 391,
+      "url": "https://github.com/cyclofinance/cyclo.site/pull/391",
+      "title": "fix(store): add callId guard to refreshBalances to discard stale results"
+    }
+  ],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 265,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/265",
+      "title": "Move review-prompt line 5's inline-cost exposition (941B) to mistake-journal.jsonl, leaving an LJ pointer"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 264,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/264",
+      "title": "force-run does not propagate --install-dir into CRON_DIR, so the runner refuses unless invoked from inside the install dir"
+    },
     {
       "repo": "rainlanguage/issue-pr-cron",
       "number": 239,
@@ -5576,29 +5597,29 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 24,
+    "unvetted": 25,
     "blockedOn": 19,
     "ready": 0,
-    "needsWork": 101,
+    "needsWork": 99,
     "relink": 0,
     "design": 0,
     "blockedInfra": 0,
     "closeCandidateIssues": 0,
     "closeCandidateUnvetted": 0,
-    "closeCandidateUpheld": 0,
+    "closeCandidateUpheld": 2,
     "leaks": 0,
-    "totalProducerPrs": 144,
+    "totalProducerPrs": 145,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 613,
+    "uncoveredIssues": 615,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 774
+    "openIssues": 776
   },
   "ages": {
     "openIssues": {
-      "meanDays": 315.9,
+      "meanDays": 315.1,
       "medianDays": 104.1,
-      "oldestDays": 1659.6
+      "oldestDays": 1659.7
     }
   }
 }

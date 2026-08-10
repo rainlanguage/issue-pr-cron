@@ -52977,13 +52977,13 @@ mod settings_tests {
             "the FAN OUT rule must name the briefed type in the form the `Agent` call takes"
         );
         assert!(
-            prompt.contains("LJ-0004") && prompt.contains("224k cached tokens PER CALL"),
+            prompt.contains("LJ-0005") && prompt.contains("224k cached tokens PER CALL"),
             "the rule must carry the measurement's figure and the journal pointer holding the \
              full story (#265)"
         );
         if let Some(journal) = repo_root_text("mistake-journal.jsonl") {
             assert!(
-                journal.contains("\"LJ-0004\"") && journal.contains("223,804"),
+                journal.contains("\"LJ-0005\"") && journal.contains("223,804"),
                 "the measured run the prompt's pointer names must live in the journal"
             );
         }
@@ -73893,6 +73893,34 @@ mod journal_tests {
             kind(&kinds, "ci-failure-attributed-to-the-wrong-pre-commit-hook").runs_since,
             None
         );
+    }
+
+    /// The one property nothing else in the repo guards: the `[LJ-0004]` citation
+    /// `/observe-run` step 1 carries INSTEAD of the narrative it used to spell out has to resolve
+    /// to a real entry.
+    ///
+    /// `every_journal_citation_in_a_prompt_resolves_to_an_entry` scans `RUNNER_CONTEXT_FILES`, and
+    /// a plugin command is deliberately not one — it is read when a human invokes it, not shipped
+    /// into a cron run's context on every turn. So nothing would notice this one going stale, and
+    /// a citation resolving to nothing has deleted the reasoning rather than moved it.
+    #[test]
+    fn the_observe_run_citation_resolves() {
+        let (Some(text), Some(command)) = (
+            repo_root_text(JOURNAL_FILE),
+            repo_root_text("plugins/human-fsm/commands/observe-run.md"),
+        ) else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let (entries, defects) = journal_entries(&text);
+        assert!(defects.is_empty(), "{JOURNAL_FILE}: {defects:?}");
+        let cited = journal_citations(&command);
+        assert!(!cited.is_empty(), "the step cites no entry: {command}");
+        for id in cited {
+            assert!(
+                entries.iter().any(|e| e.id == id),
+                "observe-run.md cites {id}, which is in no {JOURNAL_FILE} entry"
+            );
+        }
     }
 
     // ── validation: every way the journal answers WRONGLY rather than not at all ──────────────
