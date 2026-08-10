@@ -969,26 +969,8 @@
         ]
       },
       "un-vetted": {
-        "count": 23,
+        "count": 20,
         "prs": [
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 272,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/272",
-            "title": "vetter dispatcher never touches PR source; corpus-report counts dispatcher-source reads"
-          },
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 271,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/271",
-            "title": "pr_context: typed mechanical gates + max_diff_bytes=0 dispatcher view"
-          },
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 268,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/268",
-            "title": "force-run: hand the runner the install dir as CRON_DIR"
-          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 26,
@@ -5588,7 +5570,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 23,
+    "unvetted": 20,
     "blockedOn": 19,
     "ready": 0,
     "needsWork": 102,
@@ -5599,16 +5581,16 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 144,
+    "totalProducerPrs": 141,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 617,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 777
+    "openIssues": 774
   },
   "ages": {
     "openIssues": {
-      "meanDays": 314.8,
+      "meanDays": 316.0,
       "medianDays": 104.2,
       "oldestDays": 1659.8
     }
