@@ -150,15 +150,15 @@ scan cannot tell a prohibition from an instruction.
 
 `/observe-run` is the one command whose subject is the MACHINE rather than a PR
 or an issue (#252): fast-forward the install dir, force a run, watch it, profile
-what its context cost, and read the retained trace corpus for what a run is still
-hand-rolling. Its three measurements are subcommands — `watch-run`,
+what its context cost, and read the retained trace corpus for what a run is
+still hand-rolling. Its three measurements are subcommands — `watch-run`,
 `token-profile`, `corpus-report` — for the reason above, and because each was
 hand-written during one 2026-08-09 session, two of them twice. It **gathers and
 measures without deciding**: naming the next subcommand to build is the human's
 call, which is what makes it a human command rather than a cron. The forced run
-itself is the runner's own `nix run …#campaign-run -- --force` entry point, named
-in prose rather than fenced, because the fenced-block rule admits only this
-binary's transitions.
+itself is the runner's own `nix run …#campaign-run -- --force` entry point,
+named in prose rather than fenced, because the fenced-block rule admits only
+this binary's transitions.
 
 A plugin's version is stored TWICE (the marketplace listing installers read, and
 the manifest it points at) and `/plugin` compares version strings, so a stale
