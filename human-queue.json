@@ -969,8 +969,14 @@
         ]
       },
       "un-vetted": {
-        "count": 18,
+        "count": 19,
         "prs": [
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 274,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/274",
+            "title": "fix(usage-gate): fail closed when usage cannot be read"
+          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 26,
@@ -1844,6 +1850,12 @@
   "closeCandidateUnvetted": [],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 275,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/275",
+      "title": "vetter auditor recovery redispatches from scratch while logging \"resuming\" — resume the dead session instead"
+    },
     {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 297,
@@ -5575,7 +5587,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 18,
+    "unvetted": 19,
     "blockedOn": 19,
     "ready": 2,
     "needsWork": 102,
@@ -5586,18 +5598,18 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 141,
+    "totalProducerPrs": 142,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 617,
+    "uncoveredIssues": 618,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 774
+    "openIssues": 776
   },
   "ages": {
     "openIssues": {
-      "meanDays": 316.7,
+      "meanDays": 315.9,
       "medianDays": 104.9,
-      "oldestDays": 1660.4
+      "oldestDays": 1660.5
     }
   }
 }
