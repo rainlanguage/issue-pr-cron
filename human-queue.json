@@ -969,8 +969,14 @@
         ]
       },
       "un-vetted": {
-        "count": 20,
+        "count": 21,
         "prs": [
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 300,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/300",
+            "title": "chore(deps): bump OpenZeppelin 5.6.1 → 5.7.0 — only the wrapped vault's bytecode moves"
+          },
           {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 276,
@@ -5582,7 +5588,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 20,
+    "unvetted": 21,
     "blockedOn": 19,
     "ready": 0,
     "needsWork": 104,
@@ -5593,7 +5599,7 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 143,
+    "totalProducerPrs": 144,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 617,
     "designPresentable": 0,
@@ -5602,9 +5608,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 316.0,
+      "meanDays": 316.1,
       "medianDays": 105.1,
-      "oldestDays": 1660.6
+      "oldestDays": 1660.7
     }
   }
 }
