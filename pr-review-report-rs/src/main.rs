@@ -10051,12 +10051,14 @@ fn linear_pct(now_ms: i64, reset_ms: i64) -> f64 {
 /// Order matters: the CEILING is checked before the PACE, and applies whatever the pace — being
 /// under a linear burn is no help once the weekly budget is nearly spent.
 ///
-/// `None` reading means the endpoint could not be read and no fallback is set. That is INERT —
-/// it prints OK and the crons RUN. This is deliberate and must stay: an earlier version of this
-/// gate could not read usage and made the operator paste percentages in by hand, which silently
-/// paused both crons for 22 consecutive ticks when a reading went stale at 80%. The gate exists
-/// to pace spending, not to become a new way for the pipeline to stall — so a malformed response,
-/// an expired token, a network failure and an unparseable date all land here, never on Pause.
+/// `None` reading means the endpoint could not be read and no fallback is set. That FAILS
+/// CLOSED — the tick pauses (#273): a gate that runs only when it cannot check is a policy
+/// enforced everywhere except where it is blind, and one endpoint outage would wave through
+/// exactly the ticks the pace check exists to hold. A malformed response, an expired token, a
+/// network failure and an unparseable date all land here, and all pause. The reason names the
+/// read failure and shares no wording with the pace or ceiling pauses, so a blind pause is
+/// diagnosable from its single log/skip-row line; `--force` is the operator's way past it, as
+/// past any POLICY pause.
 fn usage_gate_decide(
     reading: Option<&UsageReading>,
     now_ms: i64,
@@ -10064,8 +10066,10 @@ fn usage_gate_decide(
     ceiling: f64,
 ) -> UsageVerdict {
     let Some(r) = reading else {
-        return UsageVerdict::Run(
-            "OK: usage endpoint unreachable and no fallback reading set — gate inert".to_string(),
+        return UsageVerdict::Pause(
+            "PAUSE: no usage reading — endpoint unreachable and no fallback reading set — \
+             cannot pace blind, failing closed"
+                .to_string(),
         );
     };
     let (used, source) = (r.used, r.source);
@@ -10135,7 +10139,7 @@ fn stale_slack_refusal(slack_var: Option<&str>) -> Option<UsageVerdict> {
 
 /// Pull the OAuth bearer token out of the credentials file (`.claudeAiOauth.accessToken`).
 /// Every failure — absent file, bad JSON, missing key, empty value — is `None`, which routes to
-/// the fallback-or-inert path rather than an error.
+/// the fallback reading or, absent one, the fail-closed pause, rather than an error.
 fn oauth_token(creds: &str) -> Option<String> {
     let doc: Value = serde_json::from_str(&std::fs::read_to_string(creds).ok()?).ok()?;
     let tok = doc.get("claudeAiOauth")?.get("accessToken")?.as_str()?;
@@ -10164,10 +10168,10 @@ fn oauth_token(creds: &str) -> Option<String> {
 ///     84 files) `five_hour` reached `rejected` in 5 events, all inside one run — which still
 ///     produced a `result`. The window self-clears well inside the gap between ticks. The
 ///     seven-day ceiling is what actually stops work, and this gate already holds it.
-///  3. **A second pause condition contradicts this gate's design commitment.** Every failure path
-///     here is deliberately INERT (see [`usage_gate_decide`]) because the repo has an incident on
-///     record where the gate silently paused both crons for 22 consecutive ticks. Adding a
-///     faster-cycling reason to pause is the same hazard, with 4.8 chances a day to fire.
+///  3. **A second pause condition multiplies stalls.** The gate already pauses whenever it
+///     cannot read usage (fail-closed, [`usage_gate_decide`]), and the repo has an incident on
+///     record where a gate paused both crons for 22 consecutive ticks. A faster-cycling reason
+///     to pause is 4.8 more chances a day to stall the pipeline on window noise.
 ///  4. **The units differ and would fail silently.** `utilization` on a `rate_limit_event` is a
 ///     FRACTION in 0..=1 (`0.91`); [`UsageReading::used`] here is a PERCENT in 0..=100 compared
 ///     against a default ceiling of 90. Wiring them together without converting would compare
@@ -10195,8 +10199,8 @@ fn parse_seven_day(raw: &str) -> Option<UsageReading> {
 /// The operator's last manual reading, used only when the endpoint gave nothing.
 ///
 /// A `USAGE_RESET_AT` that is set but unparseable discards the whole reading (returns `None`,
-/// i.e. inert) rather than pacing with no reset — matching the shell version, where the date
-/// parse and the percent parse shared one error path.
+/// i.e. the fail-closed pause) rather than pacing with no reset — matching the shell version,
+/// where the date parse and the percent parse shared one error path.
 fn fallback_reading(used_pct: &str, reset_at: &str) -> Option<UsageReading> {
     if used_pct.trim().is_empty() {
         return None;
@@ -10218,8 +10222,9 @@ fn fallback_reading(used_pct: &str, reset_at: &str) -> Option<UsageReading> {
     })
 }
 
-/// One HTTPS GET for the usage document. Any failure is `None` — see [`usage_gate_decide`] for
-/// why nothing here may escalate to a pause.
+/// One HTTPS GET for the usage document. Any failure is `None` — every transport failure
+/// collapses into the one no-reading state [`usage_gate_decide`] pauses on, so no error detail
+/// decides anything here.
 fn fetch_usage(url: &str, token: &str) -> Option<String> {
     ureq::get(url)
         .header("Authorization", &format!("Bearer {token}"))
@@ -10306,19 +10311,28 @@ mod usage_gate_tests {
     }
     const RESET: &str = "2026-07-19T00:00:00Z";
 
-    // ---- inert: the property that must never regress to fail-closed --------------------------
+    // ---- fail closed: no reading is a pause, never a run (#273) -------------------------------
 
-    // No endpoint and no fallback => RUN. An earlier gate that could not read usage paused both
-    // crons for 22 consecutive ticks; this gate paces spending, it does not stall the pipeline.
+    // No endpoint and no fallback => PAUSE. The gate must not run blind: an unreadable endpoint
+    // once let a scheduled tick through at 39% used against a 21% pace — the one tick the gate
+    // could not measure was the one it waved through. The reason must be distinguishable from a
+    // pace pause at a glance, so a paused-because-blind stretch reads as an endpoint problem from
+    // any single log line. Kills `UsageVerdict::Pause` -> `UsageVerdict::Run` in the `None` arm.
     #[test]
-    fn no_reading_is_inert_and_runs() {
+    fn no_reading_fails_closed_and_pauses() {
         let v = usage_gate_decide(None, ms("2026-07-15T00:00:00Z"), 5.0, 90.0);
-        assert_eq!(v.code(), 0);
-        assert!(v.reason().starts_with("OK:"), "{}", v.reason());
-        assert!(v.reason().contains("gate inert"), "{}", v.reason());
+        assert_eq!(v.code(), 10, "{}", v.reason());
+        assert!(v.reason().starts_with("PAUSE:"), "{}", v.reason());
+        assert!(v.reason().contains("no usage reading"), "{}", v.reason());
+        assert!(v.reason().contains("failing closed"), "{}", v.reason());
+        assert!(
+            !v.reason().contains("linear-by-now") && !v.reason().contains("ceiling"),
+            "a blind pause must not read as a pace or ceiling pause: {}",
+            v.reason()
+        );
     }
 
-    // Every unreadable-usage shape collapses to None, i.e. to the inert path above — never a pause.
+    // Every unreadable-usage shape collapses to None, i.e. to the fail-closed pause above.
     #[test]
     fn unreadable_usage_shapes_never_produce_a_reading() {
         assert!(parse_seven_day("").is_none(), "empty body");
@@ -10634,11 +10648,11 @@ mod usage_gate_tests {
 
     #[test]
     fn fallback_is_used_only_when_set_and_says_so() {
-        assert!(fallback_reading("", "").is_none(), "unset => inert");
-        assert!(fallback_reading("  ", "").is_none(), "blank => inert");
+        assert!(fallback_reading("", "").is_none(), "unset => no reading");
+        assert!(fallback_reading("  ", "").is_none(), "blank => no reading");
         assert!(
             fallback_reading("not-a-number", "").is_none(),
-            "unparseable pct => inert"
+            "unparseable pct => no reading"
         );
         // Set but with an unparseable reset: discard the whole reading rather than pace blind.
         assert!(
