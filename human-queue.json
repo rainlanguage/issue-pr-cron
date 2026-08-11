@@ -323,6 +323,12 @@
       },
       {
         "repo": "cyclofinance/cyclo.site",
+        "number": 400,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/400",
+        "title": "fix: receipt modal reactive bindings, balance key, and chain guard (#353, #355, #357)"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
         "number": 399,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/399",
         "title": "fix(component): fix chain-switch race and add pre-flight validation in DcaStrategy"
@@ -810,12 +816,6 @@
         "title": "fix: getCyTokenUsdPrice returns null on error instead of 0n (#317)"
       },
       {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 400,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/400",
-        "title": "fix: receipt modal reactive bindings, balance key, and chain guard (#353, #355, #357)"
-      },
-      {
         "repo": "rainlanguage/rain.flare",
         "number": 196,
         "url": "https://github.com/rainlanguage/rain.flare/pull/196",
@@ -969,8 +969,14 @@
         ]
       },
       "un-vetted": {
-        "count": 19,
+        "count": 20,
         "prs": [
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 276,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/276",
+            "title": "rework(vetter): resume a dead auditor before redispatching, and name the path taken"
+          },
           {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 274,
@@ -1090,7 +1096,7 @@
     },
     "vetter-verdicts": {
       "ai:needs-work": {
-        "count": 102,
+        "count": 103,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -1295,6 +1301,12 @@
             "number": 404,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/404",
             "title": "fix: case-insensitive symbol lookup in AccountStats (#312)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 400,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/400",
+            "title": "fix: receipt modal reactive bindings, balance key, and chain guard (#353, #355, #357)"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1707,19 +1719,13 @@
         ]
       },
       "ai:ready": {
-        "count": 2,
+        "count": 1,
         "prs": [
           {
             "repo": "cyclofinance/cyclo.site",
             "number": 403,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/403",
             "title": "fix: getCyTokenUsdPrice returns null on error instead of 0n (#317)"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 400,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/400",
-            "title": "fix: receipt modal reactive bindings, balance key, and chain guard (#353, #355, #357)"
           }
         ]
       }
@@ -1850,12 +1856,6 @@
   "closeCandidateUnvetted": [],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
-    {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 275,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/275",
-      "title": "vetter auditor recovery redispatches from scratch while logging \"resuming\" — resume the dead session instead"
-    },
     {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 297,
@@ -5587,10 +5587,10 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 19,
+    "unvetted": 20,
     "blockedOn": 19,
-    "ready": 2,
-    "needsWork": 102,
+    "ready": 1,
+    "needsWork": 103,
     "relink": 0,
     "design": 0,
     "blockedInfra": 0,
@@ -5598,9 +5598,9 @@
     "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 142,
+    "totalProducerPrs": 143,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 618,
+    "uncoveredIssues": 617,
     "designPresentable": 0,
     "designNoQuestion": 0,
     "openIssues": 776
@@ -5608,7 +5608,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 315.9,
-      "medianDays": 104.9,
+      "medianDays": 105.0,
       "oldestDays": 1660.5
     }
   }
