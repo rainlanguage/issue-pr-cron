@@ -53363,6 +53363,47 @@ mod settings_tests {
         }
     }
 
+    /// #275: an auditor that dies mid-run is RESUMED, not replaced — a stopped agent's context is
+    /// paid for, and run 20260810T230003Z re-bought it from scratch (~$2.70 of $15.46) while its
+    /// log said "resuming". The resume channel is `ListAgents` + `SendMessage`, so the same
+    /// deny-beats-allow fact from the dispatch test applies: leaving either denied makes the
+    /// prompt's resume-first rule unexecutable, and the fallback redispatch quietly becomes the
+    /// only path again. The prompt half is asserted alongside, because the permission without the
+    /// rule is a capability nothing confines, and the rule without the permission is inert.
+    #[test]
+    fn the_vetter_can_resume_a_dead_auditor() {
+        let (Some(allow), Some(deny)) = (
+            perm_list("review-settings.json", "allow"),
+            deny_list("review-settings.json"),
+        ) else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        for resume in ["ListAgents", "SendMessage"] {
+            assert!(
+                allow.iter().any(|a| a == resume),
+                "{resume} must be allowed: it is half of the resume-first recovery the FAN OUT \
+                 paragraph mandates for a dead auditor"
+            );
+            assert!(
+                !deny.iter().any(|d| d == resume),
+                "deny beats allow: leaving `{resume}` denied makes the resume rule inert and \
+                 every auditor death a silent full re-audit"
+            );
+        }
+        let Some(prompt) = repo_root_text("review-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        assert!(
+            prompt.contains("RESUMED, NOT REPLACED"),
+            "review-prompt.txt must state resume-first recovery for a dead auditor"
+        );
+        assert!(
+            prompt.contains("redispatched fresh"),
+            "the prompt must require naming a redispatch as one — a redispatch narrated as a \
+             resume is the lie #275 exists to stop"
+        );
+    }
+
     /// #261. WHERE EACH DOCUMENTED SECTION LIVES — the whole rule of the router, as data.
     ///
     /// `CLAUDE.md` is the one file a model receives without asking for it: `review-run.sh` cds to
