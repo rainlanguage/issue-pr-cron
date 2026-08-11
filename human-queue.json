@@ -323,6 +323,12 @@
       },
       {
         "repo": "cyclofinance/cyclo.site",
+        "number": 403,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/403",
+        "title": "fix: getCyTokenUsdPrice returns null on error instead of 0n (#317)"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
         "number": 400,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/400",
         "title": "fix: receipt modal reactive bindings, balance key, and chain guard (#353, #355, #357)"
@@ -810,12 +816,6 @@
         "title": "fix: Input.svelte sanitize external updates and tighten default validator (#328, #330)"
       },
       {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 403,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/403",
-        "title": "fix: getCyTokenUsdPrice returns null on error instead of 0n (#317)"
-      },
-      {
         "repo": "rainlanguage/rain.flare",
         "number": 196,
         "url": "https://github.com/rainlanguage/rain.flare/pull/196",
@@ -1096,7 +1096,7 @@
     },
     "vetter-verdicts": {
       "ai:needs-work": {
-        "count": 103,
+        "count": 104,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -1301,6 +1301,12 @@
             "number": 404,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/404",
             "title": "fix: case-insensitive symbol lookup in AccountStats (#312)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 403,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/403",
+            "title": "fix: getCyTokenUsdPrice returns null on error instead of 0n (#317)"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1715,17 +1721,6 @@
             "number": 3,
             "url": "https://github.com/rainlanguage/rain.subgraph.docker/pull/3",
             "title": "2023 12 23 anvil"
-          }
-        ]
-      },
-      "ai:ready": {
-        "count": 1,
-        "prs": [
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 403,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/403",
-            "title": "fix: getCyTokenUsdPrice returns null on error instead of 0n (#317)"
           }
         ]
       }
@@ -5589,8 +5584,8 @@
   "counts": {
     "unvetted": 20,
     "blockedOn": 19,
-    "ready": 1,
-    "needsWork": 103,
+    "ready": 0,
+    "needsWork": 104,
     "relink": 0,
     "design": 0,
     "blockedInfra": 0,
@@ -5607,9 +5602,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 315.9,
+      "meanDays": 316.0,
       "medianDays": 105.0,
-      "oldestDays": 1660.5
+      "oldestDays": 1660.6
     }
   }
 }
