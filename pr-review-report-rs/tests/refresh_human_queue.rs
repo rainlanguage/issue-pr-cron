@@ -217,6 +217,9 @@ impl Fixture {
              \x20 human-queue) cat {snap} ;;\n\
              \x20 queue-history-line) printf '{{\"ts\":\"stub\",\"counts\":{{}}}}\\n' ;;\n\
              \x20 landed-history-lines)\n\
+             \x20   # The dedup flag is what makes a replayed tick append-safe; a call without it\n\
+             \x20   # is a script regression this stub refuses so the append tests catch it.\n\
+             \x20   case \"$*\" in *--existing*) ;; *) echo 'stub: no --existing' >&2; exit 2 ;; esac\n\
              \x20   [ -f {lines} ] && cat {lines}\n\
              \x20   exit \"$(cat {rc} 2>/dev/null || echo 0)\" ;;\n\
              \x20 *) echo \"stub: unexpected subcommand ${{1:-}}\" >&2; exit 2 ;;\n\
@@ -643,6 +646,12 @@ fn a_changed_snapshot_appends_and_publishes_landed_rows() {
 
     let out = f.tick();
     assert!(out.status.success(), "tick failed: {}", stderr(&out));
+    assert!(
+        !stderr(&out).contains("landed-history incomplete"),
+        "a clean landed diff must be recorded as one (the stub refuses a call without \
+         --existing, so this also pins the dedup flag): {}",
+        stderr(&out)
+    );
     assert_eq!(f.origin_head(), f.install_head(), "the tick must publish");
     let published = git(&f.install, &["show", "HEAD:landed-history.jsonl"]);
     assert!(
