@@ -1688,11 +1688,11 @@ landed unit of pipeline work, append-only beside `human-queue-history.jsonl`:
 `ts` is GitHub's own `mergedAt`/`closedAt` — the true landing time, and what a
 consumer windows on; `observedAt` is when the row was RECORDED — the refresh
 tick for a live append, the run itself for a backfill/heal — so it is never
-earlier than `ts`: an item can leave the view open and merge later, and only
-the run that verified the landing can claim to have observed it. A row is
-emitted by `landed-history-lines`, which diffs the FSM-tracked item sets of two
-consecutive `human-queue.json` snapshots and verifies each VANISHED item's
-terminal state against GitHub:
+earlier than `ts`: an item can leave the view open and merge later, and only the
+run that verified the landing can claim to have observed it. A row is emitted by
+`landed-history-lines`, which diffs the FSM-tracked item sets of two consecutive
+`human-queue.json` snapshots and verifies each VANISHED item's terminal state
+against GitHub:
 
 - **`kind: "pr"`** — a tracked PR that actually merged.
 - **`kind: "issue"`** — a tracked issue closed by **no** merged PR: the upheld
