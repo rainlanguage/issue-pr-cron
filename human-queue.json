@@ -969,14 +969,8 @@
         ]
       },
       "un-vetted": {
-        "count": 24,
+        "count": 23,
         "prs": [
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 281,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/281",
-            "title": "feat(await): resolve own head pins and name failing checks at exit"
-          },
           {
             "repo": "rainlanguage/adversarial-mutation-test",
             "number": 10,
@@ -5656,7 +5650,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 24,
+    "unvetted": 23,
     "blockedOn": 19,
     "ready": 0,
     "needsWork": 104,
@@ -5667,18 +5661,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 147,
+    "totalProducerPrs": 146,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 617,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 779
+    "openIssues": 778
   },
   "ages": {
     "openIssues": {
-      "meanDays": 316.1,
-      "medianDays": 106.4,
-      "oldestDays": 1661.9
+      "meanDays": 316.6,
+      "medianDays": 106.5,
+      "oldestDays": 1662.0
     }
   }
 }
