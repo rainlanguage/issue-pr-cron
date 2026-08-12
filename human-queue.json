@@ -969,8 +969,20 @@
         ]
       },
       "un-vetted": {
-        "count": 20,
+        "count": 22,
         "prs": [
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 277,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/277",
+            "title": "feat(metrics): landed-history.jsonl — the landed-work denominator feed"
+          },
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 172,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/172",
+            "title": "pipeline: tokens-per-landed-item band beside the open-issue age band"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 300,
@@ -5602,7 +5614,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 20,
+    "unvetted": 22,
     "blockedOn": 19,
     "ready": 0,
     "needsWork": 104,
@@ -5613,7 +5625,7 @@
     "closeCandidateUnvetted": 1,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 143,
+    "totalProducerPrs": 145,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 618,
     "designPresentable": 0,
@@ -5622,9 +5634,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 316.7,
+      "meanDays": 316.8,
       "medianDays": 106.2,
-      "oldestDays": 1661.7
+      "oldestDays": 1661.8
     }
   }
 }
