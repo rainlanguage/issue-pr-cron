@@ -2983,9 +2983,24 @@ whoever invoked it. The refresh tick commits it beside `metrics/runs.jsonl`.
   `human-rule-issue`, `human-close`, `repair-qa-block`, `weaken-closes`,
   `deploy`, `design-doctor-route`, `retire-blocked-infra`); `verb` carries the
   fan-out where one subcommand rules several ways (a verdict, a ruling, a
-  flagged label). `open-pr-gh` is the loose `gh pr create` path, recorded by
-  the `ledger-gh-open` PostToolUse hook — distinguishable by construction from
-  the tool's own `open-pr`. A dry-run or refused transition appends nothing.
+  flagged label). The `-gh` suffixed actions are the LOOSE paths — mutations
+  that ran through bare gh instead of a transition — recorded by the
+  `ledger-gh` PostToolUse hook from gh's own evidence, distinguishable by
+  construction from the tool's own records: `open-pr-gh` (the create
+  `require-qa-block` gates), and the landing verbs `merge-pr-gh` /
+  `close-pr-gh` / `close-issue-gh`. A dry-run or refused transition appends
+  nothing.
+- **Landings are first-class actions.** The FSM should always move through the
+  tooling, and a landing must be sayable as a landing: `human-close` with verb
+  `close` is the tool-mediated terminal edge, and `merge-pr-gh` /
+  `close-pr-gh` / `close-issue-gh` are the bare-gh landings the hook records.
+  Landed-history derives from THESE records plus the doctor's sweep (a merged
+  or closed item still wearing FSM labels is found, cleaned, and recorded) —
+  so a landing bucketed as a generic mutation would be a landing the derived
+  history cannot see. Coverage honesty: a bare `gh pr merge` that names its
+  subject only through the cwd's repo (no `-R`, no url) records nothing —
+  absence, never a guess — and the doctor's sweep is the backstop that finds
+  what the hook could not attribute.
 - Appending is best-effort: an unwritable ledger is one stderr warning and a
   completed transition. The metric never fails the pipeline it measures.
 

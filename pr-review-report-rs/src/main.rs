@@ -33772,17 +33772,7 @@ fn segment_hides_pr_create(seg: &[String]) -> bool {
 /// (`hooks/block-nix-wrap-gh.sh`). Three consecutive UNQUOTED words cannot be spoofed by a
 /// `--title "gh pr create"`, which the lexer already collapsed into one token.
 fn pr_create_spans(seg: &[String]) -> Vec<(usize, usize)> {
-    let words = non_flag_words(seg);
-    let starts: Vec<usize> = words
-        .windows(3)
-        .filter(|w| [w[0].1, w[1].1, w[2].1] == PR_CREATE_WORDS)
-        .map(|w| w[0].0)
-        .collect();
-    starts
-        .iter()
-        .enumerate()
-        .map(|(j, &s)| (s, starts.get(j + 1).copied().unwrap_or(seg.len())))
-        .collect()
+    gh_words_spans(seg, PR_CREATE_WORDS)
 }
 
 /// `os.path.join` semantics: an ABSOLUTE `path` replaces `base` entirely.
@@ -34297,23 +34287,129 @@ fn command_runs_pr_create(command: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// PURE: the created PR a PostToolUse payload demonstrates — a `Bash` call whose command lexes
-/// into a `gh pr create` AND whose response carries gh's own statement of what it created, read
-/// with the same [`created_pr_ref`] the `open_pr` transition trusts.
-fn gh_open_touch(payload: &str) -> Option<(String, u64)> {
-    let doc = serde_json::from_str::<Value>(payload).ok()?;
-    if doc.get("tool_name").and_then(Value::as_str) != Some("Bash") {
+/// The loose-path LANDING verbs the recorder covers, each as (the three consecutive words that
+/// invoke it, the typed action its touch records, the subject kind, gh's own success token).
+///
+/// LANDINGS ARE FIRST-CLASS ACTIONS: the FSM should always move through the tooling, and where a
+/// landing still happens through bare gh — the interactive `gh pr merge` — its record must SAY it
+/// was a landing, because landed-history derives from these records (plus the doctor's sweep of
+/// terminal items still wearing FSM labels). A generic "mutation" bucket could never carry that.
+///
+/// The evidence token is gh's own "✓ Merged/Closed …" line. FAIL-CLOSED by construction: if gh
+/// rewords its success line the records STOP — absence a consumer can see — rather than ever
+/// recording a landing that did not happen.
+const GH_LANDING_VERBS: &[([&'static str; 3], &'static str, TouchSubject, &'static str)] = &[
+    (["gh", "pr", "merge"], "merge-pr-gh", TouchSubject::Pr, "Merged"),
+    (["gh", "pr", "close"], "close-pr-gh", TouchSubject::Pr, "Closed"),
+    (
+        ["gh", "issue", "close"],
+        "close-issue-gh",
+        TouchSubject::Issue,
+        "Closed",
+    ),
+];
+
+/// PURE: [`pr_create_spans`]' matcher for ANY three consecutive non-flag words — the create
+/// spans' own algorithm, parameterized. See that function for why consecutive-anywhere is right.
+fn gh_words_spans(seg: &[String], words: [&str; 3]) -> Vec<(usize, usize)> {
+    let nf = non_flag_words(seg);
+    let starts: Vec<usize> = nf
+        .windows(3)
+        .filter(|w| [w[0].1, w[1].1, w[2].1] == words)
+        .map(|w| w[0].0)
+        .collect();
+    starts
+        .iter()
+        .enumerate()
+        .map(|(j, &s)| (s, starts.get(j + 1).copied().unwrap_or(seg.len())))
+        .collect()
+}
+
+/// PURE: a github item url as (slug, number) — a PR's `/pull/` or an issue's `/issues/`.
+fn item_url_ref(url: &str) -> Option<(String, u64)> {
+    if url.contains("/pull/") {
+        return pr_url_ref(url);
+    }
+    let (before, after) = url.trim().rsplit_once("/issues/")?;
+    let num: u64 = after.split('/').next()?.parse().ok().filter(|n| *n > 0)?;
+    let (_, path) = before.split_once("github.com/")?;
+    let mut segs = path.split('/');
+    let (Some(owner), Some(repo), None) = (segs.next(), segs.next(), segs.next()) else {
         return None;
+    };
+    if owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+    Some((format!("{owner}/{repo}"), num))
+}
+
+/// PURE: which item one landing invocation names, from its own LEXED argv — the `-R`/`--repo`
+/// value plus a bare number, or an item url. Reading flag VALUES from lexed tokens is the QA
+/// gate's own posture (`--body-file`), not the raw-string parsing #175 rejects. `None` when the
+/// invocation does not name its subject exactly (a bare `gh pr merge` against the cwd's repo):
+/// absence, never a guess.
+fn landing_subject(seg: &[String], span: (usize, usize)) -> Option<(String, u64)> {
+    let args = &seg[span.0..span.1];
+    let mut repo: Option<String> = None;
+    let mut number: Option<u64> = None;
+    let mut url: Option<(String, u64)> = None;
+    let mut i = 0;
+    while i < args.len() {
+        let t = &args[i];
+        if t == "-R" || t == "--repo" {
+            if let Some(v) = args.get(i + 1) {
+                repo = Some(v.clone());
+                i += 2;
+                continue;
+            }
+        } else if let Some(v) = t.strip_prefix("--repo=") {
+            repo = Some(v.to_string());
+        } else if !t.starts_with('-') {
+            if let Ok(n) = t.parse::<u64>() {
+                if n > 0 && number.is_none() {
+                    number = Some(n);
+                }
+            } else if url.is_none() {
+                url = item_url_ref(t);
+            }
+        }
+        i += 1;
+    }
+    if let Some(u) = url {
+        return Some(u);
+    }
+    let slug = repo.filter(|r| parse_repo_arg(r).is_ok())?;
+    Some((slug, number?))
+}
+
+/// One touch a PostToolUse payload demonstrates.
+#[derive(Debug, PartialEq, Eq)]
+struct GhTouch {
+    action: &'static str,
+    kind: TouchSubject,
+    slug: String,
+    number: u64,
+}
+
+/// PURE: every touch a PostToolUse `Bash` payload demonstrates.
+///
+/// Two evidence models, both gh's own words: a CREATE is evidenced by the url gh printed (read
+/// with the same [`created_pr_ref`] the `open_pr` transition trusts), and a LANDING by the
+/// invocation's lexed subject plus gh's success token in the output. A command this cannot see,
+/// or whose output carries no evidence, contributes nothing — absence, never a guess.
+fn gh_ledger_touches(payload: &str) -> Vec<GhTouch> {
+    let Ok(doc) = serde_json::from_str::<Value>(payload) else {
+        return Vec::new();
+    };
+    if doc.get("tool_name").and_then(Value::as_str) != Some("Bash") {
+        return Vec::new();
     }
     let command = doc
         .pointer("/tool_input/command")
         .and_then(Value::as_str)
         .unwrap_or("");
-    if !command_runs_pr_create(command) {
-        return None;
-    }
-    // The response shape is the harness's: a string, or an object whose `stdout` holds the
-    // command's output. Both are read; anything else carries no URL to trust.
+    // The response shape is the harness's: a string, or an object whose `stdout`/`stderr` hold
+    // the command's output. Both streams are read — gh writes its ✓ lines to stderr.
     let text = match doc.get("tool_response") {
         Some(Value::String(s)) => s.clone(),
         Some(v) => ["stdout", "stderr"]
@@ -34323,22 +34419,57 @@ fn gh_open_touch(payload: &str) -> Option<(String, u64)> {
             .join(" "),
         None => String::new(),
     };
-    created_pr_ref(&text)
+    let mut out = Vec::new();
+    if command_runs_pr_create(command) {
+        if let Some((slug, num)) = created_pr_ref(&text) {
+            out.push(GhTouch {
+                action: "open-pr-gh",
+                kind: TouchSubject::Pr,
+                slug,
+                number: num,
+            });
+        }
+    }
+    let Some(tokens) = shell_split(command) else {
+        return out;
+    };
+    for seg in segments(&tokens) {
+        for (words, action, kind, evidence) in GH_LANDING_VERBS {
+            for span in gh_words_spans(&seg, *words) {
+                let Some((slug, num)) = landing_subject(&seg, span) else {
+                    continue;
+                };
+                if !text.split_whitespace().any(|w| w == *evidence) {
+                    continue;
+                }
+                let touch = GhTouch {
+                    action,
+                    kind: *kind,
+                    slug,
+                    number: num,
+                };
+                if !out.contains(&touch) {
+                    out.push(touch);
+                }
+            }
+        }
+    }
+    out
 }
 
-/// `ledger-gh-open`: the PostToolUse `Bash` hook. Payload on stdin; always exit 0.
-fn ledger_gh_open_mode() -> i32 {
+/// `ledger-gh`: the PostToolUse `Bash` hook. Payload on stdin; always exit 0.
+fn ledger_gh_mode() -> i32 {
     use std::io::Read;
     let mut payload = String::new();
     if std::io::stdin().read_to_string(&mut payload).is_err() {
         return 0;
     }
-    if let Some((slug, num)) = gh_open_touch(&payload) {
+    for t in gh_ledger_touches(&payload) {
         ledger_touch(&FsmTouch {
-            subject: TouchSubject::Pr,
-            slug: &slug,
-            number: num,
-            action: "open-pr-gh",
+            subject: t.kind,
+            slug: &t.slug,
+            number: t.number,
+            action: t.action,
             verb: None,
             closes: &[],
             rework_of: None,
@@ -43868,13 +43999,15 @@ enum Cmd {
     /// no `## QA` evidence block, naming the lines that are missing. Hook payload on stdin; exit 0
     /// allows the call, 2 blocks it with the refusal on stderr. Wiring: the user `settings.json`.
     RequireQaBlock,
-    /// PostToolUse `Bash` hook: when a `gh pr create` ran OUTSIDE the transition function (the
-    /// loose path `require-qa-block` gates but cannot record), read the created PR from gh's own
-    /// stdout and append the touch the bypassed `open_pr` would have written — action
-    /// `open-pr-gh`, so a consumer can tell the loose path from the tool's. Hook payload on
-    /// stdin; always exit 0 — a recorder must never wedge the session it observes. Wiring: the
-    /// user `settings.json`, beside `require-qa-block`.
-    LedgerGhOpen,
+    /// PostToolUse `Bash` hook: when a gh mutation ran OUTSIDE the transition function — the
+    /// loose `gh pr create` that `require-qa-block` gates but cannot record, and the LANDING
+    /// verbs (`gh pr merge`, `gh pr close`, `gh issue close`) the interactive population still
+    /// performs bare — read gh's own evidence and append the touch the bypassed tool would have
+    /// written: `open-pr-gh` / `merge-pr-gh` / `close-pr-gh` / `close-issue-gh`, so a consumer
+    /// can tell the loose path from the tool's AND a landing from a generic mutation. Hook
+    /// payload on stdin; always exit 0 — a recorder must never wedge the session it observes.
+    /// Wiring: the user `settings.json`, beside `require-qa-block`.
+    LedgerGh,
     /// Producer RETROFIT of QA-GUIDE section 8 on an ALREADY-OPEN PR: APPEND the evidence block to
     /// the PR body, leaving every byte outside the `## QA` section exactly as it was. Validated with
     /// `require-qa-block`'s own predicate, so what it writes is what the PR-open gate accepts.
@@ -47551,7 +47684,7 @@ fn main() {
         } => unvetted_mode(json, include_skipped, limit),
         Cmd::PluginVersionLockstep { root } => plugin_version_lockstep_mode(&root),
         Cmd::RequireQaBlock => require_qa_block_mode(),
-        Cmd::LedgerGhOpen => ledger_gh_open_mode(),
+        Cmd::LedgerGh => ledger_gh_mode(),
         Cmd::RepairQaBlock {
             slug,
             pr,
@@ -76736,38 +76869,103 @@ mod touch_ledger_tests {
     fn the_recorder_trusts_ghs_own_url_and_nothing_else() {
         let create = "gh pr create -R o/r --title t --body-file /tmp/b.md";
         let url = "https://github.com/o/r/pull/12";
+        let opened = |slug: &str, n: u64| {
+            vec![GhTouch {
+                action: "open-pr-gh",
+                kind: TouchSubject::Pr,
+                slug: slug.to_string(),
+                number: n,
+            }]
+        };
         assert_eq!(
-            gh_open_touch(&hook_payload("Bash", create, Value::from(url))),
-            Some(("o/r".to_string(), 12))
+            gh_ledger_touches(&hook_payload("Bash", create, Value::from(url))),
+            opened("o/r", 12)
         );
         assert_eq!(
-            gh_open_touch(&hook_payload(
+            gh_ledger_touches(&hook_payload(
                 "Bash",
                 create,
                 serde_json::json!({"stdout": format!("Creating pull request\n{url}\n")}),
             )),
-            Some(("o/r".to_string(), 12))
+            opened("o/r", 12)
         );
         // A PR url in the output of a command that did not create one attributes nothing…
         assert_eq!(
-            gh_open_touch(&hook_payload(
+            gh_ledger_touches(&hook_payload(
                 "Bash",
                 "gh pr view 12 -R o/r",
                 Value::from(url)
             )),
-            None
+            vec![]
         );
         // …and a create whose output names no PR recorded nothing real.
         assert_eq!(
-            gh_open_touch(&hook_payload("Bash", create, Value::from("boom: HTTP 422"))),
-            None
+            gh_ledger_touches(&hook_payload("Bash", create, Value::from("boom: HTTP 422"))),
+            vec![]
         );
         assert_eq!(
-            gh_open_touch(&hook_payload("Write", create, Value::from(url))),
-            None,
+            gh_ledger_touches(&hook_payload("Write", create, Value::from(url))),
+            vec![],
             "only Bash executes a command"
         );
-        assert_eq!(gh_open_touch("not json"), None);
+        assert_eq!(gh_ledger_touches("not json"), Vec::<GhTouch>::new());
+    }
+
+    #[test]
+    fn a_landing_records_as_a_landing_evidenced_by_ghs_success_line() {
+        let landed = |action: &'static str, kind: TouchSubject, n: u64| {
+            vec![GhTouch {
+                action,
+                kind,
+                slug: "o/r".to_string(),
+                number: n,
+            }]
+        };
+        // The merge names its subject in its own argv, and gh's ✓ line is the evidence.
+        assert_eq!(
+            gh_ledger_touches(&hook_payload(
+                "Bash",
+                "gh pr merge 41 -R o/r --merge --admin",
+                serde_json::json!({"stderr": "✓ Merged pull request o/r#41"}),
+            )),
+            landed("merge-pr-gh", TouchSubject::Pr, 41)
+        );
+        // A url subject carries repo and number by itself.
+        assert_eq!(
+            gh_ledger_touches(&hook_payload(
+                "Bash",
+                "gh issue close https://github.com/o/r/issues/9 --reason completed",
+                Value::from("✓ Closed issue o/r#9"),
+            )),
+            landed("close-issue-gh", TouchSubject::Issue, 9)
+        );
+        assert_eq!(
+            gh_ledger_touches(&hook_payload(
+                "Bash",
+                "gh pr close 7 --repo=o/r",
+                Value::from("✓ Closed pull request o/r#7"),
+            )),
+            landed("close-pr-gh", TouchSubject::Pr, 7)
+        );
+        // FAIL-CLOSED: no success token in the output, no record — a refused merge is not a
+        // landing, and neither is one whose wording gh changed.
+        assert_eq!(
+            gh_ledger_touches(&hook_payload(
+                "Bash",
+                "gh pr merge 41 -R o/r --merge",
+                Value::from("GraphQL: Pull request is not mergeable"),
+            )),
+            vec![]
+        );
+        // A bare merge against the cwd's repo names no subject exactly: absence, never a guess.
+        assert_eq!(
+            gh_ledger_touches(&hook_payload(
+                "Bash",
+                "gh pr merge 41 --merge",
+                Value::from("✓ Merged pull request #41"),
+            )),
+            vec![]
+        );
     }
 
     // ---- the row -------------------------------------------------------------------------------
