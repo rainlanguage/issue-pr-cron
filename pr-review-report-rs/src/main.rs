@@ -4556,7 +4556,12 @@ fn ledger_touch(t: &FsmTouch) {
             .create(true)
             .append(true)
             .open(&path)?;
-        writeln!(f, "{line}")
+        // ONE buffer, ONE write: `O_APPEND` makes a single `write()` atomic, and `Display` on a
+        // `Value` would otherwise emit many small fragments — which is how two concurrent actors
+        // interleave half-lines into a shared ledger.
+        let mut buf = line.to_string();
+        buf.push('\n');
+        f.write_all(buf.as_bytes())
     };
     if let Err(e) = write() {
         eprintln!("warning: could not append to touch ledger {path}: {e}");
@@ -4679,9 +4684,11 @@ fn run_touches(run_id: Option<&str>) -> Vec<Value> {
 /// the `owner/repo#n` ref, the input field carrying the verb, subject kind, ledger action).
 ///
 /// Matched on the tool name's last `__`-segment for the reason [`WORK_ITEM_TOOL_LEAVES`] is.
-/// `human_close` is deliberately ABSENT: its input field is `subject` because the TOOL resolves
-/// which population the ref names, so its kind is not readable from the call — the ledger record
-/// the apply writes carries the resolved kind, and that record is the authoritative one.
+/// `human_close` AND `record_close_candidate_verdict` are deliberately ABSENT: each takes a ref
+/// whose population the TOOL resolves (`human_close`'s field is literally `subject`; a
+/// close-candidate flag rides issues and PRs both), so the subject KIND is not readable from the
+/// call — the ledger record the apply writes carries the resolved kind (`subject_is_pr` at the
+/// write), and that record is the authoritative one.
 /// CLI invocations riding a Bash `command` string are also absent BY MEASUREMENT (#175): parsing
 /// shell strings invents work items, so a Bash-invoked transition is run-level ledger data only,
 /// never agent-attributed.
@@ -4692,13 +4699,6 @@ const TOUCH_INPUT_LEAVES: &[(&str, &str, Option<&str>, TouchSubject, &str)] = &[
         Some("verdict"),
         TouchSubject::Pr,
         "record-verdict",
-    ),
-    (
-        "record_close_candidate_verdict",
-        "issue",
-        Some("verdict"),
-        TouchSubject::Issue,
-        "record-close-candidate-verdict",
     ),
     (
         "human_rule",
@@ -4926,9 +4926,15 @@ fn trace_touches(trace: &str) -> std::collections::HashMap<String, Vec<Value>> {
 /// by the caller, against the live rows' `"ledger"`.
 fn trace_touches_folded(trace: &str) -> Vec<Value> {
     let per_actor = trace_touches(trace);
+    // Actors in sorted order, and every mergeable field MERGED (count summed, closes unioned,
+    // lineage kept by a deterministic rule), because `HashMap` iteration order is randomized per
+    // process: a fold that keeps whichever entry it met first writes a different backfill on
+    // every run, and a diffable artifact must not depend on hash seeding.
+    let mut actors: Vec<&String> = per_actor.keys().collect();
+    actors.sort();
     let mut folded: Vec<Value> = Vec::new();
-    for (_, entries) in per_actor {
-        for e in entries {
+    for actor in actors {
+        for e in &per_actor[actor] {
             let matches = |v: &Value| {
                 ["repo", "number", "kind", "action", "verb"]
                     .iter()
@@ -4939,8 +4945,43 @@ fn trace_touches_folded(trace: &str) -> Vec<Value> {
                     let a = seen.get("count").and_then(|c| c.as_u64()).unwrap_or(1);
                     let b = e.get("count").and_then(|c| c.as_u64()).unwrap_or(1);
                     seen["count"] = Value::from(a + b);
+                    let mut closes: Vec<u64> = seen
+                        .get("closes")
+                        .and_then(|c| c.as_array())
+                        .map(|a| a.iter().filter_map(|n| n.as_u64()).collect())
+                        .unwrap_or_default();
+                    for n in e
+                        .get("closes")
+                        .and_then(|c| c.as_array())
+                        .map(|a| a.iter().filter_map(|n| n.as_u64()).collect::<Vec<_>>())
+                        .unwrap_or_default()
+                    {
+                        if !closes.contains(&n) {
+                            closes.push(n);
+                        }
+                    }
+                    if !closes.is_empty() {
+                        closes.sort_unstable();
+                        seen["closes"] =
+                            Value::Array(closes.into_iter().map(Value::from).collect());
+                    }
+                    // Lineage: take the incoming one when none is held; when both exist and
+                    // disagree, the smaller serialization wins — arbitrary, but the SAME
+                    // arbitrary on every run.
+                    if let Some(incoming) = e.get("reworkOf").filter(|r| r.is_object()) {
+                        let keep = match seen.get("reworkOf") {
+                            None => Some(incoming.clone()),
+                            Some(held) if incoming.to_string() < held.to_string() => {
+                                Some(incoming.clone())
+                            }
+                            Some(_) => None,
+                        };
+                        if let Some(k) = keep {
+                            seen["reworkOf"] = k;
+                        }
+                    }
                 }
-                None => folded.push(e),
+                None => folded.push(e.clone()),
             }
         }
     }
@@ -6699,11 +6740,6 @@ fn run_metrics_mode(
     0
 }
 
-/// The COMPLETE end-of-run record: every field in `partial_record` plus the counts, usage, cost and
-/// outcome that only exist once the run has finished. Built here rather than inline in
-/// [`run_metrics_mode`] so the record's shape — `stage` above all — is a tested value, not a
-/// side effect of printing.
-#[allow(clippy::too_many_arguments)] // one record, one assembly point — splitting it would put the row's shape in two places
 /// The run's touch data, both resolutions: `run` is the ledger's fold for this run id (the
 /// authoritative, whole-surface record), `per_actor` is what the trace demonstrates per task
 /// ([`trace_touches`]), which is how a touch gets a token attribution.
@@ -6712,7 +6748,11 @@ struct TouchBlock<'a> {
     per_actor: &'a std::collections::HashMap<String, Vec<Value>>,
 }
 
-#[allow(clippy::too_many_arguments)]
+/// The COMPLETE end-of-run record: every field in `partial_record` plus the counts, usage, cost and
+/// outcome that only exist once the run has finished. Built here rather than inline in
+/// [`run_metrics_mode`] so the record's shape — `stage` above all — is a tested value, not a
+/// side effect of printing.
+#[allow(clippy::too_many_arguments)] // one record, one assembly point — splitting it would put the row's shape in two places
 fn final_record(
     path: &str,
     m: &RunMetrics,
@@ -35296,14 +35336,14 @@ fn open_pr_apply(
     // Every issue the posted body closes, read back with the scanner GitHub's own
     // `closingIssuesReferences` is compared against — so the typed record of what this PR
     // covers is the whole set, not just the argument that was passed.
-    let closes = closing_keywords(&body);
+    let closed_set = closing_keywords(&body);
     ledger_touch(&FsmTouch {
         subject: TouchSubject::Pr,
         slug: &found,
         number: num,
         action: "open-pr",
         verb: None,
-        closes: &closes,
+        closes: &closed_set,
         rework_of,
     });
     let mut out = serde_json::json!({
@@ -35312,7 +35352,7 @@ fn open_pr_apply(
         "url": format!("https://github.com/{found}/pull/{num}"),
         "head": head,
         "base": base,
-        "closes": closes,
+        "closes": closed_set,
         "assignee": assignee,
     });
     // The lineage rides the RESULT too, so the trace holds {agent, repo, PR, causal item} as
@@ -76625,8 +76665,15 @@ mod touch_ledger_tests {
 
     // ---- the ledger file (env-scoped; the ONE test that touches the filesystem) ----------------
 
+    /// Serializes every test that mutates the process-wide `FSM_TOUCH_*` environment. There is
+    /// exactly one today; any future test that sets these vars — or drives a NON-dry apply far
+    /// enough to reach `ledger_touch` — must hold this lock too, or parallel tests can write to
+    /// each other's ledgers (or, with the env unset, to the production default path).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn ledger_touch_appends_a_line_the_fold_reads_back() {
+        let _env = ENV_LOCK.lock().unwrap();
         let dir = std::env::temp_dir().join(format!("fsm-touch-test-{}", std::process::id()));
         let path = dir.join("ledger.jsonl");
         std::env::set_var(TOUCH_LEDGER_ENV, &path);
@@ -76823,6 +76870,44 @@ mod touch_ledger_tests {
         assert_eq!(
             entries[0]["reworkOf"],
             serde_json::json!({"repo": "o/r", "number": 41, "kind": "pr"})
+        );
+    }
+
+    #[test]
+    fn the_folded_view_merges_closes_and_lineage_across_actors_deterministically() {
+        // Two ACTORS report the same identity, each carrying a different mergeable half. HashMap
+        // order decides which entry the fold meets first, so only a real MERGE — not
+        // keep-first-met — makes the backfill byte-stable across runs.
+        let result_a = serde_json::json!({
+            "repo": "o/r", "pr": 12, "closes": [63],
+            "reworkOf": {"repo": "o/r", "number": 41, "kind": "pr"},
+        })
+        .to_string();
+        let result_b = serde_json::json!({"repo": "o/r", "pr": 12, "closes": [64]}).to_string();
+        let call = |id: &str, parent: &str| {
+            assistant(
+                Some(parent),
+                serde_json::json!([tool_use(id, "mcp__fsm__open_pr", serde_json::json!({}))]),
+            )
+        };
+        let trace = [
+            call("a", "task1"),
+            tool_result("a", &result_a, false),
+            call("b", "task2"),
+            tool_result("b", &result_b, false),
+        ]
+        .join("\n");
+        let folded = trace_touches_folded(&trace);
+        assert_eq!(folded.len(), 1);
+        assert_eq!(folded[0]["count"], 2);
+        assert_eq!(
+            folded[0]["closes"],
+            serde_json::json!([63, 64]),
+            "union, sorted"
+        );
+        assert_eq!(
+            folded[0]["reworkOf"]["number"], 41,
+            "the one lineage named survives whichever actor the fold meets first"
         );
     }
 

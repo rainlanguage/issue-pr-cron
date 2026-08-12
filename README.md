@@ -3045,6 +3045,14 @@ touches of every item in rework chains rooted at X, transitively** — follow
 `reworkOf` edges backwards from each fix to the landed item that shipped the
 defect, and charge the fix's spend to that root.
 
+**When is an issue a valid root?** A root is a LANDED item, and issues land
+too (`human-close`, `close-issue-gh`). Root at an issue when the issue's own
+disposition was the shipped defect — closed as done when it wasn't, closed
+not-planned wrongly. When the defect traces to CODE a merged PR shipped, root
+at the PR, even if an issue rode it there via `closes` — one root per fix, the
+most causal landed artifact, and cost consumers must apply the same rule or
+double-charge a chain through both the PR and its closed issue.
+
 ### Live token spend — and the one number that is not knowable
 
 `run-metrics` reads tokens from the terminal `result` event, so a killed run
