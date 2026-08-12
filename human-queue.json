@@ -969,8 +969,14 @@
         ]
       },
       "un-vetted": {
-        "count": 23,
+        "count": 24,
         "prs": [
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 281,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/281",
+            "title": "feat(await): resolve own head pins and name failing checks at exit"
+          },
           {
             "repo": "rainlanguage/adversarial-mutation-test",
             "number": 10,
@@ -1919,12 +1925,6 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
-    {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 280,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/280",
-      "title": "await: resolve its own head pins and name the failing checks — retire the probe hand-roll"
-    },
     {
       "repo": "rainlanguage/issue-pr-cron",
       "number": 278,
@@ -5656,7 +5656,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 23,
+    "unvetted": 24,
     "blockedOn": 19,
     "ready": 0,
     "needsWork": 104,
@@ -5667,18 +5667,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 146,
+    "totalProducerPrs": 147,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 618,
+    "uncoveredIssues": 617,
     "designPresentable": 0,
     "designNoQuestion": 0,
     "openIssues": 779
   },
   "ages": {
     "openIssues": {
-      "meanDays": 316.0,
+      "meanDays": 316.1,
       "medianDays": 106.3,
-      "oldestDays": 1661.8
+      "oldestDays": 1661.9
     }
   }
 }
