@@ -151,6 +151,25 @@ if [ "$snapshot_changed" -eq 1 ]; then
     log "history line failed (rc=$hist_rc): $(tr '\n' ' ' <"$histerr")— publishing the snapshot without it"
   fi
   rm -f "$histerr"
+
+  # Landed-history append (rain-org-health tokens-per-landed-item): FSM items present at HEAD's
+  # snapshot and gone from the fresh one, verified against GitHub as actually landed. HEAD is
+  # still the pre-tick commit here — the diff must be taken before the commit below moves it.
+  # `--existing` is what makes a tick replayed after a failed commit append nothing twice.
+  # Failure arms mirror the history line: reported, never fatal — and unlike that line, a miss
+  # here is HEALABLE, because backfill-landed-history re-walks the same pairs through the same
+  # subcommand. Buffered for the same partial-write reason.
+  prevsnap="$(mktemp)"; landederr="$(mktemp)"
+  if git -C "$DIR" show HEAD:human-queue.json >"$prevsnap" 2>/dev/null && [ -s "$prevsnap" ]; then
+    landed="$(pr-review-report landed-history-lines "$prevsnap" "$DIR/human-queue.json" \
+      --observed-at "$ts" --existing "$DIR/landed-history.jsonl" 2>"$landederr")"; landed_rc=$?
+    [ -n "$landed" ] && printf '%s\n' "$landed" >>"$DIR/landed-history.jsonl"
+    # rc 3 = rows above are complete minus the items stderr names; a backfill rerun recovers them.
+    [ "$landed_rc" -ne 0 ] && log "landed-history incomplete (rc=$landed_rc): $(tr '\n' ' ' <"$landederr")— publishing what resolved"
+  else
+    log "no previous snapshot at HEAD — skipping the landed-history diff this tick"
+  fi
+  rm -f "$prevsnap" "$landederr"
 fi
 
 # The commit message names what actually moved: metrics-only ticks keep the `chore(metrics):`
@@ -162,7 +181,7 @@ elif [ "$snapshot_changed" -eq 1 ]; then
 else
   msg="chore(metrics): publish accrued run metrics"
 fi
-git_q add human-queue.json human-queue-history.jsonl metrics/runs.jsonl || exit 1
+git_q add human-queue.json human-queue-history.jsonl landed-history.jsonl metrics/runs.jsonl || exit 1
 git_q -c commit.gpgsign=false commit --no-verify -m "$msg" --quiet || exit 1
 mine="$(git -C "$DIR" rev-parse HEAD)"
 

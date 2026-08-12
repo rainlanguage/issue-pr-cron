@@ -171,6 +171,14 @@ impl Fixture {
             "{\"ts\":\"2026-07-01T00:00:00Z\",\"counts\":{\"a\":1}}\n",
         )
         .unwrap();
+        // Tracked like the real repo's backfill-seeded file, so the publish `git add` always has
+        // the path whether or not the tick's landed diff appended anything.
+        std::fs::write(
+            f.install.join("landed-history.jsonl"),
+            "{\"ts\":\"2026-06-30T00:00:00Z\",\"observedAt\":\"2026-07-01T00:00:00Z\",\
+             \"kind\":\"pr\",\"repo\":\"o/seed\",\"number\":1}\n",
+        )
+        .unwrap();
         // The run-metrics ledger is TRACKED in the real repo, and the script publishes it
         // alongside the snapshot (#160) — the fixture mirrors that so `git add` has the same
         // tracked file to stage.
@@ -208,9 +216,14 @@ impl Fixture {
              case \"${{1:-}}\" in\n\
              \x20 human-queue) cat {snap} ;;\n\
              \x20 queue-history-line) printf '{{\"ts\":\"stub\",\"counts\":{{}}}}\\n' ;;\n\
+             \x20 landed-history-lines)\n\
+             \x20   [ -f {lines} ] && cat {lines}\n\
+             \x20   exit \"$(cat {rc} 2>/dev/null || echo 0)\" ;;\n\
              \x20 *) echo \"stub: unexpected subcommand ${{1:-}}\" >&2; exit 2 ;;\n\
              esac\n",
-            snap = self.root.join("snapshot.json").display()
+            snap = self.root.join("snapshot.json").display(),
+            lines = self.root.join("landed-lines").display(),
+            rc = self.root.join("landed-rc").display()
         );
         let path = bin.join("pr-review-report");
         std::fs::write(&path, stub).expect("write stub");
@@ -612,6 +625,97 @@ fn an_unchanged_snapshot_stays_a_no_op() {
             .count(),
         1,
         "an unchanged snapshot must not append a history line"
+    );
+}
+
+/// The landed-history append (rain-org-health tokens-per-landed-item): a changed-snapshot tick
+/// runs the landed diff, appends what it emitted, and the file reaches the remote with the
+/// snapshot. The diff itself is the binary's (unit-tested); this is the choreography.
+#[test]
+fn a_changed_snapshot_appends_and_publishes_landed_rows() {
+    let Some(f) = Fixture::new("landed-append") else {
+        return;
+    };
+    let row = "{\"ts\":\"2026-08-11T10:00:00Z\",\"observedAt\":\"stub\",\
+               \"kind\":\"pr\",\"repo\":\"o/r\",\"number\":7}";
+    std::fs::write(f.root.join("landed-lines"), format!("{row}\n")).unwrap();
+    f.set_next_snapshot("{\"counts\":{\"a\":2}}\n");
+
+    let out = f.tick();
+    assert!(out.status.success(), "tick failed: {}", stderr(&out));
+    assert_eq!(f.origin_head(), f.install_head(), "the tick must publish");
+    let published = git(&f.install, &["show", "HEAD:landed-history.jsonl"]);
+    assert!(
+        published.contains("\"number\":7"),
+        "the landed row must be committed and published: {published}"
+    );
+    assert_eq!(
+        published.lines().count(),
+        2,
+        "append-only: the seed row stays, the new row follows it"
+    );
+}
+
+/// A partially-resolved landed diff (exit 3: an API failure left items unresolved) still
+/// publishes the rows that DID resolve — withholding them would turn a healable gap into a
+/// permanent under-count — and leaves a stamped trail naming the incompleteness.
+#[test]
+fn a_partial_landed_resolution_still_publishes_what_resolved() {
+    let Some(f) = Fixture::new("landed-partial") else {
+        return;
+    };
+    let row = "{\"ts\":\"2026-08-11T10:00:00Z\",\"observedAt\":\"stub\",\
+               \"kind\":\"issue\",\"repo\":\"o/r\",\"number\":9}";
+    std::fs::write(f.root.join("landed-lines"), format!("{row}\n")).unwrap();
+    std::fs::write(f.root.join("landed-rc"), "3\n").unwrap();
+    f.set_next_snapshot("{\"counts\":{\"a\":3}}\n");
+
+    let out = f.tick();
+    assert!(
+        out.status.success(),
+        "an incomplete landed diff must not fail the tick: {}",
+        stderr(&out)
+    );
+    assert!(
+        git(&f.install, &["show", "HEAD:landed-history.jsonl"]).contains("\"number\":9"),
+        "the resolved row must still be committed"
+    );
+    assert!(
+        stderr(&out).contains("landed-history incomplete"),
+        "the incompleteness must be on the record: {}",
+        stderr(&out)
+    );
+}
+
+/// The landed diff is gated on the SNAPSHOT having moved, exactly as the history line is: two
+/// identical snapshots hold identical tracked sets, so a metrics-only tick has no departure to
+/// verify and must not spend API calls looking for one.
+#[test]
+fn a_metrics_only_tick_takes_no_landed_diff() {
+    let Some(f) = Fixture::new("landed-metrics-only") else {
+        return;
+    };
+    // A row the stub WOULD emit — proving the block never ran, not merely that it found nothing.
+    let row = "{\"ts\":\"2026-08-11T10:00:00Z\",\"observedAt\":\"stub\",\
+               \"kind\":\"pr\",\"repo\":\"o/r\",\"number\":8}";
+    std::fs::write(f.root.join("landed-lines"), format!("{row}\n")).unwrap();
+    f.set_next_snapshot("{\"counts\":{\"a\":1}}\n"); // identical to the seed
+    let skip_row = "{\"runId\":\"20260812T010001Z\",\"role\":\"producer\",\"exitCode\":10,\
+                    \"outcome\":\"skipped\",\"skipped\":\"usage-gate\",\
+                    \"skipReason\":\"PAUSE\"}\n";
+    let mut runs = std::fs::read_to_string(f.install.join("metrics/runs.jsonl")).unwrap();
+    runs.push_str(skip_row);
+    std::fs::write(f.install.join("metrics/runs.jsonl"), &runs).unwrap();
+
+    let out = f.tick();
+    assert!(out.status.success(), "tick failed: {}", stderr(&out));
+    assert_eq!(
+        std::fs::read_to_string(f.install.join("landed-history.jsonl"))
+            .unwrap()
+            .lines()
+            .count(),
+        1,
+        "a metrics-only tick must not take a landed diff"
     );
 }
 
