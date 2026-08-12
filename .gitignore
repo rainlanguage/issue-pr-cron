@@ -80,6 +80,10 @@
 # Per-run pipeline metrics (accumulates across trace rotation; committed periodically):
 !/metrics/
 !/metrics/runs.jsonl
+# The FSM touch ledger: every mutating transition appends which item it acted on, whoever
+# invoked it (runs stamp FSM_TOUCH_ACTOR/FSM_TOUCH_RUN_ID; interactive sessions append bare).
+# Written in place here and committed by the refresh tick, like metrics/runs.jsonl:
+!/fsm-touches.jsonl
 # FSM-conformance snapshot (`pr-review-report human-queue --json`, overwritten each refresh);
 # the rain-org-health dashboard fetches it at runtime from the raw URL — no site redeploy:
 !/human-queue.json

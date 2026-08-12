@@ -254,6 +254,14 @@ find "$RUNDIR" -maxdepth 1 -name "*.jsonl" -printf "%T@ %p\n" 2>/dev/null | sort
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 RUNLOG="$RUNDIR/$TS.jsonl"
 ERRLOG="$RUNDIR/$TS.err"
+
+# --- the FSM touch ledger's actor identity -----------------------------------------------------
+# Same stamp campaign-run.sh applies, for the vetter: every mutating transition this run invokes
+# (all MCP here — the vetter has no Bash) appends its touched item to fsm-touches.jsonl carrying
+# this run's identity, and `run-metrics` folds the set onto the run's row. Env rather than argv
+# for the reason RUN_LENS_LEDGER is env: the MCP server's argv is fixed by review-mcp.json.
+export FSM_TOUCH_ACTOR=vetter-run
+export FSM_TOUCH_RUN_ID="$TS"
 # The run's LENS LEDGER (#151): every `audit` skill invocation the harness announces, written from
 # inside the live pipe by `run-timings` and read back by `record_verdict`, which REFUSES a verdict on a
 # PR the ledger holds no invocation for. Named in TWO places for the same reason `$RUNLOG` is — the
