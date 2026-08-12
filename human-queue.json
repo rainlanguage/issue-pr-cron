@@ -969,19 +969,13 @@
         ]
       },
       "un-vetted": {
-        "count": 22,
+        "count": 21,
         "prs": [
           {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 277,
             "url": "https://github.com/rainlanguage/issue-pr-cron/pull/277",
             "title": "feat(metrics): landed-history.jsonl — the landed-work denominator feed"
-          },
-          {
-            "repo": "rainlanguage/rain-org-health",
-            "number": 172,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/172",
-            "title": "pipeline: tokens-per-landed-item band beside the open-issue age band"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -1877,6 +1871,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 278,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/278",
+      "title": "require-qa-block: also require a '## Debt' section (none, or links to filed removal issues)"
+    },
     {
       "repo": "rainlanguage/raindex.governance",
       "number": 5,
@@ -3214,6 +3214,12 @@
       "number": 2788,
       "url": "https://github.com/rainlanguage/raindex/issues/2788",
       "title": "Allow the order input token to be optional"
+    },
+    {
+      "repo": "rainlanguage/rain.erc4626.words",
+      "number": 139,
+      "url": "https://github.com/rainlanguage/rain.erc4626.words/issues/139",
+      "title": "15 vault addresses + a pinned fork block + hand-computed expected outputs are three independent sources of truth with no enforced agreement"
     },
     {
       "repo": "rainlanguage/rain.erc4626.words",
@@ -5614,7 +5620,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 22,
+    "unvetted": 21,
     "blockedOn": 19,
     "ready": 0,
     "needsWork": 104,
@@ -5625,16 +5631,16 @@
     "closeCandidateUnvetted": 1,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 145,
+    "totalProducerPrs": 144,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 618,
+    "uncoveredIssues": 620,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 777
+    "openIssues": 778
   },
   "ages": {
     "openIssues": {
-      "meanDays": 316.8,
+      "meanDays": 316.4,
       "medianDays": 106.2,
       "oldestDays": 1661.8
     }
