@@ -34299,8 +34299,18 @@ fn command_runs_pr_create(command: &str) -> bool {
 /// rewords its success line the records STOP — absence a consumer can see — rather than ever
 /// recording a landing that did not happen.
 const GH_LANDING_VERBS: &[([&'static str; 3], &'static str, TouchSubject, &'static str)] = &[
-    (["gh", "pr", "merge"], "merge-pr-gh", TouchSubject::Pr, "Merged"),
-    (["gh", "pr", "close"], "close-pr-gh", TouchSubject::Pr, "Closed"),
+    (
+        ["gh", "pr", "merge"],
+        "merge-pr-gh",
+        TouchSubject::Pr,
+        "Merged",
+    ),
+    (
+        ["gh", "pr", "close"],
+        "close-pr-gh",
+        TouchSubject::Pr,
+        "Closed",
+    ),
     (
         ["gh", "issue", "close"],
         "close-issue-gh",
@@ -76814,6 +76824,36 @@ mod touch_ledger_tests {
             entries[0]["reworkOf"],
             serde_json::json!({"repo": "o/r", "number": 41, "kind": "pr"})
         );
+    }
+
+    #[test]
+    fn a_retried_open_pr_keeps_the_first_lineage_it_named() {
+        let result = |root: u64| {
+            serde_json::json!({
+                "repo": "o/r", "pr": 12,
+                "reworkOf": {"repo": "o/r", "number": root, "kind": "pr"},
+            })
+            .to_string()
+        };
+        // Same identity twice: a retry. The FIRST record's causal item stands — a retry restates
+        // the touch, it does not re-diagnose it.
+        let trace = [
+            assistant(
+                None,
+                serde_json::json!([
+                    tool_use("t1", "mcp__fsm__open_pr", serde_json::json!({})),
+                    tool_use("t2", "mcp__fsm__open_pr", serde_json::json!({})),
+                ]),
+            ),
+            tool_result("t1", &result(41), false),
+            tool_result("t2", &result(99), false),
+        ]
+        .join("\n");
+        let map = trace_touches(&trace);
+        let entries = map.get("__main__").expect("main-loop work");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["count"], 2);
+        assert_eq!(entries[0]["reworkOf"]["number"], 41, "first lineage wins");
     }
 
     #[test]
