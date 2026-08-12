@@ -4921,6 +4921,16 @@ fn trace_touches(trace: &str) -> std::collections::HashMap<String, Vec<Value>> {
     out
 }
 
+/// PURE: a `reworkOf` object's identity as a borrowed, orderable key — what the fold's
+/// deterministic tie rule compares, without allocating.
+fn rework_ref_key(v: &Value) -> (&str, u64, &str) {
+    (
+        v.get("repo").and_then(Value::as_str).unwrap_or(""),
+        v.get("number").and_then(Value::as_u64).unwrap_or(0),
+        v.get("kind").and_then(Value::as_str).unwrap_or(""),
+    )
+}
+
 /// PURE: the run-level `touched` a TRACE demonstrates — every actor's entries folded into one
 /// list, for historical rows whose live ledger never existed. Labelled `touchedSource: "trace"`
 /// by the caller, against the live rows' `"ledger"`.
@@ -4966,18 +4976,16 @@ fn trace_touches_folded(trace: &str) -> Vec<Value> {
                             Value::Array(closes.into_iter().map(Value::from).collect());
                     }
                     // Lineage: take the incoming one when none is held; when both exist and
-                    // disagree, the smaller serialization wins — arbitrary, but the SAME
-                    // arbitrary on every run.
+                    // disagree, the smaller (repo, number, kind) key wins — arbitrary, but the
+                    // SAME arbitrary on every run, compared on the typed identity rather than an
+                    // owned serialization.
                     if let Some(incoming) = e.get("reworkOf").filter(|r| r.is_object()) {
                         let keep = match seen.get("reworkOf") {
-                            None => Some(incoming.clone()),
-                            Some(held) if incoming.to_string() < held.to_string() => {
-                                Some(incoming.clone())
-                            }
-                            Some(_) => None,
+                            None => true,
+                            Some(held) => rework_ref_key(incoming) < rework_ref_key(held),
                         };
-                        if let Some(k) = keep {
-                            seen["reworkOf"] = k;
+                        if keep {
+                            seen["reworkOf"] = incoming.clone();
                         }
                     }
                 }
