@@ -10321,14 +10321,15 @@ mod usage_gate_tests {
     #[test]
     fn no_reading_fails_closed_and_pauses() {
         let v = usage_gate_decide(None, ms("2026-07-15T00:00:00Z"), 5.0, 90.0);
+        assert!(matches!(v, UsageVerdict::Pause(_)), "{}", v.reason());
         assert_eq!(v.code(), 10, "{}", v.reason());
-        assert!(v.reason().starts_with("PAUSE:"), "{}", v.reason());
-        assert!(v.reason().contains("no usage reading"), "{}", v.reason());
-        assert!(v.reason().contains("failing closed"), "{}", v.reason());
-        assert!(
-            !v.reason().contains("linear-by-now") && !v.reason().contains("ceiling"),
-            "a blind pause must not read as a pace or ceiling pause: {}",
-            v.reason()
+        // The complete reason, pinned: it must name the read failure and share no wording with
+        // the pace ("linear-by-now") or ceiling pauses, so a blind pause is diagnosable from a
+        // single log line.
+        assert_eq!(
+            v.reason(),
+            "PAUSE: no usage reading — endpoint unreachable and no fallback reading set — \
+             cannot pace blind, failing closed"
         );
     }
 
