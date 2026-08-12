@@ -1676,7 +1676,13 @@ COST, never what later merged. This file is the denominator — one line per
 landed unit of pipeline work, append-only beside `human-queue-history.jsonl`:
 
 ```json
-{"ts":"2026-08-11T10:03:22Z","observedAt":"2026-08-11T11:00:04Z","kind":"pr","repo":"rainlanguage/rain.flare","number":170}
+{
+  "ts": "2026-08-11T10:03:22Z",
+  "observedAt": "2026-08-11T11:00:04Z",
+  "kind": "pr",
+  "repo": "rainlanguage/rain.flare",
+  "number": 170
+}
 ```
 
 `ts` is GitHub's own `mergedAt`/`closedAt` — the true landing time, and what a
@@ -1703,15 +1709,15 @@ replays all of it.
 snapshot at HEAD, diffed **before** the tick's own commit moves it) and
 publishes the file alongside the snapshot. `backfill-landed-history.sh` seeded
 it from the snapshot's full git history and is also the HEALER: `--existing`
-skips every `(kind, repo, number)` already recorded, so a rerun re-asks only
-the gaps a live tick's API failure left. The one blindness neither can heal: an
-item that enters and leaves entirely between two snapshots is never observed —
+skips every `(kind, repo, number)` already recorded, so a rerun re-asks only the
+gaps a live tick's API failure left. The one blindness neither can heal: an item
+that enters and leaves entirely between two snapshots is never observed —
 absence, not a zero.
 
-This feed and [`work-tokens`](#tokens-to-land-work--work-tokens) answer the
-same question at different scopes: `work-tokens` joins one run's spend to the
-typed items that run recorded; this file is the org-wide landed series a
-dashboard can fetch raw and window against `metrics/runs.jsonl` spend.
+This feed and [`work-tokens`](#tokens-to-land-work--work-tokens) answer the same
+question at different scopes: `work-tokens` joins one run's spend to the typed
+items that run recorded; this file is the org-wide landed series a dashboard can
+fetch raw and window against `metrics/runs.jsonl` spend.
 
 ### Opening a PR is a transition: `open_pr`
 

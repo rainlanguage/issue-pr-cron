@@ -41,9 +41,15 @@ while read -r sha ts; do
   fi
   if [ "$have_prev" -eq 1 ]; then
     # Exit 3 = the emitted rows are complete minus the items stderr names; keep walking — the
-    # rerun of this very script is the retry.
-    pr-review-report landed-history-lines "$prev" "$cur" \
-      --observed-at "$ts" --existing "$out" >>"$out" || misses=$((misses + 1))
+    # rerun of this very script is the retry. Buffered, then appended: the subcommand READS
+    # $out for its dedup keys, so appending in the same pipeline would have it reading a file
+    # it is mid-writing (SC2094) — and a buffered append can never leave a partial row.
+    rows="$(pr-review-report landed-history-lines "$prev" "$cur" \
+      --observed-at "$ts" --existing "$out")" || misses=$((misses + 1))
+    # An explicit if, not `&&`: under errexit a bare false-returning list ends the walk.
+    if [ -n "$rows" ]; then
+      printf '%s\n' "$rows" >>"$out"
+    fi
   fi
   mv "$cur" "$prev"
   cur="$(mktemp)"
