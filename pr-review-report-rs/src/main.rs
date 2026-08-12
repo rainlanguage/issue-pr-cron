@@ -1148,6 +1148,23 @@ fn gh_run(args: &[&str]) -> bool {
 /// FIX(bug 2): a CheckRun is pending unless status==COMPLETED (WAITING/REQUESTED/QUEUED/IN_PROGRESS
 /// all count as pending); a StatusContext is pending unless its state is terminal (SUCCESS/FAILURE/
 /// ERROR) — so EXPECTED/PENDING count as pending. A not-yet-concluded check is never GREEN.
+/// PURE: is this one rollup item a failure? The single predicate behind both `classify_ci`'s
+/// red count and `await`'s terminal failing-check report, so the checks `await` NAMES are exactly
+/// the ones that made the rollup red — two copies would drift into naming checks that did not
+/// count, or counting checks that are never named.
+fn check_failed(it: &Value) -> bool {
+    let concl = it.get("conclusion").and_then(|v| v.as_str());
+    let state = it.get("state").and_then(|v| v.as_str());
+    matches!(
+        concl,
+        Some("FAILURE")
+            | Some("TIMED_OUT")
+            | Some("CANCELLED")
+            | Some("ACTION_REQUIRED")
+            | Some("STARTUP_FAILURE")
+    ) || matches!(state, Some("FAILURE") | Some("ERROR"))
+}
+
 fn classify_ci(rollup: &Value) -> Ci {
     let empty = Vec::new();
     let arr = rollup.as_array().unwrap_or(&empty);
@@ -1155,18 +1172,9 @@ fn classify_ci(rollup: &Value) -> Ci {
     let mut pend = 0usize;
     let tot = arr.len();
     for it in arr {
-        let concl = it.get("conclusion").and_then(|v| v.as_str());
         let state = it.get("state").and_then(|v| v.as_str());
         let status = it.get("status").and_then(|v| v.as_str());
-        let is_fail = matches!(
-            concl,
-            Some("FAILURE")
-                | Some("TIMED_OUT")
-                | Some("CANCELLED")
-                | Some("ACTION_REQUIRED")
-                | Some("STARTUP_FAILURE")
-        ) || matches!(state, Some("FAILURE") | Some("ERROR"));
-        if is_fail {
+        if check_failed(it) {
             fail += 1;
             continue;
         }
@@ -42750,16 +42758,24 @@ enum Cmd {
         json: bool,
     },
     /// Wait — in ONE turn, in a FOREGROUND `Bash` call — until every named PR has SETTLED: its
-    /// checks have all reported, and (with `@<sha>`) a push has moved its head off `<sha>`. It
-    /// BLOCKS, so it needs nothing wrapped around it: `Monitor` returns immediately, which under
-    /// `claude --print` abandons the wait it was armed for (#249). Replaces the per-turn
-    /// `gh pr view --json headRefOid` / `gh pr checks` probing that was 60% of the enumeration
-    /// cost #170 measured. Exit 3 = the deadline stopped it; the report still names every subject.
+    /// checks have all reported, and (with `@<sha>`, or `--pin-current`) a push has moved its
+    /// head off the baseline. It BLOCKS, so it needs nothing wrapped around it: `Monitor` returns
+    /// immediately, which under `claude --print` abandons the wait it was armed for (#249).
+    /// Replaces the per-turn `gh pr view --json headRefOid` / `gh pr checks` probing that was 60%
+    /// of the enumeration cost #170 measured — including the setup probe that fetched a head just
+    /// to write it into `@<sha>`, and the aftermath probe that re-read the rollup to see WHICH
+    /// check failed: the report names each subject's final head and its failing checks (#280).
+    /// Exit 3 = the deadline stopped it; the report still names every subject.
     Await {
         /// `owner/repo#n`, or `owner/repo#n@<sha>` to also wait for a push off `<sha>`. Repeatable
         /// — the whole in-flight set is ONE wait, which is what makes it one turn.
         #[arg(required = true)]
         refs: Vec<String>,
+        /// Every subject WITHOUT an explicit `@<sha>` pins to its own head as first read inside
+        /// this wait, and then waits for a push to move OFF it — so "my delegate will push this
+        /// PR" needs no headRefOid pre-fetch. Subjects with `@<sha>` keep their explicit pin.
+        #[arg(long)]
+        pin_current: bool,
         /// Give up after this many seconds and REPORT where each subject got to. A wait always
         /// polls once, so 0 is a snapshot.
         #[arg(long, default_value_t = 900)]
@@ -44659,13 +44675,17 @@ fn uncovered_issues_mode(json_out: bool) -> i32 {
 const AWAIT_DETAIL_FIELDS: &str = "headRefOid,statusCheckRollup";
 
 /// One subject of an `await`: the PR to wait on, and — when the caller is waiting for a PUSH to
-/// land — the head sha it must move OFF.
+/// land — the head sha it must move OFF. With `pin_current` and no explicit `from_head`, that
+/// baseline is the subject's own head as FIRST READ inside the wait (#280): the caller that used
+/// to fetch `headRefOid` solely to write it into `@<sha>` was pinning to exactly the same moment,
+/// one paid turn earlier.
 #[derive(Clone, Debug, PartialEq)]
 struct AwaitRef {
     owner: String,
     repo: String,
     num: u64,
     from_head: Option<String>,
+    pin_current: bool,
 }
 
 impl AwaitRef {
@@ -44696,6 +44716,7 @@ fn parse_await_ref(r: &str) -> Option<AwaitRef> {
         repo,
         num,
         from_head,
+        pin_current: false,
     })
 }
 
@@ -44807,6 +44828,35 @@ fn await_state(
     }
 }
 
+/// PURE: the failing rollup items, as (name, verdict) — a CheckRun carries `name`/`conclusion`, a
+/// StatusContext `context`/`state`, and [`check_failed`] is the ONE predicate that decides
+/// membership, so every check named here is one that counted toward `Ci::Red` and vice versa.
+/// This is what retires the aftermath probe (#280): a caller told only "settled" re-read the
+/// rollup with `gh pr checks` to learn WHICH check went red, and that read cost a full turn.
+fn failing_checks(rollup: &Value) -> Vec<(String, String)> {
+    let empty = Vec::new();
+    rollup
+        .as_array()
+        .unwrap_or(&empty)
+        .iter()
+        .filter(|it| check_failed(it))
+        .map(|it| {
+            let name = it
+                .get("name")
+                .or_else(|| it.get("context"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("(unnamed)");
+            let verdict = it
+                .get("conclusion")
+                .and_then(|v| v.as_str())
+                .filter(|c| !c.is_empty())
+                .or_else(|| it.get("state").and_then(|v| v.as_str()))
+                .unwrap_or("?");
+            (name.to_string(), verdict.to_string())
+        })
+        .collect()
+}
+
 /// How many CONSECUTIVE unreadable polls of one subject end the wait.
 ///
 /// An unreadable subject never settles, so without a bound a wait on one runs the full deadline —
@@ -44846,10 +44896,27 @@ impl AwaitStop {
     }
 }
 
+/// One subject as the FINAL poll left it. `head` and `failing` are retained from the last
+/// document the loop already fetched — the terminal detail costs no read the poll did not make,
+/// which is how the report can name the red checks without widening the per-tick field list
+/// (#280). `baseline` is the sha the wait actually gated on: the explicit `@<sha>`, or the pin
+/// [`AwaitRef::pin_current`] resolved, so a caller reading the answer sees which push it awaited.
+#[derive(Debug, PartialEq)]
+struct AwaitRow {
+    subject: AwaitRef,
+    state: AwaitState,
+    baseline: Option<String>,
+    head: Option<String>,
+    /// Failing checks ON THE AWAITED HEAD, named only once the head gate has passed — checks
+    /// still describing a baselined head are the phantom the `@sha` gate exists to refuse, and
+    /// naming them would re-open it one field over.
+    failing: Vec<(String, String)>,
+}
+
 /// What one `await` ended up with: every subject's last-polled state, and what stopped the wait.
 #[derive(Debug, PartialEq)]
 struct AwaitOutcome {
-    rows: Vec<(AwaitRef, AwaitState)>,
+    rows: Vec<AwaitRow>,
     polls: u32,
     stop: AwaitStop,
 }
@@ -44870,6 +44937,10 @@ struct AwaitProgress {
     eligible_since: Option<u64>,
     /// Consecutive polls this subject has come back [`AwaitState::Unreadable`].
     unreadable_streak: u32,
+    /// The baseline a `pin_current` subject resolved from its FIRST readable poll. Set once and
+    /// never re-resolved: a pin that tracked the current head would read every push as "still
+    /// unmoved" and the wait it was pinned for could never end.
+    pinned_head: Option<String>,
 }
 
 /// The wait itself, with its clock, its reads and its sleeping injected — so every branch that
@@ -44911,14 +44982,24 @@ fn await_poll(
     let mut polls = 0u32;
     loop {
         let at = now();
-        let mut rows: Vec<(AwaitRef, AwaitState)> = Vec::with_capacity(refs.len());
+        let mut rows: Vec<AwaitRow> = Vec::with_capacity(refs.len());
         let mut stalled = false;
         for (r, p) in refs.iter().zip(progress.iter_mut()) {
             let detail = fetch(r);
-            let baseline = r.from_head.as_deref();
-            if await_head_ready(detail.as_ref(), baseline) == Some(true)
-                && p.eligible_since.is_none()
-            {
+            let head = detail
+                .as_ref()
+                .and_then(|d| d.get("headRefOid"))
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            // A pin resolves BEFORE this pass's state is judged, so the resolving pass reports
+            // `head-unchanged` — never a settle on the current head's checks, which are exactly
+            // the checks a `pin_current` caller declared it is not waiting on.
+            if r.pin_current && r.from_head.is_none() && p.pinned_head.is_none() {
+                p.pinned_head.clone_from(&head);
+            }
+            let baseline = r.from_head.as_deref().or(p.pinned_head.as_deref());
+            let head_ready = await_head_ready(detail.as_ref(), baseline);
+            if head_ready == Some(true) && p.eligible_since.is_none() {
                 p.eligible_since = Some(at);
             }
             let grace_expired = p
@@ -44933,10 +45014,25 @@ fn await_poll(
             } else {
                 p.unreadable_streak = 0;
             }
-            rows.push((r.clone(), state));
+            let failing = if head_ready == Some(true) {
+                detail
+                    .as_ref()
+                    .and_then(|d| d.get("statusCheckRollup"))
+                    .map(failing_checks)
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            rows.push(AwaitRow {
+                subject: r.clone(),
+                state,
+                baseline: baseline.map(str::to_string),
+                head,
+                failing,
+            });
         }
         polls += 1;
-        let stop = if rows.iter().all(|(_, s)| *s == AwaitState::Settled) {
+        let stop = if rows.iter().all(|r| r.state == AwaitState::Settled) {
             AwaitStop::AllSettled
         } else if stalled {
             AwaitStop::Unreadable
@@ -44952,16 +45048,30 @@ fn await_poll(
 
 /// PURE: the report. One line per subject plus one summary line, because the caller's next move is
 /// decided per PR — a bare "timed out" would send it straight back to the per-PR probing this
-/// subcommand exists to replace.
+/// subcommand exists to replace. The line carries the subject's final head and names its failing
+/// checks for the same reason (#280): "settled" alone sent the caller to `gh pr checks` to learn
+/// which check went red, and that probe is the other half of what this report replaces.
 fn await_report(out: &AwaitOutcome) -> String {
     let mut s = String::new();
-    for (r, st) in &out.rows {
-        s.push_str(&format!("{} {}\n", r.label(), st.as_str()));
+    for row in &out.rows {
+        s.push_str(&format!("{} {}", row.subject.label(), row.state.as_str()));
+        if let Some(h) = &row.head {
+            s.push_str(&format!(" @{h}"));
+        }
+        if !row.failing.is_empty() {
+            let named: Vec<String> = row
+                .failing
+                .iter()
+                .map(|(name, verdict)| format!("{name} ({verdict})"))
+                .collect();
+            s.push_str(&format!(" — failing: {}", named.join(", ")));
+        }
+        s.push('\n');
     }
     let unsettled = out
         .rows
         .iter()
-        .filter(|(_, st)| *st != AwaitState::Settled)
+        .filter(|r| r.state != AwaitState::Settled)
         .count();
     s.push_str(&format!(
         "{} of {} settled after {} poll(s){}\n",
@@ -44977,17 +45087,24 @@ fn await_report(out: &AwaitOutcome) -> String {
     s
 }
 
-/// PURE: the machine-readable form of the same answer.
+/// PURE: the machine-readable form of the same answer. `fromHead` is the baseline the wait
+/// actually gated on — for a `pin_current` subject, the pin it resolved — so the caller sees
+/// which push it awaited without knowing how the pin was spelled.
 fn await_json(out: &AwaitOutcome) -> Value {
     serde_json::json!({
         "settled": out.settled(),
         "stop": out.stop.as_str(),
         "polls": out.polls,
-        "subjects": out.rows.iter().map(|(r, st)| serde_json::json!({
-            "repo": format!("{}/{}", r.owner, r.repo),
-            "number": r.num,
-            "fromHead": r.from_head,
-            "state": st.as_str(),
+        "subjects": out.rows.iter().map(|row| serde_json::json!({
+            "repo": format!("{}/{}", row.subject.owner, row.subject.repo),
+            "number": row.subject.num,
+            "fromHead": row.baseline,
+            "head": row.head,
+            "state": row.state.as_str(),
+            "failingChecks": row.failing.iter().map(|(name, verdict)| serde_json::json!({
+                "name": name,
+                "verdict": verdict,
+            })).collect::<Vec<Value>>(),
         })).collect::<Vec<Value>>(),
     })
 }
@@ -45003,16 +45120,25 @@ const AWAIT_TIMED_OUT: i32 = 3;
 /// whatever the caller does next.
 const AWAIT_UNREADABLE: i32 = 4;
 
-fn await_mode(refs: &[String], timeout_secs: u64, interval_secs: u64, json_out: bool) -> i32 {
+fn await_mode(
+    refs: &[String],
+    pin_current: bool,
+    timeout_secs: u64,
+    interval_secs: u64,
+    json_out: bool,
+) -> i32 {
     let mut subjects = Vec::new();
     for r in refs {
-        let Some(a) = parse_await_ref(r) else {
+        let Some(mut a) = parse_await_ref(r) else {
             eprintln!(
                 "error: {r:?} is not an await reference — the form is `owner/repo#n`, or \
                  `owner/repo#n@<sha>` to wait for a push off `<sha>` (sha: 7+ hex digits)"
             );
             return 2;
         };
+        // Per subject, not per call: an explicit `@<sha>` is already a pin, so the flag reaches
+        // exactly the subjects that have none — a mixed fleet needs no second invocation.
+        a.pin_current = pin_current && a.from_head.is_none();
         subjects.push(a);
     }
     let out = await_poll(
@@ -45085,9 +45211,22 @@ mod await_tests {
                 owner: "o".into(),
                 repo: "repo".into(),
                 num: 12,
-                from_head: None
+                from_head: None,
+                pin_current: false
             }
         );
+    }
+
+    /// The spelled pin is a parse-time refusal surface; the resolved pin is not spelled at all —
+    /// so `pin_current` is applied by the caller, never parsed out of the ref.
+    fn pinned(s: &str) -> AwaitRef {
+        let mut a = r(s);
+        assert_eq!(
+            a.from_head, None,
+            "pin_current composes with BARE refs only"
+        );
+        a.pin_current = true;
+        a
     }
 
     #[test]
@@ -45391,9 +45530,9 @@ mod await_tests {
         ]]);
         let out = run(&mut h, &[r("o/a#1"), r("o/b#2")], 40, 20);
         assert_eq!(out.stop, AwaitStop::Deadline);
-        assert_eq!(out.rows[0].1, AwaitState::ChecksPending);
+        assert_eq!(out.rows[0].state, AwaitState::ChecksPending);
         assert_eq!(
-            out.rows[1].1,
+            out.rows[1].state,
             AwaitState::Settled,
             "a timeout still reports the settled ones"
         );
@@ -45448,7 +45587,7 @@ mod await_tests {
             out.polls, AWAIT_UNREADABLE_LIMIT,
             "it gives up ON the poll that hits the budget, not a poll later"
         );
-        assert_eq!(out.rows[0].1, AwaitState::Unreadable);
+        assert_eq!(out.rows[0].state, AwaitState::Unreadable);
     }
 
     /// The streak is CONSECUTIVE, so a subject that reads once between failures has not stalled —
@@ -45644,10 +45783,24 @@ mod await_tests {
             cmd,
             super::Cmd::Await {
                 refs: vec!["o/a#1".to_string(), "o/b#2@abc1234".to_string()],
+                pin_current: false,
                 timeout_secs: 60,
                 interval_secs: 20,
                 json: true,
             }
+        );
+        let pinned = super::Cli::try_parse_from(["prr", "await", "o/a#1", "--pin-current"])
+            .expect("--pin-current parses")
+            .command;
+        assert!(
+            matches!(
+                pinned,
+                super::Cmd::Await {
+                    pin_current: true,
+                    ..
+                }
+            ),
+            "{pinned:?}"
         );
         assert!(
             super::Cli::try_parse_from(["prr", "await", "o/a#1", "--interval-secs", "0"]).is_err(),
@@ -45656,6 +45809,171 @@ mod await_tests {
         assert!(
             super::Cli::try_parse_from(["prr", "await"]).is_err(),
             "a wait on nothing is a usage error"
+        );
+    }
+
+    // --- pin_current (#280) ----------------------------------------------------------------
+
+    /// THE MUTANT THIS EXISTS TO KILL: skip the pin, and a `pin_current` subject whose current
+    /// head is green settles on the first poll — reporting "the push landed and its CI passed"
+    /// about a push that never happened, which is the phantom green one probe earlier.
+    #[test]
+    fn a_pin_current_subject_never_settles_on_its_current_heads_checks() {
+        let mut h = Harness::new(vec![vec![Some(doc("abc1234", green()))]]);
+        let out = run(&mut h, &[pinned("o/a#1")], 40, 20);
+        assert_eq!(out.stop, AwaitStop::Deadline);
+        assert_eq!(
+            out.rows[0].state,
+            AwaitState::HeadUnchanged,
+            "green checks on the pinned head are the OLD head's checks by declaration"
+        );
+        assert_eq!(
+            out.rows[0].baseline.as_deref(),
+            Some("abc1234"),
+            "the report says which sha the wait pinned"
+        );
+    }
+
+    /// The pin resolves ONCE, from the first readable poll. A pin that re-resolved would track
+    /// every push and read "still unmoved" forever — this settles in three passes or hangs into
+    /// the harness's runaway guard.
+    #[test]
+    fn a_pin_current_subject_settles_when_a_push_moves_off_the_resolved_pin() {
+        let mut h = Harness::new(vec![
+            vec![Some(doc("abc1234", green()))],
+            vec![Some(doc("fff0000", pending()))],
+            vec![Some(doc("fff0000", green()))],
+        ]);
+        let out = run(&mut h, &[pinned("o/a#1")], 100_000, 20);
+        assert_eq!(out.stop, AwaitStop::AllSettled);
+        assert_eq!(
+            out.polls, 3,
+            "pass 2 saw the push; pass 3 saw its CI settle"
+        );
+        assert_eq!(
+            out.rows[0].baseline.as_deref(),
+            Some("abc1234"),
+            "the baseline is the FIRST head read, not the latest"
+        );
+        assert_eq!(out.rows[0].head.as_deref(), Some("fff0000"));
+    }
+
+    /// An unreadable first poll pins nothing — the pin comes from the first poll that can be
+    /// read, and until then the subject is `unreadable` like any other failed read.
+    #[test]
+    fn a_pin_current_subject_pins_on_its_first_readable_poll() {
+        let mut h = Harness::new(vec![
+            vec![None],
+            vec![Some(doc("abc1234", green()))],
+            vec![Some(doc("fff0000", green()))],
+        ]);
+        let out = run(&mut h, &[pinned("o/a#1")], 100_000, 20);
+        assert_eq!(out.stop, AwaitStop::AllSettled);
+        assert_eq!(
+            out.polls, 3,
+            "pass 2 pinned abc1234 and must NOT settle on its green; pass 3 saw the push"
+        );
+    }
+
+    /// An explicit `@<sha>` outranks the flag: `--pin-current` reaches only bare subjects, so a
+    /// mixed fleet is one invocation. The explicit pin has already moved on pass 1 here — if the
+    /// flag re-pinned the subject to its current head, the wait could never end.
+    #[test]
+    fn an_explicit_pin_keeps_outranking_the_flag_in_a_mixed_fleet() {
+        let mut a = r("o/a#1@abc1234");
+        a.pin_current = a.from_head.is_none(); // what await_mode computes for each subject
+        assert!(!a.pin_current);
+        let mut h = Harness::new(vec![vec![Some(doc("fff0000", green()))]]);
+        let out = run(&mut h, &[a], 900, 20);
+        assert_eq!(out.stop, AwaitStop::AllSettled);
+        assert_eq!(out.polls, 1);
+        assert_eq!(out.rows[0].baseline.as_deref(), Some("abc1234"));
+    }
+
+    // --- terminal failing-check detail (#280) ----------------------------------------------
+
+    /// The answer that used to cost an extra `gh pr checks` probe: WHICH check failed, by name
+    /// and verdict, on WHICH head — from the final poll's own document, at no extra read. Both
+    /// rollup spellings are named: a CheckRun (`name`/`conclusion`) and a StatusContext
+    /// (`context`/`state`).
+    #[test]
+    fn a_settled_red_names_its_failing_checks_and_head() {
+        let checks = json!([
+            {"name": "rainix-sol / test", "status": "COMPLETED", "conclusion": "FAILURE"},
+            {"context": "legal", "state": "ERROR"},
+            {"name": "build", "status": "COMPLETED", "conclusion": "SUCCESS"},
+        ]);
+        let mut h = Harness::new(vec![vec![Some(doc("fff0000", checks))]]);
+        let out = run(&mut h, &[r("o/a#1")], 900, 20);
+        assert_eq!(out.stop, AwaitStop::AllSettled);
+        let text = await_report(&out);
+        assert!(
+            text.contains(
+                "o/a#1 settled @fff0000 — failing: rainix-sol / test (FAILURE), legal (ERROR)"
+            ),
+            "{text}"
+        );
+        assert!(
+            !text.contains("build"),
+            "a green check is not named: {text}"
+        );
+        let v = await_json(&out);
+        assert_eq!(v["subjects"][0]["head"], "fff0000");
+        assert_eq!(
+            v["subjects"][0]["failingChecks"],
+            json!([
+                {"name": "rainix-sol / test", "verdict": "FAILURE"},
+                {"name": "legal", "verdict": "ERROR"},
+            ])
+        );
+    }
+
+    /// A green subject carries no failing segment — the detail is for dispatching off a red, not
+    /// noise on every line.
+    #[test]
+    fn a_settled_green_names_no_failing_checks() {
+        let mut h = Harness::new(vec![vec![Some(doc("fff0000", green()))]]);
+        let out = run(&mut h, &[r("o/a#1")], 900, 20);
+        let text = await_report(&out);
+        assert!(text.contains("o/a#1 settled @fff0000\n"), "{text}");
+        assert!(!text.contains("failing"), "{text}");
+        assert_eq!(await_json(&out)["subjects"][0]["failingChecks"], json!([]));
+    }
+
+    /// The detail is the FINAL poll's, not the first: a subject that went green, was pushed
+    /// again inside the wait, and went red reports the SECOND head and ITS failing check — the
+    /// stale-moment rule the re-fetch-everything design already pays for, kept one field over.
+    #[test]
+    fn the_failing_detail_follows_a_repush_to_the_final_head() {
+        let late_red = json!([{"name": "late", "status": "COMPLETED", "conclusion": "FAILURE"}]);
+        let mut h = Harness::new(vec![
+            vec![Some(doc("h1", green())), Some(doc("x", pending()))],
+            vec![Some(doc("h1b", late_red)), Some(doc("x", green()))],
+        ]);
+        let out = run(&mut h, &[r("o/a#1"), r("o/b#2")], 900, 20);
+        assert_eq!(out.stop, AwaitStop::AllSettled);
+        assert_eq!(out.rows[0].head.as_deref(), Some("h1b"));
+        assert_eq!(
+            out.rows[0].failing,
+            vec![("late".to_string(), "FAILURE".to_string())]
+        );
+    }
+
+    /// An unmoved head names NO failing checks: they belong to the baselined head, and naming
+    /// them re-opens the phantom the `@sha` gate exists to close — one field over.
+    #[test]
+    fn an_unmoved_heads_checks_are_not_named() {
+        let mut h = Harness::new(vec![vec![Some(doc("abc1234", red()))]]);
+        let out = run(&mut h, &[r("o/a#1@abc1234")], 0, 20);
+        assert_eq!(out.rows[0].state, AwaitState::HeadUnchanged);
+        assert!(
+            out.rows[0].failing.is_empty(),
+            "a red on the old head is not this wait's red"
+        );
+        let text = await_report(&out);
+        assert!(
+            text.contains("o/a#1 head-unchanged @abc1234\n"),
+            "the head itself IS reported — it is the current head: {text}"
         );
     }
 }
@@ -46547,10 +46865,11 @@ fn main() {
         Cmd::UncoveredIssues { json } => uncovered_issues_mode(json),
         Cmd::Await {
             refs,
+            pin_current,
             timeout_secs,
             interval_secs,
             json,
-        } => await_mode(&refs, timeout_secs, interval_secs, json),
+        } => await_mode(&refs, pin_current, timeout_secs, interval_secs, json),
         Cmd::AlreadyFixed { refs, json } => already_fixed_mode(&refs, json),
         Cmd::StateLoad { json, no_cache } => state_load_mode(json, !no_cache),
         Cmd::InfraDown { reason, root_cause } => infra_down_mode(&reason.join(" "), &root_cause),
