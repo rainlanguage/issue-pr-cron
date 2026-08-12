@@ -969,7 +969,7 @@
         ]
       },
       "un-vetted": {
-        "count": 21,
+        "count": 20,
         "prs": [
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -982,12 +982,6 @@
             "number": 276,
             "url": "https://github.com/rainlanguage/issue-pr-cron/pull/276",
             "title": "rework(vetter): resume a dead auditor before redispatching, and name the path taken"
-          },
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 274,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/274",
-            "title": "fix(usage-gate): fail closed when usage cannot be read"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -5596,7 +5590,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 21,
+    "unvetted": 20,
     "blockedOn": 19,
     "ready": 0,
     "needsWork": 104,
@@ -5607,18 +5601,18 @@
     "closeCandidateUnvetted": 1,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 144,
+    "totalProducerPrs": 143,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 616,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 776
+    "openIssues": 775
   },
   "ages": {
     "openIssues": {
-      "meanDays": 316.8,
+      "meanDays": 317.2,
       "medianDays": 105.8,
-      "oldestDays": 1661.3
+      "oldestDays": 1661.4
     }
   }
 }
