@@ -34298,7 +34298,7 @@ fn command_runs_pr_create(command: &str) -> bool {
 /// The evidence token is gh's own "✓ Merged/Closed …" line. FAIL-CLOSED by construction: if gh
 /// rewords its success line the records STOP — absence a consumer can see — rather than ever
 /// recording a landing that did not happen.
-const GH_LANDING_VERBS: &[([&'static str; 3], &'static str, TouchSubject, &'static str)] = &[
+const GH_LANDING_VERBS: &[([&str; 3], &str, TouchSubject, &str)] = &[
     (
         ["gh", "pr", "merge"],
         "merge-pr-gh",
