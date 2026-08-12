@@ -179,8 +179,9 @@ fi
 # --- weekly-budget pace gate: skip this tick when usage is over the ceiling or inside the BAU
 # headroom band under the linear burn toward the reset — the crons hold ~USAGE_HEADROOM_PCT points
 # BEHIND pace so interactive work keeps standing budget (#158). `usage-gate` reads
-# /api/oauth/usage itself; exit 10 means PAUSE (record one skip row, exit 0). It is INERT when it
-# cannot read usage and no fallback is set — it prints OK and we run. Any OTHER non-zero exit is a
+# /api/oauth/usage itself; exit 10 means PAUSE (record one skip row, exit 0). It FAILS CLOSED when
+# it cannot read usage and no fallback is set (#273) — that is a PAUSE too, its reason naming the
+# read failure so the skip row is diagnosable as an endpoint problem. Any OTHER non-zero exit is a
 # config REFUSAL (the retired USAGE_SLACK_PCT still set: exit 2, reason on stderr, captured into
 # the log): the tick must not run on config the gate refused to read, so propagate the failure — a
 # refusal is neither a run nor a pause, and it writes NO row. ---
