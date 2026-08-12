@@ -10247,6 +10247,14 @@ mod landed_history_tests {
             issue_landed_row(&issue_resp("OPEN", None, &[])),
             LandedRow::None
         );
+        // An OPEN issue that still CARRIES a closedAt — a remote API is not obligated to null
+        // the stamp on reopen, and a row here would count a landing that un-happened. This case
+        // is what makes the state check load-bearing rather than redundant with the closedAt
+        // read: a mutation pass showed the suite could not previously tell them apart.
+        assert_eq!(
+            issue_landed_row(&issue_resp("OPEN", Some("2026-08-01T00:00:00Z"), &[])),
+            LandedRow::None
+        );
         assert_eq!(
             issue_landed_row(&issue_resp("CLOSED", None, &[])),
             LandedRow::None
