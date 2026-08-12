@@ -969,8 +969,20 @@
         ]
       },
       "un-vetted": {
-        "count": 21,
+        "count": 23,
         "prs": [
+          {
+            "repo": "rainlanguage/adversarial-mutation-test",
+            "number": 10,
+            "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/10",
+            "title": "mutation-probe: the skill's probe harness as a tested, flake-shipped Rust bin"
+          },
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 279,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/279",
+            "title": "feat(metrics): FSM touch ledger — every transition records which item it acted on, landings first-class"
+          },
           {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 277,
@@ -1856,12 +1868,48 @@
   "closeCandidateIssues": [
     {
       "repo": "rainlanguage/rain.solver",
+      "number": 317,
+      "url": "https://github.com/rainlanguage/rain.solver/issues/317",
+      "title": "Measure downtime (e.g. tracking time between trades for each network and set a downtime threshold)"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 1348,
+      "url": "https://github.com/rainlanguage/raindex/issues/1348",
+      "title": "Update tests for DeploymentSteps to reflect the new updateFields calls"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 931,
+      "url": "https://github.com/rainlanguage/raindex/issues/931",
+      "title": "rainbow wallet on mobile doesn't select correct network"
+    },
+    {
+      "repo": "rainlanguage/rain.solver",
       "number": 64,
       "url": "https://github.com/rainlanguage/rain.solver/issues/64",
       "title": "bot uses way too much rpc"
     }
   ],
   "closeCandidateUnvetted": [
+    {
+      "repo": "rainlanguage/rain.solver",
+      "number": 317,
+      "url": "https://github.com/rainlanguage/rain.solver/issues/317",
+      "title": "Measure downtime (e.g. tracking time between trades for each network and set a downtime threshold)"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 1348,
+      "url": "https://github.com/rainlanguage/raindex/issues/1348",
+      "title": "Update tests for DeploymentSteps to reflect the new updateFields calls"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 931,
+      "url": "https://github.com/rainlanguage/raindex/issues/931",
+      "title": "rainbow wallet on mobile doesn't select correct network"
+    },
     {
       "repo": "rainlanguage/rain.solver",
       "number": 64,
@@ -1871,6 +1919,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 280,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/280",
+      "title": "await: resolve its own head pins and name the failing checks — retire the probe hand-roll"
+    },
     {
       "repo": "rainlanguage/issue-pr-cron",
       "number": 278,
@@ -4471,12 +4525,6 @@
     },
     {
       "repo": "rainlanguage/rain.solver",
-      "number": 317,
-      "url": "https://github.com/rainlanguage/rain.solver/issues/317",
-      "title": "Measure downtime (e.g. tracking time between trades for each network and set a downtime threshold)"
-    },
-    {
-      "repo": "rainlanguage/rain.solver",
       "number": 316,
       "url": "https://github.com/rainlanguage/rain.solver/issues/316",
       "title": "Solver KPIs"
@@ -4498,12 +4546,6 @@
       "number": 1359,
       "url": "https://github.com/rainlanguage/raindex/issues/1359",
       "title": "Refactor Balance/ trade Chart wrappers"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 1348,
-      "url": "https://github.com/rainlanguage/raindex/issues/1348",
-      "title": "Update tests for DeploymentSteps to reflect the new updateFields calls"
     },
     {
       "repo": "rainlanguage/raindex",
@@ -4660,12 +4702,6 @@
       "number": 936,
       "url": "https://github.com/rainlanguage/raindex/issues/936",
       "title": "clicking on all the accounts in the orders page also turns on \"all accounts\" which includes accounts that aren't in the list"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 931,
-      "url": "https://github.com/rainlanguage/raindex/issues/931",
-      "title": "rainbow wallet on mobile doesn't select correct network"
     },
     {
       "repo": "rainlanguage/raindex",
@@ -5620,28 +5656,28 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 21,
+    "unvetted": 23,
     "blockedOn": 19,
     "ready": 0,
     "needsWork": 104,
     "relink": 0,
     "design": 0,
     "blockedInfra": 0,
-    "closeCandidateIssues": 1,
-    "closeCandidateUnvetted": 1,
+    "closeCandidateIssues": 4,
+    "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 144,
+    "totalProducerPrs": 146,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 620,
+    "uncoveredIssues": 618,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 778
+    "openIssues": 779
   },
   "ages": {
     "openIssues": {
-      "meanDays": 316.4,
-      "medianDays": 106.2,
+      "meanDays": 316.0,
+      "medianDays": 106.3,
       "oldestDays": 1661.8
     }
   }
