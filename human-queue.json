@@ -1866,6 +1866,18 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/raindex.governance",
+      "number": 5,
+      "url": "https://github.com/rainlanguage/raindex.governance/issues/5",
+      "title": "Contract NatSpec claims pause fails ALL admin fund movement closed, but rescue() is not pause-gated"
+    },
+    {
+      "repo": "rainlanguage/raindex.governance",
+      "number": 4,
+      "url": "https://github.com/rainlanguage/raindex.governance/issues/4",
+      "title": "withdraw4 silently destroys sub-precision vault value: Raindex debits the full Float but transfers only the floored raw amount"
+    },
+    {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 297,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/297",
@@ -5603,15 +5615,15 @@
     "leaks": 0,
     "totalProducerPrs": 143,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 616,
+    "uncoveredIssues": 618,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 775
+    "openIssues": 777
   },
   "ages": {
     "openIssues": {
-      "meanDays": 317.4,
-      "medianDays": 106.0,
+      "meanDays": 316.6,
+      "medianDays": 106.1,
       "oldestDays": 1661.6
     }
   }
