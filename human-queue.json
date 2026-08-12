@@ -1853,8 +1853,22 @@
       "label": "not in any modeled state"
     }
   ],
-  "closeCandidateIssues": [],
-  "closeCandidateUnvetted": [],
+  "closeCandidateIssues": [
+    {
+      "repo": "rainlanguage/rain.solver",
+      "number": 64,
+      "url": "https://github.com/rainlanguage/rain.solver/issues/64",
+      "title": "bot uses way too much rpc"
+    }
+  ],
+  "closeCandidateUnvetted": [
+    {
+      "repo": "rainlanguage/rain.solver",
+      "number": 64,
+      "url": "https://github.com/rainlanguage/rain.solver/issues/64",
+      "title": "bot uses way too much rpc"
+    }
+  ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
@@ -4888,12 +4902,6 @@
       "title": "support `+` for exponents like `1.0e+2` to match negative"
     },
     {
-      "repo": "rainlanguage/rain.solver",
-      "number": 64,
-      "url": "https://github.com/rainlanguage/rain.solver/issues/64",
-      "title": "bot uses way too much rpc"
-    },
-    {
       "repo": "rainlanguage/raindex",
       "number": 575,
       "url": "https://github.com/rainlanguage/raindex/issues/575",
@@ -5595,13 +5603,13 @@
     "relink": 0,
     "design": 0,
     "blockedInfra": 0,
-    "closeCandidateIssues": 0,
-    "closeCandidateUnvetted": 0,
+    "closeCandidateIssues": 1,
+    "closeCandidateUnvetted": 1,
     "closeCandidateUpheld": 0,
     "leaks": 0,
     "totalProducerPrs": 144,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 617,
+    "uncoveredIssues": 616,
     "designPresentable": 0,
     "designNoQuestion": 0,
     "openIssues": 776
@@ -5609,7 +5617,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 316.6,
-      "medianDays": 105.6,
+      "medianDays": 105.7,
       "oldestDays": 1661.2
     }
   }
