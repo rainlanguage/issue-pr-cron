@@ -20,6 +20,21 @@
         "close-candidate",
         "github"
       ]
+    },
+    {
+      "name": "vetter-precedents",
+      "source": "./plugins/vetter-precedents",
+      "description": "The PR-vetter's accumulated judgement precedents, grouped by the verdict each one decides: what makes a sound PR a design rather than a ready, what makes it close rather than needs-work, when the QA gate applies and what supersedes it, what a moved head obliges a re-vet to re-check, and which of a PR's own claims are premises to falsify. One skill the vetter invokes at verdict time, so the calibration loads on demand instead of riding in the run prompt on every run.",
+      "version": "0.1.0",
+      "author": { "name": "Rain Open Source Software Ltd" },
+      "keywords": [
+        "rainlanguage",
+        "pipeline",
+        "code-review",
+        "vetting",
+        "precedent",
+        "github"
+      ]
     }
   ]
 }

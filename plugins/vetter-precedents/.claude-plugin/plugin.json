@@ -1,0 +1,22 @@
+{
+  "name": "vetter-precedents",
+  "displayName": "Vetter precedents",
+  "version": "0.1.0",
+  "description": "The PR-vetter's accumulated judgement precedents, grouped by the verdict each one decides: what makes a sound PR a `design` rather than a `ready`, what makes it `close` rather than `needs-work`, when the QA gate applies and what supersedes it, what a moved head obliges a re-vet to re-check, and which of a PR's own claims are premises to falsify. One skill, loaded on demand at verdict time rather than carried in the run prompt on every run — the machine vetter's calibration of gates the prompt states, never a second set of gates and never a GitHub write.",
+  "author": {
+    "name": "Rain Open Source Software Ltd",
+    "url": "https://github.com/rainlanguage"
+  },
+  "homepage": "https://github.com/rainlanguage/issue-pr-cron",
+  "repository": "https://github.com/rainlanguage/issue-pr-cron",
+  "license": "LicenseRef-DCL-1.0",
+  "keywords": [
+    "rainlanguage",
+    "pipeline",
+    "code-review",
+    "vetting",
+    "precedent",
+    "github"
+  ],
+  "skills": "./skills/"
+}

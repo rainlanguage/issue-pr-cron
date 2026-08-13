@@ -365,6 +365,57 @@ name), and `.github/workflows/version-hygiene.yaml` runs it plus the
 change-must-bump check. It is a subcommand rather than a CI shell script for the
 reason `require-qa-block` is: everything it does is parsing.
 
+### The vetter's precedents as a skill
+
+The other thing this marketplace publishes is not a command and not for a human:
+`vetter-precedents` is ONE skill, holding the **judgement calibration** the
+vetter's verdicts have already paid for — which QA omissions are formatting and
+which are the gate firing, what makes a locally sound PR a `design` rather than a
+`ready`, what makes it `close` rather than `needs-work`, what a moved head
+obliges a re-vet to re-check, and which of a PR's own claims are premises to
+falsify.
+
+```
+/plugin marketplace add rainlanguage/issue-pr-cron
+/plugin install vetter-precedents@issue-pr-cron
+```
+
+**It is a second plugin rather than a `skills/` directory inside `human-fsm`,
+and the reason is the same one that made those commands commands.** `human-fsm`
+is the HUMAN's side of the machine — human-typed, deterministic,
+argument-taking transitions, every input arriving from `pr-review-report` and
+none of them writing GitHub state. This is the MACHINE vetter's judgement:
+nothing types it, it takes no argument, it reaches no tool, and the model matches
+it by description and invokes it on its own — precisely the form that section
+rules OUT for a transition and IN for this. Shipping them as one plugin would
+also weld two independent release cadences together, because a plugin's CONTENT
+is its release: every precedent added would bump the version every human
+reinstalls to get slash commands that did not change, and every command edit
+would bump the version the vetter's plugin cache keys on. They version
+separately because they change separately.
+
+**Where it is loaded, and what it costs.** `review-prompt.txt` is read in full on
+every run, so anything living there is a fixed per-run charge whether or not the
+run has an item to spend it on. The prompt therefore carries the GATES and one
+line telling the vetter to invoke this skill once before the run's first
+`record_verdict`; the calibration itself loads on demand, and a run with an empty
+queue pays none of it. Extracting it took `review-prompt.txt` from 45,588 bytes
+to 43,907.
+
+**It is not an audit lens and cannot become one.** `record_verdict` credits only
+a skill whose id ends in `audit` (`AUDIT_SKILL_LEAF`), so invoking this one
+neither satisfies the lens gate nor disturbs it — a verdict still requires a
+`pr_checkout` tree at the PR's head and an `audit` invocation naming that PR, at
+a declared `pr:<number>` scope.
+
+**Why it exists at all: auto-memory does not travel** (#282). These precedents
+accumulated in Claude Code auto-memory on one box, which is machine-local,
+unversioned and unreviewable — so the pipeline's behaviour was a function of one
+host's history, and moving the FSM anywhere else would have produced no error and
+a quietly worse vetter. An autonomous pipeline's behaviour is a pure function of
+its committed code and prompts, and a rule worth remembering is a rule worth
+shipping.
+
 ### The vetter's transitions as an MCP surface
 
 For the producer, routing through the tool is enforced by the **prompt**, and a
@@ -2233,6 +2284,7 @@ and evidence that answers a narrower question than the issue asked.
 | `hooks/`                     | The two bash PreToolUse guards that close deny-list bypasses. See [PreToolUse guards](#pretooluse-guards--what-a-prompt-cannot-hold).                                                                                                                                                                                                                             |
 | `.claude-plugin/`            | The marketplace listing this repo publishes. Its version must match the plugin manifest's — `pr-review-report plugin-version-lockstep` is the gate.                                                                                                                                                                                                               |
 | `plugins/human-fsm/`         | The human's slash commands as a Claude Code plugin. Prompts only: every guard is in the binary. See [The human's slash commands](#the-humans-slash-commands).                                                                                                                                                                                                     |
+| `plugins/vetter-precedents/` | The machine vetter's judgement calibration as a Claude Code skill, loaded on demand at verdict time rather than carried in `review-prompt.txt` on every run. See [The vetter's precedents as a skill](#the-vetters-precedents-as-a-skill).                                                                                                                        |
 
 ## Briefing a dispatched worker — rules, not state
 
