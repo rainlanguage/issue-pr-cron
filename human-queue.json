@@ -15,12 +15,6 @@
       },
       {
         "repo": "rainlanguage/rain.factory.deploy",
-        "number": 7,
-        "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/7",
-        "title": "AddressRegistry: the write-once IAddressRegistryV1 concrete"
-      },
-      {
-        "repo": "rainlanguage/rain.factory.deploy",
         "number": 6,
         "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/6",
         "title": "Restore the Protofire reports as inherited audit records (reverses #1)"
@@ -30,12 +24,6 @@
         "number": 5,
         "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/5",
         "title": "Migrate to the rolling-candidate snapshot model"
-      },
-      {
-        "repo": "rainlanguage/rain.factory.deploy",
-        "number": 4,
-        "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/4",
-        "title": "Enforce that [package].version, its snapshot and the deploy lib agree"
       },
       {
         "repo": "rainlanguage/rain.deploy",
@@ -850,7 +838,7 @@
   "lanes": {
     "vet-lifecycle": {
       "ai:blocked-on": {
-        "count": 20,
+        "count": 18,
         "prs": [
           {
             "repo": "rainlanguage/rain.factory.deploy",
@@ -866,12 +854,6 @@
           },
           {
             "repo": "rainlanguage/rain.factory.deploy",
-            "number": 7,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/7",
-            "title": "AddressRegistry: the write-once IAddressRegistryV1 concrete"
-          },
-          {
-            "repo": "rainlanguage/rain.factory.deploy",
             "number": 6,
             "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/6",
             "title": "Restore the Protofire reports as inherited audit records (reverses #1)"
@@ -881,12 +863,6 @@
             "number": 5,
             "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/5",
             "title": "Migrate to the rolling-candidate snapshot model"
-          },
-          {
-            "repo": "rainlanguage/rain.factory.deploy",
-            "number": 4,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/4",
-            "title": "Enforce that [package].version, its snapshot and the deploy lib agree"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -975,8 +951,14 @@
         ]
       },
       "un-vetted": {
-        "count": 39,
+        "count": 40,
         "prs": [
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 286,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/286",
+            "title": "feat(session-tokens): read the interactive corpus with the cron's own accounting"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 308,
@@ -5878,8 +5860,8 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 39,
-    "blockedOn": 20,
+    "unvetted": 40,
+    "blockedOn": 18,
     "ready": 0,
     "needsWork": 103,
     "relink": 0,
@@ -5889,7 +5871,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 162,
+    "totalProducerPrs": 161,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 639,
     "designPresentable": 0,
@@ -5898,7 +5880,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 306.9,
+      "meanDays": 307.0,
       "medianDays": 107.4,
       "oldestDays": 1663.0
     }
