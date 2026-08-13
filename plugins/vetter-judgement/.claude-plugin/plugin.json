@@ -1,0 +1,22 @@
+{
+  "name": "vetter-judgement",
+  "displayName": "Vetter judgement",
+  "version": "0.1.0",
+  "description": "The judgement half of a PR verdict, as instructions: the properties that decide `ready` / `needs-work` / `design` / `close` where the vetting prompt's gates and the tool's refusals stop. What the QA gate is actually asking and what supersedes it, what makes a locally sound PR a question for the human, what makes a PR moot rather than wrong, which of a PR's own statements are premises to falsify, what a moved head obliges, and what a human's words settle. One skill, loaded on demand at verdict time rather than carried in the run prompt on every run. It states properties, never cases: an instruction that needs a worked example to be obeyed is underspecified, and a cited case rots when its PR changes state.",
+  "author": {
+    "name": "Rain Open Source Software Ltd",
+    "url": "https://github.com/rainlanguage"
+  },
+  "homepage": "https://github.com/rainlanguage/issue-pr-cron",
+  "repository": "https://github.com/rainlanguage/issue-pr-cron",
+  "license": "LicenseRef-DCL-1.0",
+  "keywords": [
+    "rainlanguage",
+    "pipeline",
+    "code-review",
+    "vetting",
+    "judgement",
+    "github"
+  ],
+  "skills": "./skills/"
+}

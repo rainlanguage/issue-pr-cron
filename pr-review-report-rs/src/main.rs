@@ -52752,10 +52752,22 @@ mod settings_tests {
     // moved one bullet over and still pass.
     //
     /// #140: the screenshot waiver was being used to skip the render with the CLAIM the render
-    /// would have made — cyclo.site#431 waived on "rendered output is pixel-identical", #408 rode
-    /// a pending marker through three vetter passes while a render would have shown four expired
-    /// epochs at a glance. Both were human-rejected. A gate that still accepts a free-text
-    /// `<reason>` re-licenses exactly that, so the narrowing is pinned here.
+    /// would have made. A gate that still accepts a free-text `<reason>` re-licenses exactly that,
+    /// so the narrowing is pinned here.
+    ///
+    /// This test used to require the bullet to NAME the two PRs the narrowing was written from, on
+    /// the theory that a bare prohibition is one a vetter argues around. That theory was never
+    /// evidenced, and the cost of carrying an anecdote in a prompt read in full on every run is
+    /// certain, recurring and measurable — so the burden sits on KEEPING the example, and it was
+    /// not met. What the two incidents actually carried are two PROPERTIES, and a property is
+    /// assertable where an anecdote is only quotable: a change is visible if it alters a NON-RESTING
+    /// state or the attributes of a conditionally-styled element, and a pending marker never accrues
+    /// evidence by being carried to another pass. Those are what this test now pins.
+    ///
+    /// The structural half of the same fix is the can't-apply exit, asserted below: a vetter that
+    /// finds an instruction does not fit its PR reports and stops at `design` rather than reasoning
+    /// its way to the nearest verdict. Arguing an instruction down stops being an available move,
+    /// which is what the anecdotes were bolted on to discourage.
     #[test]
     fn the_vetter_prompt_narrows_the_screenshot_waiver_to_a_failed_render() {
         let Some(prompt) = repo_root_text("review-prompt.txt") else {
@@ -52833,13 +52845,40 @@ mod settings_tests {
             ),
             "the claim-waiver must carry its verdict AND its note, coupled: {gate}"
         );
-        for incident in ["cyclo.site#431", "cyclo.site#408"] {
+        // PROPERTY 1, in place of the first incident: "pixel-identical" is a claim about ONE state,
+        // and the states it is silent about are where an unintended shift lands. The gate has to
+        // name them, or a producer reads the default render as the whole render.
+        assert!(
+            gate.contains("THE RESTING RENDER IS NOT THE WHOLE RENDER"),
+            "the gate must say the resting render is not the whole render — otherwise \
+             `pixel-identical` about the default state reads as a statement about all of them: \
+             {gate}"
+        );
+        for state in ["FOCUS", "HOVER", "ACTIVE", "DISABLED", "ERROR"] {
             assert!(
-                gate.contains(incident),
-                "the rule carries its incidents — a bare prohibition is the kind a vetter argues \
-                 around, and {incident} is one of the two it was written from"
+                gate.contains(state),
+                "the gate must name the {state} state: a change that alters only a non-resting \
+                 state is still visible, and a state the gate does not name is one a waiver does \
+                 not have to account for"
             );
         }
+        assert!(
+            gate.contains("conditional or utility styling"),
+            "the other half of property 1: removing/reordering attributes on a conditionally-styled \
+             element changes the render without changing the markup's apparent intent, so the gate \
+             must name that shape rather than leave it to be inferred: {gate}"
+        );
+        // PROPERTY 2, in place of the second incident: a deferral does not become evidence by
+        // aging. Without this, a marker re-read on each pass looks like something already accepted.
+        assert!(
+            gate.contains("A MARKER IS NOT A RENDER, AT ANY AGE"),
+            "the gate must state that a pending marker never satisfies it, at any age: {gate}"
+        );
+        assert!(
+            gate.contains("does not accrue evidence by being carried to a second or third pass"),
+            "a marker carried across passes is the SAME unmade render each time — the gate must say \
+             so, or each pass reads the previous pass's acceptance as evidence: {gate}"
+        );
         // The tail symmetry line is what a skimming vetter reads, so it has to state the same bar.
         assert!(
             gate.contains("to a screenshot or a FAILED RENDER ATTEMPT"),
@@ -52850,6 +52889,27 @@ mod settings_tests {
         assert!(
             !prompt.contains("a screenshot or a stated why-not"),
             "`a stated why-not` is the loose bar #140 closed — it must not survive anywhere"
+        );
+        // Whole-file, and deliberately so: the incidents came out of the bullet above on the
+        // strength of this existing somewhere in the prompt. A vetter that finds this gate does not
+        // fit its PR has a defined exit — report and stop at `design` — so talking past the gate is
+        // not the only move left. If the exit is ever deleted, the narrowing above loses the thing
+        // that replaced its anecdotes, and this test is where that is caught.
+        let exit = vetter_bullet(&prompt, "AN INSTRUCTION YOU CANNOT APPLY");
+        assert!(
+            exit.contains("Record `design`"),
+            "the can't-apply exit must route to `design` — the state that means the human must \
+             act — rather than leaving the vetter to pick the nearest verdict: {exit}"
+        );
+        assert!(
+            exit.contains("naming the exact instruction you could not apply"),
+            "an exit that does not name WHICH instruction failed is a shrug: the note is what makes \
+             the gap fixable: {exit}"
+        );
+        assert!(
+            exit.contains("ARGUING AN INSTRUCTION DOWN IS NEVER AN AVAILABLE MOVE"),
+            "the exit has to close the alternative explicitly, or `design` reads as one option \
+             beside arguing rather than instead of it: {exit}"
         );
     }
 
