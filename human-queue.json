@@ -975,19 +975,25 @@
         ]
       },
       "un-vetted": {
-        "count": 35,
+        "count": 36,
         "prs": [
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 305,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/305",
+            "title": "Drop snapshot-generate-cmd: rainix owns the release freeze"
+          },
+          {
+            "repo": "rainlanguage/rain.factory.deploy",
+            "number": 9,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/9",
+            "title": "Drop snapshot-generate-cmd: rainix owns the release freeze"
+          },
           {
             "repo": "rainlanguage/rainix",
             "number": 302,
             "url": "https://github.com/rainlanguage/rainix/pull/302",
             "title": "rainix owns the deploy-repo release freeze: rainix-static cut-release"
-          },
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 283,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/283",
-            "title": "The vetter's judgement precedents become a versioned skill, not machine-local memory"
           },
           {
             "repo": "rainlanguage/rainix",
@@ -1992,10 +1998,28 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 282,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/282",
-      "title": "FSM correctness depends on machine-local auto-memory that does not travel"
+      "repo": "rainlanguage/rainix",
+      "number": 304,
+      "url": "https://github.com/rainlanguage/rainix/issues/304",
+      "title": "BuildPointers should not exist: pointer generation is part of build"
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 303,
+      "url": "https://github.com/rainlanguage/rainix/issues/303",
+      "title": "Release-time verify runs the whole suite and asserts nothing about the snapshot it publishes"
+    },
+    {
+      "repo": "rainlanguage/rain-org-health",
+      "number": 173,
+      "url": "https://github.com/rainlanguage/rain-org-health/issues/173",
+      "title": "roh-scan consumes artifact schemas from other repos with nothing stating the coupling"
+    },
+    {
+      "repo": "cyclofinance/cyclo.site",
+      "number": 439,
+      "url": "https://github.com/cyclofinance/cyclo.site/issues/439",
+      "title": "Two unasserted invariants: the price band assumption, and blockNumberStore surviving a chain switch"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -5830,7 +5854,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 35,
+    "unvetted": 36,
     "blockedOn": 20,
     "ready": 0,
     "needsWork": 103,
@@ -5841,16 +5865,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 158,
+    "totalProducerPrs": 159,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 635,
+    "uncoveredIssues": 638,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 797
+    "openIssues": 800
   },
   "ages": {
     "openIssues": {
-      "meanDays": 309.6,
+      "meanDays": 308.5,
       "medianDays": 107.0,
       "oldestDays": 1662.6
     }
