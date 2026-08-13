@@ -3755,8 +3755,10 @@ impl StartupProbe {
 //      (thinking, text, each tool_use) and repeats the SAME `message.usage` on every one of them,
 //      byte for byte. In `20260728T100257Z` that is 118 events carrying 37 unique `message.id`s,
 //      33 of them repeated 2–5×, every repeat identical. So the usage must be taken ONCE per
-//      `message.id`; summing events triple-counts. (First/last/max per id are all equal — the
-//      repeats never differ — so which one is kept cannot matter, and a test pins that.)
+//      `message.id`; summing events triple-counts. (In a cron trace first/last/max per id are all
+//      equal — the repeats never differ — and a test pins that. They are NOT equal in the
+//      interactive corpus, where a compacted session's continuation can restate a carried-over
+//      turn as a zeroed stub, so the rule is MAX per class: see [`CountedUsage`].)
 //
 //   2. SUBAGENTS ARE NOT IN `result.usage`. Events with a `parent_tool_use_id` are a Task
 //      subagent's messages, and the terminal `result.usage` does NOT include them — only
@@ -4192,29 +4194,218 @@ fn unattributable_output(content: &str) -> (u64, f64) {
 /// Dedupe is by `message.id` across ALL threads (the same message is re-emitted as it streams),
 /// which is [`UsageProbe`]'s rule applied one level wider.
 fn token_attribution(content: &str) -> Vec<AgentSpend> {
-    use std::collections::{HashMap, HashSet};
-    let mut agents: HashMap<String, AgentSpend> = HashMap::new();
-    let mut labels: HashMap<String, String> = HashMap::new();
-    let mut counted: HashSet<String> = HashSet::new();
+    let mut probe = AttributionProbe::default();
+    // Cannot fail: the reader is an in-memory slice.
+    let _ = drive_events(content.as_bytes(), &["assistant"], &mut |ev| {
+        probe.observe(ev)
+    });
+    probe.take_rows()
+}
 
-    for line in content.lines() {
-        let Ok(ev) = serde_json::from_str::<Value>(line) else {
-            continue;
+/// A half-open time window over event timestamps.
+///
+/// The transcripts spell a timestamp as RFC3339 UTC with a `Z` suffix and a fixed field width, so
+/// two of them sort LEXICOGRAPHICALLY and no date library is needed to compare one against a bound.
+/// A shorter PREFIX is therefore a legal bound: `2026-08-05` is midnight that morning.
+///
+/// `since` is INCLUSIVE and `until` is EXCLUSIVE. That is the fail-safe direction for a boundary —
+/// an event exactly on `since` is spend that happened inside the window and must be counted — and
+/// it is the pairing that makes two adjacent windows PARTITION a corpus instead of both claiming
+/// the instant they share. `--until 2026-08-05` thus stops before that day rather than at the end
+/// of it, which is what a strict deadline means.
+#[derive(Default, Clone, Debug, PartialEq)]
+struct Window {
+    since: Option<String>,
+    until: Option<String>,
+}
+
+impl Window {
+    fn is_open(&self) -> bool {
+        self.since.is_none() && self.until.is_none()
+    }
+
+    /// Does this window admit an event stamped `ts`?
+    ///
+    /// An UNDATED event is admitted only by the open window. Placing one inside a bounded window
+    /// would be inventing the single fact the window selects on; leaving it out silently would
+    /// shrink the answer without saying so, which is why [`AttributionProbe`] counts the exclusions
+    /// and the report prints the count. The archived corpus has none — all 128,191 `assistant`
+    /// events carry a `timestamp` — so this is a contract, not a correction.
+    fn admits(&self, ts: Option<&str>) -> bool {
+        let Some(t) = ts else {
+            return self.is_open();
         };
+        let after = match &self.since {
+            Some(s) => t >= s.as_str(),
+            None => true,
+        };
+        let before = match &self.until {
+            Some(u) => t < u.as_str(),
+            None => true,
+        };
+        after && before
+    }
+}
+
+/// PURE: is `s` a bound that can be compared against a transcript timestamp at all?
+///
+/// [`Window`] compares STRINGS, which is exact for the one spelling the transcripts use and
+/// meaningless for any other: `05/08/2026` sorts below every timestamp in the corpus, so it would
+/// select nothing while looking like a quiet period, and `2026-8-5` sorts ABOVE `2026-08-05` and
+/// would select the wrong month. Neither can be told from a real answer by looking at the output,
+/// so a bound that is not RFC3339-shaped is refused rather than compared.
+fn valid_time_bound(s: &str) -> bool {
+    let b = s.as_bytes();
+    if b.len() < 10 {
+        return false;
+    }
+    let d = |i: usize| b[i].is_ascii_digit();
+    if !(d(0)
+        && d(1)
+        && d(2)
+        && d(3)
+        && b[4] == b'-'
+        && d(5)
+        && d(6)
+        && b[7] == b'-'
+        && d(8)
+        && d(9))
+    {
+        return false;
+    }
+    // Anything after the date must still belong to a timestamp: digits and the separators
+    // `2026-08-05T10:31:08.688Z` is made of. A stray word here means the bound is not what its
+    // author thought it was.
+    b[10..]
+        .iter()
+        .all(|c| c.is_ascii_digit() || matches!(c, b'T' | b':' | b'.' | b'Z'))
+}
+
+/// The input-side usage ALREADY BILLED for one `message.id`, per class.
+///
+/// The dedupe used to be a set of ids, on the finding that every repeat of a message carries
+/// byte-identical usage — true of the cron traces, and pinned by a test that was written as the
+/// tripwire for the day it stopped being true. The interactive corpus is that day. When a session
+/// compacts, its continuation's copy of a carried-over turn can be a STUB: `input_tokens`,
+/// `cache_read_input_tokens` and `cache_creation_input_tokens` all zero while the `cache_creation`
+/// TTL breakdown beside them is intact. 19 message ids in the archived corpus have two readings
+/// like that, one strictly dominating the other on every class, and 18.9M tokens separate the two
+/// readings.
+///
+/// "First occurrence wins" therefore made the total depend on SCAN ORDER, with nothing in the
+/// output to say which order produced it — read alphabetically, the stub is first for all 19. So a
+/// repeat may only ever RAISE a class, never lower it, and the difference is what gets added. That
+/// is order-independent by construction: max is commutative, so any order over the same corpus
+/// produces the same total, and a stub can no longer erase the full reading by arriving first.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+struct CountedUsage {
+    tokens_in: u64,
+    cache_read: u64,
+    cache_write_5m: u64,
+    cache_write_1h: u64,
+}
+
+impl CountedUsage {
+    /// PER CLASS, how much of `self` is not yet billed. Saturating, so a stub arriving after the
+    /// full reading contributes nothing rather than a negative.
+    fn above(&self, billed: &CountedUsage) -> CountedUsage {
+        CountedUsage {
+            tokens_in: self.tokens_in.saturating_sub(billed.tokens_in),
+            cache_read: self.cache_read.saturating_sub(billed.cache_read),
+            cache_write_5m: self.cache_write_5m.saturating_sub(billed.cache_write_5m),
+            cache_write_1h: self.cache_write_1h.saturating_sub(billed.cache_write_1h),
+        }
+    }
+
+    /// Take the larger of each class. NOT "take the larger total": the two cache-write classes bill
+    /// at different rates, so a reading that is bigger overall must not be allowed to move 1h
+    /// tokens into 5m or the reverse.
+    fn raise_to(&mut self, other: &CountedUsage) {
+        self.tokens_in = self.tokens_in.max(other.tokens_in);
+        self.cache_read = self.cache_read.max(other.cache_read);
+        self.cache_write_5m = self.cache_write_5m.max(other.cache_write_5m);
+        self.cache_write_1h = self.cache_write_1h.max(other.cache_write_1h);
+    }
+
+    fn is_zero(&self) -> bool {
+        *self == CountedUsage::default()
+    }
+}
+
+/// Streaming accumulator for the attribution rule, so ONE implementation of it serves a single
+/// trace and a whole corpus of transcripts alike.
+///
+/// [`token_attribution`] drives it over one file and takes the rows; the interactive-corpus scan
+/// drives it over every file in turn and takes the rows per file. What makes that second use
+/// CORRECT rather than merely convenient is which state survives a [`Self::take_rows`]:
+///
+///   - `counted` does. The dedupe ledger has to span FILES, because a session that compacts
+///     CONTINUES in a new transcript whose head repeats every turn it carried over. 2,246 message
+///     ids in the archived interactive corpus appear in more than one file. Deduping per file would
+///     bill both copies for one API call, which is the same double count the per-`message.id` rule
+///     exists to prevent, one level up. See [`CountedUsage`] for why it is a LEDGER and no longer a
+///     set of ids.
+///   - `labels` does. A label is a name and never a number, so carrying it across files costs
+///     nothing and lets a dispatch recorded in one transcript name a row assembled from another.
+///   - `agents` does NOT. That map IS the per-file answer.
+#[derive(Default)]
+struct AttributionProbe {
+    agents: std::collections::HashMap<String, AgentSpend>,
+    labels: std::collections::HashMap<String, String>,
+    counted: std::collections::HashMap<String, CountedUsage>,
+    /// Which events count. The default is open, which is exactly [`token_attribution`]'s behaviour
+    /// before there was a window at all.
+    window: Window,
+    /// Events the window could not place — see [`Window::admits`].
+    undated: usize,
+    /// Occurrences of a `message.id` that was already counted, here or in an earlier file. Almost
+    /// all of them add nothing; a few RAISE a class ([`CountedUsage`]). This number is the size of
+    /// the naive-sum overstatement, so it is reported rather than discarded.
+    repeats: usize,
+    /// The `cache_read_input_tokens` the stream ENDED on, which is the agent's CONTEXT SIZE — not
+    /// a spend term. Deliberately neither deduped nor windowed: "how much context is this agent
+    /// carrying" is a property of where the stream stopped, and a window that excludes the last
+    /// turn does not make the context smaller.
+    ///
+    /// Taken from the last `iterations` entry when the transcript carries the per-iteration
+    /// breakdown, else from the message-level field. `iterations` is serialised AFTER the
+    /// message-level fields inside a `usage` block, so this is the same value the LAST match of a
+    /// `"cache_read_input_tokens":(\d+)` regex over the file yields — which is how
+    /// `cap-agent-briefs.py` reads it out of the very same bytes (`tasks/<id>.output` is a symlink
+    /// to the transcript). The two agree by construction, not by luck.
+    last_cache_read: Option<u64>,
+    /// First and last timestamps among the events actually COUNTED — when the spend in this row
+    /// happened, which is what makes a windowed number readable.
+    first_ts: Option<String>,
+    last_ts: Option<String>,
+}
+
+impl AttributionProbe {
+    fn windowed(window: Window) -> Self {
+        AttributionProbe {
+            window,
+            ..Default::default()
+        }
+    }
+
+    /// Feed one trace event.
+    fn observe(&mut self, ev: &Value) {
         // Only `assistant` events carry model usage, and only they issue tool calls. [`UsageProbe`]
-        // guards the same way ten lines from here, and two readers of one stream disagreeing about
-        // which events count is how a future event type silently doubles a run's cost. No trace on
-        // disk has usage on any other type — this is parity with the existing reader, not a fix for
-        // an observed defect.
+        // guards the same way, and two readers of one stream disagreeing about which events count
+        // is how a future event type silently doubles a run's cost. No trace on disk has usage on
+        // any other type — this is parity with the existing reader, not a fix for an observed
+        // defect.
         if ev.get("type").and_then(|t| t.as_str()) != Some("assistant") {
-            continue;
+            return;
         }
         let Some(msg) = ev.get("message") else {
-            continue;
+            return;
         };
 
         // An `Agent` tool_use names the work its subagent is about to do. Recorded from whichever
-        // thread issues it, so a nested dispatch is labelled too.
+        // thread issues it, so a nested dispatch is labelled too. Recorded regardless of the
+        // window, because a name is not spend: a task dispatched before the window and still
+        // spending inside it must not lose its label to the boundary.
         if let Some(blocks) = msg.get("content").and_then(|c| c.as_array()) {
             for b in blocks {
                 let is_dispatch = b.get("type").and_then(|t| t.as_str()) == Some("tool_use")
@@ -4231,32 +4422,38 @@ fn token_attribution(content: &str) -> Vec<AgentSpend> {
                     continue;
                 };
                 if let Some(d) = input.get("description").and_then(|d| d.as_str()) {
-                    labels.insert(id.to_string(), d.to_string());
+                    self.labels.insert(id.to_string(), d.to_string());
                 }
             }
         }
 
         let Some(usage) = msg.get("usage") else {
-            continue;
+            return;
         };
-        // Dedupe on `message.id`, which repeats as a message streams. An ABSENT id and an EMPTY one
-        // are treated alike: neither identifies a message, so each such event is counted rather
-        // than deduped. Letting `""` into the set would make the first empty-id message swallow
-        // every later one — dropping real spend to avoid double-counting a case no trace exhibits.
-        match msg.get("id").and_then(|i| i.as_str()) {
-            Some(id) if !id.is_empty() => {
-                if !counted.insert(id.to_string()) {
-                    continue;
-                }
-            }
-            _ => {}
+
+        // The context reading, taken before every filter below — see [`Self::last_cache_read`].
+        let iter_read = usage
+            .get("iterations")
+            .and_then(|i| i.as_array())
+            .and_then(|a| a.last())
+            .and_then(|i| i.get("cache_read_input_tokens"))
+            .and_then(|n| n.as_u64());
+        if let Some(n) = iter_read.or_else(|| {
+            usage
+                .get("cache_read_input_tokens")
+                .and_then(|n| n.as_u64())
+        }) {
+            self.last_cache_read = Some(n);
         }
 
-        let owner = ev
-            .get("parent_tool_use_id")
-            .and_then(|p| p.as_str())
-            .unwrap_or("__main__")
-            .to_string();
+        let ts = ev.get("timestamp").and_then(|t| t.as_str());
+        if !self.window.admits(ts) {
+            if ts.is_none() {
+                self.undated += 1;
+            }
+            return;
+        }
+
         let g = |k: &str| usage.get(k).and_then(|n| n.as_u64()).unwrap_or(0);
         let cc = usage.get("cache_creation");
         let ttl = |k: &str| cc.and_then(|c| c.get(k)).and_then(|n| n.as_u64());
@@ -4270,42 +4467,148 @@ fn token_attribution(content: &str) -> Vec<AgentSpend> {
             (None, None) => (g("cache_creation_input_tokens"), 0),
             (a, b) => (a.unwrap_or(0), b.unwrap_or(0)),
         };
+        let here = CountedUsage {
+            tokens_in: g("input_tokens"),
+            cache_read: g("cache_read_input_tokens"),
+            cache_write_5m: w5,
+            cache_write_1h: w1,
+        };
 
+        // Dedupe on `message.id`, which repeats as a message streams. An ABSENT id and an EMPTY one
+        // are treated alike: neither identifies a message, so each such event is counted rather
+        // than deduped. Letting `""` into the ledger would make every empty-id message collapse
+        // into one — dropping real spend to avoid double-counting a case no trace exhibits.
+        //
+        // Deduping AFTER the window is what lets a message survive a boundary that falls between
+        // the events streaming it: the occurrences the window admits are folded together by
+        // [`CountedUsage`], so a message is billed once whichever of its events fell inside.
+        let id = msg
+            .get("id")
+            .and_then(|i| i.as_str())
+            .filter(|i| !i.is_empty());
+        let (delta, fresh) = match id {
+            None => (here, true),
+            Some(id) => match self.counted.get_mut(id) {
+                None => {
+                    self.counted.insert(id.to_string(), here);
+                    (here, true)
+                }
+                Some(prev) => {
+                    self.repeats += 1;
+                    let delta = here.above(prev);
+                    prev.raise_to(&here);
+                    if delta.is_zero() {
+                        return;
+                    }
+                    (delta, false)
+                }
+            },
+        };
+
+        if let Some(t) = ts {
+            if self.first_ts.as_deref().is_none_or(|f| t < f) {
+                self.first_ts = Some(t.to_string());
+            }
+            if self.last_ts.as_deref().is_none_or(|l| t > l) {
+                self.last_ts = Some(t.to_string());
+            }
+        }
+
+        let owner = ev
+            .get("parent_tool_use_id")
+            .and_then(|p| p.as_str())
+            .unwrap_or("__main__")
+            .to_string();
         let rates = rates_for(msg.get("model").and_then(|m| m.as_str()).unwrap_or(""));
-        let e = agents.entry(owner.clone()).or_insert_with(|| AgentSpend {
-            id: owner.clone(),
-            ..Default::default()
-        });
-        e.messages += 1;
-        e.tokens_in += g("input_tokens");
-        e.cache_read += g("cache_read_input_tokens");
-        e.cache_write_5m += w5;
-        e.cache_write_1h += w1;
+        let e = self
+            .agents
+            .entry(owner.clone())
+            .or_insert_with(|| AgentSpend {
+                id: owner.clone(),
+                ..Default::default()
+            });
+        // A DELTA is not a new message: it is the same one, read more completely.
+        e.messages += usize::from(fresh);
+        e.tokens_in += delta.tokens_in;
+        e.cache_read += delta.cache_read;
+        e.cache_write_5m += delta.cache_write_5m;
+        e.cache_write_1h += delta.cache_write_1h;
         // No output term — see [`AgentSpend`].
-        e.usd += (g("input_tokens") as f64 * rates.input
-            + g("cache_read_input_tokens") as f64 * rates.cache_read
-            + w5 as f64 * rates.cache_write_5m
-            + w1 as f64 * rates.cache_write_1h)
+        e.usd += (delta.tokens_in as f64 * rates.input
+            + delta.cache_read as f64 * rates.cache_read
+            + delta.cache_write_5m as f64 * rates.cache_write_5m
+            + delta.cache_write_1h as f64 * rates.cache_write_1h)
             / 1e6;
     }
 
-    let mut rows: Vec<AgentSpend> = agents.into_values().collect();
-    for r in &mut rows {
-        r.label = if r.id == "__main__" {
-            "main loop".to_string()
-        } else {
-            // An unlabelled id is a dispatch this trace never showed — a resumed run, or a stream
-            // that lost the dispatching turn. Naming the id beats printing an empty cell.
-            labels.get(&r.id).cloned().unwrap_or_else(|| r.id.clone())
-        };
+    /// The rows accumulated SINCE THE LAST CALL, labelled and sorted dearest-first.
+    fn take_rows(&mut self) -> Vec<AgentSpend> {
+        let mut rows: Vec<AgentSpend> = std::mem::take(&mut self.agents).into_values().collect();
+        for r in &mut rows {
+            r.label = if r.id == "__main__" {
+                "main loop".to_string()
+            } else {
+                // An unlabelled id is a dispatch this trace never showed — a resumed run, or a
+                // stream that lost the dispatching turn. Naming the id beats printing an empty
+                // cell.
+                self.labels
+                    .get(&r.id)
+                    .cloned()
+                    .unwrap_or_else(|| r.id.clone())
+            };
+        }
+        rows.sort_by(|a, b| {
+            b.usd
+                .partial_cmp(&a.usd)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.label.cmp(&b.label))
+        });
+        rows
     }
-    rows.sort_by(|a, b| {
-        b.usd
-            .partial_cmp(&a.usd)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.label.cmp(&b.label))
-    });
-    rows
+
+    /// The per-file readings that go with [`Self::take_rows`], reset with them: the context size
+    /// the stream ended on and the span of the spend that was counted.
+    fn take_readings(&mut self) -> (Option<u64>, Option<String>, Option<String>) {
+        (
+            self.last_cache_read.take(),
+            self.first_ts.take(),
+            self.last_ts.take(),
+        )
+    }
+}
+
+/// One pass over a transcript, handing every event a caller could want to `sink`.
+///
+/// `wanted` is a SUBSTRING pre-filter on the raw line and must be a strict SUPERSET of the event
+/// types the sink acts on: a line that contains none of the words cannot carry any of those
+/// `"type"` values, so the filter changes what is PARSED and never what is counted. It exists
+/// because the interactive corpus is 1.4 GB of which the overwhelming majority is
+/// `file-history-snapshot` lines — one transcript is 250 MB on its own — and parsing those into a
+/// `Value` to immediately discard them is the difference between a report that runs and one nobody
+/// waits for.
+///
+/// Lines are decoded LOSSILY rather than through `BufRead::lines`, whose iterator stops at the
+/// first invalid UTF-8: one bad byte in a 250 MB transcript must cost that line, not every line
+/// after it.
+fn drive_events<R: std::io::BufRead>(
+    mut r: R,
+    wanted: &[&str],
+    sink: &mut dyn FnMut(&Value),
+) -> std::io::Result<()> {
+    let mut buf = Vec::new();
+    loop {
+        buf.clear();
+        if r.read_until(b'\n', &mut buf)? == 0 {
+            return Ok(());
+        }
+        let line = String::from_utf8_lossy(&buf);
+        if !wanted.iter().any(|w| line.contains(w)) {
+            continue;
+        }
+        if let Ok(v) = serde_json::from_str::<Value>(line.trim()) {
+            sink(&v);
+        }
+    }
 }
 
 /// Round a dollar figure to the mils every cost field in the record already uses.
@@ -4628,6 +4931,1368 @@ fn token_report_mode(path: &str, json: bool) -> i32 {
     println!("list price            ${:>8.2}", attributed + out_usd);
     println!("billed                ${billed:>8.2}");
     0
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// session-tokens — THE INTERACTIVE CORPUS.
+//
+// The cron traces under `runs/` are one half of what this box spends; the other half is the
+// INTERACTIVE sessions a human drives, and until now nothing read them. They are bigger. Measured
+// over `~/.claude/projects` on 2026-08-13 — 279 session transcripts and 1,054 subagent transcripts,
+// 1.5 GB, 40 days — the corpus holds 97,690 messages and 27.17 BILLION cache-read tokens.
+//
+// The FORMAT is not the cron's, and the difference is exactly what makes the existing accounting
+// reusable rather than in need of a second summing path:
+//
+//   - There is no `result` event, so `run_metrics` has nothing to read and `billed_cost` /
+//     `unattributable_output` have no whole-run total to take. Reconstructing the input side from
+//     `assistant` events is the ONLY reading available here, which is the reading [`UsageProbe`]
+//     and [`token_attribution`] were built to do.
+//   - There is no `parent_tool_use_id`. A dispatched subagent gets its own FILE —
+//     `<session>/subagents/**/agent-<id>.jsonl` — and the session transcript does not repeat its
+//     turns: across all 279 session transcripts there are ZERO `isSidechain` assistant events. So
+//     the split [`token_attribution`] makes by key, this makes by file, and a subagent's spend
+//     cannot land in its parent's total because it was never in its parent's file.
+//   - A message id spans files. A session that compacts CONTINUES in a new transcript, and that
+//     transcript opens with the turns it carried over, repeated byte for byte — on
+//     `a764cae5` → `8a366ec8` the 640 shared ids are positions 0..639 of the successor, contiguous
+//     from its first event. 2,246 message ids appear in more than one file this way. That is why
+//     [`AttributionProbe`] carries its dedupe set across the whole scan and why transcripts are
+//     read OLDEST FIRST: a carried-over turn was paid for by the session that MADE it, which is
+//     the one that started earlier (`a764cae5` opens 2026-07-24, its successor 2026-07-29), so the
+//     predecessor keeps the spend and the continuation shows only what it added. Per-file dedupe
+//     would bill one API call twice.
+//
+// WHAT IS NOT HERE. Output tokens, for [`AgentSpend`]'s reason one level along: this corpus has no
+// `result.modelUsage` at all, so the whole-run figure that rescued output for `token-report` does
+// not exist. `usage.output_tokens` IS present and sums to 46.4M deduped, but it is the same
+// message-start snapshot the section comment above measures at 18x understatement, so it is read
+// for nothing. The input side stands on its own: cache reads are 27.17B of the corpus against
+// 1.19M fresh input tokens, i.e. essentially all of it.
+//
+// One known undercount, stated rather than corrected. Some `usage` blocks carry a per-ITERATION
+// breakdown whose classes do not sum to the message-level fields beside them. Taking the
+// message-level field, as [`AttributionProbe`] does for parity with the cron reader, gives
+// 27,542,215,669 tokens where preferring the breakdown gives 27,551,949,304 — a 9,733,635 token
+// undercount, 0.035% of the corpus. Parity with the reader that reconciles against `result.usage`
+// is worth more than a third of a tenth of a percent.
+//
+// VERIFICATION. On a frozen copy of the corpus this agrees to the TOKEN with an independent
+// reimplementation of the stated rules — different language, and a REVERSED scan order, so
+// agreement is evidence rather than a tautology: 97,690 messages, 88,567 repeat occurrences,
+// 27,169,216,898 cache-read, 209,796,908 5m and 162,011,644 1h cache-write, on both.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Where the interactive corpus lives, under `$HOME`.
+const CLAUDE_PROJECTS_DIR: &str = ".claude/projects";
+
+/// How many sessions, and how many subagents WITHIN one, the table prints before summarising the
+/// tail. The JSON always carries every row — a rendering that drops data a consumer keeps is how
+/// two readers of one report come to disagree — so these bound a screenful, not the answer.
+///
+/// The second cap is not symmetry: one archived session dispatched 241 subagents, so a table
+/// capped only on sessions prints one session and 241 of its tasks, which is the ranking made
+/// unreadable by the very row that tops it.
+const SESSION_TABLE_ROWS: usize = 20;
+const SESSION_TABLE_SUBAGENTS: usize = 5;
+
+/// What one transcript file IS, decided from its path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TranscriptKind {
+    /// `<projects>/<project>/<session>.jsonl` — a session's own turns.
+    Session,
+    /// `<projects>/<project>/<session>/subagents/**/agent-<id>.jsonl` — one dispatched subagent's
+    /// own turns, which the session transcript does not also hold.
+    Subagent(String),
+}
+
+/// One transcript in the corpus, before it is read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Transcript {
+    path: std::path::PathBuf,
+    /// The directory Claude Code derives from the session's cwd (`-home-gildlab-code`). Kept as
+    /// the wire spells it: it is the only project identity a transcript carries that does not
+    /// require reading the file.
+    project: String,
+    session: String,
+    kind: TranscriptKind,
+}
+
+/// PURE: what a path under the projects root is, or `None` when it is neither shape.
+///
+/// Decided on the PATH and never on the file's contents, so a 250 MB transcript is classified
+/// without being opened, and an empty or truncated one is still classified. The two shapes are
+/// asserted positively rather than by elimination — anything that matches neither is reported as
+/// unclassified rather than silently folded into one of them, because a THIRD transcript layout is
+/// exactly the thing a corpus report must not quietly leave out. The recursion between `subagents`
+/// and the file is real and not defensive: 472 of the 1,054 archived subagent transcripts sit a
+/// further two directories down, under `subagents/workflows/wf_<id>/`.
+///
+/// The 22 paths this rejects in the archived corpus are all `subagents/workflows/wf_<id>/
+/// journal.jsonl` — workflow RESULT logs, carrying zero `assistant` events between them, so
+/// rejecting them excludes no spend. That was checked, not assumed: a classifier that silently
+/// drops a transcript is indistinguishable from one that has nothing to drop.
+fn classify_transcript(root: &std::path::Path, path: &std::path::Path) -> Option<Transcript> {
+    let rel = path.strip_prefix(root).ok()?;
+    let parts: Vec<&str> = rel
+        .components()
+        .map(|c| c.as_os_str().to_str())
+        .collect::<Option<Vec<&str>>>()?;
+    let (project, rest) = parts.split_first()?;
+    let file = rest.last()?;
+    let stem = file.strip_suffix(".jsonl")?;
+    match rest {
+        [_] => Some(Transcript {
+            path: path.to_path_buf(),
+            project: project.to_string(),
+            session: stem.to_string(),
+            kind: TranscriptKind::Session,
+        }),
+        [session, "subagents", ..] => {
+            let agent = stem.strip_prefix("agent-")?;
+            Some(Transcript {
+                path: path.to_path_buf(),
+                project: project.to_string(),
+                session: session.to_string(),
+                kind: TranscriptKind::Subagent(agent.to_string()),
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Every `*.jsonl` under `root`, and the paths that are not transcripts.
+///
+/// Returns `(transcripts, unclassified)`. A directory that cannot be read contributes its own path
+/// to `unclassified` instead of vanishing: a corpus report whose denominator silently shrank is
+/// worse than one that says which part it could not see.
+fn discover_transcripts(root: &std::path::Path) -> (Vec<Transcript>, Vec<String>) {
+    let mut found = Vec::new();
+    let mut unclassified = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            unclassified.push(dir.display().to_string());
+            continue;
+        };
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+                continue;
+            }
+            if p.extension().and_then(|x| x.to_str()) != Some("jsonl") {
+                continue;
+            }
+            match classify_transcript(root, &p) {
+                Some(t) => found.push(t),
+                None => unclassified.push(p.display().to_string()),
+            }
+        }
+    }
+    unclassified.sort();
+    (found, unclassified)
+}
+
+/// What a subagent's `.meta.json` sidecar says about it.
+///
+/// `description` is the operator's own name for the work — the same field [`AttributionProbe`]
+/// reads off an `Agent` tool_use one level up — so it is the label that means something in a cost
+/// table. Only 582 of the 1,054 archived sidecars carry one: a workflow subagent is spawned by a
+/// workflow rather than by a dispatch, so it has an `agentType` and no description at all — and
+/// those 472 are exactly the ones nested under `subagents/workflows/`. Naming such a row by its
+/// type beats an empty cell, and naming it by its id beats inventing a type.
+#[derive(Debug, Default, Clone, PartialEq)]
+struct AgentMeta {
+    description: Option<String>,
+    agent_type: Option<String>,
+}
+
+impl AgentMeta {
+    /// PURE: the sidecar as data. An absent, unreadable or malformed sidecar is the empty meta,
+    /// because a subagent that SPENT is a row this report owes the reader whether or not anything
+    /// named it. Every one of the 1,054 archived transcripts does have a sidecar today, so this is
+    /// the case the corpus has not shown rather than one it has — and the row it produces is named
+    /// by the agent id, which is the only thing then known to be true.
+    fn parse(body: &str) -> AgentMeta {
+        let Ok(v) = serde_json::from_str::<Value>(body) else {
+            return AgentMeta::default();
+        };
+        let s = |k: &str| {
+            v.get(k)
+                .and_then(|x| x.as_str())
+                .filter(|x| !x.is_empty())
+                .map(str::to_string)
+        };
+        AgentMeta {
+            description: s("description"),
+            agent_type: s("agentType"),
+        }
+    }
+
+    fn read(transcript: &std::path::Path) -> AgentMeta {
+        let sidecar = transcript.with_extension("meta.json");
+        std::fs::read_to_string(sidecar)
+            .map(|b| AgentMeta::parse(&b))
+            .unwrap_or_default()
+    }
+}
+
+/// The name a session goes by, from its own title events.
+///
+/// A session RE-EMITS its title as it changes — 3,567 `custom-title` events in the largest
+/// transcript — so the LAST one is the current name. A human's `custom-title` outranks the model's
+/// `ai-title` however late the model's arrived: one is what the operator called the work and the
+/// other is a guess about it. 92 of the 279 archived sessions carry neither and are named by their
+/// id, which is the only thing that is then true.
+#[derive(Default)]
+struct SessionTitle {
+    custom: Option<String>,
+    ai: Option<String>,
+}
+
+impl SessionTitle {
+    /// The event types this reads, as the substring filter [`drive_events`] wants.
+    const WANTED: [&'static str; 2] = ["custom-title", "ai-title"];
+
+    fn observe(&mut self, ev: &Value) {
+        let s = |k: &str| {
+            ev.get(k)
+                .and_then(|t| t.as_str())
+                .filter(|t| !t.is_empty())
+                .map(str::to_string)
+        };
+        match ev.get("type").and_then(|t| t.as_str()) {
+            Some("custom-title") => {
+                if let Some(t) = s("customTitle") {
+                    self.custom = Some(t);
+                }
+            }
+            Some("ai-title") => {
+                if let Some(t) = s("aiTitle") {
+                    self.ai = Some(t);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn label(&self, fallback: &str) -> String {
+        self.custom
+            .clone()
+            .or_else(|| self.ai.clone())
+            .unwrap_or_else(|| fallback.to_string())
+    }
+}
+
+/// One transcript's spend, plus what it takes to name and place it.
+#[derive(Debug, Clone, PartialEq)]
+struct TranscriptSpend {
+    session: String,
+    project: String,
+    /// `Some` for a subagent transcript, `None` for a session's own.
+    agent: Option<String>,
+    label: String,
+    /// The transcript's path, which is the only unique key here: two subagent transcripts in the
+    /// corpus share an agent id across different sessions, so a caller resolving "this agent" picks
+    /// the row with the greatest `last`.
+    path: String,
+    spend: AgentSpend,
+    /// See [`AttributionProbe::last_cache_read`] — a context size, not a spend term.
+    context_tokens: Option<u64>,
+    first: Option<String>,
+    last: Option<String>,
+}
+
+/// Read ONE transcript against a shared probe, returning what it spent.
+///
+/// The probe is `&mut` and shared with every other call in the scan on purpose: that is what makes
+/// the dedupe set span files. A transcript that holds turns for more than one `parent_tool_use_id`
+/// contributes one row per key, summed, because a transcript is the unit being reported and the
+/// keys inside an interactive one are all `__main__` anyway.
+fn read_transcript(
+    t: &Transcript,
+    probe: &mut AttributionProbe,
+    faults: &mut Vec<String>,
+) -> Option<TranscriptSpend> {
+    let mut title = SessionTitle::default();
+    let file = match std::fs::File::open(&t.path) {
+        Ok(f) => f,
+        Err(_) => {
+            faults.push(t.path.display().to_string());
+            return None;
+        }
+    };
+    let mut wanted = vec!["assistant"];
+    if t.kind == TranscriptKind::Session {
+        wanted.extend_from_slice(&SessionTitle::WANTED);
+    }
+    if drive_events(std::io::BufReader::new(file), &wanted, &mut |ev: &Value| {
+        probe.observe(ev);
+        title.observe(ev);
+    })
+    .is_err()
+    {
+        // A read that faulted PART-WAY keeps what it got — dropping a transcript's whole spend
+        // because its tail was unreadable would understate by an unknown amount rather than by a
+        // stated one — but the path is still reported, so the row is known to be partial.
+        faults.push(t.path.display().to_string());
+    }
+    let rows = probe.take_rows();
+    let (context_tokens, first, last) = probe.take_readings();
+    let mut spend = AgentSpend::default();
+    for r in rows {
+        spend.messages += r.messages;
+        spend.tokens_in += r.tokens_in;
+        spend.cache_read += r.cache_read;
+        spend.cache_write_5m += r.cache_write_5m;
+        spend.cache_write_1h += r.cache_write_1h;
+        spend.usd += r.usd;
+    }
+    let label = match &t.kind {
+        TranscriptKind::Session => title.label(&t.session),
+        TranscriptKind::Subagent(agent) => {
+            let meta = AgentMeta::read(&t.path);
+            meta.description
+                .or(meta.agent_type)
+                .unwrap_or_else(|| agent.clone())
+        }
+    };
+    Some(TranscriptSpend {
+        session: t.session.clone(),
+        project: t.project.clone(),
+        agent: match &t.kind {
+            TranscriptKind::Session => None,
+            TranscriptKind::Subagent(a) => Some(a.clone()),
+        },
+        label,
+        path: t.path.display().to_string(),
+        spend,
+        context_tokens,
+        first,
+        last,
+    })
+}
+
+/// What one `session-tokens` invocation is asking for.
+#[derive(Debug, Default, Clone, PartialEq)]
+struct SessionQuery {
+    window: Window,
+    /// Only this session, by id.
+    session: Option<String>,
+    /// Only this subagent, by agent id. This is the fast path a PreToolUse hook can afford: it
+    /// selects the file by NAME during discovery, so the answer costs one open instead of a
+    /// 1.4 GB scan.
+    agent: Option<String>,
+}
+
+impl SessionQuery {
+    /// Does this query want `t` read at all?
+    fn selects(&self, t: &Transcript) -> bool {
+        if let Some(s) = &self.session {
+            if &t.session != s {
+                return false;
+            }
+        }
+        if let Some(a) = &self.agent {
+            match &t.kind {
+                TranscriptKind::Subagent(id) => return id == a,
+                TranscriptKind::Session => return false,
+            }
+        }
+        true
+    }
+}
+
+/// The corpus scan: every selected transcript, oldest first, against one shared probe.
+///
+/// OLDEST FIRST is the attribution rule for a message that appears in more than one file — the
+/// session that MADE a carried-over turn is the one that started earlier — and the order is taken
+/// from the transcripts' own first timestamps rather than from mtime: mtime moves when a session is
+/// resumed, so it names the most recently TOUCHED file rather than the one that produced the
+/// message. Ties fall back to the path, so the scan is deterministic; nothing in the corpus needs
+/// that tiebreak, since a continuation by construction starts after what it continues.
+fn scan_corpus(root: &std::path::Path, query: &SessionQuery) -> CorpusScan {
+    let (all, unclassified) = discover_transcripts(root);
+    let selected: Vec<Transcript> = all.into_iter().filter(|t| query.selects(t)).collect();
+    let considered = selected.len();
+    let mut ordered: Vec<(String, Transcript)> = selected
+        .into_iter()
+        .map(|t| (first_timestamp(&t.path).unwrap_or_default(), t))
+        .collect();
+    ordered.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.path.cmp(&b.1.path)));
+    let mut probe = AttributionProbe::windowed(query.window.clone());
+    let mut rows = Vec::new();
+    let mut unreadable = Vec::new();
+    for (_, t) in ordered {
+        if let Some(r) = read_transcript(&t, &mut probe, &mut unreadable) {
+            rows.push(r);
+        }
+    }
+    CorpusScan {
+        rows,
+        probe,
+        considered,
+        unclassified,
+        unreadable,
+    }
+}
+
+/// One scan's whole result: the rows, the probe that produced them (for the counts only IT knows),
+/// and the two ways a path in the corpus can fail to become a row.
+///
+/// `unclassified` and `unreadable` are ALWAYS emitted, `[]` when empty, for the reason
+/// `unreadableFiles` is: a consumer must be able to tell "the corpus was fully read" from "this
+/// report predates the field". They are also why a shrinking total is legible — a corpus report
+/// whose denominator quietly moved is the failure this whole file is written against. A path in
+/// `unreadable` contributed either NOTHING (it would not open) or a PARTIAL row (the read faulted
+/// mid-file); either way the totals are a floor, and the path says where to look.
+struct CorpusScan {
+    rows: Vec<TranscriptSpend>,
+    probe: AttributionProbe,
+    considered: usize,
+    unclassified: Vec<String>,
+    unreadable: Vec<String>,
+}
+
+/// The first timestamp in a transcript — when the session or subagent STARTED.
+///
+/// Reads until it FINDS one, and stops there. An earlier version capped the search at the first 64
+/// lines, on the theory that the preamble is short: it is not reliably short, and the cap was
+/// nearly binding on the corpus it was written against. Two archived transcripts carry no timestamp
+/// inside 64 lines and one needs its 63rd — so a single extra preamble line would have flipped that
+/// file's position in the scan, silently. A cap that is one line from wrong is not a budget, it is
+/// a coin toss, and the whole file gets read by the very next pass anyway.
+///
+/// `None` means the transcript carries no timestamped event at all, which sorts it to the FRONT.
+/// That end matters less than it used to: since a repeat may only RAISE a class ([`CountedUsage`]),
+/// scan order can no longer change a total, only which transcript a duplicated message is
+/// ATTRIBUTED to. Reading an undated transcript first attributes shared turns to it — the reverse
+/// of what a reader might assume, so it is said here plainly rather than left to the name.
+fn first_timestamp(path: &std::path::Path) -> Option<String> {
+    use std::io::BufRead;
+    let file = std::fs::File::open(path).ok()?;
+    let mut r = std::io::BufReader::new(file);
+    let mut buf = Vec::new();
+    loop {
+        buf.clear();
+        if r.read_until(b'\n', &mut buf).ok()? == 0 {
+            return None;
+        }
+        let line = String::from_utf8_lossy(&buf);
+        if !line.contains("timestamp") {
+            continue;
+        }
+        if let Ok(v) = serde_json::from_str::<Value>(line.trim()) {
+            if let Some(ts) = v.get("timestamp").and_then(|t| t.as_str()) {
+                return Some(ts.to_string());
+            }
+        }
+    }
+}
+
+/// PURE: the whole `session-tokens` report as data — the one value both renderings are made of, so
+/// the table and the JSON can never disagree about a number.
+///
+/// Subagents are NESTED under the session that dispatched them, and their tokens are a SEPARATE
+/// field from the session's own. That shape is the no-double-count rule made visible: `tokens` is
+/// what the session's own turns cost and nothing else, `subagentTokens` is what it dispatched, and
+/// the corpus total adds each exactly once. A session whose transcript spent nothing in the window
+/// still appears when its subagents did — the dispatch is the session's work however the spend
+/// splits.
+fn session_tokens_report(root: &std::path::Path, query: &SessionQuery, scan: &CorpusScan) -> Value {
+    use std::collections::BTreeMap;
+    let rows = &scan.rows;
+    struct Sess<'a> {
+        own: Vec<&'a TranscriptSpend>,
+        agents: Vec<&'a TranscriptSpend>,
+    }
+    let mut sessions: BTreeMap<&str, Sess> = BTreeMap::new();
+    for r in rows {
+        let e = sessions.entry(r.session.as_str()).or_insert_with(|| Sess {
+            own: Vec::new(),
+            agents: Vec::new(),
+        });
+        if r.agent.is_some() {
+            e.agents.push(r);
+        } else {
+            e.own.push(r);
+        }
+    }
+
+    let row_value = |r: &TranscriptSpend| {
+        serde_json::json!({
+            "label": r.label,
+            "agent": r.agent,
+            "tokens": agent_tokens(&r.spend),
+            "usd": round3(r.spend.usd),
+            "messages": r.spend.messages,
+            "inputTokens": r.spend.tokens_in,
+            "cacheRead": r.spend.cache_read,
+            "cacheWrite5m": r.spend.cache_write_5m,
+            "cacheWrite1h": r.spend.cache_write_1h,
+            "contextTokens": r.context_tokens,
+            "first": r.first,
+            "last": r.last,
+            "path": r.path,
+        })
+    };
+
+    let mut out: Vec<Value> = Vec::new();
+    let (mut t_own, mut t_sub, mut t_usd, mut n_agents) = (0u64, 0u64, 0.0f64, 0usize);
+    for (id, s) in &sessions {
+        // A resumed session writes more than one transcript under one id; its own spend is their
+        // sum, and the dedupe set has already made sure a message copied between them is in only
+        // one of the two.
+        let own_tokens: u64 = s.own.iter().map(|r| agent_tokens(&r.spend)).sum();
+        let own_usd: f64 = s.own.iter().map(|r| r.spend.usd).sum();
+        let sub_tokens: u64 = s.agents.iter().map(|r| agent_tokens(&r.spend)).sum();
+        let sub_usd: f64 = s.agents.iter().map(|r| r.spend.usd).sum();
+        let mut agents: Vec<&TranscriptSpend> = s.agents.clone();
+        agents.sort_by(|a, b| {
+            agent_tokens(&b.spend)
+                .cmp(&agent_tokens(&a.spend))
+                .then_with(|| a.label.cmp(&b.label))
+        });
+        t_own += own_tokens;
+        t_sub += sub_tokens;
+        t_usd += own_usd + sub_usd;
+        n_agents += agents.len();
+        out.push(serde_json::json!({
+            "session": id,
+            "label": s.own.first().map(|r| r.label.clone()).unwrap_or_else(|| (*id).to_string()),
+            "project": s.own.first().or(s.agents.first()).map(|r| r.project.clone()),
+            "tokens": own_tokens,
+            "usd": round3(own_usd),
+            "messages": s.own.iter().map(|r| r.spend.messages).sum::<usize>(),
+            "cacheRead": s.own.iter().map(|r| r.spend.cache_read).sum::<u64>(),
+            "cacheWrite5m": s.own.iter().map(|r| r.spend.cache_write_5m).sum::<u64>(),
+            "cacheWrite1h": s.own.iter().map(|r| r.spend.cache_write_1h).sum::<u64>(),
+            "contextTokens": s.own.iter().filter_map(|r| r.context_tokens).next_back(),
+            "first": s.own.iter().filter_map(|r| r.first.clone()).min(),
+            "last": s.own.iter().filter_map(|r| r.last.clone()).max(),
+            "subagentTokens": sub_tokens,
+            "subagentUsd": round3(sub_usd),
+            "subagents": agents.iter().map(|r| row_value(r)).collect::<Vec<Value>>(),
+            "transcripts": s.own.iter().map(|r| r.path.clone()).collect::<Vec<String>>(),
+        }));
+    }
+    // Dearest first, on the session's WHOLE footprint — its own turns plus what it dispatched —
+    // because that is the number a reader is deciding about. The two halves stay separate in the
+    // row so the ranking cannot be mistaken for a sum that double counts.
+    out.sort_by(|a, b| {
+        let k = |v: &Value| {
+            v["tokens"].as_u64().unwrap_or(0) + v["subagentTokens"].as_u64().unwrap_or(0)
+        };
+        k(b).cmp(&k(a))
+            .then_with(|| a["session"].as_str().cmp(&b["session"].as_str()))
+    });
+
+    serde_json::json!({
+        "projects": root.display().to_string(),
+        "since": query.window.since,
+        "until": query.window.until,
+        "sessions": out,
+        "totals": {
+            "sessions": sessions.len(),
+            "subagents": n_agents,
+            "sessionTokens": t_own,
+            "subagentTokens": t_sub,
+            "tokens": t_own + t_sub,
+            "usd": round3(t_usd),
+        },
+        "corpus": {
+            "transcriptsRead": scan.considered,
+            // The dedupe rule doing its work, as a number: occurrences skipped because the
+            // message was already counted. It is what a naive occurrence-sum would have added.
+            "repeatOccurrences": scan.probe.repeats,
+            // Events a bounded window could not place. See `Window::admits` — nonzero here means
+            // the windowed number is missing spend, and how much is unknowable.
+            "undatedEvents": scan.probe.undated,
+            "unclassifiedPaths": scan.unclassified,
+            "unreadablePaths": scan.unreadable,
+        },
+    })
+}
+
+/// `session-tokens`: what the INTERACTIVE sessions spent, per session and per dispatched subagent.
+fn session_tokens_mode(projects: Option<&str>, query: &SessionQuery, json: bool) -> i32 {
+    for (flag, bound) in [
+        ("--since", &query.window.since),
+        ("--until", &query.window.until),
+    ] {
+        if let Some(b) = bound {
+            if !valid_time_bound(b) {
+                eprintln!(
+                    "error: {flag} {b:?} is not a timestamp. Bounds are compared as text against \
+                     the transcripts' own RFC3339 spelling, so give a prefix of one: \
+                     2026-08-05, or 2026-08-05T10:00:00Z."
+                );
+                return 2;
+            }
+        }
+    }
+    let root = match projects {
+        Some(p) => std::path::PathBuf::from(p),
+        None => match std::env::var_os("HOME") {
+            Some(h) => std::path::PathBuf::from(h).join(CLAUDE_PROJECTS_DIR),
+            None => {
+                eprintln!("error: HOME is unset — name the corpus with --projects <dir>");
+                return 2;
+            }
+        },
+    };
+    if !root.is_dir() {
+        eprintln!("error: no transcript corpus at {}", root.display());
+        return 2;
+    }
+    let scan = scan_corpus(&root, query);
+    let report = session_tokens_report(&root, query, &scan);
+    if json {
+        println!("{}", serde_json::to_string(&report).unwrap());
+        return 0;
+    }
+    render_session_tokens(&report);
+    0
+}
+
+/// The table rendering of [`session_tokens_report`].
+fn render_session_tokens(report: &Value) {
+    let sessions = report["sessions"].as_array().cloned().unwrap_or_default();
+    let win = match (report["since"].as_str(), report["until"].as_str()) {
+        (None, None) => "all time".to_string(),
+        (s, u) => format!("{} .. {}", s.unwrap_or("start"), u.unwrap_or("now")),
+    };
+    println!("{} — {}", report["projects"].as_str().unwrap_or(""), win);
+    println!(
+        "\n{:>14}  {:>9}  {:>6}  {:>10}  session / task",
+        "tokens", "cost", "msgs", "ctx now"
+    );
+    let line = |tokens: u64, usd: f64, msgs: u64, ctx: Option<u64>, label: &str, indent: bool| {
+        println!(
+            "{:>14}  {:>9}  {:>6}  {:>10}  {}{}",
+            tokens,
+            format!("${usd:.2}"),
+            msgs,
+            ctx.map(|c| c.to_string()).unwrap_or_else(|| "-".into()),
+            if indent { "  └ " } else { "" },
+            label
+        );
+    };
+    let g = |v: &Value, k: &str| v[k].as_u64().unwrap_or(0);
+    let f = |v: &Value, k: &str| v[k].as_f64().unwrap_or(0.0);
+    for s in sessions.iter().take(SESSION_TABLE_ROWS) {
+        line(
+            g(s, "tokens"),
+            f(s, "usd"),
+            g(s, "messages"),
+            s["contextTokens"].as_u64(),
+            s["label"].as_str().unwrap_or(""),
+            false,
+        );
+        let subs = s["subagents"].as_array().cloned().unwrap_or_default();
+        for a in subs.iter().take(SESSION_TABLE_SUBAGENTS) {
+            line(
+                g(a, "tokens"),
+                f(a, "usd"),
+                g(a, "messages"),
+                a["contextTokens"].as_u64(),
+                a["label"].as_str().unwrap_or(""),
+                true,
+            );
+        }
+        if subs.len() > SESSION_TABLE_SUBAGENTS {
+            let rest: u64 = subs
+                .iter()
+                .skip(SESSION_TABLE_SUBAGENTS)
+                .map(|a| g(a, "tokens"))
+                .sum();
+            println!(
+                "{:>14}  {:>9}  {:>6}  {:>10}    └ … {} more tasks",
+                rest,
+                "",
+                "",
+                "",
+                subs.len() - SESSION_TABLE_SUBAGENTS
+            );
+        }
+    }
+    if sessions.len() > SESSION_TABLE_ROWS {
+        let tail: u64 = sessions
+            .iter()
+            .skip(SESSION_TABLE_ROWS)
+            .map(|s| g(s, "tokens") + g(s, "subagentTokens"))
+            .sum();
+        println!(
+            "{:>14}  {:>9}  {:>6}  {:>10}  … {} more sessions (in the totals below, and in --json)",
+            tail,
+            "",
+            "",
+            "",
+            sessions.len() - SESSION_TABLE_ROWS
+        );
+    }
+    let t = &report["totals"];
+    println!(
+        "\n{} sessions, {} subagents",
+        g(t, "sessions"),
+        g(t, "subagents")
+    );
+    println!("session turns   {:>16} tokens", g(t, "sessionTokens"));
+    println!("subagent turns  {:>16} tokens", g(t, "subagentTokens"));
+    println!(
+        "TOTAL           {:>16} tokens   ${:.2} at list price",
+        g(t, "tokens"),
+        f(t, "usd")
+    );
+    println!(
+        "\noutput tokens are NOT counted — see the session-tokens section comment; \
+         this is the input side, which is ~99% of the volume."
+    );
+    let c = &report["corpus"];
+    println!(
+        "{} transcripts read; {} repeated message occurrences skipped by the per-message.id rule",
+        g(c, "transcriptsRead"),
+        g(c, "repeatOccurrences")
+    );
+    if g(c, "undatedEvents") > 0 {
+        println!(
+            "WARNING: {} events carry no timestamp and are EXCLUDED by the window — \
+             the number above is missing them.",
+            g(c, "undatedEvents")
+        );
+    }
+    for (key, what) in [
+        ("unclassifiedPaths", "match no known transcript layout"),
+        ("unreadablePaths", "could not be opened"),
+    ] {
+        let paths = c[key].as_array().cloned().unwrap_or_default();
+        if paths.is_empty() {
+            continue;
+        }
+        println!(
+            "WARNING: {} path(s) {what} and contribute NOTHING to the totals:",
+            paths.len()
+        );
+        for p in paths.iter().take(5) {
+            println!("  {}", p.as_str().unwrap_or(""));
+        }
+        if paths.len() > 5 {
+            println!("  … and {} more (all of them in --json)", paths.len() - 5);
+        }
+    }
+}
+
+/// The interactive corpus (`session-tokens`).
+///
+/// Every test here builds a REAL directory tree in the shape `~/.claude/projects` has and runs the
+/// real scan over it, because the three things that can go wrong are all about the tree: which file
+/// a message is attributed to, which files a query reads, and whether a subagent's spend reaches
+/// its parent. None of those is expressible against a single in-memory string, which is exactly why
+/// they were worth writing.
+#[cfg(test)]
+mod session_tokens_tests {
+    use super::*;
+
+    fn tmp_root(tag: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("prr-sessions-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    fn write(root: &std::path::Path, rel: &str, body: &str) -> std::path::PathBuf {
+        let p = root.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, body).unwrap();
+        p
+    }
+
+    /// One `assistant` event as an interactive transcript spells it: a `timestamp`, no
+    /// `parent_tool_use_id`, and the TTL breakdown that keeps the two cache-write classes apart.
+    fn turn(id: &str, ts: &str, cache_read: u64, w5: u64, w1: u64) -> String {
+        serde_json::to_string(&serde_json::json!({
+            "type": "assistant",
+            "timestamp": ts,
+            "message": {
+                "id": id,
+                "model": "claude-opus-5",
+                "usage": {
+                    "input_tokens": 0,
+                    "output_tokens": 9,
+                    "cache_read_input_tokens": cache_read,
+                    "cache_creation_input_tokens": w5 + w1,
+                    "cache_creation": {
+                        "ephemeral_5m_input_tokens": w5,
+                        "ephemeral_1h_input_tokens": w1,
+                    },
+                },
+            },
+        }))
+        .unwrap()
+    }
+
+    fn scan(root: &std::path::Path, query: SessionQuery) -> Value {
+        let s = scan_corpus(root, &query);
+        session_tokens_report(root, &query, &s)
+    }
+
+    fn session(report: &Value, id: &str) -> Value {
+        report["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["session"] == id)
+            .unwrap_or_else(|| panic!("session {id} is in the report"))
+            .clone()
+    }
+
+    // ── the window ─────────────────────────────────────────────────────────────
+
+    /// `since` is inclusive and `until` is exclusive, so two adjacent windows partition a corpus.
+    /// Both directions matter: an event exactly on `since` is spend inside the window, and one
+    /// exactly on `until` belongs to the NEXT window, not to both.
+    #[test]
+    fn window_bounds_are_inclusive_then_exclusive() {
+        let w = Window {
+            since: Some("2026-08-05".into()),
+            until: Some("2026-08-06".into()),
+        };
+        assert!(
+            w.admits(Some("2026-08-05")),
+            "the instant since names is in"
+        );
+        assert!(w.admits(Some("2026-08-05T23:59:59.999Z")));
+        assert!(
+            !w.admits(Some("2026-08-06")),
+            "the instant until names is out"
+        );
+        assert!(!w.admits(Some("2026-08-04T23:59:59.999Z")));
+    }
+
+    /// An undated event cannot be placed, so only the open window takes it — and the count of the
+    /// exclusions is what the report prints, rather than a quietly smaller number.
+    #[test]
+    fn an_undated_event_is_admitted_only_by_the_open_window() {
+        assert!(Window::default().admits(None));
+        let bounded = Window {
+            since: Some("2026-08-05".into()),
+            until: None,
+        };
+        assert!(!bounded.admits(None));
+        let mut probe = AttributionProbe::windowed(bounded);
+        probe.observe(
+            &serde_json::from_str::<Value>(
+                &serde_json::to_string(&serde_json::json!({
+                    "type":"assistant",
+                    "message":{"id":"m1","model":"claude-opus-5",
+                               "usage":{"cache_read_input_tokens":1_000_000}}}))
+                .unwrap(),
+            )
+            .unwrap(),
+        );
+        assert_eq!(probe.undated, 1, "the exclusion is counted, not swallowed");
+        assert!(probe.take_rows().is_empty());
+    }
+
+    /// A bound that is not RFC3339-shaped sorts against nothing, and a window that selects nothing
+    /// is indistinguishable from a quiet period. So it is refused rather than compared.
+    #[test]
+    fn a_bound_that_cannot_be_compared_is_refused() {
+        for good in [
+            "2026-08-05",
+            "2026-08-05T10:00:00Z",
+            "2026-08-05T10:31:08.688Z",
+        ] {
+            assert!(valid_time_bound(good), "{good}");
+        }
+        for bad in [
+            "05/08/2026",
+            "2026-8-5",
+            "yesterday",
+            "2026-08",
+            "",
+            "aug 5",
+        ] {
+            assert!(!valid_time_bound(bad), "{bad}");
+        }
+    }
+
+    /// The window selects EVENTS, not files: a session that ran across midnight reports only the
+    /// turns inside the window, with the rest of its spend left to the window that holds it.
+    #[test]
+    fn a_window_splits_one_session_by_turn() {
+        let root = tmp_root("window");
+        write(
+            &root,
+            "-proj/sess-a.jsonl",
+            &[
+                turn("m1", "2026-08-04T23:00:00.000Z", 1_000_000, 0, 0),
+                turn("m2", "2026-08-05T01:00:00.000Z", 3_000_000, 0, 0),
+            ]
+            .join("\n"),
+        );
+        let all = scan(&root, SessionQuery::default());
+        assert_eq!(all["totals"]["tokens"], 4_000_000);
+        let day = scan(
+            &root,
+            SessionQuery {
+                window: Window {
+                    since: Some("2026-08-05".into()),
+                    until: Some("2026-08-06".into()),
+                },
+                ..Default::default()
+            },
+        );
+        assert_eq!(day["totals"]["tokens"], 3_000_000);
+        assert_eq!(session(&day, "sess-a")["messages"], 1);
+    }
+
+    // ── attribution across the tree ────────────────────────────────────────────
+
+    /// THE acceptance test for the corpus. A session that compacts CONTINUES in a new transcript
+    /// whose head repeats the turns it carried over — message ids, usage and timestamps byte for
+    /// byte — so one API call sits in two files. It must be billed ONCE, to the session that made
+    /// it, which is the one that started earlier.
+    ///
+    /// The fixture is the real shape: `b` opens with `a`'s last turn and then goes on. Measured on
+    /// `a764cae5` → `8a366ec8`, the 640 shared message ids are positions 0..639 of the successor,
+    /// contiguous from its first event.
+    #[test]
+    fn a_carried_over_message_is_billed_once_to_the_session_that_made_it() {
+        let root = tmp_root("continuation");
+        let carried = turn("m-carried", "2026-08-05T10:00:00.000Z", 2_000_000, 0, 0);
+        write(
+            &root,
+            "-proj/sess-a.jsonl",
+            &[
+                turn("m-early", "2026-08-05T09:00:00.000Z", 300_000, 0, 0),
+                carried.clone(),
+            ]
+            .join("\n"),
+        );
+        write(
+            &root,
+            "-proj/sess-b.jsonl",
+            &[
+                carried,
+                turn("m-own", "2026-08-05T12:00:00.000Z", 500_000, 0, 0),
+            ]
+            .join("\n"),
+        );
+        let r = scan(&root, SessionQuery::default());
+        assert_eq!(
+            r["totals"]["tokens"], 2_800_000,
+            "one API call, one charge — not 4.8M"
+        );
+        assert_eq!(session(&r, "sess-a")["tokens"], 2_300_000);
+        assert_eq!(
+            session(&r, "sess-b")["tokens"],
+            500_000,
+            "the continuation is charged only for what it added"
+        );
+        assert_eq!(r["corpus"]["repeatOccurrences"], 1);
+    }
+
+    /// A continuation can restate a carried-over turn as a ZEROED STUB — every message-level count
+    /// zero, the TTL breakdown beside them intact. Keeping the first occurrence would then throw
+    /// the message away, and which occurrence came first is a property of the SCAN ORDER, so the
+    /// corpus total would move with it: 27,508,747,350 tokens read one way, 27,524,657,937 the
+    /// other. Max per class is the rule, and this asserts it from BOTH orders.
+    #[test]
+    fn a_stub_restatement_never_erases_the_full_reading() {
+        let full = |ts: &str| turn("m1", ts, 995_522, 0, 1_245);
+        let stub = |ts: &str| {
+            serde_json::to_string(&serde_json::json!({
+                "type": "assistant",
+                "timestamp": ts,
+                "message": {"id": "m1", "model": "claude-opus-5", "usage": {
+                    "input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                    "cache_creation_input_tokens": 0,
+                    "cache_creation": {"ephemeral_5m_input_tokens": 0,
+                                       "ephemeral_1h_input_tokens": 1_245}}}}))
+            .unwrap()
+        };
+        for order in [
+            [
+                full("2026-08-05T10:00:00.000Z"),
+                stub("2026-08-05T10:00:00.000Z"),
+            ],
+            [
+                stub("2026-08-05T10:00:00.000Z"),
+                full("2026-08-05T10:00:00.000Z"),
+            ],
+        ] {
+            let rows = token_attribution(&order.join("\n"));
+            assert_eq!(rows[0].cache_read, 995_522, "the full reading survives");
+            assert_eq!(rows[0].cache_write_1h, 1_245);
+            assert_eq!(rows[0].messages, 1, "still ONE message");
+        }
+    }
+
+    /// Raising is PER CLASS, never by the bigger total: 5m and 1h bill at different rates, so a
+    /// reading that is larger overall must not be allowed to move tokens between them.
+    #[test]
+    fn raising_a_counted_message_cannot_move_tokens_between_cache_classes() {
+        let mut billed = CountedUsage {
+            cache_write_5m: 100,
+            cache_write_1h: 0,
+            ..Default::default()
+        };
+        let other = CountedUsage {
+            cache_write_5m: 0,
+            cache_write_1h: 900,
+            ..Default::default()
+        };
+        assert_eq!(other.above(&billed).cache_write_5m, 0, "no negative delta");
+        assert_eq!(other.above(&billed).cache_write_1h, 900);
+        billed.raise_to(&other);
+        assert_eq!((billed.cache_write_5m, billed.cache_write_1h), (100, 900));
+    }
+
+    /// A transcript whose timestamps start deep in the file is still ordered by them. The search
+    /// used to stop after 64 lines, which on the archived corpus was one line from changing a
+    /// file's position in the scan.
+    #[test]
+    fn the_start_time_is_found_however_long_the_preamble() {
+        let root = tmp_root("preamble");
+        let mut lines: Vec<String> = (0..200)
+            .map(|i| format!(r#"{{"type":"file-history-snapshot","messageId":"m{i}"}}"#))
+            .collect();
+        lines.push(turn("m1", "2026-08-05T10:00:00.000Z", 1_000, 0, 0));
+        let p = write(&root, "-proj/sess-a.jsonl", &lines.join("\n"));
+        assert_eq!(
+            first_timestamp(&p).as_deref(),
+            Some("2026-08-05T10:00:00.000Z")
+        );
+        // …and a transcript with no timestamped event at all is not a crash, it is `None`.
+        let bare = write(
+            &root,
+            "-proj/sess-b.jsonl",
+            r#"{"type":"mode","mode":"normal"}"#,
+        );
+        assert_eq!(first_timestamp(&bare), None);
+    }
+
+    /// …and the rule is the ORDER, not the filename. Reverse which session started first and the
+    /// charge moves with it, so a lexical accident cannot decide who paid.
+    #[test]
+    fn the_earlier_session_keeps_the_message_whichever_it_is_named() {
+        let root = tmp_root("continuation-order");
+        let carried = turn("m-carried", "2026-08-05T10:00:00.000Z", 2_000_000, 0, 0);
+        // `zzz` starts first and `aaa` continues it: the opposite of the path ordering.
+        write(
+            &root,
+            "-proj/zzz.jsonl",
+            &[
+                turn("m-early", "2026-08-05T09:00:00.000Z", 300_000, 0, 0),
+                carried.clone(),
+            ]
+            .join("\n"),
+        );
+        write(&root, "-proj/aaa.jsonl", &carried);
+        let r = scan(&root, SessionQuery::default());
+        assert_eq!(session(&r, "zzz")["tokens"], 2_300_000);
+        assert_eq!(session(&r, "aaa")["tokens"], 0);
+    }
+
+    /// A subagent's spend is its own row under its parent and is NOT in the parent's own total.
+    /// The corpus total holds each exactly once, so the two can be added without double counting.
+    #[test]
+    fn a_subagents_spend_stays_out_of_its_parents_total() {
+        let root = tmp_root("subagent");
+        write(
+            &root,
+            "-proj/sess-a.jsonl",
+            &turn("m-main", "2026-08-05T10:00:00.000Z", 1_000_000, 0, 0),
+        );
+        write(
+            &root,
+            "-proj/sess-a/subagents/agent-a0123456789abcdef.jsonl",
+            &turn("m-sub", "2026-08-05T10:05:00.000Z", 8_000_000, 0, 0),
+        );
+        write(
+            &root,
+            "-proj/sess-a/subagents/agent-a0123456789abcdef.meta.json",
+            r#"{"description":"audit the diff","agentType":"general-purpose"}"#,
+        );
+        let r = scan(&root, SessionQuery::default());
+        let s = session(&r, "sess-a");
+        assert_eq!(s["tokens"], 1_000_000, "the session's OWN turns only");
+        assert_eq!(s["subagentTokens"], 8_000_000);
+        assert_eq!(s["subagents"][0]["label"], "audit the diff");
+        assert_eq!(s["subagents"][0]["agent"], "a0123456789abcdef");
+        assert_eq!(r["totals"]["sessionTokens"], 1_000_000);
+        assert_eq!(r["totals"]["subagentTokens"], 8_000_000);
+        assert_eq!(r["totals"]["tokens"], 9_000_000);
+    }
+
+    /// A workflow subagent sits two directories deeper and its sidecar names no description. It is
+    /// still that session's subagent, and it is named by its type rather than by an empty cell.
+    #[test]
+    fn a_nested_workflow_subagent_belongs_to_its_session() {
+        let root = tmp_root("workflow");
+        write(
+            &root,
+            "-proj/sess-a/subagents/workflows/wf_abc/agent-adeadbeefdeadbeef.jsonl",
+            &turn("m-wf", "2026-08-05T10:00:00.000Z", 700_000, 0, 0),
+        );
+        write(
+            &root,
+            "-proj/sess-a/subagents/workflows/wf_abc/agent-adeadbeefdeadbeef.meta.json",
+            r#"{"agentType":"workflow-subagent","spawnDepth":1}"#,
+        );
+        let r = scan(&root, SessionQuery::default());
+        let s = session(&r, "sess-a");
+        assert_eq!(
+            s["tokens"], 0,
+            "the session transcript is absent, not faked"
+        );
+        assert_eq!(s["subagentTokens"], 700_000);
+        assert_eq!(s["subagents"][0]["label"], "workflow-subagent");
+    }
+
+    /// A path in the corpus that is neither shape contributes nothing, and SAYS SO. A silently
+    /// dropped transcript is a total that moved for no stated reason.
+    #[test]
+    fn a_path_of_no_known_shape_is_reported_not_dropped() {
+        let root = tmp_root("unclassified");
+        write(
+            &root,
+            "-proj/sess-a.jsonl",
+            &turn("m1", "2026-08-05T10:00:00.000Z", 10, 0, 0),
+        );
+        write(&root, "-proj/sess-a/notes/scratch.jsonl", "{}");
+        let r = scan(&root, SessionQuery::default());
+        let unclassified = r["corpus"]["unclassifiedPaths"].as_array().unwrap();
+        assert_eq!(unclassified.len(), 1);
+        assert!(unclassified[0].as_str().unwrap().ends_with("scratch.jsonl"));
+    }
+
+    /// Path classification is a decision about the tree, so it is pinned directly.
+    #[test]
+    fn transcripts_are_classified_by_path() {
+        let root = std::path::Path::new("/r");
+        let of = |p: &str| classify_transcript(root, std::path::Path::new(p));
+        let s = of("/r/-proj/abc.jsonl").unwrap();
+        assert_eq!(s.kind, TranscriptKind::Session);
+        assert_eq!((s.session.as_str(), s.project.as_str()), ("abc", "-proj"));
+        let a = of("/r/-proj/abc/subagents/agent-a1.jsonl").unwrap();
+        assert_eq!(a.kind, TranscriptKind::Subagent("a1".into()));
+        assert_eq!(a.session, "abc");
+        let w = of("/r/-proj/abc/subagents/workflows/wf_z/agent-a2.jsonl").unwrap();
+        assert_eq!(w.kind, TranscriptKind::Subagent("a2".into()));
+        assert_eq!(w.session, "abc");
+        // Not transcripts: a bare file at the root, a sidecar, a non-agent file under subagents.
+        assert!(of("/r/loose.jsonl").is_none());
+        assert!(of("/r/-proj/abc/subagents/notes.jsonl").is_none());
+        assert!(of("/r/-proj/abc/other/agent-a3.jsonl").is_none());
+    }
+
+    // ── the numbers themselves ─────────────────────────────────────────────────
+
+    /// The two cache-write classes bill differently (1h is 2x input, 5m is 1.25x), so they stay
+    /// distinct all the way out to the report rather than being blended into one write column.
+    #[test]
+    fn the_two_cache_write_classes_reach_the_report_apart() {
+        let root = tmp_root("ttl");
+        write(
+            &root,
+            "-proj/sess-a.jsonl",
+            &[
+                turn("m1", "2026-08-05T10:00:00.000Z", 0, 1_000_000, 0),
+                turn("m2", "2026-08-05T10:01:00.000Z", 0, 0, 1_000_000),
+            ]
+            .join("\n"),
+        );
+        let s = session(&scan(&root, SessionQuery::default()), "sess-a");
+        assert_eq!(s["cacheWrite5m"], 1_000_000);
+        assert_eq!(s["cacheWrite1h"], 1_000_000);
+        // $6.25 at the 5m rate plus $10.00 at the 1h rate. One blended rate cannot produce this.
+        assert_eq!(s["usd"], 16.25);
+    }
+
+    /// `contextTokens` is the reading `cap-agent-briefs.py` gates a resume on: the LAST
+    /// `cache_read_input_tokens` in the stream, which is the agent's context size NOW. It is not a
+    /// sum, and it is not the largest — a compacted agent's context goes DOWN, and a gate reading
+    /// a maximum would refuse the resume that compaction just made cheap.
+    #[test]
+    fn context_tokens_is_where_the_stream_ended() {
+        let root = tmp_root("ctx");
+        write(
+            &root,
+            "-proj/sess-a/subagents/agent-a1.jsonl",
+            &[
+                turn("m1", "2026-08-05T10:00:00.000Z", 180_000, 0, 0),
+                turn("m2", "2026-08-05T10:01:00.000Z", 40_000, 0, 0),
+            ]
+            .join("\n"),
+        );
+        let s = session(&scan(&root, SessionQuery::default()), "sess-a");
+        assert_eq!(s["subagents"][0]["contextTokens"], 40_000);
+        assert_eq!(
+            s["subagents"][0]["tokens"], 220_000,
+            "spend is still the sum"
+        );
+    }
+
+    /// When a `usage` block carries the per-iteration breakdown, the context reading comes from
+    /// the LAST iteration — the same value a regex over the file's tail lands on, because
+    /// `iterations` is serialised after the message-level fields.
+    #[test]
+    fn context_tokens_reads_the_last_iteration_when_there_is_one() {
+        let ev: Value = serde_json::from_str(
+            r#"{"type":"assistant","timestamp":"2026-08-05T10:00:00.000Z","message":{
+                 "id":"m1","model":"claude-opus-5","usage":{
+                   "cache_read_input_tokens":10,
+                   "iterations":[{"cache_read_input_tokens":900},
+                                 {"cache_read_input_tokens":992888}]}}}"#,
+        )
+        .unwrap();
+        let mut probe = AttributionProbe::default();
+        probe.observe(&ev);
+        assert_eq!(probe.take_readings().0, Some(992_888));
+    }
+
+    /// A window must not change what "context now" means. The gate asks how big the agent is, and
+    /// a report bounded to last Tuesday does not make it smaller.
+    #[test]
+    fn context_tokens_ignores_the_window() {
+        let root = tmp_root("ctx-window");
+        write(
+            &root,
+            "-proj/sess-a/subagents/agent-a1.jsonl",
+            &[
+                turn("m1", "2026-08-05T10:00:00.000Z", 30_000, 0, 0),
+                turn("m2", "2026-08-09T10:00:00.000Z", 150_000, 0, 0),
+            ]
+            .join("\n"),
+        );
+        let r = scan(
+            &root,
+            SessionQuery {
+                window: Window {
+                    since: None,
+                    until: Some("2026-08-06".into()),
+                },
+                ..Default::default()
+            },
+        );
+        let a = &session(&r, "sess-a")["subagents"][0];
+        assert_eq!(a["tokens"], 30_000, "spend IS windowed");
+        assert_eq!(a["contextTokens"], 150_000, "context is not");
+    }
+
+    /// `--agent` reads that subagent's transcript and no other file — the property that makes it
+    /// affordable from a PreToolUse hook, where a 1.4 GB corpus scan is not.
+    #[test]
+    fn an_agent_query_reads_only_that_transcript() {
+        let root = tmp_root("agent-query");
+        write(
+            &root,
+            "-proj/sess-a.jsonl",
+            &turn("m-main", "2026-08-05T10:00:00.000Z", 9_000_000, 0, 0),
+        );
+        for id in ["a1", "a2"] {
+            write(
+                &root,
+                &format!("-proj/sess-a/subagents/agent-{id}.jsonl"),
+                &turn(
+                    &format!("m-{id}"),
+                    "2026-08-05T10:05:00.000Z",
+                    100_000,
+                    0,
+                    0,
+                ),
+            );
+        }
+        let r = scan(
+            &root,
+            SessionQuery {
+                agent: Some("a2".into()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(r["corpus"]["transcriptsRead"], 1);
+        assert_eq!(r["totals"]["tokens"], 100_000);
+        let s = session(&r, "sess-a");
+        assert_eq!(s["tokens"], 0, "the parent session was not read");
+        assert_eq!(s["subagents"].as_array().unwrap().len(), 1);
+        assert_eq!(s["subagents"][0]["agent"], "a2");
+    }
+
+    // ── naming ─────────────────────────────────────────────────────────────────
+
+    /// A human's title outranks the model's however late the model's arrived, and the LAST of
+    /// either wins — a session renames itself as it goes.
+    #[test]
+    fn a_session_is_named_by_its_latest_human_title() {
+        let mut t = SessionTitle::default();
+        let ev = |k: &str, v: &str| {
+            serde_json::from_str::<Value>(&format!(
+                r#"{{"type":"{}","{}":"{}"}}"#,
+                if k == "customTitle" {
+                    "custom-title"
+                } else {
+                    "ai-title"
+                },
+                k,
+                v
+            ))
+            .unwrap()
+        };
+        t.observe(&ev("aiTitle", "first guess"));
+        t.observe(&ev("customTitle", "token corpus"));
+        t.observe(&ev("aiTitle", "second guess"));
+        assert_eq!(t.label("fallback-id"), "token corpus");
+        assert_eq!(
+            SessionTitle::default().label("fallback-id"),
+            "fallback-id",
+            "an untitled session is named by the only thing that is true"
+        );
+    }
+
+    /// The sidecar's `description` is the operator's own name for the work. Without one the type
+    /// names the row; without that either, the id does. Nothing is invented.
+    #[test]
+    fn a_subagent_falls_back_from_description_to_type() {
+        assert_eq!(
+            AgentMeta::parse(r#"{"description":"fix #130","agentType":"general-purpose"}"#),
+            AgentMeta {
+                description: Some("fix #130".into()),
+                agent_type: Some("general-purpose".into()),
+            }
+        );
+        assert_eq!(
+            AgentMeta::parse(r#"{"agentType":"workflow-subagent","spawnDepth":1}"#).description,
+            None
+        );
+        assert_eq!(AgentMeta::parse("not json"), AgentMeta::default());
+        assert_eq!(AgentMeta::parse(r#"{"description":""}"#).description, None);
+    }
+
+    /// The refactor that made the corpus scan possible must not have moved the cron's numbers:
+    /// [`token_attribution`] over one trace is still one probe with an open window and a fresh
+    /// dedupe set, which is what it always was.
+    #[test]
+    fn one_trace_still_reads_exactly_as_it_did() {
+        let trace = [
+            turn("m1", "2026-08-05T10:00:00.000Z", 1_000_000, 0, 0),
+            turn("m1", "2026-08-05T10:00:00.500Z", 1_000_000, 0, 0),
+            turn("m2", "2026-08-05T10:01:00.000Z", 2_000_000, 4_000, 8_000),
+        ]
+        .join("\n");
+        let rows = token_attribution(&trace);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].label, "main loop");
+        assert_eq!(rows[0].messages, 2, "the repeat is one message");
+        assert_eq!(rows[0].cache_read, 3_000_000);
+        assert_eq!(
+            (rows[0].cache_write_5m, rows[0].cache_write_1h),
+            (4_000, 8_000)
+        );
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -42716,6 +44381,33 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// What the INTERACTIVE sessions spent, per session and per dispatched subagent, over a time
+    /// window. `token-report` reads ONE cron trace; this reads the whole `~/.claude/projects`
+    /// corpus with the same accounting — usage once per `message.id`, deduped ACROSS files because
+    /// a forked session copies its transcript, and a subagent's spend reported beside its parent's
+    /// rather than inside it.
+    SessionTokens {
+        /// The transcript corpus (default `$HOME/.claude/projects`).
+        #[arg(long)]
+        projects: Option<String>,
+        /// Count only events at or after this instant. RFC3339, or any prefix of one
+        /// (`2026-08-05`).
+        #[arg(long)]
+        since: Option<String>,
+        /// Count only events STRICTLY BEFORE this instant. Same spelling as `--since`.
+        #[arg(long)]
+        until: Option<String>,
+        /// Only this session id.
+        #[arg(long)]
+        session: Option<String>,
+        /// Only this subagent id. Selects the transcript by name, so this costs one file open
+        /// rather than a corpus scan — the shape a PreToolUse hook can afford to call.
+        #[arg(long)]
+        agent: Option<String>,
+        /// Emit the whole report object instead of the table.
+        #[arg(long)]
+        json: bool,
+    },
     /// What it cost to LAND work: per-task spend joined to the typed work items `open_pr` recorded,
     /// bucketed landed / delivered-awaiting-human / churn. Only churn is waste — merges are
     /// human-gated by design. A task with no typed work item is churn; nothing is inferred from a
@@ -46858,6 +48550,22 @@ fn main() {
             json,
         } => journal_report_mode(&journal, runs.as_deref(), json),
         Cmd::TokenReport { trace, json } => token_report_mode(&trace, json),
+        Cmd::SessionTokens {
+            projects,
+            since,
+            until,
+            session,
+            agent,
+            json,
+        } => session_tokens_mode(
+            projects.as_deref(),
+            &SessionQuery {
+                window: Window { since, until },
+                session,
+                agent,
+            },
+            json,
+        ),
         Cmd::WorkTokens { path, json } => work_tokens_mode(&path, json),
         Cmd::BackfillMetrics { path, write } => backfill_metrics_mode(&path, write),
         Cmd::UsageGate => usage_gate_mode(),
@@ -50646,9 +52354,12 @@ mod usage_probe_tests {
         assert_eq!(repeated, 33, "message ids appearing more than once");
     }
 
-    /// Every repeat of a message id carries byte-identical usage. This is WHY first/last/max per
-    /// id are interchangeable — and if the SDK ever changes that, this test is the tripwire that
-    /// says the "take the first" rule has to be revisited.
+    /// In a CRON trace every repeat of a message id carries byte-identical usage, so first, last
+    /// and max per id are interchangeable there. This was written as the tripwire for the day that
+    /// stopped holding, and the interactive corpus tripped it: a compacted session's continuation
+    /// restates a carried-over turn as a zeroed stub, 19 ids and 18.9M cache-read tokens' worth. So
+    /// the rule is now MAX per class ([`CountedUsage`]) — which is why this trace's numbers did not
+    /// move, and why this test still passes unchanged.
     #[test]
     fn repeats_of_one_message_id_carry_identical_usage() {
         let mut by_id: std::collections::BTreeMap<String, Vec<&Value>> = Default::default();

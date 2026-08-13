@@ -3136,6 +3136,93 @@ the three exact fields account for a **median 72%** of a run's spend, range
 55–91% across the 36 model-runs where the rate is solvable. Cache-read alone is
 the term that runs away — the $37.02 run in #97 read 26.4M cached tokens.
 
+### The interactive corpus — `session-tokens`
+
+`pr-review-report session-tokens [--since T] [--until T] [--session ID] [--agent ID] [--json]`.
+
+The crons are one half of what this box spends. The other half is the
+**interactive sessions a human drives**, and nothing read them. They are bigger:
+measured over `~/.claude/projects` on 2026-08-13 — 279 session transcripts, 1,054
+subagent transcripts, 1.5 GB, 40 days — the corpus holds **97,690 messages and
+27,542,215,669 tokens**, of which 27.17 billion are cache reads against 1.19M
+fresh input tokens. Cache reads are essentially all of it. The scan takes ~3s.
+
+This is the **same accounting**, not a second one. `token-report` and
+`session-tokens` both drive `AttributionProbe`, so usage is counted once per
+`message.id` in one place, cache writes are split 5m/1h in one place, and a
+change to either is a change to both. What the corpus needed was a **scope**:
+the probe now carries a time window and a dedupe set that outlives one file.
+
+Three things differ from a cron trace, and each is what makes the reuse work:
+
+- **No `result` event.** Reconstructing the input side from `assistant` events is
+  the only reading available — which is exactly the reading
+  [the live probe](#live-token-spend--and-the-one-number-that-is-not-knowable)
+  was built to do. It also means output tokens are gone for good here: there is
+  no `result.modelUsage` to rescue them, and `usage.output_tokens` is the same
+  message-start snapshot that understates by 18x. The report says so rather than
+  printing it.
+- **No `parent_tool_use_id`.** A dispatched subagent gets its own FILE under
+  `<session>/subagents/**/agent-<id>.jsonl`, and the session transcript does not
+  repeat its turns — across all 279 session transcripts there are **zero**
+  `isSidechain` assistant events. So the split `token-report` makes by key, this
+  makes by file, and a subagent's spend **cannot** land in its parent's total
+  because it was never in its parent's file. The row shows both: `tokens` is the
+  session's own turns, `subagentTokens` is what it dispatched, and the corpus
+  total adds each exactly once — 15,590,501,650 against 11,951,714,019 over the
+  archived corpus, so nearly half the spend is dispatched work that no
+  session-level reading would have shown.
+- **A message id spans files.** A session that compacts CONTINUES in a new
+  transcript whose head repeats every turn it carried over, byte for byte — on
+  `a764cae5` → `8a366ec8` the 640 shared ids are positions 0..639 of the
+  successor, contiguous from its first event. **2,246 message ids appear in more
+  than one file.** So the dedupe set spans the whole scan, and transcripts are
+  read **oldest first**: a carried-over turn was paid for by the session that
+  made it, which is the one that started earlier, so the predecessor keeps the
+  spend and the continuation is charged only for what it added.
+
+**The window selects events, not files.** `--since` is inclusive, `--until` is
+exclusive, and both compare as text against the transcripts' own RFC3339
+spelling — so a prefix (`2026-08-05`) is a legal bound, two adjacent windows
+partition the corpus instead of both claiming the instant they share, and a bound
+that is not RFC3339-shaped is **refused** rather than compared. `05/08/2026`
+sorts below every timestamp in the corpus: it would select nothing while looking
+exactly like a quiet period.
+
+**`contextTokens` is not a spend term.** It is the LAST
+`cache_read_input_tokens` in a transcript, which is what that agent is carrying
+right now — so it is neither deduped nor windowed, because a report bounded to
+last Tuesday does not make an agent's context smaller. It is the number
+`~/.claude/hooks/cap-agent-briefs.py` gates a resume on, read out of the very
+same bytes (`/tmp/claude-*/*/*/tasks/<id>.output` is a **symlink** to the
+transcript). `--agent <id>` selects that transcript by name, so the answer costs
+one file open rather than a 1.4 GB scan.
+
+**A repeat may only RAISE a class, never lower it.** The dedupe used to be a set
+of ids, on the finding that every repeat of a message carries byte-identical
+usage — true of the cron traces, and pinned by a test written as the tripwire for
+the day it stopped being true. This corpus is that day: a continuation's copy of
+a carried-over turn can be a **stub**, with `input_tokens`,
+`cache_read_input_tokens` and `cache_creation_input_tokens` all zero while the
+`cache_creation` TTL breakdown beside them is intact. 19 message ids have two
+readings like that, one strictly dominating the other on every class, 18.9M
+tokens apart. Under "first occurrence wins" the total then depended on **scan
+order**, with nothing in the output to say which order produced it — read
+alphabetically, the stub is first for all 19. Max-per-class is commutative, so
+the answer no longer moves.
+
+**Verified against an independent reimplementation.** On a frozen copy of the
+corpus, a second implementation of the stated rules — different language, and a
+**reversed** scan order, so agreement is evidence and not a tautology — lands on
+the same numbers to the token: 97,690 messages, 88,567 repeat occurrences,
+27,169,216,898 cache-read, 209,796,908 5m and 162,011,644 1h cache-write.
+
+One known undercount, stated rather than corrected: some `usage` blocks carry a
+per-iteration breakdown whose classes do not sum to the message-level fields
+beside them. Taking the message-level field — parity with the cron reader — gives
+27,542,215,669 tokens where preferring the breakdown gives 27,551,949,304, a
+**9,733,635 token undercount, 0.035%**.
+
 ### Tokens to land work — `work-tokens`
 
 `pr-review-report work-tokens metrics/runs.jsonl [--json]`.
