@@ -2,10 +2,16 @@
   "states": {
     "ai:blocked-on": [
       {
+        "repo": "rainlanguage/rain.factory.deploy",
+        "number": 8,
+        "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/8",
+        "title": "feat: open-salt deterministic clone variant (ICloneableFactoryV4)"
+      },
+      {
         "repo": "rainlanguage/rain.factory",
         "number": 51,
         "url": "https://github.com/rainlanguage/rain.factory/pull/51",
-        "title": "feat: open-salt deterministic clone variant (ICloneableFactoryV4)"
+        "title": "feat: ICloneableFactoryV4 — open-salt deterministic clone interface"
       },
       {
         "repo": "rainlanguage/rain.factory.deploy",
@@ -844,13 +850,19 @@
   "lanes": {
     "vet-lifecycle": {
       "ai:blocked-on": {
-        "count": 19,
+        "count": 20,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.factory.deploy",
+            "number": 8,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/8",
+            "title": "feat: open-salt deterministic clone variant (ICloneableFactoryV4)"
+          },
           {
             "repo": "rainlanguage/rain.factory",
             "number": 51,
             "url": "https://github.com/rainlanguage/rain.factory/pull/51",
-            "title": "feat: open-salt deterministic clone variant (ICloneableFactoryV4)"
+            "title": "feat: ICloneableFactoryV4 — open-salt deterministic clone interface"
           },
           {
             "repo": "rainlanguage/rain.factory.deploy",
@@ -963,8 +975,26 @@
         ]
       },
       "un-vetted": {
-        "count": 32,
+        "count": 35,
         "prs": [
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 302,
+            "url": "https://github.com/rainlanguage/rainix/pull/302",
+            "title": "rainix owns the deploy-repo release freeze: rainix-static cut-release"
+          },
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 283,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/283",
+            "title": "The vetter's judgement precedents become a versioned skill, not machine-local memory"
+          },
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 299,
+            "url": "https://github.com/rainlanguage/rainix/pull/299",
+            "title": "rainix-static: cap launch-loaded agent context at 4096 bytes (floor-only ratchet)"
+          },
           {
             "repo": "rainlanguage/rain.tofu.erc20-decimals",
             "number": 28,
@@ -1961,6 +1991,18 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 282,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/282",
+      "title": "FSM correctness depends on machine-local auto-memory that does not travel"
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 300,
+      "url": "https://github.com/rainlanguage/rainix/issues/300",
+      "title": "Migrate legacy test/util(s) trees to the sol tree convention, then lint it"
+    },
     {
       "repo": "rainlanguage/rainix",
       "number": 298,
@@ -5788,8 +5830,8 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 32,
-    "blockedOn": 19,
+    "unvetted": 35,
+    "blockedOn": 20,
     "ready": 0,
     "needsWork": 103,
     "relink": 0,
@@ -5799,16 +5841,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 154,
+    "totalProducerPrs": 158,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 633,
+    "uncoveredIssues": 635,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 794
+    "openIssues": 797
   },
   "ages": {
     "openIssues": {
-      "meanDays": 310.8,
+      "meanDays": 309.6,
       "medianDays": 107.0,
       "oldestDays": 1662.6
     }
