@@ -1,6 +1,6 @@
 ---
 name: rain-repo-conventions
-description: The standing constraints on any agent doing work in a rainlanguage repo, so a brief does not have to restate them — what is never done, what is true of the box and the harness rather than of the work, and what is a route around a defect that should be fixed. Covers clone and scratch isolation for parallel agents, the irreversible acts reserved to the human, the `## QA` gate every `gh pr create` passes through, the force-backgrounding of long builds and how to read one to completion, the wait shapes that never exit, and the soldeer bump sequence. Invoke once per session, before the first clone or the first write. Triggers on "work this issue", "open a PR", "clone the repo to work in", "bump a dependency", "run the test suite", "CI is red", "report the result".
+description: The standing constraints on any agent doing work in a rainlanguage repo, so a brief does not have to restate them — what is never done, what is true of the box and the harness rather than of the work, and what is a route around a defect that should be fixed. Covers clone and scratch isolation for parallel agents, the irreversible acts reserved to the human, the `## QA` gate every `gh pr create` passes through, the force-backgrounding of long builds and how to read one to completion, what makes a wait terminate, and the soldeer bump sequence. Invoke once per session, before the first clone or the first write. Triggers on "work this issue", "open a PR", "clone the repo to work in", "bump a dependency", "run the test suite", "wait for CI", "CI is red", "report the result".
 version: 0.1.0
 ---
 
@@ -55,6 +55,14 @@ Three groups, and the group tells you what kind of rule you are reading:
   pass/fail line in front of you — not an exit code you inferred, not a run you
   started and left, not a suite that was green on the last head. A claim about a
   run you did not read to its end is fabricated whatever the run goes on to do.
+- **A wait is bounded, and never keyed on a pattern its own command line
+  contains.** Every loop carries a maximum iteration count and says what it last
+  saw when it reaches it, because an unbounded loop whose condition never
+  arrives does not fail — it runs on past the turn that started it, invisible
+  and unattended, and they accumulate. The self-matching pattern below is the
+  other way one never terminates. Prefer neither shape: poll once in the
+  foreground and move on, or read the backgrounded output file. A loop is the
+  last resort, not the default.
 
 ## Facts
 
@@ -92,10 +100,10 @@ Three groups, and the group tells you what kind of rule you are reading:
 - **`jq` is on PATH only inside the flake devshell.** Outside one it is simply
   absent, and a pipeline through it fails in a way that reads like the `gh` call
   failing. `gh --jq` takes the same expressions and needs nothing on PATH.
-- **`pgrep -f <pattern>` matches the searching process's own command line**, so
-  a wait built on it is satisfied by itself. Do not write
-  `until <cond>; do sleep; done` at all — poll once in the foreground and move
-  on, or read the output file above.
+- **`pgrep -f <pattern>` matches the searching process's own command line.** The
+  pattern sits in the argv of the shell doing the looking, so the search finds
+  itself and goes on finding itself after the process it is watching is gone. A
+  wait keyed on it can never be satisfied in the direction it needs.
 
 ## Workarounds
 

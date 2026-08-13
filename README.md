@@ -442,7 +442,8 @@ The third thing this marketplace publishes is for **neither** actor in
 particular: `rain-repo-conventions` is ONE skill holding what is true around the
 work in any rainlanguage repo — the isolation a parallel agent needs, the
 irreversible acts reserved to the human, the gate a `gh pr create` passes
-through, and the environment facts whose shape a run breaks on.
+through, what makes a wait terminate, and the environment facts whose shape a
+run breaks on.
 
 ```
 /plugin marketplace add rainlanguage/issue-pr-cron
@@ -466,6 +467,15 @@ the entry is simply wrong, and a stale fact carried as belief is worse than no
 entry. _Workarounds_ route around a defect elsewhere and each names what would
 retire it. An agent that cannot tell which it is holding argues with a fact,
 verifies a prohibition, or treats a piece of debt as permanent.
+
+**The split disciplines the entries themselves.** `pgrep -f` matching the
+searching process's own command line is a FACT — checkable, and about the box.
+"Every wait carries a maximum iteration count and is never keyed on a pattern
+its own command line contains" is a RULE. Written as one entry they collapsed
+into a ban on the whole `until <cond>; do sleep; done` shape, which is stronger
+than the fact underneath it: a bounded loop terminates correctly, so the ban
+forbade something safe while naming neither thing that actually strands a wait.
+A rule that overreaches its fact is the failure this grouping is built to catch.
 
 **It states properties, never cases**, for the reasons the section above gives.
 It is also not a gate: the `## QA` block's substance stays in
