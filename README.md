@@ -400,7 +400,18 @@ run has an item to spend it on. The prompt therefore carries the GATES and one
 line telling the vetter to invoke this skill once before the run's first
 `record_verdict`; the calibration itself loads on demand, and a run with an empty
 queue pays none of it. Extracting it took `review-prompt.txt` from 45,588 bytes
-to 43,907.
+to 44,479 — the prompt keeps every gate RULE and loses the worked examples the
+skill now owns.
+
+**One set of worked examples deliberately stayed.** The SCREENSHOT gate's two
+incidents (`cyclo.site#431`, `#408`) are pinned to the prompt by
+`the_vetter_prompt_narrows_the_screenshot_waiver_to_a_failed_render`, on the
+stated property that a bare prohibition is the kind a vetter argues around. That
+is a contract, and it is a sound one: the prompt is read in full on every run
+while a skill is read when something invokes it, so a mandatory gate's incidents
+belong on the surface that cannot be skipped. A precedent moves to the skill when
+it CALIBRATES a gate; it stays here when a test says the gate itself is
+incomplete without it.
 
 **It is not an audit lens and cannot become one.** `record_verdict` credits only
 a skill whose id ends in `audit` (`AUDIT_SKILL_LEAF`), so invoking this one

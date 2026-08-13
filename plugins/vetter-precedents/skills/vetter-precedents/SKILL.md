@@ -251,14 +251,6 @@ the current one.
 - **A rework that completes the CALLER side can ADD a visible state the original
   diff lacked and newly trip the gate** — a PR whose QA gate the rework cured can
   fail on visual evidence it never previously owed. (`cyclo.site#403`.)
-- **A waiver made of a CLAIM about the render waives nothing, and a marker
-  carried across passes is not evidence.** "Rendered output is pixel-identical"
-  waived a change that removed attributes from an input carrying a long
-  conditional Tailwind class list — identical is precisely what an unintended
-  shift hides behind (`cyclo.site#431`). A screenshot-pending marker rode through
-  THREE vetter passes on a rewritten rewards card that, rendered once, listed
-  four epochs that had ALL ENDED — the defect all three verdicts missed
-  (`cyclo.site#408`).
 - **A pure-visual PR carrying screenshots plus an honest verified /
   not-verified analysis is not sent back for the QA block's absence when a human
   has already approved at head.** (`rain-org-health#76`.)
