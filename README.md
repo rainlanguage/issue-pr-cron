@@ -3142,10 +3142,11 @@ the term that runs away — the $37.02 run in #97 read 26.4M cached tokens.
 
 The crons are one half of what this box spends. The other half is the
 **interactive sessions a human drives**, and nothing read them. They are bigger:
-measured over `~/.claude/projects` on 2026-08-13 — 279 session transcripts, 1,054
-subagent transcripts, 1.5 GB, 40 days — the corpus holds **97,690 messages and
-27,542,215,669 tokens**, of which 27.17 billion are cache reads against 1.19M
-fresh input tokens. Cache reads are essentially all of it. The scan takes ~3s.
+measured over `~/.claude/projects` on 2026-08-13 — 279 session transcripts,
+1,054 subagent transcripts, 1.5 GB, 40 days — the corpus holds **97,690 messages
+and 27,542,215,669 tokens**, of which 27.17 billion are cache reads against
+1.19M fresh input tokens. Cache reads are essentially all of it. The scan takes
+~3s.
 
 This is the **same accounting**, not a second one. `token-report` and
 `session-tokens` both drive `AttributionProbe`, so usage is counted once per
@@ -3155,8 +3156,8 @@ the probe now carries a time window and a dedupe set that outlives one file.
 
 Three things differ from a cron trace, and each is what makes the reuse work:
 
-- **No `result` event.** Reconstructing the input side from `assistant` events is
-  the only reading available — which is exactly the reading
+- **No `result` event.** Reconstructing the input side from `assistant` events
+  is the only reading available — which is exactly the reading
   [the live probe](#live-token-spend--and-the-one-number-that-is-not-knowable)
   was built to do. It also means output tokens are gone for good here: there is
   no `result.modelUsage` to rescue them, and `usage.output_tokens` is the same
@@ -3184,10 +3185,10 @@ Three things differ from a cron trace, and each is what makes the reuse work:
 **The window selects events, not files.** `--since` is inclusive, `--until` is
 exclusive, and both compare as text against the transcripts' own RFC3339
 spelling — so a prefix (`2026-08-05`) is a legal bound, two adjacent windows
-partition the corpus instead of both claiming the instant they share, and a bound
-that is not RFC3339-shaped is **refused** rather than compared. `05/08/2026`
-sorts below every timestamp in the corpus: it would select nothing while looking
-exactly like a quiet period.
+partition the corpus instead of both claiming the instant they share, and a
+bound that is not RFC3339-shaped is **refused** rather than compared.
+`05/08/2026` sorts below every timestamp in the corpus: it would select nothing
+while looking exactly like a quiet period.
 
 **`contextTokens` is not a spend term.** It is the LAST
 `cache_read_input_tokens` in a transcript, which is what that agent is carrying
@@ -3200,9 +3201,9 @@ one file open rather than a 1.4 GB scan.
 
 **A repeat may only RAISE a class, never lower it.** The dedupe used to be a set
 of ids, on the finding that every repeat of a message carries byte-identical
-usage — true of the cron traces, and pinned by a test written as the tripwire for
-the day it stopped being true. This corpus is that day: a continuation's copy of
-a carried-over turn can be a **stub**, with `input_tokens`,
+usage — true of the cron traces, and pinned by a test written as the tripwire
+for the day it stopped being true. This corpus is that day: a continuation's
+copy of a carried-over turn can be a **stub**, with `input_tokens`,
 `cache_read_input_tokens` and `cache_creation_input_tokens` all zero while the
 `cache_creation` TTL breakdown beside them is intact. 19 message ids have two
 readings like that, one strictly dominating the other on every class, 18.9M
@@ -3219,9 +3220,9 @@ the same numbers to the token: 97,690 messages, 88,567 repeat occurrences,
 
 One known undercount, stated rather than corrected: some `usage` blocks carry a
 per-iteration breakdown whose classes do not sum to the message-level fields
-beside them. Taking the message-level field — parity with the cron reader — gives
-27,542,215,669 tokens where preferring the breakdown gives 27,551,949,304, a
-**9,733,635 token undercount, 0.035%**.
+beside them. Taking the message-level field — parity with the cron reader —
+gives 27,542,215,669 tokens where preferring the breakdown gives 27,551,949,304,
+a **9,733,635 token undercount, 0.035%**.
 
 ### Tokens to land work — `work-tokens`
 
