@@ -9,11 +9,11 @@ or leave one out.
 It is grouped by the KIND of rule each entry is, because that is what decides
 what a reader does with it:
 
-| Section         | What the group is                                                                                          |
-| --------------- | ---------------------------------------------------------------------------------------------------------- |
-| **Rules**       | chosen, and they do not expire — nothing about the box lifts one                                           |
+| Section         | What the group is                                                                                            |
+| --------------- | ------------------------------------------------------------------------------------------------------------ |
+| **Rules**       | chosen, and they do not expire — nothing about the box lifts one                                             |
 | **Facts**       | true of the environment rather than of the work — stated so you can check one, wrong the day the box changes |
-| **Workarounds** | a route around a defect elsewhere, each naming what would retire it                                        |
+| **Workarounds** | a route around a defect elsewhere, each naming what would retire it                                          |
 
 The split is not decoration. A rule is argued with, a fact is verified, and a
 workaround is a piece of debt with an owner — an agent that cannot tell which it

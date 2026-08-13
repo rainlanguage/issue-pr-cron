@@ -23,8 +23,7 @@ Three groups, and the group tells you what kind of rule you are reading:
   can check it — when the environment changes the entry is wrong, and a wrong
   fact carried as belief is worse than no entry at all.
 - **Workarounds** route around a defect somewhere else. Each names what would
-  retire it. Fixing the defect and deleting the entry is always the better
-  move.
+  retire it. Fixing the defect and deleting the entry is always the better move.
 
 ## Rules
 
@@ -37,14 +36,14 @@ Three groups, and the group tells you what kind of rule you are reading:
 - **Scratch files and logs go under a path scoped to the repo being worked,
   never a shared session scratchpad.** Parallel agents are handed the same
   scratchpad, so an unqualified filename is one another agent is also writing:
-  what you read back is another repo's numbers, and you will report them as
-  this repo's. A count, a log or a diff read out of a shared path is evidence
-  for nothing.
+  what you read back is another repo's numbers, and you will report them as this
+  repo's. A count, a log or a diff read out of a shared path is evidence for
+  nothing.
 - **Never merge a PR, delete a branch, create a tag, dispatch a deploy workflow
   or broadcast a transaction. Never force-push, in any spelling.** Every one of
-  them either destroys work the next agent cannot recover or moves state a
-  human then has to live with. Performing one is taking a decision, not doing
-  the work you were asked for.
+  them either destroys work the next agent cannot recover or moves state a human
+  then has to live with. Performing one is taking a decision, not doing the work
+  you were asked for.
 - **Assign every PR and issue you open to `thedavidmeister`.** An unassigned
   subject has no inbox: it is found only by someone already looking for it.
 - **Never depart from an agreed spec without asking first — including to turn a
@@ -85,8 +84,8 @@ Three groups, and the group tells you what kind of rule you are reading:
 
 - **Push the branch before `gh pr create`.** The create is where the gate reads
   the body, and a create against a branch the remote does not have either fails
-  outright or drags an interactive push prompt into a session that cannot
-  answer one.
+  outright or drags an interactive push prompt into a session that cannot answer
+  one.
 - **That gate reads a command line, not a shell.** `--body-file` must be a
   literal absolute path: a `$VAR` or a `~` in the argument is never expanded,
   because the gate resolves quoting and nothing else. This one is not a defect
@@ -113,12 +112,11 @@ Three groups, and the group tells you what kind of rule you are reading:
   resolution that produced it. `update` then **appends** the new remapping
   without pruning the one it replaces: delete the stale line by hand, and check
   what still imports through it — a versioned import prefix is deliberate, so a
-  leftover remapping keeps compiling and pins the old version silently.
-  _Retired when a bump resolves from the manifest and rewrites the remapping in
-  place._
-- **Never commit a `.pre-commit-config.yaml`.** Entering a rainix devshell
-  generates one in the repo root — it is output, regenerated on every entry, and
-  it looks authored because it arrives untracked next to real files. Much of the
-  org already `.gitignore`s it and the rest does not. _Retired per repo by that
-  `.gitignore` line, which is the fix worth making the moment you meet a repo
-  without it._
+  leftover remapping keeps compiling and pins the old version silently. _Retired
+  when a bump resolves from the manifest and rewrites the remapping in place._
+- **Never commit a `.pre-commit-config.yaml`.** Entering a rainix devshell drops
+  one in the repo root — a symlink into the nix store, rewritten on every entry.
+  It is output, not source, and it looks authored because it arrives untracked
+  next to real files. Much of the org already `.gitignore`s it and the rest does
+  not. _Retired per repo by that `.gitignore` line, which is the fix worth
+  making the moment you meet a repo without it._
