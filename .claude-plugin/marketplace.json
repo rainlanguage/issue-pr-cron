@@ -20,6 +20,21 @@
         "close-candidate",
         "github"
       ]
+    },
+    {
+      "name": "vetter-judgement",
+      "source": "./plugins/vetter-judgement",
+      "description": "The judgement half of a PR verdict, as instructions: the properties that decide ready / needs-work / design / close where the vetting prompt's gates and the tool's refusals stop. What the QA gate is actually asking and what supersedes it, what makes a locally sound PR a question for the human, what makes a PR moot rather than wrong, which of a PR's own statements are premises to falsify, what a moved head obliges, and what a human's words settle. One skill the vetter invokes at verdict time, so the calibration loads on demand instead of riding in the run prompt on every run. It states properties, never cases.",
+      "version": "0.1.0",
+      "author": { "name": "Rain Open Source Software Ltd" },
+      "keywords": [
+        "rainlanguage",
+        "pipeline",
+        "code-review",
+        "vetting",
+        "judgement",
+        "github"
+      ]
     }
   ]
 }
