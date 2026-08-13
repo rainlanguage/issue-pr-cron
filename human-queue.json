@@ -5870,13 +5870,13 @@
     "uncoveredIssues": 638,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 800
+    "openIssues": 801
   },
   "ages": {
     "openIssues": {
-      "meanDays": 308.5,
-      "medianDays": 107.0,
-      "oldestDays": 1662.6
+      "meanDays": 308.2,
+      "medianDays": 107.1,
+      "oldestDays": 1662.7
     }
   }
 }
