@@ -975,8 +975,32 @@
         ]
       },
       "un-vetted": {
-        "count": 36,
+        "count": 40,
         "prs": [
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 285,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/285",
+            "title": "feat: the standing repo conventions become a skill, not a per-brief retype"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 308,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/308",
+            "title": "codegen: use LibCodeGen.addressConstantString instead of a local copy"
+          },
+          {
+            "repo": "rainlanguage/rain.verify",
+            "number": 29,
+            "url": "https://github.com/rainlanguage/rain.verify/pull/29",
+            "title": "codegen: use LibCodeGen.addressConstantString instead of a local copy"
+          },
+          {
+            "repo": "rainlanguage/rain.factory.deploy",
+            "number": 11,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/11",
+            "title": "codegen: use LibCodeGen.addressConstantString instead of a local copy"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 305,
@@ -2002,24 +2026,6 @@
       "number": 305,
       "url": "https://github.com/rainlanguage/rainix/issues/305",
       "title": "LibSnapshot already implements the release freeze in Solidity; which layer owns it?"
-    },
-    {
-      "repo": "S01-Issuer/st0x.deploy",
-      "number": 307,
-      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/307",
-      "title": "BuildPointers hand-rolls an address-constant emitter LibCodeGen already provides"
-    },
-    {
-      "repo": "rainlanguage/rain.verify",
-      "number": 28,
-      "url": "https://github.com/rainlanguage/rain.verify/issues/28",
-      "title": "BuildPointers hand-rolls an address-constant emitter LibCodeGen already provides"
-    },
-    {
-      "repo": "rainlanguage/rain.factory.deploy",
-      "number": 10,
-      "url": "https://github.com/rainlanguage/rain.factory.deploy/issues/10",
-      "title": "BuildPointers hand-rolls an address-constant emitter LibCodeGen already provides"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -5878,7 +5884,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 36,
+    "unvetted": 40,
     "blockedOn": 20,
     "ready": 0,
     "needsWork": 103,
@@ -5889,16 +5895,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 159,
+    "totalProducerPrs": 163,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 642,
+    "uncoveredIssues": 639,
     "designPresentable": 0,
     "designNoQuestion": 0,
     "openIssues": 805
   },
   "ages": {
     "openIssues": {
-      "meanDays": 306.8,
+      "meanDays": 306.9,
       "medianDays": 107.3,
       "oldestDays": 1662.9
     }
