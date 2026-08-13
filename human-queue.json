@@ -969,8 +969,62 @@
         ]
       },
       "un-vetted": {
-        "count": 23,
+        "count": 32,
         "prs": [
+          {
+            "repo": "rainlanguage/raindex",
+            "number": 2831,
+            "url": "https://github.com/rainlanguage/raindex/pull/2831",
+            "title": "chore: bump soldeer rain-math-binary 0.1.1 -> 0.1.3"
+          },
+          {
+            "repo": "rainlanguage/rain.merkle",
+            "number": 16,
+            "url": "https://github.com/rainlanguage/rain.merkle/pull/16",
+            "title": "chore(deps): bump rain-math-binary 0.1.1 -> 0.1.3"
+          },
+          {
+            "repo": "rainlanguage/rain.verify",
+            "number": 27,
+            "url": "https://github.com/rainlanguage/rain.verify/pull/27",
+            "title": "chore(deps): bump rain-math-binary 0.1.1 -> 0.1.3"
+          },
+          {
+            "repo": "rainlanguage/rain.dia",
+            "number": 66,
+            "url": "https://github.com/rainlanguage/rain.dia/pull/66",
+            "title": "build(deps): bump rain-math-binary 0.1.1 -> 0.1.3"
+          },
+          {
+            "repo": "rainlanguage/rainlang.interface",
+            "number": 119,
+            "url": "https://github.com/rainlanguage/rainlang.interface/pull/119",
+            "title": "deps: bump rain-math-binary 0.1.1 -> 0.1.3"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 261,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/261",
+            "title": "bump rain-math-binary 0.1.1 -> 0.1.3"
+          },
+          {
+            "repo": "rainlanguage/rainlang",
+            "number": 551,
+            "url": "https://github.com/rainlanguage/rainlang/pull/551",
+            "title": "Bump rain-math-binary 0.1.1 -> 0.1.3"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 205,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/205",
+            "title": "bump rain-math-binary 0.1.1 -> 0.1.3"
+          },
+          {
+            "repo": "rainlanguage/rain.pyth",
+            "number": 32,
+            "url": "https://github.com/rainlanguage/rain.pyth/pull/32",
+            "title": "deps: bump rain-math-binary 0.1.1 -> 0.1.3"
+          },
           {
             "repo": "rainlanguage/adversarial-mutation-test",
             "number": 10,
@@ -5650,7 +5704,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 23,
+    "unvetted": 32,
     "blockedOn": 19,
     "ready": 0,
     "needsWork": 104,
@@ -5661,7 +5715,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 146,
+    "totalProducerPrs": 155,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 617,
     "designPresentable": 0,
@@ -5671,7 +5725,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 317.0,
-      "medianDays": 106.8,
+      "medianDays": 106.9,
       "oldestDays": 1662.4
     }
   }
