@@ -5713,7 +5713,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 317.1,
-      "medianDays": 106.9,
+      "medianDays": 107.0,
       "oldestDays": 1662.5
     }
   }
