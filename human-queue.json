@@ -969,7 +969,7 @@
         ]
       },
       "un-vetted": {
-        "count": 32,
+        "count": 30,
         "prs": [
           {
             "repo": "rainlanguage/raindex",
@@ -984,22 +984,10 @@
             "title": "chore(deps): bump rain-math-binary 0.1.1 -> 0.1.3"
           },
           {
-            "repo": "rainlanguage/rain.verify",
-            "number": 27,
-            "url": "https://github.com/rainlanguage/rain.verify/pull/27",
-            "title": "chore(deps): bump rain-math-binary 0.1.1 -> 0.1.3"
-          },
-          {
             "repo": "rainlanguage/rain.dia",
             "number": 66,
             "url": "https://github.com/rainlanguage/rain.dia/pull/66",
             "title": "build(deps): bump rain-math-binary 0.1.1 -> 0.1.3"
-          },
-          {
-            "repo": "rainlanguage/rainlang.interface",
-            "number": 119,
-            "url": "https://github.com/rainlanguage/rainlang.interface/pull/119",
-            "title": "deps: bump rain-math-binary 0.1.1 -> 0.1.3"
           },
           {
             "repo": "rainlanguage/rain.erc4626.words",
@@ -5704,7 +5692,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 32,
+    "unvetted": 30,
     "blockedOn": 19,
     "ready": 0,
     "needsWork": 104,
@@ -5715,7 +5703,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 155,
+    "totalProducerPrs": 153,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 617,
     "designPresentable": 0,
@@ -5724,9 +5712,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 317.0,
+      "meanDays": 317.1,
       "medianDays": 106.9,
-      "oldestDays": 1662.4
+      "oldestDays": 1662.5
     }
   }
 }
