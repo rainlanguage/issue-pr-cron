@@ -1999,6 +1999,30 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rainix",
+      "number": 305,
+      "url": "https://github.com/rainlanguage/rainix/issues/305",
+      "title": "LibSnapshot already implements the release freeze in Solidity; which layer owns it?"
+    },
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 307,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/307",
+      "title": "BuildPointers hand-rolls an address-constant emitter LibCodeGen already provides"
+    },
+    {
+      "repo": "rainlanguage/rain.verify",
+      "number": 28,
+      "url": "https://github.com/rainlanguage/rain.verify/issues/28",
+      "title": "BuildPointers hand-rolls an address-constant emitter LibCodeGen already provides"
+    },
+    {
+      "repo": "rainlanguage/rain.factory.deploy",
+      "number": 10,
+      "url": "https://github.com/rainlanguage/rain.factory.deploy/issues/10",
+      "title": "BuildPointers hand-rolls an address-constant emitter LibCodeGen already provides"
+    },
+    {
+      "repo": "rainlanguage/rainix",
       "number": 304,
       "url": "https://github.com/rainlanguage/rainix/issues/304",
       "title": "BuildPointers should not exist: pointer generation is part of build"
@@ -5867,14 +5891,14 @@
     "leaks": 0,
     "totalProducerPrs": 159,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 638,
+    "uncoveredIssues": 642,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 801
+    "openIssues": 805
   },
   "ages": {
     "openIssues": {
-      "meanDays": 308.3,
+      "meanDays": 306.8,
       "medianDays": 107.2,
       "oldestDays": 1662.8
     }
