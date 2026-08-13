@@ -148,12 +148,6 @@
         "title": "test: red repro for #54 unchecked mul(_, 0x20) word scaling wrap (EXPECTED RED)"
       },
       {
-        "repo": "rainlanguage/rain.factory",
-        "number": 47,
-        "url": "https://github.com/rainlanguage/rain.factory/pull/47",
-        "title": "Slim rain.factory to the interface library (#46)"
-      },
-      {
         "repo": "cyclofinance/cyclo.site",
         "number": 436,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/436",
@@ -969,8 +963,20 @@
         ]
       },
       "un-vetted": {
-        "count": 30,
+        "count": 32,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.tofu.erc20-decimals",
+            "number": 28,
+            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/28",
+            "title": "fix(ci): grant Package Release the token permissions its callee needs"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 206,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/206",
+            "title": "fix(ci): grant Package Release the token permissions its callee needs"
+          },
           {
             "repo": "rainlanguage/raindex",
             "number": 2831,
@@ -1156,7 +1162,7 @@
     },
     "vetter-verdicts": {
       "ai:needs-work": {
-        "count": 104,
+        "count": 103,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -1187,12 +1193,6 @@
             "number": 100,
             "url": "https://github.com/rainlanguage/rain.solmem/pull/100",
             "title": "test: red repro for #54 unchecked mul(_, 0x20) word scaling wrap (EXPECTED RED)"
-          },
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 47,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/47",
-            "title": "Slim rain.factory to the interface library (#46)"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1961,6 +1961,102 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 298,
+      "url": "https://github.com/rainlanguage/rainix/issues/298",
+      "title": "CLAUDE.md defaults to empty: tool the repetition instead of documenting it"
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 297,
+      "url": "https://github.com/rainlanguage/rainix/issues/297",
+      "title": "autopublish callers rely on a permissive repo setting: no caller declares permissions"
+    },
+    {
+      "repo": "rainlanguage/rain.verify.interface",
+      "number": 14,
+      "url": "https://github.com/rainlanguage/rain.verify.interface/issues/14",
+      "title": "Package Release never starts: caller declares no permissions block"
+    },
+    {
+      "repo": "rainlanguage/rain.verify.interface",
+      "number": 13,
+      "url": "https://github.com/rainlanguage/rain.verify.interface/issues/13",
+      "title": "Absorb rain-verify-interface back into rain.verify (rainix#296)"
+    },
+    {
+      "repo": "rainlanguage/raindex.interface",
+      "number": 68,
+      "url": "https://github.com/rainlanguage/raindex.interface/issues/68",
+      "title": "Absorb raindex-interface back into raindex (rainix#296)"
+    },
+    {
+      "repo": "rainlanguage/rainlang.interface",
+      "number": 120,
+      "url": "https://github.com/rainlanguage/rainlang.interface/issues/120",
+      "title": "Absorb rainlang-interface back into rainlang (rainix#296)"
+    },
+    {
+      "repo": "rainlanguage/rain.vats",
+      "number": 333,
+      "url": "https://github.com/rainlanguage/rain.vats/issues/333",
+      "title": "Diagnose wedged release lane: wedged with no deploy half (rainix#296)"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 2832,
+      "url": "https://github.com/rainlanguage/raindex/issues/2832",
+      "title": "Split deploy half out of raindex (rainix#296)"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 552,
+      "url": "https://github.com/rainlanguage/rainlang/issues/552",
+      "title": "Split deploy half out of rainlang (rainix#296)"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 257,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/257",
+      "title": "Split deploy half out of rain.math.float (rainix#296)"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 134,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/134",
+      "title": "Split deploy half out of rain.metadata (rainix#296)"
+    },
+    {
+      "repo": "rainlanguage/rain.flare",
+      "number": 207,
+      "url": "https://github.com/rainlanguage/rain.flare/issues/207",
+      "title": "Split deploy half out of rain.flare (rainix#296)"
+    },
+    {
+      "repo": "rainlanguage/rain.pyth",
+      "number": 33,
+      "url": "https://github.com/rainlanguage/rain.pyth/issues/33",
+      "title": "Split deploy half out of rain.pyth (rainix#296)"
+    },
+    {
+      "repo": "rainlanguage/rain.tofu.erc20-decimals",
+      "number": 29,
+      "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/issues/29",
+      "title": "Split deploy half out of rain.tofu.erc20-decimals (rainix#296)"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 46,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/46",
+      "title": "Split deploy half out of rain.extrospection (rainix#296)"
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 296,
+      "url": "https://github.com/rainlanguage/rainix/issues/296",
+      "title": "Org-wide repo refactor: split deploy from library, then absorb interfaces into cores"
+    },
     {
       "repo": "rainlanguage/issue-pr-cron",
       "number": 278,
@@ -5692,10 +5788,10 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 30,
+    "unvetted": 32,
     "blockedOn": 19,
     "ready": 0,
-    "needsWork": 104,
+    "needsWork": 103,
     "relink": 0,
     "design": 0,
     "blockedInfra": 0,
@@ -5703,18 +5799,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 153,
+    "totalProducerPrs": 154,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 617,
+    "uncoveredIssues": 633,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 778
+    "openIssues": 794
   },
   "ages": {
     "openIssues": {
-      "meanDays": 317.1,
+      "meanDays": 310.8,
       "medianDays": 107.0,
-      "oldestDays": 1662.5
+      "oldestDays": 1662.6
     }
   }
 }
