@@ -5899,6 +5899,14 @@ mod session_tokens_tests {
     /// the message away, and which occurrence came first is a property of the SCAN ORDER, so the
     /// corpus total would move with it: 27,508,747,350 tokens read one way, 27,524,657,937 the
     /// other. Max per class is the rule, and this asserts it from BOTH orders.
+    ///
+    /// A THIRD occurrence is what makes the LEDGER observable, and it is not a contrived one: a
+    /// message repeats as it streams AND is copied into a continuation, so three readings of one
+    /// `message.id` is the ordinary case in this corpus. With only two, the delta alone lands the
+    /// right answer whichever order they arrive in — [`CountedUsage::above`] carries it — and a
+    /// ledger left sitting at the stub reading is indistinguishable from one raised to the full. It
+    /// stops being indistinguishable on the next occurrence, which is billed AGAIN against the stub
+    /// it was compared to. So `stub, full, full` is the order that reads the ledger back.
     #[test]
     fn a_stub_restatement_never_erases_the_full_reading() {
         let full = |ts: &str| turn("m1", ts, 995_522, 0, 1_245);
@@ -5914,18 +5922,19 @@ mod session_tokens_tests {
                                        "ephemeral_1h_input_tokens": 1_245}}}}))
             .unwrap()
         };
+        let ts = "2026-08-05T10:00:00.000Z";
         for order in [
-            [
-                full("2026-08-05T10:00:00.000Z"),
-                stub("2026-08-05T10:00:00.000Z"),
-            ],
-            [
-                stub("2026-08-05T10:00:00.000Z"),
-                full("2026-08-05T10:00:00.000Z"),
-            ],
+            vec![full(ts), stub(ts)],
+            vec![stub(ts), full(ts)],
+            vec![stub(ts), full(ts), full(ts)],
+            vec![full(ts), stub(ts), full(ts)],
         ] {
+            let n = order.len();
             let rows = token_attribution(&order.join("\n"));
-            assert_eq!(rows[0].cache_read, 995_522, "the full reading survives");
+            assert_eq!(
+                rows[0].cache_read, 995_522,
+                "the full reading survives, and is billed ONCE across {n} occurrences"
+            );
             assert_eq!(rows[0].cache_write_1h, 1_245);
             assert_eq!(rows[0].messages, 1, "still ONE message");
         }
