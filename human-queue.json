@@ -2095,12 +2095,6 @@
     },
     {
       "repo": "rainlanguage/raindex.governance",
-      "number": 5,
-      "url": "https://github.com/rainlanguage/raindex.governance/issues/5",
-      "title": "Contract NatSpec claims pause fails ALL admin fund movement closed, but rescue() is not pause-gated"
-    },
-    {
-      "repo": "rainlanguage/raindex.governance",
       "number": 4,
       "url": "https://github.com/rainlanguage/raindex.governance/issues/4",
       "title": "withdraw4 silently destroys sub-precision vault value: Raindex debits the full Float but transfers only the floored raw amount"
@@ -5840,7 +5834,7 @@
     "leaks": 1,
     "totalProducerPrs": 159,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 640,
+    "uncoveredIssues": 639,
     "designPresentable": 0,
     "designNoQuestion": 0,
     "openIssues": 803
