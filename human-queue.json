@@ -115,7 +115,7 @@
         "repo": "rainlanguage/rain.deploy",
         "number": 23,
         "url": "https://github.com/rainlanguage/rain.deploy/pull/23",
-        "title": "chore(pragma): pin the three concrete .sol files to =0.8.25"
+        "title": "chore(pragma): pin every concrete .sol file to =0.8.25"
       },
       {
         "repo": "rainlanguage/rain.solmem",
@@ -936,6 +936,12 @@
         "count": 38,
         "prs": [
           {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 30,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/30",
+            "title": "build(flake): pin rainix at the rev CI runs, so the static gate runs locally"
+          },
+          {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 286,
             "url": "https://github.com/rainlanguage/issue-pr-cron/pull/286",
@@ -1068,12 +1074,6 @@
             "title": "rework(vetter): resume a dead auditor before redispatching, and name the path taken"
           },
           {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 26,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/26",
-            "title": "Address registry: interface, concrete, reader lib and post-deploy cross-network verification"
-          },
-          {
             "repo": "cyclofinance/cyclo.site",
             "number": 435,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/435",
@@ -1174,7 +1174,7 @@
             "repo": "rainlanguage/rain.deploy",
             "number": 23,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/23",
-            "title": "chore(pragma): pin the three concrete .sol files to =0.8.25"
+            "title": "chore(pragma): pin every concrete .sol file to =0.8.25"
           },
           {
             "repo": "rainlanguage/rain.solmem",
@@ -1950,6 +1950,12 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 29,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/29",
+      "title": "flake.nix declares a `rain` input it never uses, dragging a stale rainix into the lock"
+    },
+    {
       "repo": "rainlanguage/rainix",
       "number": 306,
       "url": "https://github.com/rainlanguage/rainix/issues/306",
@@ -1966,12 +1972,6 @@
       "number": 305,
       "url": "https://github.com/rainlanguage/rainix/issues/305",
       "title": "LibSnapshot already implements the release freeze in Solidity; which layer owns it?"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 27,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/27",
-      "title": "Parameterized deploy-verification abstract: derive expectations from creation code, check against source and every chain"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -5854,8 +5854,8 @@
   "ages": {
     "openIssues": {
       "meanDays": 307.2,
-      "medianDays": 108.1,
-      "oldestDays": 1663.7
+      "medianDays": 108.2,
+      "oldestDays": 1663.8
     }
   }
 }
