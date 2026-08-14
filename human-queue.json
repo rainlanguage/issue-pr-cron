@@ -913,15 +913,15 @@
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
-            "number": 34,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/34",
-            "title": "test(fork): make `--no-match-contract Chain` the offline gate it claims to be"
+            "number": 38,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/38",
+            "title": "docs: drop the `--no-match-contract Chain` selection nobody runs"
           },
           {
             "repo": "rainlanguage/rain.deploy",
-            "number": 33,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/33",
-            "title": "docs: say what findDeployBlock, isStartBlock and the deploy actually do"
+            "number": 37,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/37",
+            "title": "test(env): hold both `DEPLOYMENT_SUITE` values in one test, not two"
           },
           {
             "repo": "rainlanguage/issue-pr-cron",
@@ -1921,9 +1921,9 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rain.deploy",
-      "number": 28,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/28",
-      "title": "Dev shell has no rainix-sol-single-contract: flake.lock pins rainix before the task existed, so the documented static gate cannot run locally"
+      "number": 32,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/32",
+      "title": "main goes red on RPC weather: 37 forks, no retry, and the fork/chain split does not hold"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -5807,11 +5807,11 @@
     "uncoveredIssues": 639,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 801
+    "openIssues": 800
   },
   "ages": {
     "openIssues": {
-      "meanDays": 308.3,
+      "meanDays": 308.7,
       "medianDays": 108.2,
       "oldestDays": 1663.8
     }
