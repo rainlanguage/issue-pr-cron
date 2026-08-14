@@ -26,12 +26,6 @@
         "title": "Migrate to the rolling-candidate snapshot model"
       },
       {
-        "repo": "rainlanguage/rain.deploy",
-        "number": 19,
-        "url": "https://github.com/rainlanguage/rain.deploy/pull/19",
-        "title": "test(deploy): close the coverage gaps a whole-repo mutation pass found"
-      },
-      {
         "repo": "cyclofinance/cyclo.sol",
         "number": 56,
         "url": "https://github.com/cyclofinance/cyclo.sol/pull/56",
@@ -112,22 +106,10 @@
     ],
     "ai:needs-work": [
       {
-        "repo": "rainlanguage/rain.deploy",
-        "number": 23,
-        "url": "https://github.com/rainlanguage/rain.deploy/pull/23",
-        "title": "chore(pragma): pin every concrete .sol file to =0.8.25"
-      },
-      {
         "repo": "rainlanguage/rain.solmem",
         "number": 103,
         "url": "https://github.com/rainlanguage/rain.solmem/pull/103",
         "title": "Discriminate the underflow-reverts-via-gas guarantee instead of accepting any revert"
-      },
-      {
-        "repo": "rainlanguage/rain.deploy",
-        "number": 20,
-        "url": "https://github.com/rainlanguage/rain.deploy/pull/20",
-        "title": "fix(deploy): report the zero address when the Zoltu factory call fails"
       },
       {
         "repo": "rainlanguage/rain.solmem",
@@ -820,7 +802,7 @@
   "lanes": {
     "vet-lifecycle": {
       "ai:blocked-on": {
-        "count": 18,
+        "count": 17,
         "prs": [
           {
             "repo": "rainlanguage/rain.factory.deploy",
@@ -845,12 +827,6 @@
             "number": 5,
             "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/5",
             "title": "Migrate to the rolling-candidate snapshot model"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 19,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/19",
-            "title": "test(deploy): close the coverage gaps a whole-repo mutation pass found"
           },
           {
             "repo": "cyclofinance/cyclo.sol",
@@ -933,13 +909,19 @@
         ]
       },
       "un-vetted": {
-        "count": 38,
+        "count": 39,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
-            "number": 30,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/30",
-            "title": "build(flake): pin rainix at the rev CI runs, so the static gate runs locally"
+            "number": 34,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/34",
+            "title": "test(fork): make `--no-match-contract Chain` the offline gate it claims to be"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 33,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/33",
+            "title": "docs: say what findDeployBlock, isStartBlock and the deploy actually do"
           },
           {
             "repo": "rainlanguage/issue-pr-cron",
@@ -1168,25 +1150,13 @@
     },
     "vetter-verdicts": {
       "ai:needs-work": {
-        "count": 102,
+        "count": 100,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 23,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/23",
-            "title": "chore(pragma): pin every concrete .sol file to =0.8.25"
-          },
           {
             "repo": "rainlanguage/rain.solmem",
             "number": 103,
             "url": "https://github.com/rainlanguage/rain.solmem/pull/103",
             "title": "Discriminate the underflow-reverts-via-gas guarantee instead of accepting any revert"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 20,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/20",
-            "title": "fix(deploy): report the zero address when the Zoltu factory call fails"
           },
           {
             "repo": "rainlanguage/rain.solmem",
@@ -1951,9 +1921,9 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rain.deploy",
-      "number": 29,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/29",
-      "title": "flake.nix declares a `rain` input it never uses, dragging a stale rainix into the lock"
+      "number": 28,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/28",
+      "title": "Dev shell has no rainix-sol-single-contract: flake.lock pins rainix before the task existed, so the documented static gate cannot run locally"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -2662,18 +2632,6 @@
       "number": 62,
       "url": "https://github.com/rainlanguage/rain.solmem/issues/62",
       "title": "Matrix itemCount sums unchecked, and flatten mints an array whose declared length exceeds its allocation"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 18,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/18",
-      "title": "Docs describe behaviour the code does not have: checkDependencies, CREATE vs CREATE2, findDeployBlock validation, Base Sepolia"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 16,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/16",
-      "title": "deployToNetworks reports success without deploying when expectedAddress is stale relative to creationCode"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -5833,10 +5791,10 @@
     }
   ],
   "counts": {
-    "unvetted": 38,
-    "blockedOn": 18,
+    "unvetted": 39,
+    "blockedOn": 17,
     "ready": 0,
-    "needsWork": 102,
+    "needsWork": 100,
     "relink": 0,
     "design": 0,
     "blockedInfra": 0,
@@ -5844,16 +5802,16 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 1,
-    "totalProducerPrs": 159,
+    "totalProducerPrs": 157,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 641,
+    "uncoveredIssues": 639,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 804
+    "openIssues": 801
   },
   "ages": {
     "openIssues": {
-      "meanDays": 307.2,
+      "meanDays": 308.3,
       "medianDays": 108.2,
       "oldestDays": 1663.8
     }
