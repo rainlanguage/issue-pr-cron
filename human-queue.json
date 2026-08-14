@@ -1921,12 +1921,6 @@
       "title": "Update tests for DeploymentSteps to reflect the new updateFields calls"
     },
     {
-      "repo": "rainlanguage/raindex",
-      "number": 931,
-      "url": "https://github.com/rainlanguage/raindex/issues/931",
-      "title": "rainbow wallet on mobile doesn't select correct network"
-    },
-    {
       "repo": "rainlanguage/rain.solver",
       "number": 64,
       "url": "https://github.com/rainlanguage/rain.solver/issues/64",
@@ -1945,12 +1939,6 @@
       "number": 1348,
       "url": "https://github.com/rainlanguage/raindex/issues/1348",
       "title": "Update tests for DeploymentSteps to reflect the new updateFields calls"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 931,
-      "url": "https://github.com/rainlanguage/raindex/issues/931",
-      "title": "rainbow wallet on mobile doesn't select correct network"
     },
     {
       "repo": "rainlanguage/rain.solver",
@@ -5846,8 +5834,8 @@
     "relink": 0,
     "design": 0,
     "blockedInfra": 0,
-    "closeCandidateIssues": 4,
-    "closeCandidateUnvetted": 4,
+    "closeCandidateIssues": 3,
+    "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 1,
     "totalProducerPrs": 159,
@@ -5855,13 +5843,13 @@
     "uncoveredIssues": 640,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 804
+    "openIssues": 803
   },
   "ages": {
     "openIssues": {
-      "meanDays": 307.8,
-      "medianDays": 107.9,
-      "oldestDays": 1663.5
+      "meanDays": 307.4,
+      "medianDays": 108.0,
+      "oldestDays": 1663.6
     }
   }
 }
