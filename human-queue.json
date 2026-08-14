@@ -909,19 +909,13 @@
         ]
       },
       "un-vetted": {
-        "count": 39,
+        "count": 38,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
-            "number": 38,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/38",
-            "title": "docs: drop the `--no-match-contract Chain` selection nobody runs"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 37,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/37",
-            "title": "test(env): hold both `DEPLOYMENT_SUITE` values in one test, not two"
+            "number": 39,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/39",
+            "title": "feat(migrations): an on-chain registry of which migrations have been applied"
           },
           {
             "repo": "rainlanguage/issue-pr-cron",
@@ -1920,12 +1914,6 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 32,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/32",
-      "title": "main goes red on RPC weather: 37 forks, no retry, and the fork/chain split does not hold"
-    },
-    {
       "repo": "rainlanguage/rainix",
       "number": 306,
       "url": "https://github.com/rainlanguage/rainix/issues/306",
@@ -2698,12 +2686,6 @@
       "number": 278,
       "url": "https://github.com/rainlanguage/rainix/issues/278",
       "title": "Extend the one-contract-per-file check to interfaces"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 15,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/15",
-      "title": "On-chain migration registry: let deploy scripts record what has been applied, so tests assert state instead of dates"
     },
     {
       "repo": "S01-Issuer/st0x.deploy",
@@ -5791,7 +5773,7 @@
     }
   ],
   "counts": {
-    "unvetted": 39,
+    "unvetted": 38,
     "blockedOn": 17,
     "ready": 0,
     "needsWork": 100,
@@ -5802,18 +5784,18 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 1,
-    "totalProducerPrs": 157,
+    "totalProducerPrs": 156,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 639,
+    "uncoveredIssues": 637,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 800
+    "openIssues": 798
   },
   "ages": {
     "openIssues": {
-      "meanDays": 308.7,
-      "medianDays": 108.2,
-      "oldestDays": 1663.8
+      "meanDays": 309.6,
+      "medianDays": 108.3,
+      "oldestDays": 1663.9
     }
   }
 }
