@@ -4179,6 +4179,66 @@ fn unattributable_output(content: &str) -> (u64, f64) {
     (tokens, usd)
 }
 
+/// PURE: has this message already been charged? Records it if not.
+///
+/// A message is re-emitted as it streams and its usage repeats verbatim, so counting RECORDS
+/// instead of MESSAGES multiplies a run by however many times each message was flushed — 45% of
+/// the session corpus, and up to 6x on a single stream-json message.
+///
+/// An ABSENT id and an EMPTY one are treated alike: neither identifies a message, so each such
+/// event is charged rather than deduped. Letting `""` into the set would make the first empty-id
+/// message swallow every later one — dropping real spend to avoid double-counting a case no trace
+/// exhibits.
+///
+/// Shared by [`token_attribution`] and [`session_agents_from`] for the reason [`accumulate_usage`]
+/// is: two readers of two transcript shapes must not drift on what counts as one message.
+fn already_charged(msg: &Value, counted: &mut std::collections::HashSet<String>) -> bool {
+    match msg.get("id").and_then(|i| i.as_str()) {
+        Some(id) if !id.is_empty() => !counted.insert(id.to_string()),
+        _ => false,
+    }
+}
+
+/// PURE: fold one assistant event's `usage` into an actor's running total.
+///
+/// The ONE place token arithmetic happens, so every reader of every transcript shape charges the
+/// same event the same way. [`token_attribution`] reads stream-json run traces and
+/// [`session_attribution`] reads `~/.claude/projects` session transcripts; two implementations of
+/// this arithmetic would let the two disagree about what a run cost, which is the disagreement the
+/// caller is usually trying to settle.
+///
+/// No output term, deliberately — see [`AgentSpend`]. That is not a shortcut taken here: measured
+/// across all 49 retained traces, summing `usage.output_tokens` recovers between 0.2% and 8.9% of
+/// the run's true output (`result.modelUsage`), and taking the MAXIMUM per `message.id` instead of
+/// the first recovers exactly the same figure — the field is repeated unchanged, so there is no
+/// later value to find. A column wrong by 11x-500x is worse than no column.
+fn accumulate_usage(e: &mut AgentSpend, usage: &Value, model: &str) {
+    let g = |k: &str| usage.get(k).and_then(|n| n.as_u64()).unwrap_or(0);
+    let cc = usage.get("cache_creation");
+    let ttl = |k: &str| cc.and_then(|c| c.get(k)).and_then(|n| n.as_u64());
+    // Absent breakdown: charge the whole write at the 5m rate. The default TTL is the honest
+    // assumption when the trace does not say, and it is the cheaper of the two — this
+    // understates rather than inventing a premium the run may never have paid.
+    let (w5, w1) = match (
+        ttl("ephemeral_5m_input_tokens"),
+        ttl("ephemeral_1h_input_tokens"),
+    ) {
+        (None, None) => (g("cache_creation_input_tokens"), 0),
+        (a, b) => (a.unwrap_or(0), b.unwrap_or(0)),
+    };
+    let rates = rates_for(model);
+    e.messages += 1;
+    e.tokens_in += g("input_tokens");
+    e.cache_read += g("cache_read_input_tokens");
+    e.cache_write_5m += w5;
+    e.cache_write_1h += w1;
+    e.usd += (g("input_tokens") as f64 * rates.input
+        + g("cache_read_input_tokens") as f64 * rates.cache_read
+        + w5 as f64 * rates.cache_write_5m
+        + w1 as f64 * rates.cache_write_1h)
+        / 1e6;
+}
+
 /// PURE: attribute a run's token spend to the agent that incurred it, dearest first.
 ///
 /// No new instrumentation is needed for this: every assistant event already carries
@@ -4239,17 +4299,8 @@ fn token_attribution(content: &str) -> Vec<AgentSpend> {
         let Some(usage) = msg.get("usage") else {
             continue;
         };
-        // Dedupe on `message.id`, which repeats as a message streams. An ABSENT id and an EMPTY one
-        // are treated alike: neither identifies a message, so each such event is counted rather
-        // than deduped. Letting `""` into the set would make the first empty-id message swallow
-        // every later one — dropping real spend to avoid double-counting a case no trace exhibits.
-        match msg.get("id").and_then(|i| i.as_str()) {
-            Some(id) if !id.is_empty() => {
-                if !counted.insert(id.to_string()) {
-                    continue;
-                }
-            }
-            _ => {}
+        if already_charged(msg, &mut counted) {
+            continue;
         }
 
         let owner = ev
@@ -4257,36 +4308,12 @@ fn token_attribution(content: &str) -> Vec<AgentSpend> {
             .and_then(|p| p.as_str())
             .unwrap_or("__main__")
             .to_string();
-        let g = |k: &str| usage.get(k).and_then(|n| n.as_u64()).unwrap_or(0);
-        let cc = usage.get("cache_creation");
-        let ttl = |k: &str| cc.and_then(|c| c.get(k)).and_then(|n| n.as_u64());
-        // Absent breakdown: charge the whole write at the 5m rate. The default TTL is the honest
-        // assumption when the trace does not say, and it is the cheaper of the two — this
-        // understates rather than inventing a premium the run may never have paid.
-        let (w5, w1) = match (
-            ttl("ephemeral_5m_input_tokens"),
-            ttl("ephemeral_1h_input_tokens"),
-        ) {
-            (None, None) => (g("cache_creation_input_tokens"), 0),
-            (a, b) => (a.unwrap_or(0), b.unwrap_or(0)),
-        };
-
-        let rates = rates_for(msg.get("model").and_then(|m| m.as_str()).unwrap_or(""));
+        let model = msg.get("model").and_then(|m| m.as_str()).unwrap_or("");
         let e = agents.entry(owner.clone()).or_insert_with(|| AgentSpend {
             id: owner.clone(),
             ..Default::default()
         });
-        e.messages += 1;
-        e.tokens_in += g("input_tokens");
-        e.cache_read += g("cache_read_input_tokens");
-        e.cache_write_5m += w5;
-        e.cache_write_1h += w1;
-        // No output term — see [`AgentSpend`].
-        e.usd += (g("input_tokens") as f64 * rates.input
-            + g("cache_read_input_tokens") as f64 * rates.cache_read
-            + w5 as f64 * rates.cache_write_5m
-            + w1 as f64 * rates.cache_write_1h)
-            / 1e6;
+        accumulate_usage(e, usage, model);
     }
 
     let mut rows: Vec<AgentSpend> = agents.into_values().collect();
@@ -4628,6 +4655,625 @@ fn token_report_mode(path: &str, json: bool) -> i32 {
     println!("list price            ${:>8.2}", attributed + out_usd);
     println!("billed                ${billed:>8.2}");
     0
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// session-tokens — WHAT THE SUBAGENTS AN INTERACTIVE SESSION DISPATCHES COST.
+//
+// `token-report` reads a stream-json RUN trace, where every thread shares one file and an actor is
+// a `parent_tool_use_id`. An interactive session records nothing of the sort: each dispatched
+// agent gets its OWN transcript under `~/.claude/projects/<project>/<session>/subagents/`, keyed
+// by `agentId`, and `parent_tool_use_id` never appears in one. So the fleet's own accounting could
+// not be pointed at the population a human actually asks about — "what are my agents costing me"
+// — and that question kept getting answered by hand, differently each time. This is that mode, on
+// the same arithmetic, so the two answers can be compared instead of argued about.
+//
+// MEASURED ON THE CORPUS THIS WAS BUILT AGAINST (1,099 transcripts, 118,595 assistant records,
+// 6 Jul – 14 Aug 2026). Each fact decided a line of code, so each is recorded rather than assumed:
+//
+//   - 65,690 distinct `message.id` across 118,595 records. A message is re-emitted as it streams
+//     and its usage repeats verbatim, so dedupe is not a refinement — it is 45% of the records.
+//   - Deduping on `requestId` instead would differ on exactly 2 groups out of 65,690. The keys are
+//     near-interchangeable HERE; `message.id` is used anyway because that is what
+//     [`token_attribution`] uses, and one rule shared beats two that are each defensible.
+//   - ZERO transcripts carry more than one `agentId`, so a file IS an agent — but 2 agentIds span
+//     two files each (a resumed agent), which is why the key is `agentId` and never the path.
+//   - ZERO transcripts carry a `type: "result"` record. The whole-run `modelUsage` figure that
+//     [`unattributable_output`] reads DOES NOT EXIST for this population, so its true output-token
+//     count is not recoverable at any price. This reports no output column at all rather than the
+//     message-start snapshot, which measures 0.2%–8.9% of truth on the traces where truth is known.
+//   - `attributionAgent` is the agent TYPE (`general-purpose`, `workflow-subagent`, `claude`), not
+//     an id — it differs from `agentId` on every record. Reported as a dimension, never joined on.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// One dispatched agent, as an interactive session's transcript records it.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct SessionAgent {
+    /// The same spend record [`token_attribution`] produces, filled by the same [`accumulate_usage`].
+    spend: AgentSpend,
+    /// `attributionAgent` — the agent TYPE. A dimension to group by, never a join key.
+    agent_type: String,
+    /// `YYYY-MM-DD` of the earliest usage-bearing turn. An agent is dated by when it STARTED, so
+    /// one running across midnight lands in the day that dispatched it rather than being split.
+    day: String,
+    model: String,
+}
+
+/// PURE: the first non-blank line of a prompt, clipped — what the agent was asked to do.
+fn first_line_clipped(s: &str, max: usize) -> String {
+    let line = s
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("")
+        .trim();
+    if line.chars().count() <= max {
+        line.to_string()
+    } else {
+        line.chars().take(max.saturating_sub(1)).collect::<String>() + "…"
+    }
+}
+
+/// PURE: fold one session transcript into the per-`agentId` totals.
+///
+/// `counted` is threaded across every file rather than reset per file: a `message.id` is globally
+/// unique, and a shared set means a transcript that appears twice on disk (a copied session
+/// directory, a restored backup) cannot count its spend twice.
+fn session_agents_from(
+    content: &str,
+    counted: &mut std::collections::HashSet<String>,
+    out: &mut std::collections::HashMap<String, SessionAgent>,
+) {
+    for line in content.lines() {
+        let Ok(ev) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let Some(id) = ev.get("agentId").and_then(|a| a.as_str()) else {
+            continue;
+        };
+        let ty = ev.get("type").and_then(|t| t.as_str()).unwrap_or("");
+
+        // The agent's own PROMPT names the work. [`token_attribution`] prefers the dispatching
+        // call's `description` — the operator's own words — but that call is recorded in the
+        // PARENT session's transcript, not in this file, and reaching across files for a label
+        // would put a lookup that can fail in the middle of an accounting pass. The prompt is what
+        // this file knows, and it is never nothing.
+        if ty == "user" {
+            if let Some(text) = ev
+                .get("message")
+                .and_then(|m| m.get("content"))
+                .and_then(|c| c.as_str())
+            {
+                let e = out.entry(id.to_string()).or_insert_with(|| SessionAgent {
+                    spend: AgentSpend {
+                        id: id.to_string(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                });
+                if e.spend.label.is_empty() {
+                    e.spend.label = first_line_clipped(text, 72);
+                }
+            }
+            continue;
+        }
+        if ty != "assistant" {
+            continue;
+        }
+        let Some(msg) = ev.get("message") else {
+            continue;
+        };
+        let Some(usage) = msg.get("usage") else {
+            continue;
+        };
+        if already_charged(msg, counted) {
+            continue;
+        }
+        let model = msg.get("model").and_then(|m| m.as_str()).unwrap_or("");
+        let day = ev
+            .get("timestamp")
+            .and_then(|t| t.as_str())
+            .and_then(|t| t.split('T').next())
+            .unwrap_or("")
+            .to_string();
+        let e = out.entry(id.to_string()).or_insert_with(|| SessionAgent {
+            spend: AgentSpend {
+                id: id.to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        if !day.is_empty() && (e.day.is_empty() || day < e.day) {
+            e.day = day;
+        }
+        if e.agent_type.is_empty() {
+            if let Some(t) = ev.get("attributionAgent").and_then(|a| a.as_str()) {
+                e.agent_type = t.to_string();
+            }
+        }
+        if e.model.is_empty() && !model.is_empty() {
+            e.model = model.to_string();
+        }
+        accumulate_usage(&mut e.spend, usage, model);
+    }
+}
+
+/// Every subagent transcript ANYWHERE under a `subagents/` directory, sorted so a run is
+/// reproducible.
+///
+/// The whole SUBTREE, not the directory's direct children. A `Workflow` fan-out nests its agents
+/// two levels further down, at `subagents/workflows/wf_<id>/agent-<id>.jsonl`, and on the corpus
+/// this was built against that is 472 of the 1,100 agent transcripts — 43% of the population, and
+/// the busiest days are the ones that used workflows. Matching only direct children silently
+/// reported the other 57% as the whole picture, which is the failure mode a cost report can least
+/// afford: it looks complete.
+///
+/// `journal.jsonl` is excluded by name. It is a workflow's own `started`/`result` ledger, not an
+/// agent transcript — 22 of them exist and none carries a `message.usage`, so including them would
+/// change no number today, but it would make the file count a lie about how many agents ran.
+///
+/// Matched on the DIRECTORY, never on the `agent-` filename prefix: the directory is the harness's
+/// own structure, while the prefix is a naming convention this code does not own.
+fn find_subagent_transcripts(root: &str) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![(std::path::PathBuf::from(root), false)];
+    while let Some((dir, inside)) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in rd.flatten() {
+            let p = entry.path();
+            let name = p
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+            if p.is_dir() {
+                // Once inside a `subagents` subtree, every depth below it stays inside.
+                stack.push((p, inside || name == "subagents"));
+            } else if inside
+                && name != "journal.jsonl"
+                && p.extension().and_then(|e| e.to_str()) == Some("jsonl")
+            {
+                out.push(p);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// PURE: the median of a slice, by value. Empty is 0 — a day with no agents has no middle agent.
+fn median_u64(v: &mut [u64]) -> u64 {
+    if v.is_empty() {
+        return 0;
+    }
+    v.sort_unstable();
+    let n = v.len();
+    if n % 2 == 1 {
+        v[n / 2]
+    } else {
+        (v[n / 2 - 1] + v[n / 2]) / 2
+    }
+}
+
+/// One day's rollup of the agents dispatched that day.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct SessionDay {
+    day: String,
+    agents: usize,
+    messages: usize,
+    tokens: u64,
+    usd: f64,
+    mean: u64,
+    median: u64,
+}
+
+/// PURE: bucket agents into days, dearest-day order preserved by the caller.
+///
+/// A day with no agents is ABSENT rather than zero-filled: this reports what the transcripts
+/// record, and "no agent ran" is a different statement from "an agent ran and spent nothing".
+fn session_days(agents: &[SessionAgent]) -> Vec<SessionDay> {
+    use std::collections::BTreeMap;
+    let mut by_day: BTreeMap<String, Vec<&SessionAgent>> = BTreeMap::new();
+    for a in agents {
+        by_day.entry(a.day.clone()).or_default().push(a);
+    }
+    by_day
+        .into_iter()
+        .map(|(day, list)| {
+            let mut toks: Vec<u64> = list.iter().map(|a| a.spend.tokens()).collect();
+            let tokens: u64 = toks.iter().sum();
+            SessionDay {
+                day,
+                agents: list.len(),
+                messages: list.iter().map(|a| a.spend.messages).sum(),
+                tokens,
+                usd: list.iter().map(|a| a.spend.usd).sum(),
+                mean: tokens / list.len().max(1) as u64,
+                median: median_u64(&mut toks),
+            }
+        })
+        .collect()
+}
+
+/// `session-tokens [--root <dir>] [--since <YYYY-MM-DD>] [--agents] [--json]`: what the subagents
+/// dispatched by interactive sessions cost, per day or per agent.
+fn session_tokens_mode(
+    root: Option<String>,
+    since: Option<String>,
+    agents_view: bool,
+    json: bool,
+) -> i32 {
+    let root = root.unwrap_or_else(|| {
+        std::env::var("HOME").map_or_else(
+            |_| ".claude/projects".to_string(),
+            |h| format!("{h}/.claude/projects"),
+        )
+    });
+    let files = find_subagent_transcripts(&root);
+    if files.is_empty() {
+        eprintln!("error: no subagent transcripts under {root}");
+        return 2;
+    }
+
+    let mut counted = std::collections::HashSet::new();
+    let mut by_agent = std::collections::HashMap::new();
+    let mut unreadable = 0usize;
+    for f in &files {
+        match std::fs::read_to_string(f) {
+            Ok(c) => session_agents_from(&c, &mut counted, &mut by_agent),
+            Err(_) => unreadable += 1,
+        }
+    }
+
+    let mut agents: Vec<SessionAgent> = by_agent
+        .into_values()
+        // An agent with no usage-bearing turn never got a response — it is not a zero-cost agent,
+        // it is not an agent. Counting it would put a 0 in every median on its day.
+        .filter(|a: &SessionAgent| a.spend.messages > 0)
+        .filter(|a| since.as_deref().is_none_or(|s| a.day.as_str() >= s))
+        .collect();
+    agents.sort_by(|a, b| {
+        b.spend
+            .tokens()
+            .cmp(&a.spend.tokens())
+            .then_with(|| a.spend.id.cmp(&b.spend.id))
+    });
+
+    let days = session_days(&agents);
+    let total: u64 = agents.iter().map(|a| a.spend.tokens()).sum();
+    let usd: f64 = agents.iter().map(|a| a.spend.usd).sum();
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "root": root,
+                "transcripts": files.len(),
+                "unreadable": unreadable,
+                "agents": agents.len(),
+                "messages": counted.len(),
+                "tokens": total,
+                "inputUsd": round3(usd),
+                "outputTokens": Value::Null,
+                "outputNote": "not recoverable: session transcripts carry no result.modelUsage record",
+                "days": days.iter().map(|d| serde_json::json!({
+                    "day": d.day, "agents": d.agents, "messages": d.messages,
+                    "tokens": d.tokens, "meanPerAgent": d.mean, "medianPerAgent": d.median,
+                    "inputUsd": round3(d.usd),
+                })).collect::<Vec<Value>>(),
+                "agentRows": agents.iter().map(|a| serde_json::json!({
+                    "id": a.spend.id, "label": a.spend.label, "type": a.agent_type,
+                    "model": a.model, "day": a.day, "messages": a.spend.messages,
+                    "tokens": a.spend.tokens(), "cacheRead": a.spend.cache_read,
+                    "cacheWrite": a.spend.cache_write_5m + a.spend.cache_write_1h,
+                    "inputUsd": round3(a.spend.usd),
+                })).collect::<Vec<Value>>(),
+            }))
+            .unwrap()
+        );
+        return 0;
+    }
+
+    if agents_view {
+        println!(
+            "{:>13}  {:>5}  {:>10}  {:<18}  task",
+            "tokens", "msgs", "cost", "type"
+        );
+        for a in &agents {
+            println!(
+                "{:>13}  {:>5}  {:>10}  {:<18}  {}",
+                a.spend.tokens(),
+                a.spend.messages,
+                format!("${:.2}", a.spend.usd),
+                a.agent_type,
+                a.spend.label
+            );
+        }
+    } else {
+        println!(
+            "{:<12}  {:>6}  {:>6}  {:>14}  {:>13}  {:>13}  {:>10}",
+            "day", "agents", "msgs", "tokens", "mean/agent", "median/agent", "cost"
+        );
+        for d in &days {
+            println!(
+                "{:<12}  {:>6}  {:>6}  {:>14}  {:>13}  {:>13}  {:>10}",
+                d.day,
+                d.agents,
+                d.messages,
+                d.tokens,
+                d.mean,
+                d.median,
+                format!("${:.2}", d.usd)
+            );
+        }
+    }
+
+    println!(
+        "\n{} agents over {} days, {} tokens, ${:.2} input-side",
+        agents.len(),
+        days.len(),
+        total,
+        usd
+    );
+    println!(
+        "read {} transcripts ({} unreadable), {} distinct messages",
+        files.len(),
+        unreadable,
+        counted.len()
+    );
+    println!(
+        "output tokens: NOT REPORTED — these transcripts carry no `result.modelUsage`, and the \
+         per-message field measures 0.2%–8.9% of truth where truth is known"
+    );
+    0
+}
+
+#[cfg(test)]
+mod session_tokens_tests {
+    use super::*;
+    use std::collections::{HashMap, HashSet};
+
+    /// One assistant turn in an interactive session's shape.
+    fn turn(agent: &str, msg_id: &str, ts: &str, usage: Value) -> String {
+        serde_json::json!({
+            "type": "assistant",
+            "agentId": agent,
+            "attributionAgent": "general-purpose",
+            "timestamp": ts,
+            "message": { "id": msg_id, "model": "claude-opus-5", "usage": usage },
+        })
+        .to_string()
+    }
+
+    fn usage(input: u64, output: u64, cache_read: u64, cache_create: u64) -> Value {
+        serde_json::json!({
+            "input_tokens": input,
+            "output_tokens": output,
+            "cache_read_input_tokens": cache_read,
+            "cache_creation_input_tokens": cache_create,
+        })
+    }
+
+    fn run(contents: &[&str]) -> Vec<SessionAgent> {
+        let mut counted = HashSet::new();
+        let mut out = HashMap::new();
+        for c in contents {
+            session_agents_from(c, &mut counted, &mut out);
+        }
+        let mut v: Vec<SessionAgent> = out.into_values().collect();
+        v.sort_by(|a, b| a.spend.id.cmp(&b.spend.id));
+        v
+    }
+
+    /// The defect this whole mode is built around: a message is re-emitted as it streams and its
+    /// usage repeats verbatim. 45% of the real corpus is duplicate records, so counting records
+    /// instead of messages overstates every figure at once.
+    #[test]
+    fn a_restreamed_message_is_counted_once() {
+        let u = usage(10, 500, 90_000, 1_000);
+        let body = [
+            turn("a1", "msg_1", "2026-08-14T10:00:00Z", u.clone()),
+            turn("a1", "msg_1", "2026-08-14T10:00:01Z", u.clone()),
+            turn("a1", "msg_1", "2026-08-14T10:00:02Z", u),
+        ]
+        .join("\n");
+        let agents = run(&[&body]);
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].spend.messages, 1);
+        assert_eq!(agents[0].spend.tokens(), 10 + 90_000 + 1_000);
+    }
+
+    /// An absent or empty `message.id` identifies no message, so each such event counts —
+    /// [`token_attribution`]'s rule, and the reason is the same: letting `""` into the set would
+    /// make the first id-less message swallow every later one.
+    #[test]
+    fn an_id_less_message_is_never_deduped() {
+        let u = usage(5, 0, 1_000, 0);
+        let body = [
+            turn("a1", "", "2026-08-14T10:00:00Z", u.clone()),
+            turn("a1", "", "2026-08-14T10:00:01Z", u),
+        ]
+        .join("\n");
+        let agents = run(&[&body]);
+        assert_eq!(agents[0].spend.messages, 2);
+        assert_eq!(agents[0].spend.tokens(), 2 * (5 + 1_000));
+    }
+
+    /// Output NEVER enters a total. Measured across 49 retained traces, the per-message field
+    /// recovers 0.2%–8.9% of a run's true output, and this transcript shape has no
+    /// `result.modelUsage` to correct it from — so an output column here could only ever be wrong.
+    #[test]
+    fn output_tokens_never_enter_a_total() {
+        let quiet = turn("a1", "m1", "2026-08-14T10:00:00Z", usage(10, 0, 1_000, 0));
+        let loud = turn(
+            "a2",
+            "m2",
+            "2026-08-14T10:00:00Z",
+            usage(10, 9_999_999, 1_000, 0),
+        );
+        let agents = run(&[&format!("{quiet}\n{loud}")]);
+        assert_eq!(agents[0].spend.tokens(), agents[1].spend.tokens());
+    }
+
+    /// A file is an agent on the real corpus — but 2 agentIds span two files each, so the key is
+    /// the id. Splitting a resumed agent in two would halve its cost and double the agent count.
+    #[test]
+    fn an_agent_spanning_two_files_is_one_agent() {
+        let f1 = turn("a1", "m1", "2026-08-13T23:59:00Z", usage(1, 0, 1_000, 0));
+        let f2 = turn("a1", "m2", "2026-08-14T00:01:00Z", usage(1, 0, 2_000, 0));
+        let agents = run(&[&f1, &f2]);
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].spend.messages, 2);
+        assert_eq!(agents[0].spend.tokens(), 2 + 3_000);
+        // Dated by its EARLIEST turn, so a resumed agent stays in the day that dispatched it.
+        assert_eq!(agents[0].day, "2026-08-13");
+    }
+
+    /// The same transcript encountered twice — a copied session dir, a restored backup — must not
+    /// double the spend. This is why `counted` is threaded across files rather than reset per file.
+    #[test]
+    fn the_same_transcript_read_twice_counts_once() {
+        let f = turn("a1", "m1", "2026-08-14T10:00:00Z", usage(10, 0, 5_000, 0));
+        let once = run(&[&f]);
+        let twice = run(&[&f, &f]);
+        assert_eq!(once[0].spend.tokens(), twice[0].spend.tokens());
+        assert_eq!(twice[0].spend.messages, 1);
+    }
+
+    /// A transcript whose agent never got a response carries a prompt and no usage. It is not a
+    /// zero-cost agent; it is not an agent, and the mode filters it on `messages > 0`.
+    #[test]
+    fn a_prompt_with_no_response_accrues_no_turn() {
+        let body = serde_json::json!({
+            "type": "user", "agentId": "a1", "timestamp": "2026-08-14T10:00:00Z",
+            "message": { "role": "user", "content": "Audit cyclo.site#404\n\nmore detail" },
+        })
+        .to_string();
+        let agents = run(&[&body]);
+        assert_eq!(agents[0].spend.messages, 0);
+        // The prompt still names the work, for the row the caller may choose to show.
+        assert_eq!(agents[0].spend.label, "Audit cyclo.site#404");
+    }
+
+    /// Both transcript shapes must charge one event identically, or the two modes disagree about
+    /// what the same work cost. This is the reason [`accumulate_usage`] exists as one function.
+    #[test]
+    fn both_readers_charge_one_event_identically() {
+        let u = usage(37, 4_000, 123_456, 7_890);
+        let session = turn("a1", "m1", "2026-08-14T10:00:00Z", u.clone());
+        let trace = serde_json::json!({
+            "type": "assistant",
+            "parent_tool_use_id": "toolu_1",
+            "message": { "id": "m1", "model": "claude-opus-5", "usage": u },
+        })
+        .to_string();
+
+        let from_session = run(&[&session]).remove(0).spend;
+        let from_trace = token_attribution(&trace).remove(0);
+
+        assert_eq!(from_session.tokens(), from_trace.tokens());
+        assert_eq!(from_session.cache_read, from_trace.cache_read);
+        assert_eq!(from_session.tokens_in, from_trace.tokens_in);
+        assert!((from_session.usd - from_trace.usd).abs() < 1e-12);
+    }
+
+    /// With no TTL breakdown the whole write is charged at the 5m rate — the cheaper of the two,
+    /// so an absent field understates rather than inventing a premium.
+    #[test]
+    fn cache_creation_falls_back_when_the_ttl_breakdown_is_absent() {
+        let flat = turn("a1", "m1", "2026-08-14T10:00:00Z", usage(0, 0, 0, 8_000));
+        let a = run(&[&flat]).remove(0).spend;
+        assert_eq!(a.cache_write_5m, 8_000);
+        assert_eq!(a.cache_write_1h, 0);
+
+        let split = serde_json::json!({
+            "type": "assistant", "agentId": "a1", "timestamp": "2026-08-14T10:00:00Z",
+            "message": { "id": "m2", "model": "claude-opus-5", "usage": {
+                "cache_creation_input_tokens": 8_000,
+                "cache_creation": { "ephemeral_5m_input_tokens": 3_000, "ephemeral_1h_input_tokens": 5_000 },
+            }},
+        })
+        .to_string();
+        let b = run(&[&split]).remove(0).spend;
+        assert_eq!((b.cache_write_5m, b.cache_write_1h), (3_000, 5_000));
+        // 1h is priced at 2x input against 5m's 1.25x, so the split is not cosmetic.
+        assert!(b.usd > a.usd);
+    }
+
+    /// A day with no agents is ABSENT, not a zero row: "no agent ran" and "an agent ran and spent
+    /// nothing" are different statements and the second one is never true here.
+    #[test]
+    fn days_bucket_by_first_turn_and_skip_the_idle_ones() {
+        let body = [
+            turn("a1", "m1", "2026-08-12T10:00:00Z", usage(0, 0, 1_000, 0)),
+            turn("a2", "m2", "2026-08-14T10:00:00Z", usage(0, 0, 3_000, 0)),
+            turn("a3", "m3", "2026-08-14T11:00:00Z", usage(0, 0, 5_000, 0)),
+        ]
+        .join("\n");
+        let days = session_days(&run(&[&body]));
+        assert_eq!(days.len(), 2, "13 Aug dispatched nothing and gets no row");
+        assert_eq!(days[0].day, "2026-08-12");
+        assert_eq!(days[1].agents, 2);
+        assert_eq!(days[1].tokens, 8_000);
+        assert_eq!(days[1].mean, 4_000);
+        assert_eq!(days[1].median, 4_000);
+    }
+
+    /// A `Workflow` fan-out nests its agents at `subagents/workflows/wf_<id>/`, two levels below
+    /// the directory a naive walk stops at. On the real corpus that is 472 of 1,100 transcripts, so
+    /// a walker that takes only direct children reports 57% of the spend as if it were all of it.
+    #[test]
+    fn the_walk_reaches_workflow_nested_agents_and_skips_journals() {
+        let base = std::env::temp_dir().join(format!("session-tokens-walk-{}", std::process::id()));
+        let flat = base.join("proj/sess/subagents");
+        let nested = flat.join("workflows/wf_abc123");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(flat.join("agent-a1.jsonl"), "").unwrap();
+        std::fs::write(nested.join("agent-a2.jsonl"), "").unwrap();
+        std::fs::write(nested.join("journal.jsonl"), "").unwrap();
+        // Outside any `subagents` directory — a main session transcript, not an agent.
+        std::fs::write(base.join("proj/sess/main.jsonl"), "").unwrap();
+
+        let found = find_subagent_transcripts(base.to_str().unwrap());
+        let names: Vec<String> = found
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        std::fs::remove_dir_all(&base).ok();
+
+        assert_eq!(names, vec!["agent-a1.jsonl", "agent-a2.jsonl"]);
+    }
+
+    #[test]
+    fn median_handles_odd_even_and_empty() {
+        assert_eq!(median_u64(&mut []), 0);
+        assert_eq!(median_u64(&mut [5]), 5);
+        assert_eq!(median_u64(&mut [9, 1, 5]), 5);
+        assert_eq!(median_u64(&mut [1, 9, 3, 5]), 4);
+    }
+
+    #[test]
+    fn a_label_is_the_first_non_blank_line_clipped() {
+        assert_eq!(first_line_clipped("\n\n  hello  \nworld", 72), "hello");
+        assert_eq!(first_line_clipped("abcdef", 3), "ab…");
+        assert_eq!(first_line_clipped("", 10), "");
+    }
+
+    /// `attributionAgent` is the agent TYPE, not an id — it differs from `agentId` on every record
+    /// of the real corpus. Reading it as an identity would collapse every general-purpose agent
+    /// into one row.
+    #[test]
+    fn attribution_agent_is_a_type_not_an_identity() {
+        let body = [
+            turn("a1", "m1", "2026-08-14T10:00:00Z", usage(0, 0, 1_000, 0)),
+            turn("a2", "m2", "2026-08-14T10:00:00Z", usage(0, 0, 2_000, 0)),
+        ]
+        .join("\n");
+        let agents = run(&[&body]);
+        assert_eq!(agents.len(), 2);
+        assert!(agents.iter().all(|a| a.agent_type == "general-purpose"));
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -42716,6 +43362,26 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// What the subagents an INTERACTIVE session dispatched cost, per day or per agent. The
+    /// sibling of `token-report` for the other transcript shape: that one reads a stream-json run
+    /// trace and splits it by `parent_tool_use_id`, which `~/.claude/projects` transcripts do not
+    /// carry — each dispatched agent is its own file there, keyed by `agentId`. Same arithmetic,
+    /// so the two populations can be compared. Reports NO output-token column: this shape has no
+    /// `result.modelUsage` to read one from.
+    SessionTokens {
+        /// Where the session transcripts live. Defaults to `$HOME/.claude/projects`.
+        #[arg(long)]
+        root: Option<String>,
+        /// Only agents whose FIRST turn was on or after this `YYYY-MM-DD`.
+        #[arg(long)]
+        since: Option<String>,
+        /// List every agent dearest-first instead of the per-day rollup.
+        #[arg(long)]
+        agents: bool,
+        /// Emit one JSON object instead of the table.
+        #[arg(long)]
+        json: bool,
+    },
     /// What it cost to LAND work: per-task spend joined to the typed work items `open_pr` recorded,
     /// bucketed landed / delivered-awaiting-human / churn. Only churn is waste — merges are
     /// human-gated by design. A task with no typed work item is churn; nothing is inferred from a
@@ -46858,6 +47524,12 @@ fn main() {
             json,
         } => journal_report_mode(&journal, runs.as_deref(), json),
         Cmd::TokenReport { trace, json } => token_report_mode(&trace, json),
+        Cmd::SessionTokens {
+            root,
+            since,
+            agents,
+            json,
+        } => session_tokens_mode(root, since, agents, json),
         Cmd::WorkTokens { path, json } => work_tokens_mode(&path, json),
         Cmd::BackfillMetrics { path, write } => backfill_metrics_mode(&path, write),
         Cmd::UsageGate => usage_gate_mode(),
