@@ -139,7 +139,7 @@
         "repo": "rainlanguage/rain.solmem",
         "number": 100,
         "url": "https://github.com/rainlanguage/rain.solmem/pull/100",
-        "title": "test: red repro for #54 unchecked mul(_, 0x20) word scaling wrap (EXPECTED RED)"
+        "title": "fix: guard the unchecked mul(_, 0x20) word scaling at both sites (#54)"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -732,18 +732,6 @@
     ],
     "ai:ready": [
       {
-        "repo": "rainlanguage/rain.solmem",
-        "number": 104,
-        "url": "https://github.com/rainlanguage/rain.solmem/pull/104",
-        "title": "Derive array differential expectations from pre-call input snapshots"
-      },
-      {
-        "repo": "rainlanguage/rain.solmem",
-        "number": 102,
-        "url": "https://github.com/rainlanguage/rain.solmem/pull/102",
-        "title": "test: pin truncate's accept/reject boundary in both array libs"
-      },
-      {
         "repo": "cyclofinance/cyclo.site",
         "number": 435,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/435",
@@ -951,7 +939,7 @@
         ]
       },
       "un-vetted": {
-        "count": 40,
+        "count": 38,
         "prs": [
           {
             "repo": "rainlanguage/issue-pr-cron",
@@ -1092,18 +1080,6 @@
             "title": "Address registry: interface, concrete, reader lib and post-deploy cross-network verification"
           },
           {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 104,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/104",
-            "title": "Derive array differential expectations from pre-call input snapshots"
-          },
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 102,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/102",
-            "title": "test: pin truncate's accept/reject boundary in both array libs"
-          },
-          {
             "repo": "cyclofinance/cyclo.site",
             "number": 435,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/435",
@@ -1228,7 +1204,7 @@
             "repo": "rainlanguage/rain.solmem",
             "number": 100,
             "url": "https://github.com/rainlanguage/rain.solmem/pull/100",
-            "title": "test: red repro for #54 unchecked mul(_, 0x20) word scaling wrap (EXPECTED RED)"
+            "title": "fix: guard the unchecked mul(_, 0x20) word scaling at both sites (#54)"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1997,6 +1973,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.solmem",
+      "number": 110,
+      "url": "https://github.com/rainlanguage/rain.solmem/issues/110",
+      "title": "consumeSentinelTuples: n near 2**251 scales to a negative stride, so the scan walks UPWARD out of [lower, upper) and returns a sentinelPointer above upper without reverting"
+    },
     {
       "repo": "rainlanguage/rainix",
       "number": 305,
@@ -5860,7 +5842,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 40,
+    "unvetted": 38,
     "blockedOn": 18,
     "ready": 0,
     "needsWork": 103,
@@ -5871,16 +5853,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 161,
+    "totalProducerPrs": 159,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 639,
+    "uncoveredIssues": 640,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 805
+    "openIssues": 804
   },
   "ages": {
     "openIssues": {
-      "meanDays": 307.3,
+      "meanDays": 307.7,
       "medianDays": 107.8,
       "oldestDays": 1663.4
     }
