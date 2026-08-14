@@ -1968,6 +1968,12 @@
       "title": "LibSnapshot already implements the release freeze in Solidity; which layer owns it?"
     },
     {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 27,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/27",
+      "title": "Parameterized deploy-verification abstract: derive expectations from creation code, check against source and every chain"
+    },
+    {
       "repo": "rainlanguage/rainix",
       "number": 304,
       "url": "https://github.com/rainlanguage/rainix/issues/304",
@@ -5840,14 +5846,14 @@
     "leaks": 1,
     "totalProducerPrs": 159,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 640,
+    "uncoveredIssues": 641,
     "designPresentable": 0,
     "designNoQuestion": 0,
     "openIssues": 804
   },
   "ages": {
     "openIssues": {
-      "meanDays": 307.1,
+      "meanDays": 307.2,
       "medianDays": 108.1,
       "oldestDays": 1663.7
     }
