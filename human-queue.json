@@ -1950,6 +1950,12 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rainix",
+      "number": 306,
+      "url": "https://github.com/rainlanguage/rainix/issues/306",
+      "title": "sol repos can commit forge fmt drift: no Solidity hook in the pre-commit suite rainix-sol-static gates on"
+    },
+    {
       "repo": "rainlanguage/rain.solmem",
       "number": 110,
       "url": "https://github.com/rainlanguage/rain.solmem/issues/110",
@@ -5834,16 +5840,16 @@
     "leaks": 1,
     "totalProducerPrs": 159,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 639,
+    "uncoveredIssues": 640,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 803
+    "openIssues": 804
   },
   "ages": {
     "openIssues": {
-      "meanDays": 307.5,
-      "medianDays": 108.0,
-      "oldestDays": 1663.6
+      "meanDays": 307.1,
+      "medianDays": 108.1,
+      "oldestDays": 1663.7
     }
   }
 }
