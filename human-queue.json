@@ -133,13 +133,7 @@
         "repo": "rainlanguage/rain.solmem",
         "number": 101,
         "url": "https://github.com/rainlanguage/rain.solmem/pull/101",
-        "title": "test: red repro for #62 matrix itemCount unchecked sum and flatten wrap (EXPECTED RED)"
-      },
-      {
-        "repo": "rainlanguage/rain.solmem",
-        "number": 100,
-        "url": "https://github.com/rainlanguage/rain.solmem/pull/100",
-        "title": "fix: guard the unchecked mul(_, 0x20) word scaling at both sites (#54)"
+        "title": "fix: guard the matrix itemCount unchecked sum and flatten allocation scaling (#62)"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -1174,7 +1168,7 @@
     },
     "vetter-verdicts": {
       "ai:needs-work": {
-        "count": 103,
+        "count": 102,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -1198,13 +1192,7 @@
             "repo": "rainlanguage/rain.solmem",
             "number": 101,
             "url": "https://github.com/rainlanguage/rain.solmem/pull/101",
-            "title": "test: red repro for #62 matrix itemCount unchecked sum and flatten wrap (EXPECTED RED)"
-          },
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 100,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/100",
-            "title": "fix: guard the unchecked mul(_, 0x20) word scaling at both sites (#54)"
+            "title": "fix: guard the matrix itemCount unchecked sum and flatten allocation scaling (#62)"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -5840,19 +5828,28 @@
       "title": "add generic errors for integrity operand overflow and underflow"
     }
   ],
-  "leaks": [],
+  "leaks": [
+    {
+      "repo": "rainlanguage/rain.solmem",
+      "number": 100,
+      "url": "https://github.com/rainlanguage/rain.solmem/pull/100",
+      "title": "fix: guard the unchecked mul(_, 0x20) word scaling at both sites (#54)",
+      "reason": "🤖 ai:producer  Rework of the 2026-08-08 ruling landed at `aa77568`. All 7 items of the rework note, in order:  1. **`LibStackPointer.unsafeList` guarded** — `src/lib/LibStackPointer.sol:148`, multiply hoisted into checked Solidity exactly as the candidate diff. 2. **`LibStackSentinel.consumeSentinelTuples` guarded** — `src/lib/LibStackSentinel.sol:181`, same treatment for `size := mul(n, 0x20)`. 3. **False documentation corrected, not supplemented** — three sites, not two: the NatSpec claim (`src/lib/LibStackSentinel.sol:109-128`), the inline comment beside the scan loop (`src/lib/LibStackSentinel.sol:185-191`), and a third instance of the same universal claim in the library preamble (`src/lib/LibStackSentinel.sol:71-75`) that the note did not name but that says the same untrue thing. All three rewritten to state what the guarded function actually does, including that an out of range `n` is **not** guaranteed to fail loudly while #110 is open. 4. **Both control tests pass, untouched** — the four repro files are byte-identical to `83db85b`, and the fix commit touches no test at all: both `git diff 83db85b..aa77568 -- test/src/lib/LibStackPointer.unsafeListWrap.t.sol test/src/lib/LibStackPointerWrapHarness.sol test/src/lib/LibStackSentinel.tupleSizeWrap.t.sol test/src/lib/LibStackSentinelWrapHarness.sol` and `git diff 064249b..aa77568 -- test/` are empty. 5. **Full suite** — `origin/main` merged in first (it had moved). 334 passed / 6 failed on the merge commit, so the merge masked nothing; **340 passed, 0 failed, 0 skipped (340 total)** with the guard, exit 0. 6. **Second defect filed separately** — #110, reproduced against this branch **with the guard applied**: `sentinelPointer` 64 bytes above `upper`, returns at 11,269 gas, no revert. 7. **Audited source drift stated in the PR body**, up top with a warning heading — Protofire-audited, ~23 downstreams, re-audit conversation and republish cascade visible now rather than at merge.  Mutation evidence, each guard broken individually with the full suite re-run:  | mutant | result | | --- | --- | | `unsafeList` scaling wrapped in `unchecked` | 337 passed, **3 failed** / 340, exit 1 — all 3 `LibStackPointerUnsafeListWrapTest` red tests fire with their original messages | | `consumeSentinelTuples` scaling wrapped in `unchecked` | 337 passed, **3 failed** / 340, exit 1 — all 3 `LibStackSentinelTupleSizeWrapTest` red tests fire with their original messages |  Both controls kept passing under both mutants, which is the expected asymmetry — they do not depend on the guard.  `pre-commit run --all-files` and `forge fmt --check` both clean. **This PR is no longer expected-red.** ",
+      "createdAt": "2026-07-25T21:32:37Z"
+    }
+  ],
   "counts": {
     "unvetted": 38,
     "blockedOn": 18,
     "ready": 0,
-    "needsWork": 103,
+    "needsWork": 102,
     "relink": 0,
     "design": 0,
     "blockedInfra": 0,
     "closeCandidateIssues": 4,
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
-    "leaks": 0,
+    "leaks": 1,
     "totalProducerPrs": 159,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 640,
@@ -5862,9 +5859,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 307.7,
-      "medianDays": 107.8,
-      "oldestDays": 1663.4
+      "meanDays": 307.8,
+      "medianDays": 107.9,
+      "oldestDays": 1663.5
     }
   }
 }
