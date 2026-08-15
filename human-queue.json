@@ -917,8 +917,188 @@
         ]
       },
       "un-vetted": {
-        "count": 67,
+        "count": 97,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 125,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/125",
+            "title": "test: assert every declared artifact path resolves to the contract it names"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 124,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/124",
+            "title": "docs(LibRainDeploy): name the `supportedNetworks` return its NatSpec already documents"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 123,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/123",
+            "title": "test: drop duplicate MockAddressRevertingFactory import"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 122,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/122",
+            "title": "test: cover every answer length the resolved-address read guard refuses"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 121,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/121",
+            "title": "docs: checkCodeHash's rationale counts three entry points, not two"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 120,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/120",
+            "title": "fix(package): stop publishing .audit/, and say what the package actually ships"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 119,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/119",
+            "title": "Refuse a leading zero on a release-version component"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 118,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/118",
+            "title": "docs: `@param` tags for `UnexpectedDeployedAddress`"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 117,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/117",
+            "title": "test: name the real suite keys in two shared-creation-code comments"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 116,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/116",
+            "title": "docs: replace dangling Extrospection reference with the codehash mechanism"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 115,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/115",
+            "title": "docs: use the SPDX identifier for the licence in README"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 114,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/114",
+            "title": "One spelling of the record root, pinned to the writer's"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 113,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/113",
+            "title": "test: move shared test helpers into test/lib"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 112,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/112",
+            "title": "test: assert [rpc_endpoints] and [etherscan] are exactly supportedNetworks()"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 111,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/111",
+            "title": "Suppress unsafe-typecast lint on the range-checked uint160 cast"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 110,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/110",
+            "title": "docs: version is the last publish, not a name for a snapshot that exists"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 109,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/109",
+            "title": "test: name the deployable mocks' mutable storage `sFoo`"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 108,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/108",
+            "title": "test: drive the deployToNetworks dependency loop past index 0"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 107,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/107",
+            "title": "docs: add the soldeer install step to CLAUDE.md's command block"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 106,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/106",
+            "title": "test: assert the empty-derivation early return forks nothing"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 105,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/105",
+            "title": "docs: drop the false \"AddressRegistry is the only concrete\" premise"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 104,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/104",
+            "title": "Correct checkCodeHash's stated justification in LibMigrationRegistry"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 103,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/103",
+            "title": "Seed `suiteNames`'s named return before the loop"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 102,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/102",
+            "title": "fix: `candidateContractName` is `pure`, not `view`"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 101,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/101",
+            "title": "docs: NoDeployCandidates docstring names its real raise site"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 100,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/100",
+            "title": "docs: install section names the rain-sol-codegen dependency"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 99,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/99",
+            "title": "docs: place consumer example verification tests by subject path"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 98,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/98",
+            "title": "docs: name every RegistryDeploySuites inheritor, without a count"
+          },
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 292,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/292",
+            "title": "feat(cap): RUN_ITEM_CAP is the single source of truth for the per-run item cap"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 97,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/97",
+            "title": "test: drive freeze's write path and its append-only guard"
+          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 96,
@@ -2103,6 +2283,12 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 291,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/291",
+      "title": "token-profile's dispatching benchmark is stale, and stored so it will go stale again"
+    },
+    {
       "repo": "rainlanguage/rain.deploy",
       "number": 83,
       "url": "https://github.com/rainlanguage/rain.deploy/issues/83",
@@ -2110,201 +2296,9 @@
     },
     {
       "repo": "rainlanguage/rain.deploy",
-      "number": 82,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/82",
-      "title": "artifactPath is a hand-written string nothing resolves, and half of it is load bearing for the shape test"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 81,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/81",
-      "title": "The record root is spelled three times, and a walk of the wrong root makes every record-anchored assertion pass with no subject"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 80,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/80",
-      "title": "Build & Development commands omit the dependency install step, so the documented first command fails on a fresh checkout"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 78,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/78",
-      "title": "solc warning 2018: `candidateContractName` declared `view` when it can be `pure`"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 76,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/76",
-      "title": "Mutable storage in the deployable mocks is not `sFoo`"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 75,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/75",
-      "title": "`ExampleDeploySuites` documents `AddressRegistry` as the only concrete in the repo, which is no longer true"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 74,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/74",
-      "title": "Two test comments describe a suite key `0_0_2` that no fixture declares"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 73,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/73",
-      "title": "Shared test helpers are re-declared per test contract instead of living in test/lib"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 72,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/72",
-      "title": "`suiteNames`'s named return is assigned only inside a loop, made total by a guard in another function"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 71,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/71",
-      "title": "`MockAddressRevertingFactory` is imported twice in the same file"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 70,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/70",
-      "title": "`UnexpectedDeployedAddress` has no `@param` tags"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 69,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/69",
-      "title": "Licence shorthand `(DCL-1.0)` is not the identifier the repo uses anywhere else"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 68,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/68",
-      "title": "\"The published package deliberately ships only `src/` and `script/`\" is inaccurate against `.soldeerignore`"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 67,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/67",
-      "title": "Stated invariant \"`[package].version` … naming the current `src/generated/<tag>/` snapshots\" does not hold: no tag directory exists"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 66,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/66",
-      "title": "Consumer example places verification test contracts in `test/src/concrete/`, contradicting the mirror-by-subject convention and this repo's own tree"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 65,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/65",
-      "title": "Dangling reference to the \"Rain Extrospection lib\", which nothing in the tree uses"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
       "number": 64,
       "url": "https://github.com/rainlanguage/rain.deploy/issues/64",
       "title": "The mutation ledger predates almost the entire current source tree"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 63,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/63",
-      "title": "The \"nothing to check does not touch five RPC endpoints\" early return is asserted by nothing"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 62,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/62",
-      "title": "A read answering more than one word is never exercised, so the word-length guard is only half covered"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 60,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/60",
-      "title": "The dependency loop in deployToNetworks is never driven with more than one dependency"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 57,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/57",
-      "title": "The alias-lib emitters (writeAliasLib, aliasImportBlock, aliasLibraryBlock) have no test"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 55,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/55",
-      "title": "RegistryDeploySuites's docstring enumerates three inheritors when five inherit it, and omits the two that use it as a generation template"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 54,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/54",
-      "title": "NoDeployCandidates's docstring names the wrong raise site and claims a totality that is not there, contradicting checkedCandidateSuites's own docstring"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 53,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/53",
-      "title": "checkCodeHash's doc says \"both entry points\" and \"the two\" for three callers"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 52,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/52",
-      "title": "checkCodeHash's stated justification is factually wrong: an unguarded call into an empty account reverts, it does not decode as zero"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 51,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/51",
-      "title": "isStrictTriple accepts leading zeros, so one release version has two directory spellings and SnapshotAlreadyFrozen never sees the second as a re-cut"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 50,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/50",
-      "title": "`supportedNetworks` documents a return name its signature does not declare"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 49,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/49",
-      "title": "forge-lint `unsafe-typecast` on an already-range-checked uint160 cast is the repo's only unsuppressed warning"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 48,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/48",
-      "title": "Install docs omit the `rain-sol-codegen` dependency, so a consumer following them cannot compile"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 47,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/47",
-      "title": "The supported-network list lives in three places and only the RPC half is enforced"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 46,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/46",
-      "title": "`freeze()`'s write path and its `SnapshotAlreadyFrozen` append-only guard are untested"
-    },
-    {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 290,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/290",
-      "title": "state-load: every producer run still re-slices it with jq — the digest already exists, the rows do not"
-    },
-    {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 288,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/288",
-      "title": "The per-run item cap has no single source of truth — 19 hand-copied prose restatements plus two Rust constants"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -6256,7 +6250,7 @@
     }
   ],
   "counts": {
-    "unvetted": 67,
+    "unvetted": 97,
     "blockedOn": 18,
     "ready": 0,
     "needsWork": 98,
@@ -6267,9 +6261,9 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 1,
-    "totalProducerPrs": 185,
+    "totalProducerPrs": 215,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 686,
+    "uncoveredIssues": 655,
     "designPresentable": 1,
     "designNoQuestion": 0,
     "openIssues": 875
@@ -6278,7 +6272,7 @@
     "openIssues": {
       "meanDays": 283.0,
       "medianDays": 102.2,
-      "oldestDays": 1664.6
+      "oldestDays": 1664.7
     }
   }
 }
