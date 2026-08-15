@@ -909,20 +909,8 @@
         ]
       },
       "un-vetted": {
-        "count": 58,
+        "count": 56,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 43,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/43",
-            "title": "test(migration-registry): exercise the orderings the docstrings assert"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 42,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/42",
-            "title": "chore: remove the submodule-era residue — dead foundry.lock, .gitmodules and lib/ references"
-          },
           {
             "repo": "rainlanguage/raindex",
             "number": 2835,
@@ -2033,6 +2021,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 288,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/288",
+      "title": "The per-run item cap has no single source of truth — 19 hand-copied prose restatements plus two Rust constants"
+    },
     {
       "repo": "rainlanguage/rainix",
       "number": 308,
@@ -5983,7 +5977,7 @@
     }
   ],
   "counts": {
-    "unvetted": 58,
+    "unvetted": 56,
     "blockedOn": 17,
     "ready": 0,
     "needsWork": 100,
@@ -5994,17 +5988,17 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 1,
-    "totalProducerPrs": 176,
+    "totalProducerPrs": 174,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 652,
+    "uncoveredIssues": 653,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 833
+    "openIssues": 832
   },
   "ages": {
     "openIssues": {
-      "meanDays": 297.2,
-      "medianDays": 108.1,
+      "meanDays": 297.6,
+      "medianDays": 108.2,
       "oldestDays": 1664.6
     }
   }
