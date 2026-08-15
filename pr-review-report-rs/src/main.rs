@@ -45290,43 +45290,75 @@ fn state_load_backlog_issues() -> Option<(Vec<Value>, usize)> {
     ))
 }
 
-/// `state-load --audit` / `--action` / `--actionable` / `--approved`: the ROWS, typed.
+/// WHAT ONE ROW CALL RESOLVED TO: the rows, and the shape they print in.
+///
+/// A NAMED type rather than the four-tuple this was, because the columns and the projection have to
+/// AGREE — a fleet projection paired with the audit header still compiles and prints a header the
+/// rows do not carry — and a positional tuple is exactly where that pairing goes unnamed. The
+/// [`Self::columns`]/[`Self::line`] pair is only ever built by [`state_load_row_selection`], so the
+/// two spellings that agree are the only two that exist.
+struct RowSelection {
+    /// The header these rows print under — [`FLEET_ROW_COLUMNS`] or [`AUDIT_ROW_COLUMNS`].
+    columns: &'static [&'static str],
+    /// How ONE of [`Self::rows`] projects to a line under those columns.
+    line: fn(&Value) -> String,
+    /// The selected rows, WHOLE. `--limit` is applied after, so the count line can state what it
+    /// cut against the number that was actually there.
+    rows: Vec<Value>,
+    /// What an archived repo froze out of the population these came from, before any selection
+    /// (#206) — the same withhold the digest reports for that half.
+    archived: usize,
+}
+
+/// The rows one selector names, read from the ONE half that holds them.
 ///
 /// ONE HALF, NOT BOTH. A fleet selector reads the fleet and a backlog selector reads the backlog:
 /// the digest composes both because it IS the whole opening picture, but making a row list pay for
 /// an org-wide issue search it cannot report on would price the typed route above the `jq` one it
-/// replaces. The abort-on-failure rule is unchanged — it just applies to the half that was asked
-/// for.
+/// replaces. `None` is the digest's ABORT rule applied to the half that was asked for: a read that
+/// refused to report a falsely-empty set is never laundered into an empty row list.
+fn state_load_row_selection(use_cache: bool, sel: StateLoadRows) -> Option<RowSelection> {
+    if sel == StateLoadRows::Audit {
+        let (issues, archived) = state_load_backlog_issues()?;
+        return Some(RowSelection {
+            columns: &AUDIT_ROW_COLUMNS,
+            line: audit_row_line,
+            rows: backlog_digest(&issues)
+                .pointer("/audit/issues")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default(),
+            archived,
+        });
+    }
+    let (rows, archived) = worklist_rows(use_cache)?;
+    Some(RowSelection {
+        columns: &FLEET_ROW_COLUMNS,
+        line: fleet_row_line,
+        rows: rows
+            .into_iter()
+            .filter(|r| fleet_row_selected(r, sel))
+            .collect(),
+        archived,
+    })
+}
+
+/// `state-load --audit` / `--action` / `--actionable` / `--approved`: the ROWS, typed.
 fn state_load_row_mode(
     json_out: bool,
     use_cache: bool,
     sel: StateLoadRows,
     limit: Option<usize>,
 ) -> i32 {
-    let (columns, line, all, archived): (&[&str], fn(&Value) -> String, Vec<Value>, usize) =
-        if sel == StateLoadRows::Audit {
-            let Some((issues, archived)) = state_load_backlog_issues() else {
-                return 1;
-            };
-            let audit = backlog_digest(&issues)
-                .pointer("/audit/issues")
-                .and_then(|v| v.as_array())
-                .cloned()
-                .unwrap_or_default();
-            (&AUDIT_ROW_COLUMNS, audit_row_line, audit, archived)
-        } else {
-            let Some((rows, archived)) = worklist_rows(use_cache) else {
-                return 1;
-            };
-            (
-                &FLEET_ROW_COLUMNS,
-                fleet_row_line,
-                rows.into_iter()
-                    .filter(|r| fleet_row_selected(r, sel))
-                    .collect(),
-                archived,
-            )
-        };
+    let Some(RowSelection {
+        columns,
+        line,
+        rows: all,
+        archived,
+    }) = state_load_row_selection(use_cache, sel)
+    else {
+        return 1;
+    };
     let total = all.len();
     let shown = take_limit(all, limit);
     if json_out {
