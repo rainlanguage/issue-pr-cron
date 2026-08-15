@@ -3495,16 +3495,18 @@ reduce. It now prescribes the bare call and says the default output is the
 digest.
 
 The other two `jq` calls were the tool's fault, and they select **rows** —
-`nextAction == "rework-needs-work"` as `repo / number / ci / mergeState /
-closes / title`, and the first 12 actionable rows. The `--help` claimed the
-result contains "the rows that name work", and it did: inside 95 KB, reachable
-only by re-slicing. So every row list the digest counts now has a **selector**
-that projects it — `--action <nextAction>` (any action the histogram names,
-including the ones no step acts on), `--actionable`, `--approved`, `--audit`,
-each with `--limit N` — printing compact TSV columns under a `#` header, led by
-a `#` count line that states what a `--limit` cut so a truncated list is never
-read as the whole set. A row call after the digest re-fetches nothing per PR: it
-reads through the fleet cache the digest just wrote.
+`nextAction == "rework-needs-work"` as
+`repo / number / ci / mergeState /
+closes / title`, and the first 12 actionable
+rows. The `--help` claimed the result contains "the rows that name work", and it
+did: inside 95 KB, reachable only by re-slicing. So every row list the digest
+counts now has a **selector** that projects it — `--action <nextAction>` (any
+action the histogram names, including the ones no step acts on), `--actionable`,
+`--approved`, `--audit`, each with `--limit N` — printing compact TSV columns
+under a `#` header, led by a `#` count line that states what a `--limit` cut so
+a truncated list is never read as the whole set. A row call after the digest
+re-fetches nothing per PR: it reads through the fleet cache the digest just
+wrote.
 
 That is **projection, not a query language**, and it does not undo the paragraph
 above. The selectors name the digest's own row lists and one `nextAction`; none
