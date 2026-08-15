@@ -109,7 +109,7 @@
         "repo": "rainlanguage/rain.solmem",
         "number": 103,
         "url": "https://github.com/rainlanguage/rain.solmem/pull/103",
-        "title": "Discriminate the underflow-reverts-via-gas guarantee instead of accepting any revert"
+        "title": "Assert the underflow safety property, and close the hole that made it false"
       },
       {
         "repo": "rainlanguage/rain.solmem",
@@ -909,8 +909,14 @@
         ]
       },
       "un-vetted": {
-        "count": 38,
+        "count": 39,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 112,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/112",
+            "title": "Delete LibStackPointer, dead across the whole org"
+          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 39,
@@ -1150,7 +1156,7 @@
             "repo": "rainlanguage/rain.solmem",
             "number": 103,
             "url": "https://github.com/rainlanguage/rain.solmem/pull/103",
-            "title": "Discriminate the underflow-reverts-via-gas guarantee instead of accepting any revert"
+            "title": "Assert the underflow safety property, and close the hole that made it false"
           },
           {
             "repo": "rainlanguage/rain.solmem",
@@ -1914,16 +1920,58 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 26,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/26",
+      "title": "Remove the submodule-era residue — dead `foundry.lock`, `.gitmodules` and `lib/` references in a repo with no submodules"
+    },
+    {
+      "repo": "rainlanguage/rain.intorastring",
+      "number": 20,
+      "url": "https://github.com/rainlanguage/rain.intorastring/issues/20",
+      "title": "Remove the submodule-era residue — dead `foundry.lock`, `.gitmodules` and `lib/` references in a repo with no submodules"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 22,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/22",
+      "title": "Remove the submodule-era residue — dead `foundry.lock`, `.gitmodules` and `lib/` references in a repo with no submodules"
+    },
+    {
+      "repo": "rainlanguage/rain.string",
+      "number": 29,
+      "url": "https://github.com/rainlanguage/rain.string/issues/29",
+      "title": "Remove the submodule-era residue — dead `foundry.lock`, `.gitmodules` and `lib/` references in a repo with no submodules"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 258,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/258",
+      "title": "Remove the submodule-era residue — dead `foundry.lock`, `.gitmodules` and `lib/` references in a repo with no submodules"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 47,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/47",
+      "title": "Remove the submodule-era residue — dead `foundry.lock`, `.gitmodules` and `lib/` references in a repo with no submodules"
+    },
+    {
+      "repo": "rainlanguage/rainlang.interface",
+      "number": 121,
+      "url": "https://github.com/rainlanguage/rainlang.interface/issues/121",
+      "title": "Remove the submodule-era residue — dead `foundry.lock`, `.gitmodules` and `lib/` references in a repo with no submodules"
+    },
+    {
+      "repo": "rainlanguage/rain.solmem",
+      "number": 111,
+      "url": "https://github.com/rainlanguage/rain.solmem/issues/111",
+      "title": "Remove the submodule-era residue — dead `foundry.lock`, `.gitmodules` and `lib/` references in a repo with no submodules"
+    },
+    {
       "repo": "rainlanguage/rainix",
       "number": 306,
       "url": "https://github.com/rainlanguage/rainix/issues/306",
       "title": "sol repos can commit forge fmt drift: no Solidity hook in the pre-commit suite rainix-sol-static gates on"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 110,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/110",
-      "title": "consumeSentinelTuples: n near 2**251 scales to a negative stride, so the scan walks UPWARD out of [lower, upper) and returns a sentinelPointer above upper without reverting"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -2734,12 +2782,6 @@
       "number": 277,
       "url": "https://github.com/rainlanguage/rainix/issues/277",
       "title": "rainix-sol-artifacts: forge script --verify fails for Zoltu CREATE2, then --resume loops without wallet"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 54,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/54",
-      "title": "Unchecked mul(_, 0x20) word scaling wraps, turning documented loud failures into silent corruption"
     },
     {
       "repo": "rainlanguage/issue-pr-cron",
@@ -5773,7 +5815,7 @@
     }
   ],
   "counts": {
-    "unvetted": 38,
+    "unvetted": 39,
     "blockedOn": 17,
     "ready": 0,
     "needsWork": 100,
@@ -5784,16 +5826,16 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 1,
-    "totalProducerPrs": 156,
+    "totalProducerPrs": 157,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 637,
+    "uncoveredIssues": 643,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 798
+    "openIssues": 806
   },
   "ages": {
     "openIssues": {
-      "meanDays": 310.0,
+      "meanDays": 307.0,
       "medianDays": 108.8,
       "oldestDays": 1664.4
     }
