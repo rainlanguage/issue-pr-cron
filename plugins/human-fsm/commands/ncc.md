@@ -259,7 +259,7 @@ Each field of the row is one read a human otherwise does by hand:
 
 `queue.more` and `counts` frame the row. A flag you expected and did not get is
 usually in `counts.unvetted` — the vetter has not judged it, and under the
-3-item run cap it may wait; a flag the vetter would REJECT never arrives here at
+5-item run cap it may wait; a flag the vetter would REJECT never arrives here at
 all. `strandedFlags` is a label parking an issue with nothing consuming it: no
 producer comment behind it, or a reject whose label is live anyway. The vetter's
 state-load clears both, so one listed here is a clearance that has not run yet
