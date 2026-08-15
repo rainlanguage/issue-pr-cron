@@ -52617,7 +52617,8 @@ ONE-SHOT, NOT A LOOP
 ";
         let preamble = producer_preamble(PROMPT);
         assert_eq!(
-            preamble, "RUN BUDGET: at most {{ITEM_CAP}} WORK ITEMS\nFAN OUT BY DEFAULT, and here is why",
+            preamble,
+            "RUN BUDGET: at most {{ITEM_CAP}} WORK ITEMS\nFAN OUT BY DEFAULT, and here is why",
             "a wrapped paragraph is joined back with its own newlines, not flattened"
         );
         // A whitespace-only line ENDS the paragraph — it is blank to a reader, and a separator that
@@ -68005,9 +68006,33 @@ mod run_item_cap_tests {
     /// does" are ordinary English for a single item — counting them would make the scan cry wolf on
     /// the two sentences that explain what an item IS.
     const NUMBER_WORDS: &[&str] = &[
-        "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
-        "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty",
-        "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety", "hundred",
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+        "seven",
+        "eight",
+        "nine",
+        "ten",
+        "eleven",
+        "twelve",
+        "thirteen",
+        "fourteen",
+        "fifteen",
+        "sixteen",
+        "seventeen",
+        "eighteen",
+        "nineteen",
+        "twenty",
+        "thirty",
+        "forty",
+        "fifty",
+        "sixty",
+        "seventy",
+        "eighty",
+        "ninety",
+        "hundred",
     ];
 
     /// The prose that may still put a bare quantity against `items`, because it RECORDS a run that
@@ -68116,6 +68141,14 @@ mod run_item_cap_tests {
             "the lane split (#114 — lane items) is computed per subject",
             "it is ~617 issues against a {{ITEM_CAP}}-item budget",
             "the 2026-08-03 run budget items",
+            // THE TWO ABOVE DO NOT REACH THE GUARDS THEY NAME, which a mutation pass is how you
+            // find out: in the live sentence `~617` sits three tokens off the noun (`against a
+            // {{ITEM_CAP}}-item`) so the digit-run rule never judges it, and `#114` is excluded by
+            // that same digit-run rule whether or not the `#` rule exists. Each guard needs a
+            // quantity ADJACENT to the noun and short enough to reach it, or it is pinned by
+            // nothing — both of these survived until they were written.
+            "the uncovered set is 617 items",
+            "the lane split (#51 — lane items) is computed per subject",
         ] {
             assert!(
                 cap_restatements(derived).is_empty(),
@@ -68136,7 +68169,11 @@ mod run_item_cap_tests {
             STATE_LOAD_PAGE_DEFAULT, 5,
             "a state-load page IS the run's budget, so it moves only with RUN_ITEM_CAP"
         );
-        assert_eq!(*STATE_LOAD_PAGE_RANGE.start(), 1, "a caller may always narrow");
+        assert_eq!(
+            *STATE_LOAD_PAGE_RANGE.start(),
+            1,
+            "a caller may always narrow"
+        );
         assert_eq!(
             *STATE_LOAD_PAGE_RANGE.end(),
             5,
@@ -68185,7 +68222,10 @@ mod run_item_cap_tests {
     /// the spot rather than the next time the cap moves.
     #[test]
     fn the_human_inbox_page_is_not_the_run_item_cap() {
-        assert_eq!(NEXT_READY_MAX_ROWS, 3, "the human's inbox page, not the cap");
+        assert_eq!(
+            NEXT_READY_MAX_ROWS, 3,
+            "the human's inbox page, not the cap"
+        );
         assert_eq!(NEXT_CC_MAX_ROWS, 3);
         assert_eq!(NEXT_DESIGN_MAX_ROWS, 3);
         assert_eq!(NEXT_LEAK_MAX_ROWS, 3);
