@@ -394,10 +394,19 @@ trap '[ -n "${SCRATCH_DIR:-}" ] && rm -rf "$SCRATCH_DIR"' EXIT
 # most  WORK ITEMS per run" and hands the model a budget with no number in it — the same silent
 # degradation the worker-brief guard below exists for, one stale binary on PATH away. So a value
 # that is not a positive integer ABORTS the run instead of reaching the model.
+#
+# "Positive" is decided by finding a NONZERO DIGIT, not by excluding the string `0`: `00` is all
+# digits and is not `0`, so an exclusion list lets it through and renders "at most 00 WORK ITEMS",
+# which is the zero budget this guard exists to refuse wearing two characters instead of one.
 ITEM_CAP="$(pr-review-report item-cap 2>/dev/null)"
 case "$ITEM_CAP" in
-  '' | *[!0-9]* | 0)
+  '' | *[!0-9]*)
     echo "$(date -u +%FT%TZ) campaign run ABORT: \`pr-review-report item-cap\` gave no usable run budget (got '$ITEM_CAP') — the prompt's {{ITEM_CAP}} would render empty" | _log
+    exit 1
+    ;;
+  *[1-9]*) ;;
+  *)
+    echo "$(date -u +%FT%TZ) campaign run ABORT: \`pr-review-report item-cap\` gave a ZERO run budget (got '$ITEM_CAP') — a run told to spend no items must not start" | _log
     exit 1
     ;;
 esac

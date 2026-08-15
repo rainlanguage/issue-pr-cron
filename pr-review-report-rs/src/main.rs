@@ -68076,11 +68076,19 @@ mod run_item_cap_tests {
         NUMBER_WORDS.contains(&t.as_str())
     }
 
-    /// Every place `text` attaches a bare quantity to the `item`/`items` noun — i.e. every place it
+    /// Every place `text` puts a bare quantity BEFORE the `item`/`items` noun — i.e. every place it
     /// states a work-item budget in its own words instead of deriving one from `{{ITEM_CAP}}`.
     ///
     /// The split treats `-` as a separator so `5-ITEM BUDGET` is caught: the hyphenated form is a
     /// restatement that a scan for a free-standing digit walks straight past.
+    ///
+    /// LOOKING BACKWARD IS THE RULE, NOT A LIMITATION TO LIFT. English attaches a count to the noun
+    /// that FOLLOWS it, so a window opened after the noun reads the count of the NEXT noun instead:
+    /// the live sentence `{{ITEM_CAP}} items dispatched as thirty agents` would be flagged for the
+    /// `thirty` that belongs to `agents`, and it is the one sentence in the prompt whose whole job
+    /// is to say the cap counts items and NOT agents. A post-noun form (`items per run: 5`) is a
+    /// different construction, and catching it means stopping at the next noun rather than widening
+    /// this window — do not add a forward scan without that. The case below pins it.
     fn cap_restatements(text: &str) -> Vec<String> {
         let toks: Vec<&str> = text
             .split(|c: char| c.is_whitespace() || c == '-')
@@ -68149,6 +68157,10 @@ mod run_item_cap_tests {
             // nothing — both of these survived until they were written.
             "the uncovered set is 617 items",
             "the lane split (#51 — lane items) is computed per subject",
+            // THE DIRECTION, PINNED. A count sitting AFTER the noun belongs to the next noun, not
+            // to this one — widening the window forward flags `thirty` here, on the one sentence
+            // that exists to say the cap counts items and not agents.
+            "{{ITEM_CAP}} items dispatched as thirty agents is still {{ITEM_CAP}} items",
         ] {
             assert!(
                 cap_restatements(derived).is_empty(),
@@ -68264,7 +68276,7 @@ mod run_item_cap_tests {
     fn the_prompts_state_no_item_cap_of_their_own() {
         for name in ["campaign-prompt.txt", "review-prompt.txt"] {
             let Some(prompt) = repo_root_text(name) else {
-                return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+                continue; // not checked out (nix build sandbox) — enforced by the rs-test gate
             };
             assert!(
                 prompt.contains("{{ITEM_CAP}}"),
@@ -68295,7 +68307,7 @@ mod run_item_cap_tests {
             let (Some(prompt), Some(runner)) =
                 (repo_root_text(prompt_name), repo_root_text(runner_name))
             else {
-                return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+                continue; // not checked out (nix build sandbox) — enforced by the rs-test gate
             };
 
             let mut placeholders: Vec<String> = prompt
@@ -68324,6 +68336,32 @@ mod run_item_cap_tests {
         }
     }
 
+    /// TEST HELPER: run a runner's OWN budget guard against one value, in a shell, and report
+    /// whether it aborted. The `case` block is lifted verbatim out of the script, so what is
+    /// exercised is the guard that ships rather than a copy of it kept here.
+    ///
+    /// Asserting on the guard's TEXT is what let `00` through: a pattern list reads as covering the
+    /// case it names and says nothing whatever about the ones it does not, so `'' | *[!0-9]* | 0`
+    /// looked like "refuses zero" while `00` — all digits, and not the string `0` — sailed past it
+    /// into a rendered budget of nothing.
+    fn budget_guard_rejects(runner: &str, value: &str) -> bool {
+        let after = runner
+            .split_once("case \"$ITEM_CAP\" in")
+            .expect("the budget guard is present")
+            .1;
+        let block = after.split_once("esac").expect("the guard closes").0;
+        // `_log` is the runner's own logger, which the guard pipes its abort line into.
+        let script = format!(
+            "_log() {{ cat >/dev/null; }}\nITEM_CAP='{value}'\ncase \"$ITEM_CAP\" in{block}esac\nexit 0\n"
+        );
+        !std::process::Command::new("sh")
+            .arg("-c")
+            .arg(script)
+            .status()
+            .expect("sh runs")
+            .success()
+    }
+
     /// A budget that cannot be resolved ABORTS the run instead of reaching the model.
     ///
     /// An empty substitution is not a failure the shell notices: it renders "at most  WORK ITEMS
@@ -68333,16 +68371,27 @@ mod run_item_cap_tests {
     fn the_runners_abort_rather_than_render_an_empty_run_budget() {
         for name in ["campaign-run.sh", "review-run.sh"] {
             let Some(runner) = repo_root_text(name) else {
-                return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+                continue; // not checked out (nix build sandbox) — enforced by the rs-test gate
             };
             assert!(
                 runner.contains("ITEM_CAP=\"$(pr-review-report item-cap 2>/dev/null)\""),
                 "{name} takes the run budget from the transition function, not from a literal"
             );
-            assert!(
-                runner.contains("'' | *[!0-9]* | 0)"),
-                "{name} must refuse an empty, non-numeric or zero budget"
-            );
+            // EVERY shape that must not reach the model. `00`/`000` are the ones an exclusion list
+            // misses — all digits, neither of them the string `0`, and both render a ZERO budget,
+            // which is the same instruction as an empty one written with a character in it.
+            for bad in ["", "0", "00", "000", "x", "5x", " 5", "-1", "1.5", "5 5"] {
+                assert!(
+                    budget_guard_rejects(&runner, bad),
+                    "{name} must refuse {bad:?} rather than render it into the RUN BUDGET sentence"
+                );
+            }
+            for good in ["1", "5", "10", "25"] {
+                assert!(
+                    !budget_guard_rejects(&runner, good),
+                    "{name} must accept the positive budget {good:?}"
+                );
+            }
             let guard = runner
                 .split_once("ITEM_CAP=\"$(")
                 .expect("the read is present")

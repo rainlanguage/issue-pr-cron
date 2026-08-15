@@ -332,10 +332,19 @@ export INSTALL_DIR="$DIR"
 # A value that is not a positive integer ABORTS: `{{ITEM_CAP}}` rendering empty leaves the vetter a
 # RUN BUDGET sentence with no number in it, which nothing rejects and every run resolves its own
 # way — the same silent-degradation class as the empty auditor brief below.
+#
+# "Positive" is decided by finding a NONZERO DIGIT, not by excluding the string `0`: `00` is all
+# digits and is not `0`, so an exclusion list lets it through and renders "at most 00 WORK ITEMS",
+# which is the zero budget this guard exists to refuse wearing two characters instead of one.
 ITEM_CAP="$(pr-review-report item-cap 2>/dev/null)"
 case "$ITEM_CAP" in
-  '' | *[!0-9]* | 0)
+  '' | *[!0-9]*)
     echo "$(date -u +%FT%TZ) review run ABORT: \`pr-review-report item-cap\` gave no usable run budget (got '$ITEM_CAP') — the prompt's {{ITEM_CAP}} would render empty" | _log
+    exit 1
+    ;;
+  *[1-9]*) ;;
+  *)
+    echo "$(date -u +%FT%TZ) review run ABORT: \`pr-review-report item-cap\` gave a ZERO run budget (got '$ITEM_CAP') — a run told to spend no items must not start" | _log
     exit 1
     ;;
 esac
