@@ -67489,16 +67489,18 @@ mod vetter_state_load_tests {
                 doc["prs"].as_array().unwrap().len(),
                 STATE_LOAD_PAGE_DEFAULT
             );
-            // 20 vet-able minus the page; 150 skipped minus the same page. Expressed against the
-            // constant rather than as a literal, because what is being asserted is that `more` is
-            // whole-queue truth minus THIS page — a property that must survive the cap moving.
-            assert_eq!(doc["more"], json!(20 - STATE_LOAD_PAGE_DEFAULT));
+            // 20 vet-able minus the 5-row page; 150 skipped minus the same page. LITERALS, not
+            // `20 - STATE_LOAD_PAGE_DEFAULT`: deriving them from the constant makes every value of
+            // the constant self-consistent, so the assertion stops being able to tell 5 from 3 and
+            // the test survives a mutation of the very number it is here to pin (#288 wants a test
+            // that FAILS when the page and the prompts' budget diverge — this is that test).
+            assert_eq!(doc["more"], json!(15));
             if include_skipped {
                 assert_eq!(
                     doc["skipped"].as_array().unwrap().len(),
                     STATE_LOAD_PAGE_DEFAULT
                 );
-                assert_eq!(doc["moreSkipped"], json!(150 - STATE_LOAD_PAGE_DEFAULT));
+                assert_eq!(doc["moreSkipped"], json!(145));
             }
         }
 
