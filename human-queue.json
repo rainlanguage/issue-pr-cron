@@ -8,6 +8,12 @@
         "title": "feat: open-salt deterministic clone variant (ICloneableFactoryV4)"
       },
       {
+        "repo": "rainlanguage/rain.dia",
+        "number": 66,
+        "url": "https://github.com/rainlanguage/rain.dia/pull/66",
+        "title": "build(deps): bump rain-math-binary 0.1.1 -> 0.1.3"
+      },
+      {
         "repo": "rainlanguage/rain.factory",
         "number": 51,
         "url": "https://github.com/rainlanguage/rain.factory/pull/51",
@@ -804,13 +810,19 @@
   "lanes": {
     "vet-lifecycle": {
       "ai:blocked-on": {
-        "count": 18,
+        "count": 19,
         "prs": [
           {
             "repo": "rainlanguage/rain.factory.deploy",
             "number": 8,
             "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/8",
             "title": "feat: open-salt deterministic clone variant (ICloneableFactoryV4)"
+          },
+          {
+            "repo": "rainlanguage/rain.dia",
+            "number": 66,
+            "url": "https://github.com/rainlanguage/rain.dia/pull/66",
+            "title": "build(deps): bump rain-math-binary 0.1.1 -> 0.1.3"
           },
           {
             "repo": "rainlanguage/rain.factory",
@@ -919,6 +931,18 @@
       "un-vetted": {
         "count": 97,
         "prs": [
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 295,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/295",
+            "title": "bootstrap.sh: stand a fresh producer/vetter box up from a tracked script"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 126,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/126",
+            "title": "Generate the released-suites aggregate instead of writing it by hand"
+          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 125,
@@ -1104,12 +1128,6 @@
             "number": 96,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/96",
             "title": "freeze: refuse a release tag that does not follow the record"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 95,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/95",
-            "title": "Freeze each release's dependency list into its snapshot"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -1350,12 +1368,6 @@
             "number": 16,
             "url": "https://github.com/rainlanguage/rain.merkle/pull/16",
             "title": "chore(deps): bump rain-math-binary 0.1.1 -> 0.1.3"
-          },
-          {
-            "repo": "rainlanguage/rain.dia",
-            "number": 66,
-            "url": "https://github.com/rainlanguage/rain.dia/pull/66",
-            "title": "build(deps): bump rain-math-binary 0.1.1 -> 0.1.3"
           },
           {
             "repo": "rainlanguage/rain.erc4626.words",
@@ -2287,12 +2299,6 @@
       "number": 291,
       "url": "https://github.com/rainlanguage/issue-pr-cron/issues/291",
       "title": "token-profile's dispatching benchmark is stale, and stored so it will go stale again"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 83,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/83",
-      "title": "releasedSuites() is hand-written glue over per-contract generated libs, and the doc beside it says adding a contract touches nothing else"
     },
     {
       "repo": "rainlanguage/rain.deploy",
@@ -6251,7 +6257,7 @@
   ],
   "counts": {
     "unvetted": 97,
-    "blockedOn": 18,
+    "blockedOn": 19,
     "ready": 0,
     "needsWork": 98,
     "relink": 0,
@@ -6261,16 +6267,16 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 1,
-    "totalProducerPrs": 215,
+    "totalProducerPrs": 216,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 655,
+    "uncoveredIssues": 654,
     "designPresentable": 1,
     "designNoQuestion": 0,
     "openIssues": 875
   },
   "ages": {
     "openIssues": {
-      "meanDays": 283.0,
+      "meanDays": 283.1,
       "medianDays": 102.2,
       "oldestDays": 1664.7
     }
