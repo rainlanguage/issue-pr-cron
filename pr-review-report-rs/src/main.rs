@@ -43471,7 +43471,7 @@ enum Cmd {
     /// name work, the approved set, and the audit backlog by severity — pre-grouped, so a run opens
     /// on a typed answer rather than on a blob it re-slices with `jq`.
     ///
-    /// WITH NO FLAG this prints the DIGEST — ~19 lines, the whole opening picture. WITH A ROW
+    /// WITH NO FLAG this prints the DIGEST — 21 lines, the whole opening picture. WITH A ROW
     /// SELECTOR (`--action`/`--actionable`/`--approved`/`--audit`) it prints THOSE ROWS as compact
     /// columns, which is the half that used to be reachable only by re-slicing `--json` with `jq`
     /// (#290). `--json` is the ESCAPE HATCH for a field the columns do not carry, and with a
@@ -45290,57 +45290,99 @@ fn state_load_backlog_issues() -> Option<(Vec<Value>, usize)> {
     ))
 }
 
-/// WHAT ONE ROW CALL RESOLVED TO: the rows, and the shape they print in.
+/// THE SHAPE A SELECTOR'S ROWS PRINT IN: the header, and the projection that fills it.
 ///
-/// A NAMED type rather than the four-tuple this was, because the columns and the projection have to
-/// AGREE — a fleet projection paired with the audit header still compiles and prints a header the
-/// rows do not carry — and a positional tuple is exactly where that pairing goes unnamed. The
-/// [`Self::columns`]/[`Self::line`] pair is only ever built by [`state_load_row_selection`], so the
-/// two spellings that agree are the only two that exist.
-struct RowSelection {
+/// The two travel together because they have to AGREE — an audit projection under the FLEET header
+/// still compiles and prints three cells under six column names — and this pairs them ONCE, as a
+/// property of the SELECTOR rather than of whichever code path fetched the rows. That is also what
+/// makes the pairing checkable without a fleet: [`StateLoadRows::shape`] is pure, so every selector
+/// can be asked what it prints and held to it.
+struct RowShape {
     /// The header these rows print under — [`FLEET_ROW_COLUMNS`] or [`AUDIT_ROW_COLUMNS`].
     columns: &'static [&'static str],
-    /// How ONE of [`Self::rows`] projects to a line under those columns.
+    /// How ONE selected row projects to a line under those columns.
     line: fn(&Value) -> String,
-    /// The selected rows, WHOLE. `--limit` is applied after, so the count line can state what it
-    /// cut against the number that was actually there.
-    rows: Vec<Value>,
-    /// What an archived repo froze out of the population these came from, before any selection
-    /// (#206) — the same withhold the digest reports for that half.
-    archived: usize,
 }
 
-/// The rows one selector names, read from the ONE half that holds them.
+impl StateLoadRows {
+    /// PURE: the columns this selector's rows print under, and the projection that fills them.
+    ///
+    /// EXHAUSTIVE over the selector — no `_` arm — so a selector added to the enum cannot reach the
+    /// printer without saying what shape it prints in. A catch-all would default a new row list
+    /// into the fleet header, which is the exact mispairing this function exists to make
+    /// unspellable.
+    fn shape(self) -> RowShape {
+        match self {
+            // The backlog half. Its rows are issues, and they carry none of the fleet's columns.
+            StateLoadRows::Audit => RowShape {
+                columns: &AUDIT_ROW_COLUMNS,
+                line: audit_row_line,
+            },
+            // The three fleet selectors differ in WHICH rows they take, never in what a row is.
+            StateLoadRows::Action(_) | StateLoadRows::Actionable | StateLoadRows::Approved => {
+                RowShape {
+                    columns: &FLEET_ROW_COLUMNS,
+                    line: fleet_row_line,
+                }
+            }
+        }
+    }
+}
+
+/// The rows one selector names, read from the ONE half that holds them, plus what an archived repo
+/// froze out of that half's population before any selection (#206) — the same withhold the digest
+/// reports for it.
 ///
 /// ONE HALF, NOT BOTH. A fleet selector reads the fleet and a backlog selector reads the backlog:
 /// the digest composes both because it IS the whole opening picture, but making a row list pay for
 /// an org-wide issue search it cannot report on would price the typed route above the `jq` one it
 /// replaces. `None` is the digest's ABORT rule applied to the half that was asked for: a read that
 /// refused to report a falsely-empty set is never laundered into an empty row list.
-fn state_load_row_selection(use_cache: bool, sel: StateLoadRows) -> Option<RowSelection> {
+///
+/// The rows come back WHOLE. `--limit` is applied downstream in [`row_output`], so the count line
+/// can state what it cut against the number that was actually there.
+fn state_load_row_selection(use_cache: bool, sel: StateLoadRows) -> Option<(Vec<Value>, usize)> {
     if sel == StateLoadRows::Audit {
         let (issues, archived) = state_load_backlog_issues()?;
-        return Some(RowSelection {
-            columns: &AUDIT_ROW_COLUMNS,
-            line: audit_row_line,
-            rows: backlog_digest(&issues)
+        return Some((
+            backlog_digest(&issues)
                 .pointer("/audit/issues")
                 .and_then(|v| v.as_array())
                 .cloned()
                 .unwrap_or_default(),
             archived,
-        });
+        ));
     }
     let (rows, archived) = worklist_rows(use_cache)?;
-    Some(RowSelection {
-        columns: &FLEET_ROW_COLUMNS,
-        line: fleet_row_line,
-        rows: rows
-            .into_iter()
+    Some((
+        rows.into_iter()
             .filter(|r| fleet_row_selected(r, sel))
             .collect(),
         archived,
-    })
+    ))
+}
+
+/// PURE: the WHOLE answer to a row call, line by line — in the shape the selector names.
+///
+/// `--limit` is applied HERE, in the one function BOTH output formats go through, so the TSV list
+/// and the `--json` escape hatch cannot cut different numbers of rows. A `--json` array that
+/// ignored the flag under a count line that honoured it would be two answers to one call.
+fn row_output(
+    sel: StateLoadRows,
+    all: Vec<Value>,
+    limit: Option<usize>,
+    archived: usize,
+    json_out: bool,
+) -> Vec<String> {
+    let RowShape { columns, line } = sel.shape();
+    let total = all.len();
+    let shown = take_limit(all, limit);
+    if json_out {
+        return vec![
+            serde_json::to_string_pretty(&Value::Array(shown)).unwrap_or_else(|_| "[]".into())
+        ];
+    }
+    row_report(columns, &shown, line, total, limit, archived)
 }
 
 /// `state-load --audit` / `--action` / `--actionable` / `--approved`: the ROWS, typed.
@@ -45350,28 +45392,76 @@ fn state_load_row_mode(
     sel: StateLoadRows,
     limit: Option<usize>,
 ) -> i32 {
-    let Some(RowSelection {
-        columns,
-        line,
-        rows: all,
-        archived,
-    }) = state_load_row_selection(use_cache, sel)
-    else {
+    let Some((all, archived)) = state_load_row_selection(use_cache, sel) else {
         return 1;
     };
-    let total = all.len();
-    let shown = take_limit(all, limit);
-    if json_out {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&Value::Array(shown)).unwrap_or_else(|_| "[]".into())
-        );
-        return 0;
-    }
-    for l in row_report(columns, &shown, line, total, limit, archived) {
+    for l in row_output(sel, all, limit, archived, json_out) {
         println!("{l}");
     }
     0
+}
+
+/// PURE: the DIGEST itself, line by line, off the two half-documents [`state_load_mode`] composed.
+///
+/// A function of the two documents rather than a run of `println!`s, because the digest's LENGTH is
+/// a fact the producer prompt quotes — it tells a run what the opening call costs, and a prompt
+/// that says a number the tool no longer prints is teaching the run something false. Here that
+/// number is `digest_lines(..).len()`, so the prompt's claim is checkable against the code that
+/// produces it rather than against somebody's memory of a measurement.
+///
+/// The withhold notes are read back off `archivedRepo`, the field [`state_load_mode`] inserted into
+/// each half, rather than taken as separate arguments: the plain-text note and the `--json` field
+/// then state one number from one place, and a digest whose two renderings disagreed about what an
+/// archived repo froze out would be the silent-omission defect (#206) wearing the fix's clothes.
+fn digest_lines(fleet: &Value, backlog: &Value, assignee: &str) -> Vec<String> {
+    let count = |doc: &Value, ptr: &str| {
+        doc.pointer(ptr)
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0)
+    };
+    let withheld = |doc: &Value| usize::try_from(count(doc, "/archivedRepo")).unwrap_or(usize::MAX);
+    let mut out = vec![format!(
+        "fleet: {} open PRs by {}{}",
+        count(fleet, "/total"),
+        assignee,
+        archived_note(withheld(fleet))
+    )];
+    out.extend(
+        ALL_ACTIONS
+            .iter()
+            .map(|a| format!("  {a:<14} {}", count(fleet, &format!("/byAction/{a}")))),
+    );
+    out.push(format!(
+        "  approved       {}",
+        fleet
+            .get("approved")
+            .and_then(|v| v.as_array())
+            .map_or(0, Vec::len)
+    ));
+    out.push(String::new());
+    out.push(format!(
+        "backlog: {} uncovered issues ({} audit-labelled){}",
+        count(backlog, "/uncovered"),
+        count(backlog, "/audit/total"),
+        archived_note(withheld(backlog))
+    ));
+    out.extend(
+        SEVERITY_LABELS
+            .iter()
+            .chain(std::iter::once(&SEVERITY_NONE))
+            .map(|s| {
+                format!(
+                    "  {s:<14} {}",
+                    count(backlog, &format!("/audit/bySeverity/{s}"))
+                )
+            }),
+    );
+    // The digest counts rows it does not print, so it ENDS by naming the call that prints them.
+    // Without this the only route from a count to the rows behind it was `--json` plus `jq`, and a
+    // run that had already paid for the digest paid for the 95 KB document as well (#290).
+    out.push(String::new());
+    out.push(STATE_LOAD_ROWS_HINT.to_string());
+    out
 }
 
 /// `state-load`: the producer's WHOLE opening picture in ONE result.
@@ -45384,7 +45474,8 @@ fn state_load_row_mode(
 /// answer the tool could have handed over.
 ///
 /// PRE-GROUPED BY DEFAULT, PROJECTED ON REQUEST (#290). The digest stays the opening call and stays
-/// unqueryable: it is ~19 lines, every run wants nearly all of it, and a caller that had to ask for
+/// unqueryable: it is 21 lines ([`digest_lines`]), every run wants nearly all of it, and a caller
+/// that had to ask for
 /// each grouping would pay the round trip the digest exists to remove. What the digest cannot do is
 /// hand over a ROW — the row lists it holds were reachable only by taking `--json` (95 KB) and
 /// re-slicing it, which is the hand-roll this subcommand was built to end, so the row lists get
@@ -45433,59 +45524,9 @@ fn state_load_mode(
         );
         return 0;
     }
-    println!(
-        "fleet: {} open PRs by {}{}",
-        fleet
-            .get("total")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0),
-        pr_assignee(),
-        archived_note(fleet_archived)
-    );
-    for a in ALL_ACTIONS {
-        println!(
-            "  {a:<14} {}",
-            fleet
-                .pointer(&format!("/byAction/{a}"))
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0)
-        );
+    for l in digest_lines(&fleet, &backlog, &pr_assignee()) {
+        println!("{l}");
     }
-    println!(
-        "  approved       {}",
-        fleet
-            .get("approved")
-            .and_then(|v| v.as_array())
-            .map_or(0, Vec::len)
-    );
-    println!(
-        "\nbacklog: {} uncovered issues ({} audit-labelled){}",
-        backlog
-            .get("uncovered")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0),
-        backlog
-            .pointer("/audit/total")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0),
-        archived_note(backlog_archived)
-    );
-    for s in SEVERITY_LABELS
-        .iter()
-        .chain(std::iter::once(&SEVERITY_NONE))
-    {
-        println!(
-            "  {s:<14} {}",
-            backlog
-                .pointer(&format!("/audit/bySeverity/{s}"))
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0)
-        );
-    }
-    // The digest counts rows it does not print, so it ENDS by naming the call that prints them.
-    // Without this the only route from a count to the rows behind it was `--json` plus `jq`, and a
-    // run that had already paid for the digest paid for the 95 KB document as well (#290).
-    println!("\n{STATE_LOAD_ROWS_HINT}");
     0
 }
 
@@ -53002,8 +53043,8 @@ ONE-SHOT, NOT A LOOP
 #[cfg(test)]
 mod settings_tests {
     use super::{
-        journal_citations, journal_entries, producer_preamble, producer_step, repo_root_text,
-        vetter_bullet, JOURNAL_FILE,
+        digest_lines, journal_citations, journal_entries, producer_preamble, producer_step,
+        repo_root_text, vetter_bullet, JOURNAL_FILE,
     };
     use serde_json::Value;
 
@@ -53225,8 +53266,9 @@ mod settings_tests {
     /// #290, the PROMPT half. `state-load` exists so a run opens on a typed answer "rather than on
     /// a blob it re-slices with `jq`" — and every producer run opened by taking `--json` (95,370
     /// bytes), redirecting it to a scratch file and paying three main-thread `jq` calls, the first
-    /// of which rebuilt the 488-byte digest the DEFAULT output already prints. The tool was not at
-    /// fault for that one: the prompt was, because it prescribed `--json`.
+    /// of which rebuilt, key by key, the digest the DEFAULT output already prints — 488 bytes when
+    /// that run measured it, and 21 lines now that the digest ends by naming the row calls. The
+    /// tool was not at fault for that one: the prompt was, because it prescribed `--json`.
     ///
     /// Asserted both ways round, like the send-back rules below: the `--json` opening must be GONE
     /// as an instruction AND present as a prohibition, because a rule merely deleted is a rule the
@@ -53249,6 +53291,16 @@ mod settings_tests {
         assert!(
             step2.contains("THE DEFAULT OUTPUT IS THE DIGEST"),
             "…and the step must SAY so, or the next reader takes --json again: {step2}"
+        );
+        // The step tells the run what the opening call COSTS, and that number is the TOOL's — the
+        // digest's own length, not a measurement somebody took once. It is structural (a line per
+        // action, a line per severity, the two the rows hint added), so the empty documents give
+        // the same count as a live fleet does. A prompt quoting a stale one teaches the run that
+        // the call is cheaper or dearer than it is, which is the class of claim #290 is about.
+        let digest_len = digest_lines(&Value::Null, &Value::Null, "assignee").len();
+        assert!(
+            step2.contains(&format!("{digest_len} lines")),
+            "step 2 must state the digest's real length ({digest_len} lines): {step2}"
         );
         assert!(
             step2.contains("NEVER OPEN ON `--json`, AND NEVER RE-SLICE IT WITH `jq`"),
@@ -61949,7 +62001,8 @@ mod state_load_tests {
 // `state-load` replaced the producer's hand-rolled API calls and left the RE-SLICING: the run
 // `runs/20260815T110709Z.jsonl` opened by taking `--json` (95,370 bytes), redirecting it to a
 // scratch file, and paying three main-thread `jq` calls — one rebuilding the digest the default
-// output already prints (488 bytes, 19 lines), two selecting ROWS the tool had no way to hand over:
+// output already prints (488 bytes and 19 lines as that run measured it; 21 lines now, because the
+// digest ends by naming these very selectors), two selecting ROWS the tool had no way to hand over:
 //
 //   jq -r '.fleet.actionable[] | select(.nextAction=="rework-needs-work")
 //          | [.repo, (.number|tostring), .ci, .mergeState, (.closes|tostring), .title] | @tsv'
@@ -62272,6 +62325,175 @@ mod state_load_row_tests {
         assert!(
             !STATE_LOAD_ROWS_HINT.contains("jq"),
             "the hint is the route AWAY from jq"
+        );
+    }
+
+    /// EVERY selector this binary can resolve — the three named row lists plus one per action, so
+    /// a selector added to the enum is held to the properties below the day it exists.
+    fn every_selector() -> Vec<StateLoadRows> {
+        let mut all = vec![
+            StateLoadRows::Actionable,
+            StateLoadRows::Approved,
+            StateLoadRows::Audit,
+        ];
+        all.extend(ALL_ACTIONS.iter().map(|a| {
+            StateLoadRows::Action(NextAction::from_str(a).expect("ALL_ACTIONS is the enum's own"))
+        }));
+        all
+    }
+
+    /// A selector's HEADER and its PROJECTION are one decision. The audit rows carry none of the
+    /// fleet's columns, so pairing them with the fleet header prints three cells under six names —
+    /// in a format whose entire contract is that a reader may split it on tabs and index the
+    /// result. Held for every selector, not just the two halves, because the mispairing compiles.
+    #[test]
+    fn every_selector_names_a_header_its_own_projection_fills() {
+        // ONE row carrying BOTH halves' source fields, so each shape is asked for its own columns
+        // off the same document: a mismatch is then the shape's and never the fixture's.
+        let probe = json!({
+            "repo": "o/r", "number": 7, "nextAction": "needs-3b", "reviewDecision": "APPROVED",
+            "ci": "green", "mergeState": "CLEAN", "closes": [1], "title": "t",
+            "severity": "critical"
+        });
+        for sel in every_selector() {
+            let shape = sel.shape();
+            assert_eq!(
+                (shape.line)(&probe).split('\t').count(),
+                shape.columns.len(),
+                "{sel:?} prints a line its own header cannot name: {:?} under {:?}",
+                (shape.line)(&probe),
+                shape.columns
+            );
+        }
+        // …and the two halves are not interchangeable: the backlog selector takes the backlog's
+        // columns and every fleet selector takes the fleet's.
+        assert_eq!(StateLoadRows::Audit.shape().columns, &AUDIT_ROW_COLUMNS[..]);
+        for sel in every_selector()
+            .into_iter()
+            .filter(|s| *s != StateLoadRows::Audit)
+        {
+            assert_eq!(sel.shape().columns, &FLEET_ROW_COLUMNS[..], "{sel:?}");
+        }
+    }
+
+    /// `--limit` cuts the ROWS, and it cuts them once: the TSV list and the `--json` escape hatch
+    /// go through the same decision. A `--json` array that ignored the flag under a count line that
+    /// honoured it would be two answers to one call — and the JSON reader is the one that cannot
+    /// see the count line at all.
+    #[test]
+    fn the_limit_cuts_the_tsv_and_the_json_array_alike() {
+        let rows = vec![row("needs-3b", 1), row("needs-3b", 2), row("needs-3b", 3)];
+        let json_rows = |out: Vec<String>| -> Vec<Value> {
+            assert_eq!(out.len(), 1, "--json is ONE document: {out:?}");
+            serde_json::from_str::<Value>(&out[0])
+                .expect("--json emits a document")
+                .as_array()
+                .expect("…and that document is the row ARRAY")
+                .clone()
+        };
+
+        let tsv = row_output(StateLoadRows::Actionable, rows.clone(), Some(2), 0, false);
+        assert_eq!(tsv[0], "# 2 of 3 rows (--limit 2)");
+        assert_eq!(tsv[1], column_header(&FLEET_ROW_COLUMNS));
+        assert_eq!(
+            tsv.len(),
+            2 + 2,
+            "the count line, the header, and TWO rows: {tsv:?}"
+        );
+        assert_eq!(tsv[2], fleet_row_line(&rows[0]));
+        assert_eq!(tsv[3], fleet_row_line(&rows[1]));
+        assert_eq!(
+            json_rows(row_output(
+                StateLoadRows::Actionable,
+                rows.clone(),
+                Some(2),
+                0,
+                true
+            )),
+            rows[..2],
+            "--json must hand back the CUT rows, not the whole selection"
+        );
+
+        // No limit is the whole selection, both ways round — the cut is the flag's, never the
+        // shape's.
+        assert_eq!(
+            row_output(StateLoadRows::Actionable, rows.clone(), None, 0, false).len(),
+            2 + rows.len()
+        );
+        assert_eq!(
+            json_rows(row_output(
+                StateLoadRows::Actionable,
+                rows.clone(),
+                None,
+                0,
+                true
+            )),
+            rows
+        );
+
+        // …and the withhold an archived repo caused rides the count line here too (#206).
+        let cut = row_output(StateLoadRows::Audit, Vec::new(), None, 4, false);
+        assert_eq!(
+            cut,
+            vec![
+                "# 0 rows (4 withheld: archived repo, unactionable)".to_string(),
+                column_header(&AUDIT_ROW_COLUMNS),
+            ]
+        );
+    }
+
+    /// THE DIGEST, whole. Its LENGTH is what the producer prompt quotes when it tells a run what
+    /// the opening call costs, and its LAST line is the only route from a count to the rows behind
+    /// it — the route that replaced `--json | jq` (#290). Both are asserted here, against the
+    /// digest documents the two halves actually build, so a count printed under the wrong label or
+    /// a hint quietly dropped is a failing test rather than a prompt that has gone stale.
+    #[test]
+    fn the_digest_is_the_whole_opening_picture_and_ends_by_naming_the_row_calls() {
+        let issue = |labels: &[&str], n: u64| {
+            json!({
+                "number": n, "url": "u", "title": "t",
+                "repository": {"nameWithOwner": "o/r"},
+                "labels": labels.iter().map(|l| json!({"name": l})).collect::<Vec<_>>(),
+            })
+        };
+        let mut fleet = fleet_digest(&[approved("needs-3b", 1), row("green-ready", 2)]);
+        let mut backlog = backlog_digest(&[issue(&["audit", "critical"], 1), issue(&["bug"], 2)]);
+        // The two insertions `state_load_mode` makes before it renders anything — the withhold each
+        // half reports (#206). Read back here, so the note and the `--json` field are one number.
+        fleet
+            .as_object_mut()
+            .expect("fleet_digest builds an object")
+            .insert("archivedRepo".into(), Value::from(3));
+        backlog
+            .as_object_mut()
+            .expect("backlog_digest builds an object")
+            .insert("archivedRepo".into(), Value::from(0));
+
+        assert_eq!(
+            digest_lines(&fleet, &backlog, "someone"),
+            vec![
+                "fleet: 2 open PRs by someone (3 withheld: archived repo, unactionable)",
+                "  flag-migration 0",
+                "  rework-needs-work 0",
+                "  needs-3b       1",
+                "  conflict-3d    0",
+                "  coderabbit-3e  0",
+                "  screenshot-3c  0",
+                "  green-ready    1",
+                "  wait           0",
+                "  parked-skip    0",
+                "  approved       1",
+                "",
+                "backlog: 2 uncovered issues (1 audit-labelled)",
+                "  critical       1",
+                "  high           0",
+                "  medium         0",
+                "  low            0",
+                "  info           0",
+                "  none           0",
+                "",
+                STATE_LOAD_ROWS_HINT,
+            ]
         );
     }
 }

@@ -3485,12 +3485,14 @@ fleet across the measured runs.
 the groupings removed the API calls and left the **re-slicing**: run
 `20260815T110709Z` opened by taking `--json` (95,370 bytes), redirecting it to a
 scratch file, and paying three main-thread `jq` calls before doing anything
-else. The first rebuilt, key by key, the 488-byte 19-line digest the **bare**
-call already prints — same answer, different route, and the route cost a scratch
-file plus an interpreter invocation in the run's most expensive position. That
-one was the prompt's fault, not the tool's: step 2 prescribed `--json`, so the
-run reached for it reflexively and then had a blob it had to reduce. It now
-prescribes the bare call and says the default output is the digest.
+else. The first rebuilt, key by key, the digest the **bare** call already prints
+— 488 bytes and 19 lines as that run measured it, 21 lines now that the digest
+ends by naming the row calls — same answer, different route, and the route cost
+a scratch file plus an interpreter invocation in the run's most expensive
+position. That one was the prompt's fault, not the tool's: step 2 prescribed
+`--json`, so the run reached for it reflexively and then had a blob it had to
+reduce. It now prescribes the bare call and says the default output is the
+digest.
 
 The other two `jq` calls were the tool's fault, and they select **rows** —
 `nextAction == "rework-needs-work"` as `repo / number / ci / mergeState /
