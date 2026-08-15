@@ -3460,8 +3460,8 @@ evidence is not evidence, and a false abort here costs a whole tick.
 
 ### The producer's state-load is one pre-grouped result
 
-`pr-review-report state-load --json` composes `worklist` and `uncovered-issues`
-and returns the groupings the producer traces show runs actually derive:
+`pr-review-report state-load` composes `worklist` and `uncovered-issues` and
+returns the groupings the producer traces show runs actually derive:
 
 | Grouping                                        | Runs asking for it |
 | ----------------------------------------------- | ------------------ |
@@ -3480,6 +3480,37 @@ three of the four are wanted by every run. The payload argument runs the other
 way too — `green-ready`, `wait` and `parked-skip` rows are **counted, not
 listed**, because no step acts on one, and they were 70–95% of the ~123 KB raw
 fleet across the measured runs.
+
+**The default output IS the digest, and the rows are flags** (#290). Composing
+the groupings removed the API calls and left the **re-slicing**: run
+`20260815T110709Z` opened by taking `--json` (95,370 bytes), redirecting it to a
+scratch file, and paying three main-thread `jq` calls before doing anything
+else. The first rebuilt, key by key, the 488-byte 19-line digest the **bare**
+call already prints — same answer, different route, and the route cost a scratch
+file plus an interpreter invocation in the run's most expensive position. That
+one was the prompt's fault, not the tool's: step 2 prescribed `--json`, so the
+run reached for it reflexively and then had a blob it had to reduce. It now
+prescribes the bare call and says the default output is the digest.
+
+The other two `jq` calls were the tool's fault, and they select **rows** —
+`nextAction == "rework-needs-work"` as `repo / number / ci / mergeState /
+closes / title`, and the first 12 actionable rows. The `--help` claimed the
+result contains "the rows that name work", and it did: inside 95 KB, reachable
+only by re-slicing. So every row list the digest counts now has a **selector**
+that projects it — `--action <nextAction>` (any action the histogram names,
+including the ones no step acts on), `--actionable`, `--approved`, `--audit`,
+each with `--limit N` — printing compact TSV columns under a `#` header, led by
+a `#` count line that states what a `--limit` cut so a truncated list is never
+read as the whole set. A row call after the digest re-fetches nothing per PR: it
+reads through the fleet cache the digest just wrote.
+
+That is **projection, not a query language**, and it does not undo the paragraph
+above. The selectors name the digest's own row lists and one `nextAction`; none
+of them groups, sorts or computes anything, so the digest stays the opening call
+and stays the thing a run reasons from. What changed is that the rows behind its
+counts are now reachable without an interpreter, which leaves `--json` as the
+escape hatch it was meant to be — and taken **with** a selector, so the escape
+hatch returns the rows rather than the whole document.
 
 Two of these are not merely round trips. `reviewDecision` was already in
 `WORKLIST_DETAIL_FIELDS` and thrown away, so every run re-asked GitHub for it
@@ -3645,7 +3676,9 @@ design question about that component and its message is the finding to quote, a
 
 1. `campaign-run.sh` asserts the environment before the model starts
    (`preflight --gh-auth --sol-shell`); unsatisfied ends the run.
-2. Load the whole opening state in one call (`state-load --json`).
+2. Load the whole opening state in one call (`state-load`, whose default output
+   is the digest; rows come from its `--action` / `--actionable` / `--approved`
+   / `--audit` selectors, never from `jq` over `--json`).
 3. Cheaply dedup against open PRs (single `jq` pass; byte-grepping the PR JSON
    is forbidden).
 4. For each tractable, genuinely-uncovered issue: clone, branch, implement a

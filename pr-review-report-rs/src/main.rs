@@ -43470,12 +43470,48 @@ enum Cmd {
     /// The PRODUCER's state-load in ONE result: the fleet's `nextAction` histogram, the rows that
     /// name work, the approved set, and the audit backlog by severity — pre-grouped, so a run opens
     /// on a typed answer rather than on a blob it re-slices with `jq`.
+    ///
+    /// WITH NO FLAG this prints the DIGEST — ~19 lines, the whole opening picture. WITH A ROW
+    /// SELECTOR (`--action`/`--actionable`/`--approved`/`--audit`) it prints THOSE ROWS as compact
+    /// columns, which is the half that used to be reachable only by re-slicing `--json` with `jq`
+    /// (#290). `--json` is the ESCAPE HATCH for a field the columns do not carry, and with a
+    /// selector it emits only the selected rows rather than the whole ~95 KB document.
+    #[command(group(clap::ArgGroup::new("rows").args([
+        "action",
+        "actionable",
+        "approved",
+        "audit",
+    ])))]
     StateLoad {
         #[arg(long)]
         json: bool,
         /// Bypass the fleet's read-through cache entirely (always fetch fresh).
         #[arg(long)]
         no_cache: bool,
+        /// ROWS: the fleet rows carrying this one `nextAction` — the histogram's own vocabulary
+        /// (`rework-needs-work`, `conflict-3d`, …). An action no classifier produces is REFUSED,
+        /// naming every legal one: a typo that silently printed zero rows would read as "no work".
+        #[arg(long, value_name = "ACTION")]
+        action: Option<String>,
+        /// ROWS: every fleet row that names WORK this run — `fleet.actionable`, in dispatch order.
+        #[arg(long)]
+        actionable: bool,
+        /// ROWS: every fleet row GitHub reports as APPROVED — `fleet.approved`, worked first.
+        #[arg(long)]
+        approved: bool,
+        /// ROWS: the audit backlog — `backlog.audit.issues`, worst severity first.
+        #[arg(long)]
+        audit: bool,
+        /// Print at most this many rows. The count line says what was cut, so a truncated list is
+        /// never mistaken for the whole set. Meaningless without a row selector, so it REQUIRES
+        /// one, and `0` is refused rather than printing a header over nothing.
+        #[arg(
+            long,
+            value_name = "N",
+            requires = "rows",
+            value_parser = clap::value_parser!(u64).range(1..)
+        )]
+        limit: Option<u64>,
     },
     /// END THE RUN: the infrastructure the work depends on is down. Records the reason on the run
     /// record and exits 12. Writes NOTHING to any PR — no label, no comment (#108).
@@ -43725,7 +43761,7 @@ enum Cmd {
 
 /// The producer's next step for one of its own open PRs — the FSM state `worklist` computes so the
 /// producer knows WHICH PRs need action without re-deriving it from scratch each run.
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum NextAction {
     GreenReady, // green + mergeable + no open threads -> present to the human (step 2z)
     // red prod-pin/testProdDeploy*, or "REQUIRES redeploy at land" residue: the repo has not
@@ -45000,6 +45036,312 @@ fn worklist_rows(use_cache: bool) -> Option<(Vec<Value>, usize)> {
     Some((rows, n_archived))
 }
 
+/// WHICH ROWS one `state-load` call is asking for — the typed answer to "what work is there",
+/// which used to be reachable only by re-slicing `--json` with `jq` (#290).
+///
+/// Every ROW LIST the digest holds gets a selector, not just the two a trace happened to slice:
+/// the defect is that rows live only inside a 95 KB document, and a selector for the two projected
+/// on 2026-08-15 would leave the same defect standing for the third. `--action` is the one
+/// selector that is not a digest field, and it exists because `fleet.actionable` is a UNION — a
+/// run dispatching one step wants that step's rows, which is what the trace's own `jq` selected.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum StateLoadRows {
+    /// Fleet rows carrying exactly this `nextAction`, including the actions that name no work:
+    /// `green-ready` is what 2z presents to the human, and a selector that could not name it would
+    /// send that step back to `jq`.
+    Action(NextAction),
+    /// Every fleet row that names work — `fleet.actionable`, in dispatch order.
+    Actionable,
+    /// Every fleet row GitHub reports as APPROVED — `fleet.approved`, the set 2z works first.
+    Approved,
+    /// The audit backlog — `backlog.audit.issues`, worst severity first.
+    Audit,
+}
+
+/// PURE: the row selector a `state-load` invocation names, or `None` for the DIGEST.
+///
+/// TOTAL over the flag tuple rather than trusting the caller: clap's `rows` [`clap::ArgGroup`]
+/// already refuses two selectors at once, but a resolver that silently picked a precedence order
+/// for a combination it was never meant to see would answer a question nobody asked. Both refusals
+/// name the legal spellings, because a refusal that only says "no" sends the run back to `jq` —
+/// which is the whole thing this selector exists to stop.
+fn state_load_rows(
+    action: Option<&str>,
+    actionable: bool,
+    approved: bool,
+    audit: bool,
+) -> Result<Option<StateLoadRows>, String> {
+    let flags = usize::from(action.is_some())
+        + usize::from(actionable)
+        + usize::from(approved)
+        + usize::from(audit);
+    if flags > 1 {
+        return Err(format!(
+            "error: --action/--actionable/--approved/--audit select DIFFERENT rows — pass one, \
+             or none for the digest ({})",
+            STATE_LOAD_ROWS_HINT
+        ));
+    }
+    match (action, actionable, approved, audit) {
+        (Some(a), ..) => NextAction::from_str(a)
+            .map(|a| Some(StateLoadRows::Action(a)))
+            .ok_or_else(|| {
+                format!(
+                    "error: --action {a}: no classifier produces that action. One of: {}",
+                    ALL_ACTIONS.join(", ")
+                )
+            }),
+        (None, true, ..) => Ok(Some(StateLoadRows::Actionable)),
+        (None, false, true, _) => Ok(Some(StateLoadRows::Approved)),
+        (None, false, false, true) => Ok(Some(StateLoadRows::Audit)),
+        (None, false, false, false) => Ok(None),
+    }
+}
+
+/// The line the DIGEST ends on: where the ROWS are. The tool teaches its own next call, so a run
+/// whose prompt never learned the selectors still finds them without reaching for `jq` — which is
+/// what the run that opened `state-load --json | jq` three times did have to reach for (#290).
+const STATE_LOAD_ROWS_HINT: &str =
+    "rows: state-load --action <nextAction> | --actionable | --approved | --audit  [--limit N]";
+
+/// The compact FLEET columns, in order — the projection the producer traces' own `jq` calls made,
+/// minus the `repo`/`number` split: `owner/repo#n` is the ref every other subcommand here TAKES
+/// (`await`, `already-fixed`), so emitting it whole is one fewer join at the call site.
+const FLEET_ROW_COLUMNS: [&str; 6] = ["action", "ref", "ci", "merge", "closes", "title"];
+
+/// The compact AUDIT-BACKLOG columns, in order. Severity leads because the row ORDER is already
+/// the priority order, and a column that restates it is what lets a reader check that.
+const AUDIT_ROW_COLUMNS: [&str; 3] = ["severity", "ref", "title"];
+
+/// PURE: one TSV cell.
+///
+/// Every control character becomes a space — a tab or a newline inside a PR title would otherwise
+/// invent a column or a row, and GitHub accepts titles this binary does not author. Empty becomes
+/// `-`, so a missing value is visible rather than being an empty run between two tabs.
+fn column_cell(s: &str) -> String {
+    let out = s
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect::<String>()
+        .trim()
+        .to_string();
+    if out.is_empty() {
+        "-".to_string()
+    } else {
+        out
+    }
+}
+
+/// PURE: the header line for a set of columns. `#`-prefixed like the count line, so the two lines
+/// a reader must not parse as data are the two lines that start with `#`.
+fn column_header(columns: &[&str]) -> String {
+    format!("# {}", columns.join("\t"))
+}
+
+/// PURE: what this row list IS — how many rows, out of how many, and what an archived repo froze
+/// out of the population before either number was taken (#206).
+///
+/// A truncated list SAYS it was truncated. `--limit 12` over 60 rows printed without this line
+/// reads exactly like a fleet with 12 rows in it, and "the tool said there were 12" is the shape
+/// of every silent omission this binary refuses elsewhere.
+fn row_count_line(shown: usize, total: usize, limit: Option<usize>, archived: usize) -> String {
+    let cut = if shown < total {
+        format!(
+            " of {total} rows{}",
+            limit.map_or_else(String::new, |n| format!(" (--limit {n})"))
+        )
+    } else {
+        " rows".to_string()
+    };
+    format!("# {shown}{cut}{}", archived_note(archived))
+}
+
+/// PURE: does this fleet row belong to the selection?
+///
+/// The predicates are the DIGEST's, spelled the same way: `Actionable` reads [`ACTIONABLE_ACTIONS`]
+/// and `Approved` reads `reviewDecision`, exactly as [`fleet_digest`] does, so the rows a selector
+/// prints and the rows the digest counts cannot become two answers.
+///
+/// `Audit` selects NO fleet row. It is the other half's population and [`state_load_mode`] routes
+/// it to the backlog before a fleet row exists — this arm is the fail-safe if that ever stops
+/// being true, because an `--audit` call that printed PRs would be worse than one that printed
+/// nothing.
+fn fleet_row_selected(r: &Value, sel: StateLoadRows) -> bool {
+    let action = r
+        .get("nextAction")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    match sel {
+        StateLoadRows::Action(a) => action == a.as_str(),
+        StateLoadRows::Actionable => ACTIONABLE_ACTIONS.contains(&action),
+        StateLoadRows::Approved => {
+            r.get("reviewDecision").and_then(|v| v.as_str()) == Some("APPROVED")
+        }
+        StateLoadRows::Audit => false,
+    }
+}
+
+/// PURE: one fleet row as [`FLEET_ROW_COLUMNS`].
+fn fleet_row_line(r: &Value) -> String {
+    let str_at = |k: &str| {
+        r.get(k)
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+    let closes = r
+        .get("closes")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(serde_json::Value::as_u64)
+                .map(|n| n.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .unwrap_or_default();
+    [
+        str_at("nextAction"),
+        format!(
+            "{}#{}",
+            str_at("repo"),
+            r.get("number")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0)
+        ),
+        str_at("ci"),
+        str_at("mergeState"),
+        closes,
+        str_at("title"),
+    ]
+    .iter()
+    .map(|c| column_cell(c))
+    .collect::<Vec<_>>()
+    .join("\t")
+}
+
+/// PURE: one audit-backlog row as [`AUDIT_ROW_COLUMNS`]. Reads the rows [`backlog_digest`] built,
+/// so the severity a column shows is the severity the histogram counted.
+fn audit_row_line(r: &Value) -> String {
+    let str_at = |k: &str| {
+        r.get(k)
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+    [
+        str_at("severity"),
+        format!(
+            "{}#{}",
+            str_at("repo"),
+            r.get("number")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0)
+        ),
+        str_at("title"),
+    ]
+    .iter()
+    .map(|c| column_cell(c))
+    .collect::<Vec<_>>()
+    .join("\t")
+}
+
+/// PURE: the whole plain-text answer to a ROW call — count line, header, then the rows.
+///
+/// The count comes FIRST because it is the line that must not be missed: a reader who stops at the
+/// rows has still read how many there are and how many were cut.
+fn row_report(
+    columns: &[&str],
+    rows: &[Value],
+    line: impl Fn(&Value) -> String,
+    total: usize,
+    limit: Option<usize>,
+    archived: usize,
+) -> Vec<String> {
+    let mut out = vec![
+        row_count_line(rows.len(), total, limit, archived),
+        column_header(columns),
+    ];
+    out.extend(rows.iter().map(line));
+    out
+}
+
+/// PURE: the first `limit` rows, or all of them. Split out so the truncation the count line
+/// reports and the truncation the row list performs are ONE decision.
+fn take_limit(rows: Vec<Value>, limit: Option<usize>) -> Vec<Value> {
+    match limit {
+        Some(n) if n < rows.len() => rows.into_iter().take(n).collect(),
+        _ => rows,
+    }
+}
+
+/// The BACKLOG half of the state-load: every uncovered open issue's search row, plus how many an
+/// archived repo froze out (#206). Split out so the digest and `--audit` read ONE computation.
+fn state_load_backlog_issues() -> Option<(Vec<Value>, usize)> {
+    let OrgIssues {
+        uncovered: open,
+        meta,
+        archived_repo,
+        ..
+    } = coverage_uncovered()?;
+    Some((
+        open.iter().filter_map(|k| meta.get(k).cloned()).collect(),
+        archived_repo,
+    ))
+}
+
+/// `state-load --audit` / `--action` / `--actionable` / `--approved`: the ROWS, typed.
+///
+/// ONE HALF, NOT BOTH. A fleet selector reads the fleet and a backlog selector reads the backlog:
+/// the digest composes both because it IS the whole opening picture, but making a row list pay for
+/// an org-wide issue search it cannot report on would price the typed route above the `jq` one it
+/// replaces. The abort-on-failure rule is unchanged — it just applies to the half that was asked
+/// for.
+fn state_load_row_mode(
+    json_out: bool,
+    use_cache: bool,
+    sel: StateLoadRows,
+    limit: Option<usize>,
+) -> i32 {
+    let (columns, line, all, archived): (&[&str], fn(&Value) -> String, Vec<Value>, usize) =
+        if sel == StateLoadRows::Audit {
+            let Some((issues, archived)) = state_load_backlog_issues() else {
+                return 1;
+            };
+            let audit = backlog_digest(&issues)
+                .pointer("/audit/issues")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            (&AUDIT_ROW_COLUMNS, audit_row_line, audit, archived)
+        } else {
+            let Some((rows, archived)) = worklist_rows(use_cache) else {
+                return 1;
+            };
+            (
+                &FLEET_ROW_COLUMNS,
+                fleet_row_line,
+                rows.into_iter()
+                    .filter(|r| fleet_row_selected(r, sel))
+                    .collect(),
+                archived,
+            )
+        };
+    let total = all.len();
+    let shown = take_limit(all, limit);
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&Value::Array(shown)).unwrap_or_else(|_| "[]".into())
+        );
+        return 0;
+    }
+    for l in row_report(columns, &shown, line, total, limit, archived) {
+        println!("{l}");
+    }
+    0
+}
+
 /// `state-load`: the producer's WHOLE opening picture in ONE result.
 ///
 /// It composes the two state-loads a run already made — the fleet and the uncovered backlog — and
@@ -45009,29 +45351,32 @@ fn worklist_rows(use_cache: bool) -> Option<(Vec<Value>, usize)> {
 /// given data the two subcommands already hold, so each round trip that computed one was buying an
 /// answer the tool could have handed over.
 ///
-/// PRE-GROUPED, NOT QUERYABLE. A query interface would put the round trip back for the caller that
-/// wants one grouping, and the payload argument does not survive the counts: three of the four are
-/// wanted by every run and the fourth by most, so the inflation a general result pays is a fraction
-/// of one grouping's summary — against 6–31 shell calls whose results also sit in context for the
-/// rest of the run.
+/// PRE-GROUPED BY DEFAULT, PROJECTED ON REQUEST (#290). The digest stays the opening call and stays
+/// unqueryable: it is ~19 lines, every run wants nearly all of it, and a caller that had to ask for
+/// each grouping would pay the round trip the digest exists to remove. What the digest cannot do is
+/// hand over a ROW — the row lists it holds were reachable only by taking `--json` (95 KB) and
+/// re-slicing it, which is the hand-roll this subcommand was built to end, so the row lists get
+/// SELECTORS. That is projection, not a query language: the selectors name the digest's own row
+/// lists and one `nextAction`, and none of them can group, sort or compute anything.
 ///
 /// A FAILED half is an ABORT, never a partial digest: the two underlying reads each refuse to
 /// report a falsely-empty set, and a digest that quietly dropped one would launder exactly the
 /// emptiness they refuse.
-fn state_load_mode(json_out: bool, use_cache: bool) -> i32 {
+fn state_load_mode(
+    json_out: bool,
+    use_cache: bool,
+    rows: Option<StateLoadRows>,
+    limit: Option<usize>,
+) -> i32 {
+    if let Some(sel) = rows {
+        return state_load_row_mode(json_out, use_cache, sel, limit);
+    }
     let Some((rows, fleet_archived)) = worklist_rows(use_cache) else {
         return 1;
     };
-    let Some(OrgIssues {
-        uncovered: open,
-        meta,
-        archived_repo: backlog_archived,
-        ..
-    }) = coverage_uncovered()
-    else {
+    let Some((issues, backlog_archived)) = state_load_backlog_issues() else {
         return 1;
     };
-    let issues: Vec<Value> = open.iter().filter_map(|k| meta.get(k).cloned()).collect();
     let mut fleet = fleet_digest(&rows);
     let mut backlog = backlog_digest(&issues);
     // Both halves report what an archived repo froze out of them, in the digest itself: this is
@@ -45105,6 +45450,10 @@ fn state_load_mode(json_out: bool, use_cache: bool) -> i32 {
                 .unwrap_or(0)
         );
     }
+    // The digest counts rows it does not print, so it ENDS by naming the call that prints them.
+    // Without this the only route from a count to the rows behind it was `--json` plus `jq`, and a
+    // run that had already paid for the digest paid for the 95 KB document as well (#290).
+    println!("\n{STATE_LOAD_ROWS_HINT}");
     0
 }
 
@@ -47545,7 +47894,26 @@ fn main() {
             json,
         } => await_mode(&refs, pin_current, timeout_secs, interval_secs, json),
         Cmd::AlreadyFixed { refs, json } => already_fixed_mode(&refs, json),
-        Cmd::StateLoad { json, no_cache } => state_load_mode(json, !no_cache),
+        Cmd::StateLoad {
+            json,
+            no_cache,
+            action,
+            actionable,
+            approved,
+            audit,
+            limit,
+        } => match state_load_rows(action.as_deref(), actionable, approved, audit) {
+            Ok(rows) => state_load_mode(
+                json,
+                !no_cache,
+                rows,
+                limit.map(|n| usize::try_from(n).unwrap_or(usize::MAX)),
+            ),
+            Err(msg) => {
+                eprintln!("{msg}");
+                2
+            }
+        },
         Cmd::InfraDown { reason, root_cause } => infra_down_mode(&reason.join(" "), &root_cause),
         Cmd::RunInfra { record, json } => run_infra_mode(record.as_deref(), json),
         Cmd::RetireBlockedInfra { dry_run } => retire_blocked_infra_mode(dry_run),
@@ -52819,6 +53187,71 @@ mod settings_tests {
         assert!(
             prompt.contains("Do NOT hand-roll this with `git clone`"),
             "clone CREATION must be the tool's, said as a prohibition and not merely omitted"
+        );
+    }
+
+    /// #290, the PROMPT half. `state-load` exists so a run opens on a typed answer "rather than on
+    /// a blob it re-slices with `jq`" — and every producer run opened by taking `--json` (95,370
+    /// bytes), redirecting it to a scratch file and paying three main-thread `jq` calls, the first
+    /// of which rebuilt the 488-byte digest the DEFAULT output already prints. The tool was not at
+    /// fault for that one: the prompt was, because it prescribed `--json`.
+    ///
+    /// Asserted both ways round, like the send-back rules below: the `--json` opening must be GONE
+    /// as an instruction AND present as a prohibition, because a rule merely deleted is a rule the
+    /// next edit reinvents. And the ROWS have to be routed somewhere — a step told not to reach for
+    /// `jq` and not told what to call instead reaches for `jq`.
+    #[test]
+    fn the_state_load_step_opens_on_the_digest_and_takes_its_rows_as_flags() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let step2 = producer_step(&prompt, "2");
+        assert!(
+            !step2.contains("`pr-review-report state-load --json`"),
+            "step 2 must not prescribe the 95 KB document as the opening call: {step2}"
+        );
+        assert!(
+            step2.contains("`pr-review-report state-load`, BARE"),
+            "…the opening call is the BARE one, whose DEFAULT output is the digest: {step2}"
+        );
+        assert!(
+            step2.contains("THE DEFAULT OUTPUT IS THE DIGEST"),
+            "…and the step must SAY so, or the next reader takes --json again: {step2}"
+        );
+        assert!(
+            step2.contains("NEVER OPEN ON `--json`, AND NEVER RE-SLICE IT WITH `jq`"),
+            "…stated as a prohibition, not merely by omitting the old instruction: {step2}"
+        );
+        // Every row selector the tool offers is routed, so no row list is left reachable only
+        // through `jq` — which is the defect, and the two the trace happened to slice are only
+        // examples of it.
+        for flag in [
+            "state-load --action <nextAction>",
+            "--actionable",
+            "--approved",
+            "--audit",
+            "--limit N",
+        ] {
+            assert!(
+                step2.contains(flag),
+                "step 2 must route rows via {flag}: {step2}"
+            );
+        }
+        // …and `--json` survives as what it now is: the escape hatch, narrowed by a selector.
+        assert!(
+            step2.contains("`--json` IS THE ESCAPE HATCH AND IT TAKES A SELECTOR"),
+            "step 2 must keep --json reachable as the escape hatch: {step2}"
+        );
+        // The approved set is 2z's FIRST work, and it was the one grouping the step named by JSON
+        // pointer — a pointer only a `--json` reader can follow.
+        let step2z = producer_step(&prompt, "2z");
+        assert!(
+            step2z.contains("`pr-review-report state-load --approved`"),
+            "step 2z must take the approved set as rows, not as a JSON pointer: {step2z}"
+        );
+        assert!(
+            !step2z.contains("`fleet.approved`"),
+            "…and must not send the reader back into the document for it: {step2z}"
         );
     }
 
@@ -59145,17 +59578,93 @@ mod cli_tests {
             parse(&["prr", "state-load"]),
             Cmd::StateLoad {
                 json: false,
-                no_cache: false
-            }
+                no_cache: false,
+                action: None,
+                actionable: false,
+                approved: false,
+                audit: false,
+                limit: None,
+            },
+            "the BARE call is the digest — the opening call, and the one the prompt makes"
         );
         assert_eq!(
             parse(&["prr", "state-load", "--json", "--no-cache"]),
             Cmd::StateLoad {
                 json: true,
-                no_cache: true
+                no_cache: true,
+                action: None,
+                actionable: false,
+                approved: false,
+                audit: false,
+                limit: None,
             },
             "the fleet half reads through worklist's cache, so it takes worklist's bypass too"
         );
+    }
+
+    /// #290: the ROW selectors reach the CLI, one at a time, with `--limit` attached to them.
+    #[test]
+    fn state_load_row_selectors_cli() {
+        assert_eq!(
+            parse(&["prr", "state-load", "--action", "rework-needs-work"]),
+            Cmd::StateLoad {
+                json: false,
+                no_cache: false,
+                action: Some("rework-needs-work".to_string()),
+                actionable: false,
+                approved: false,
+                audit: false,
+                limit: None,
+            }
+        );
+        assert_eq!(
+            parse(&["prr", "state-load", "--actionable", "--limit", "12"]),
+            Cmd::StateLoad {
+                json: false,
+                no_cache: false,
+                action: None,
+                actionable: true,
+                approved: false,
+                audit: false,
+                limit: Some(12),
+            }
+        );
+        assert!(matches!(
+            parse(&["prr", "state-load", "--approved"]),
+            Cmd::StateLoad { approved: true, .. }
+        ));
+        assert!(
+            matches!(
+                parse(&["prr", "state-load", "--audit", "--json"]),
+                Cmd::StateLoad {
+                    audit: true,
+                    json: true,
+                    ..
+                }
+            ),
+            "`--json` stays reachable WITH a selector: the escape hatch is the rows, not the fleet"
+        );
+    }
+
+    /// The `rows` group, both ways round. Two selectors name two different sets, and a `--limit`
+    /// with nothing to limit is a call the caller did not mean to make — a silently-ignored flag
+    /// is how a run believes it asked for 12 rows and reads all 174.
+    #[test]
+    fn state_load_refuses_two_selectors_and_a_limit_with_nothing_to_limit() {
+        for args in [
+            vec!["prr", "state-load", "--actionable", "--approved"],
+            vec!["prr", "state-load", "--action", "needs-3b", "--audit"],
+            vec!["prr", "state-load", "--approved", "--audit"],
+            vec!["prr", "state-load", "--limit", "5"],
+            vec!["prr", "state-load", "--json", "--limit", "5"],
+            // …and a zero page is refused rather than printing a header over nothing.
+            vec!["prr", "state-load", "--actionable", "--limit", "0"],
+        ] {
+            assert!(
+                Cli::try_parse_from(&args).is_err(),
+                "{args:?} must not parse"
+            );
+        }
     }
 
     #[test]
@@ -61399,6 +61908,339 @@ mod state_load_tests {
             .as_array()
             .unwrap()
             .is_empty());
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #290 — the state-load's ROWS, typed.
+//
+// `state-load` replaced the producer's hand-rolled API calls and left the RE-SLICING: the run
+// `runs/20260815T110709Z.jsonl` opened by taking `--json` (95,370 bytes), redirecting it to a
+// scratch file, and paying three main-thread `jq` calls — one rebuilding the digest the default
+// output already prints (488 bytes, 19 lines), two selecting ROWS the tool had no way to hand over:
+//
+//   jq -r '.fleet.actionable[] | select(.nextAction=="rework-needs-work")
+//          | [.repo, (.number|tostring), .ci, .mergeState, (.closes|tostring), .title] | @tsv'
+//   jq -r '.fleet.actionable[:12] | .[]
+//          | [.nextAction, .repo, (.number|tostring), .ci, .mergeState, .title] | @tsv'
+//
+// The `--help` claimed the result contains "the rows that name work". It did — inside 95 KB,
+// reachable only by re-slicing, which is the hand-roll this subcommand exists to remove. These
+// tests pin the typed route: a selector per row list the digest holds, the projection those two
+// `jq` calls made, and a count line that says what a `--limit` cut.
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod state_load_row_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// A fleet row as the projection reads it — every column's source field, so a dropped column
+    /// shows up as a missing value rather than as an empty string that could have come from
+    /// anywhere.
+    fn row(action: &str, n: u64) -> Value {
+        json!({
+            "repo": "o/r", "number": n, "nextAction": action, "reviewDecision": "",
+            "ci": "green", "mergeState": "CLEAN", "closes": [n * 10], "title": "t"
+        })
+    }
+
+    fn approved(action: &str, n: u64) -> Value {
+        let mut r = row(action, n);
+        r["reviewDecision"] = json!("APPROVED");
+        r
+    }
+
+    fn refs(rows: &[Value], sel: StateLoadRows) -> Vec<u64> {
+        rows.iter()
+            .filter(|r| fleet_row_selected(r, sel))
+            .filter_map(|r| r["number"].as_u64())
+            .collect()
+    }
+
+    /// No selector is the DIGEST — the opening call, unchanged. This is the half of #290 the
+    /// prompt owns, and the resolver has to keep it expressible.
+    #[test]
+    fn no_selector_is_the_digest() {
+        assert_eq!(state_load_rows(None, false, false, false), Ok(None));
+    }
+
+    /// Every selector resolves, and `--action` covers EVERY action the classifier can emit —
+    /// derived from [`ALL_ACTIONS`] rather than a list here, so an action added to the enum is
+    /// selectable the day it exists instead of the day somebody remembers this test.
+    #[test]
+    fn every_selector_resolves_and_every_action_is_selectable() {
+        assert_eq!(
+            state_load_rows(None, true, false, false),
+            Ok(Some(StateLoadRows::Actionable))
+        );
+        assert_eq!(
+            state_load_rows(None, false, true, false),
+            Ok(Some(StateLoadRows::Approved))
+        );
+        assert_eq!(
+            state_load_rows(None, false, false, true),
+            Ok(Some(StateLoadRows::Audit))
+        );
+        for a in ALL_ACTIONS {
+            assert_eq!(
+                state_load_rows(Some(a), false, false, false),
+                Ok(Some(StateLoadRows::Action(
+                    NextAction::from_str(a).expect("ALL_ACTIONS is the enum's own spelling")
+                ))),
+                "--action {a}"
+            );
+        }
+    }
+
+    /// An action no classifier produces is REFUSED, and the refusal enumerates the legal ones.
+    /// A typo that printed zero rows would read as "nothing to do", which is the one wrong answer
+    /// this whole subcommand exists to stop a run believing.
+    #[test]
+    fn an_unknown_action_is_refused_and_the_refusal_names_the_legal_ones() {
+        // `deploy` is not hypothetical: it is the retired spelling the hand-written action list
+        // carried for months while no variant could produce it.
+        for typo in [
+            "deploy",
+            "rework-ruling",
+            "",
+            "REWORK-NEEDS-WORK",
+            "needs3b",
+        ] {
+            let e = match state_load_rows(Some(typo), false, false, false) {
+                Err(e) => e,
+                Ok(v) => panic!("{typo:?} names no action, so it must be REFUSED — got {v:?}"),
+            };
+            for a in ALL_ACTIONS {
+                assert!(e.contains(a), "the refusal for {typo:?} must name {a}: {e}");
+            }
+        }
+    }
+
+    /// Two selectors name two different row sets, so there is no answer to give. clap's `rows`
+    /// group refuses it first; the resolver is TOTAL rather than picking a precedence order for a
+    /// combination it was never meant to see.
+    #[test]
+    fn two_selectors_are_refused_rather_than_ranked() {
+        for (a, actionable, approved, audit) in [
+            (Some("needs-3b"), true, false, false),
+            (Some("needs-3b"), false, false, true),
+            (None, true, true, false),
+            (None, true, false, true),
+            (None, false, true, true),
+            (None, true, true, true),
+        ] {
+            let e = match state_load_rows(a, actionable, approved, audit) {
+                Err(e) => e,
+                Ok(v) => panic!("two selectors have no single answer — got {v:?}"),
+            };
+            assert!(e.contains(STATE_LOAD_ROWS_HINT), "{e}");
+        }
+    }
+
+    /// THE SEAM. `--actionable` and `--approved` must return exactly the rows the digest counts —
+    /// the same predicates, not a second filter beside them. A run that read one number from the
+    /// digest and then the rows behind it from a selector must never be handed two populations.
+    #[test]
+    fn the_selectors_are_the_digests_own_row_lists() {
+        let rows = vec![
+            row("green-ready", 1),
+            approved("needs-3b", 2),
+            row("conflict-3d", 3),
+            approved("wait", 4),
+            row("parked-skip", 5),
+            row("rework-needs-work", 6),
+        ];
+        let d = fleet_digest(&rows);
+        let picked = |sel| -> Vec<Value> {
+            rows.iter()
+                .filter(|r| fleet_row_selected(r, sel))
+                .cloned()
+                .collect()
+        };
+        assert_eq!(
+            picked(StateLoadRows::Actionable),
+            *d["actionable"].as_array().unwrap(),
+            "--actionable must BE fleet.actionable"
+        );
+        assert_eq!(
+            picked(StateLoadRows::Approved),
+            *d["approved"].as_array().unwrap(),
+            "--approved must BE fleet.approved"
+        );
+        // …and the histogram's count for an action is the number of rows `--action` prints for it.
+        for a in ALL_ACTIONS {
+            let sel = StateLoadRows::Action(NextAction::from_str(a).unwrap());
+            assert_eq!(
+                Value::from(picked(sel).len()),
+                d["byAction"][a],
+                "--action {a} must print byAction[{a}] rows"
+            );
+        }
+    }
+
+    /// `--action` reaches the rows `--actionable` cannot: `green-ready` is 2z's own step and no
+    /// union of work actions contains it. This is why the selector set is not just "actionable".
+    #[test]
+    fn an_action_that_names_no_work_is_still_selectable() {
+        let rows = vec![row("green-ready", 1), row("wait", 2), row("needs-3b", 3)];
+        assert_eq!(
+            refs(&rows, StateLoadRows::Action(NextAction::GreenReady)),
+            vec![1]
+        );
+        assert!(refs(&rows, StateLoadRows::Actionable).contains(&3));
+        assert!(!refs(&rows, StateLoadRows::Actionable).contains(&1));
+    }
+
+    /// The fail-safe arm: an `--audit` call never selects a PR. It is routed to the backlog half
+    /// before a fleet row exists, and if that ever stops being true, printing nothing is the
+    /// answer that cannot mislead.
+    #[test]
+    fn the_audit_selector_claims_no_fleet_row() {
+        let rows = vec![row("needs-3b", 1), approved("green-ready", 2)];
+        assert!(refs(&rows, StateLoadRows::Audit).is_empty());
+    }
+
+    /// The projection itself: the columns the trace's `jq` built, in order, with the ref joined.
+    #[test]
+    fn a_fleet_row_projects_to_the_columns_the_header_names() {
+        let r = json!({
+            "repo": "rainlanguage/raindex", "number": 2777, "nextAction": "rework-needs-work",
+            "ci": "red", "mergeState": "DIRTY", "closes": [12, 34], "title": "Fix the thing"
+        });
+        assert_eq!(
+            fleet_row_line(&r),
+            "rework-needs-work\trainlanguage/raindex#2777\tred\tDIRTY\t12,34\tFix the thing"
+        );
+        assert_eq!(
+            fleet_row_line(&r).split('\t').count(),
+            FLEET_ROW_COLUMNS.len(),
+            "one cell per column, or the header names something the rows do not carry"
+        );
+        // An empty cell is `-`, never an empty run between two tabs: a PR closing nothing and a
+        // PR whose closes the row lost must not print the same way.
+        let bare = json!({"repo": "o/r", "number": 1, "nextAction": "wait", "closes": []});
+        assert_eq!(fleet_row_line(&bare), "wait\to/r#1\t-\t-\t-\t-");
+    }
+
+    /// A title is DATA, and GitHub accepts characters this binary does not author. A tab inside
+    /// one would invent a column and a newline would invent a row, so every control character
+    /// becomes a space — the row stays parseable whatever the title says.
+    #[test]
+    fn a_control_character_in_a_title_cannot_invent_a_column_or_a_row() {
+        let r = json!({
+            "repo": "o/r", "number": 1, "nextAction": "needs-3b", "ci": "red",
+            "mergeState": "CLEAN", "closes": [],
+            "title": "tab\there\nand a newline\r\n"
+        });
+        let line = fleet_row_line(&r);
+        assert_eq!(
+            line.split('\t').count(),
+            FLEET_ROW_COLUMNS.len(),
+            "a tab in the title added a column: {line}"
+        );
+        assert!(!line.contains('\n') && !line.contains('\r'), "{line}");
+        assert!(line.ends_with("tab here and a newline"), "{line}");
+        // …and a title made ENTIRELY of control characters is empty, not a run of spaces.
+        assert_eq!(column_cell("\t\n \r"), "-");
+    }
+
+    /// The audit projection reads the rows [`backlog_digest`] built, so the severity a column
+    /// shows is the severity the histogram counted — and worst-first order survives the print.
+    #[test]
+    fn the_audit_rows_project_worst_first_off_the_digests_own_rows() {
+        let issue = |labels: &[&str], n: u64| {
+            json!({
+                "number": n, "url": "u", "title": "t",
+                "repository": {"nameWithOwner": "o/r"},
+                "labels": labels.iter().map(|l| json!({"name": l})).collect::<Vec<_>>(),
+            })
+        };
+        let b = backlog_digest(&[
+            issue(&["audit", "low"], 1),
+            issue(&["audit", "critical"], 2),
+            issue(&["bug"], 3),
+        ]);
+        let rows = b["audit"]["issues"].as_array().unwrap();
+        let lines: Vec<String> = rows.iter().map(audit_row_line).collect();
+        assert_eq!(lines, vec!["critical\to/r#2\tt", "low\to/r#1\tt"]);
+        for l in &lines {
+            assert_eq!(l.split('\t').count(), AUDIT_ROW_COLUMNS.len(), "{l}");
+        }
+    }
+
+    /// A truncated list SAYS it was truncated, and names the flag that cut it. Twelve rows printed
+    /// without this line read exactly like a fleet with twelve rows in it.
+    #[test]
+    fn a_limited_list_states_what_it_cut() {
+        assert_eq!(
+            row_count_line(12, 60, Some(12), 0),
+            "# 12 of 60 rows (--limit 12)"
+        );
+        assert_eq!(row_count_line(60, 60, Some(99), 0), "# 60 rows");
+        assert_eq!(row_count_line(60, 60, None, 0), "# 60 rows");
+        assert_eq!(row_count_line(0, 0, None, 0), "# 0 rows");
+        // A truncation with no `--limit` behind it is still stated: the count is about the ROWS,
+        // never about which argument produced them.
+        assert_eq!(row_count_line(3, 9, None, 0), "# 3 of 9 rows");
+        // …and an archived repo's withhold rides on the same line (#206): a row list that silently
+        // omits a repo is one the run re-derives from outside the tool.
+        assert_eq!(
+            row_count_line(5, 5, None, 4),
+            "# 5 rows (4 withheld: archived repo, unactionable)"
+        );
+    }
+
+    /// The cut the count line reports and the cut the row list performs are ONE decision.
+    #[test]
+    fn the_limit_takes_the_first_rows_and_nothing_below_the_length_truncates() {
+        let rows = vec![row("needs-3b", 1), row("needs-3b", 2), row("needs-3b", 3)];
+        let nums =
+            |v: Vec<Value>| -> Vec<u64> { v.iter().filter_map(|r| r["number"].as_u64()).collect() };
+        assert_eq!(nums(take_limit(rows.clone(), Some(2))), vec![1, 2]);
+        assert_eq!(nums(take_limit(rows.clone(), Some(3))), vec![1, 2, 3]);
+        assert_eq!(nums(take_limit(rows.clone(), Some(99))), vec![1, 2, 3]);
+        assert_eq!(nums(take_limit(rows.clone(), None)), vec![1, 2, 3]);
+        assert!(take_limit(Vec::new(), Some(5)).is_empty());
+    }
+
+    /// The whole plain-text answer: count first, header second, one line per row and no more.
+    #[test]
+    fn a_row_report_leads_with_the_count_then_the_header_then_the_rows() {
+        let rows = vec![row("needs-3b", 1), row("needs-3b", 2)];
+        let out = row_report(&FLEET_ROW_COLUMNS, &rows, fleet_row_line, 7, Some(2), 0);
+        assert_eq!(out[0], "# 2 of 7 rows (--limit 2)");
+        assert_eq!(out[1], "# action\tref\tci\tmerge\tcloses\ttitle");
+        assert_eq!(out.len(), 2 + rows.len());
+        assert_eq!(out[2], fleet_row_line(&rows[0]));
+        // Both non-data lines are marked, and no data line is: `#` is the whole rule a reader needs.
+        assert_eq!(out.iter().filter(|l| l.starts_with('#')).count(), 2);
+        // An empty selection is an ANSWER — the count line and the header, and nothing to read
+        // into the silence.
+        let empty = row_report(&AUDIT_ROW_COLUMNS, &[], audit_row_line, 0, None, 0);
+        assert_eq!(empty, vec!["# 0 rows", "# severity\tref\ttitle"]);
+    }
+
+    /// The digest ENDS by naming the call that prints the rows it counted. Without it the only
+    /// route from a count to its rows was `--json` plus `jq`, which is #290.
+    #[test]
+    fn the_rows_hint_names_every_selector() {
+        for flag in [
+            "--action",
+            "--actionable",
+            "--approved",
+            "--audit",
+            "--limit",
+        ] {
+            assert!(
+                STATE_LOAD_ROWS_HINT.contains(flag),
+                "the hint must name {flag}: {STATE_LOAD_ROWS_HINT}"
+            );
+        }
+        assert!(STATE_LOAD_ROWS_HINT.contains("state-load"));
+        assert!(
+            !STATE_LOAD_ROWS_HINT.contains("jq"),
+            "the hint is the route AWAY from jq"
+        );
     }
 }
 
