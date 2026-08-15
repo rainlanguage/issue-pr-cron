@@ -3533,8 +3533,8 @@ merged PR, never a finding that the issue is fixed — establishing that is
 
 Per-subject is a **cost** decision, measured: the uncovered set is 617 issues
 and the read is one GraphQL round trip each (~0.65 s over a 40-issue sample, so
-~6.7 minutes of network per run), against a producer budget of 3 work items.
-Folding it into the backlog buys ~614 answers per run that nothing reads.
+~6.7 minutes of network per run), against a producer budget of 5 work items.
+Folding it into the backlog buys ~612 answers per run that nothing reads.
 
 It reads `timelineItems(CROSS_REFERENCED_EVENT)` and **not**
 `closedByPullRequestsReferences(includeClosedPrs: true)`, which is the field

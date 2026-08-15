@@ -24130,19 +24130,21 @@ const GC_MAX_AGE_RANGE: std::ops::RangeInclusive<u64> = 1..=365;
 /// longest legal titles, so the size of the queue stops being able to break the state-load.
 ///
 /// RUN BUDGET (2026-08-03): a page is now an ALLOWANCE, not a window onto a longer queue. A vetter
-/// run spends at most 3 ITEMS — a PR vetted or a close-candidate flag ruled on, ONE budget shared
+/// run spends at most 5 ITEMS — a PR vetted or a close-candidate flag ruled on, ONE budget shared
 /// across both state-loads. It is a RISK CONTROL, not a throughput preference: the FSM is not yet
 /// reliable or efficient, every item a run attempts is an item that can go wrong (a wrong verdict
-/// a human acts on, a sound flag stripped, tokens burnt for nothing), and 3 bounds how much damage
+/// a human acts on, a sound flag stripped, tokens burnt for nothing), and 5 bounds how much damage
 /// ONE run can do while that is still true. So a state-load handing back 10 or 25 is handing back
-/// work the run must not do, and the per-tool half of "stop at 3" is a rule the surface enforces
+/// work the run must not do, and the per-tool half of "stop at 5" is a rule the surface enforces
 /// rather than one the prompt merely asserts. The SHARING is necessarily the prompt's to enforce:
 /// each tool call is bounded on its own, and neither can see what the other already spent. The
 /// bound is deliberately conservative and explicitly temporary — raising it is moving THIS number,
 /// gated on evidence from the run logs that runs have become reliable and efficient, never on a
-/// run having finished early with budget to spare.
-const STATE_LOAD_PAGE_DEFAULT: usize = 3;
-const STATE_LOAD_PAGE_RANGE: std::ops::RangeInclusive<u64> = 1..=3;
+/// run having finished early with budget to spare. It is the SAME number `campaign-prompt.txt` and
+/// `review-prompt.txt` state in prose: a page smaller than the prompt's cap silently caps the run
+/// lower than the rule says, so the two move together.
+const STATE_LOAD_PAGE_DEFAULT: usize = 5;
+const STATE_LOAD_PAGE_RANGE: std::ops::RangeInclusive<u64> = 1..=5;
 
 /// The byte budget ONE tool result must fit in — the contract this server holds itself to, checked
 /// on every result before it is handed back (#78), and sized so that OUR error always arrives before
@@ -31948,12 +31950,12 @@ fn mcp_all_tools() -> Value {
         {
             "name": "unvetted",
             "narrows": "limit",
-            "description": "State-load: ONE PAGE of the open PRs to vet, vet-first order. Per PR: headRefOid, labels, reviewDecision, humanSacred, vettedAtHead, ci, mergeable. `counts` is whole-queue; `more` is how many vet-able PRs this page left behind — the NEXT run's work: a run spends at most 3 ITEMS in total, shared with the flags from unvetted_close_candidates, so never re-call for a second page. `openThreads` lists the PRs withheld because a review thread is unresolved. Human-decided and vetted-at-head PRs are already excluded. A DRAFT is not vetted either, but it is not skipped: this call SENDS IT BACK itself, as ai:needs-work with the work order that the producer confirm the PR is not a draft if it intends to merge something, and `draftNeedsWork` names the PRs that happened to (`sentBack: false` = the write did not land). A draft ALREADY in a modeled ai:* state is left alone instead — the send-back would strip that label, and for ai:close-candidate/ai:design the label IS the human's queue — counted as `skipDraftInState` and inventoried by that state, not here. It also runs the ai:blocked-on clearance check: a flag whose typed deps are all merged/closed is cleared in-place and the PR appears here un-vetted; `blockedOn` lists the PRs still held (open deps named); `blockedOnManualReview` lists the flags the machine cannot judge (no typed refs / unresolvable ref) — those need a human, never a verdict.",
+            "description": "State-load: ONE PAGE of the open PRs to vet, vet-first order. Per PR: headRefOid, labels, reviewDecision, humanSacred, vettedAtHead, ci, mergeable. `counts` is whole-queue; `more` is how many vet-able PRs this page left behind — the NEXT run's work: a run spends at most 5 ITEMS in total, shared with the flags from unvetted_close_candidates, so never re-call for a second page. `openThreads` lists the PRs withheld because a review thread is unresolved. Human-decided and vetted-at-head PRs are already excluded. A DRAFT is not vetted either, but it is not skipped: this call SENDS IT BACK itself, as ai:needs-work with the work order that the producer confirm the PR is not a draft if it intends to merge something, and `draftNeedsWork` names the PRs that happened to (`sentBack: false` = the write did not land). A draft ALREADY in a modeled ai:* state is left alone instead — the send-back would strip that label, and for ai:close-candidate/ai:design the label IS the human's queue — counted as `skipDraftInState` and inventoried by that state, not here. It also runs the ai:blocked-on clearance check: a flag whose typed deps are all merged/closed is cleared in-place and the PR appears here un-vetted; `blockedOn` lists the PRs still held (open deps named); `blockedOnManualReview` lists the flags the machine cannot judge (no typed refs / unresolvable ref) — those need a human, never a verdict.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "include_skipped": {"type": "boolean", "description": "Also list the excluded PRs and why (digest rows: pr, action, unresolvedThreads)."},
-                    "limit": {"type": "integer", "description": "Rows per list, 1-3 (default 3) — a run's whole work budget is 3 items across both state-loads."}
+                    "limit": {"type": "integer", "description": "Rows per list, 1-5 (default 5) — a run's whole work budget is 5 items across both state-loads."}
                 }
             }
         },
@@ -32054,12 +32056,12 @@ fn mcp_all_tools() -> Value {
         {
             "name": "unvetted_close_candidates",
             "narrows": "limit",
-            "description": "State-load: ONE PAGE of the producer close-candidate flags on open SUBJECTS — issues AND pull requests (#211; the row's url says which) — to vet. Per subject: flagAt, flagReason (the producer's stated evidence), labels, humanSacred, vettedAtFlag. `counts` is whole-queue; `more` is how many this page left behind — the NEXT run's work: a run spends at most 3 ITEMS in total, shared with the PRs from unvetted, so never re-call for a second page. Already-vetted-at-flag subjects are excluded, as are PRs whose label is the vetter's own `close` verdict (counts.skipVetterClose — the human's queue, not a claim to judge). A subject a human has RULED is not excluded and not skipped: the ruling is a transition whose write only half landed, so this call COMPLETES it — the recorded close executed, or the flag the ruling contradicts retired (counts.completedHumanRuling / humanRulingCompletionFailed).",
+            "description": "State-load: ONE PAGE of the producer close-candidate flags on open SUBJECTS — issues AND pull requests (#211; the row's url says which) — to vet. Per subject: flagAt, flagReason (the producer's stated evidence), labels, humanSacred, vettedAtFlag. `counts` is whole-queue; `more` is how many this page left behind — the NEXT run's work: a run spends at most 5 ITEMS in total, shared with the PRs from unvetted, so never re-call for a second page. Already-vetted-at-flag subjects are excluded, as are PRs whose label is the vetter's own `close` verdict (counts.skipVetterClose — the human's queue, not a claim to judge). A subject a human has RULED is not excluded and not skipped: the ruling is a transition whose write only half landed, so this call COMPLETES it — the recorded close executed, or the flag the ruling contradicts retired (counts.completedHumanRuling / humanRulingCompletionFailed).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "include_skipped": {"type": "boolean", "description": "Also list the excluded issues and why."},
-                    "limit": {"type": "integer", "description": "Rows per list, 1-3 (default 3) — a run's whole work budget is 3 items across both state-loads."}
+                    "limit": {"type": "integer", "description": "Rows per list, 1-5 (default 5) — a run's whole work budget is 5 items across both state-loads."}
                 }
             }
         },
@@ -46990,8 +46992,8 @@ fn retire_blocked_infra_mode(dry_run: bool) -> i32 {
 //
 // PER-SUBJECT AND NOT FOLDED INTO `uncovered-issues`, which is a cost decision, measured: the
 // uncovered set is 617 issues and the read is one GraphQL round trip each (~0.65s measured over a
-// 40-issue sample), while the producer's run budget is 3 work items. Running it over the backlog
-// buys ~614 answers per run that nothing reads. Running it over the candidates costs three calls.
+// 40-issue sample), while the producer's run budget is 5 work items. Running it over the backlog
+// buys ~612 answers per run that nothing reads. Running it over the candidates costs five calls.
 //
 // The recency rule is [`landed_after_filed`] — the SAME function `already_fixed_recency_gate`
 // enforces at flag time, so the two ends of a run cannot disagree about what "post-dates" means.
@@ -52565,7 +52567,7 @@ mod prompt_section_tests {
     #[test]
     fn the_preamble_is_the_first_paragraph_and_stops_at_the_blank_line() {
         const PROMPT: &str = "\
-RUN BUDGET: at most 3 WORK ITEMS
+RUN BUDGET: at most 5 WORK ITEMS
 FAN OUT BY DEFAULT, and here is why
    \nSHELL SHAPES: a LATER paragraph
 
@@ -52573,7 +52575,7 @@ ONE-SHOT, NOT A LOOP
 ";
         let preamble = producer_preamble(PROMPT);
         assert_eq!(
-            preamble, "RUN BUDGET: at most 3 WORK ITEMS\nFAN OUT BY DEFAULT, and here is why",
+            preamble, "RUN BUDGET: at most 5 WORK ITEMS\nFAN OUT BY DEFAULT, and here is why",
             "a wrapped paragraph is joined back with its own newlines, not flattened"
         );
         // A whitespace-only line ENDS the paragraph — it is blank to a reader, and a separator that
@@ -52593,7 +52595,7 @@ ONE-SHOT, NOT A LOOP
     #[test]
     #[should_panic(expected = "campaign-prompt.txt has no preamble paragraph")]
     fn a_missing_preamble_panics_rather_than_yielding_an_empty_haystack() {
-        producer_preamble("\nRUN BUDGET: at most 3 WORK ITEMS\n");
+        producer_preamble("\nRUN BUDGET: at most 5 WORK ITEMS\n");
     }
 }
 
@@ -52994,11 +52996,12 @@ mod settings_tests {
         );
     }
 
-    /// #183. The 3-item cap is a RISK bound, and the paragraph that states it also decides how the
-    /// run is SHAPED — so it has to say which shape is the default and why. Run `20260804T114433Z`
-    /// read the cap, dispatched nothing, and paid 264k cached tokens per tool call against the
-    /// dispatching run's 75k. The prompt named both options and gave the model no way to weigh
-    /// them: the cost asymmetry is a property of the harness, underivable from the work.
+    /// #183. The per-run item cap is a RISK bound, and the paragraph that states it also decides
+    /// how the run is SHAPED — so it has to say which shape is the default and why. Run
+    /// `20260804T114433Z` read the cap, dispatched nothing, and paid 264k cached tokens per tool
+    /// call against the dispatching run's 75k. The prompt named both options and gave the model no
+    /// way to weigh them: the cost asymmetry is a property of the harness, underivable from the
+    /// work.
     #[test]
     fn the_producer_prompt_makes_fan_out_the_default_and_says_why() {
         let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
@@ -67486,14 +67489,16 @@ mod vetter_state_load_tests {
                 doc["prs"].as_array().unwrap().len(),
                 STATE_LOAD_PAGE_DEFAULT
             );
-            // 20 vet-able minus the 3-row page; 150 skipped minus the same page.
-            assert_eq!(doc["more"], json!(17));
+            // 20 vet-able minus the page; 150 skipped minus the same page. Expressed against the
+            // constant rather than as a literal, because what is being asserted is that `more` is
+            // whole-queue truth minus THIS page — a property that must survive the cap moving.
+            assert_eq!(doc["more"], json!(20 - STATE_LOAD_PAGE_DEFAULT));
             if include_skipped {
                 assert_eq!(
                     doc["skipped"].as_array().unwrap().len(),
                     STATE_LOAD_PAGE_DEFAULT
                 );
-                assert_eq!(doc["moreSkipped"], json!(147));
+                assert_eq!(doc["moreSkipped"], json!(150 - STATE_LOAD_PAGE_DEFAULT));
             }
         }
 
@@ -68388,31 +68393,33 @@ mod mcp_tests {
     // #78: a state-load handed to a token-budgeted caller is ALWAYS paged, and the page is the
     // run's whole work budget (see STATE_LOAD_PAGE_RANGE). An out-of-range page is refused rather
     // than clamped — a clamp leaves the caller believing it got what it asked for — and the
-    // refusal covers the sizes the pre-budget 1..=25 bound used to accept (4, the old default 10,
-    // the old ceiling 25): asking for them is asking for more work than a run may do.
+    // refusal covers one step OVER the cap (6) as well as the sizes the pre-budget 1..=25 bound
+    // used to accept (the old default 10, the old ceiling 25): asking for them is asking for more
+    // work than a run may do. A non-integer ("5") and a negative are refused on shape, not size.
     #[test]
     fn a_state_load_page_is_bounded_by_the_transition_guard() {
         let f = FakeExec::ok();
         for tool in ["unvetted", "unvetted_close_candidates"] {
             for bad in [
                 json!(0),
-                json!(4),
+                json!(6),
                 json!(10),
                 json!(25),
-                json!("3"),
+                json!("5"),
                 json!(-1),
                 json!(1000),
             ] {
                 let resp = f.handle(&call(tool, json!({"limit": bad}))).unwrap();
                 assert!(is_error(&resp), "{tool} limit={bad} must be refused");
-                assert!(text(&resp).contains("limit must be an integer in 1..=3"));
+                assert!(text(&resp).contains("limit must be an integer in 1..=5"));
             }
         }
         assert!(f.calls().is_empty(), "no refused page reached a fetch");
 
-        // …and an in-range page is carried through verbatim.
+        // …and an in-range page is carried through verbatim — including the ceiling, which is the
+        // one a run that means to spend its whole budget in one state-load actually asks for.
         f.handle(&call("unvetted", json!({"limit": 1}))).unwrap();
-        f.handle(&call("unvetted_close_candidates", json!({"limit": 3})))
+        f.handle(&call("unvetted_close_candidates", json!({"limit": 5})))
             .unwrap();
         assert_eq!(
             f.calls(),
@@ -68423,7 +68430,7 @@ mod mcp_tests {
                 },
                 McpCall::UnvettedCloseCandidates {
                     include_skipped: false,
-                    limit: 3
+                    limit: 5
                 },
             ]
         );
