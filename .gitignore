@@ -90,6 +90,11 @@
 # Per-run pipeline metrics (accumulates across trace rotation; committed periodically):
 !/metrics/
 !/metrics/runs.jsonl
+# ...but NOT the per-run infra records `infra-down` writes: transient, swept at +7d by
+# campaign-run.sh, and already folded into runs.jsonl above, which is the durable copy.
+# Un-ignored `/metrics/` reaches them too, so without this each one reads as an untracked
+# file — a dirty tree — for the whole week it is retained.
+/metrics/.infra-*.jsonl
 # FSM-conformance snapshot (`pr-review-report human-queue --json`, overwritten each refresh);
 # the rain-org-health dashboard fetches it at runtime from the raw URL — no site redeploy:
 !/human-queue.json
