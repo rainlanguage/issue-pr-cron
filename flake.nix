@@ -296,6 +296,20 @@
           };
         };
 
+        # `bootstrap.sh` is the one shell script here that is NOT a flake package.
+        # It cannot be: it runs on a box that has no nix yet, and installing nix
+        # is its first step — so it can never inherit the shellcheck that
+        # `writeShellApplication` runs at build time for every runner. Without
+        # this check the repo's only tracked un-linted shell would be the script
+        # a fresh box's whole install depends on. CI already runs
+        # `nix flake check --print-build-logs`.
+        checks.bootstrap-shellcheck =
+          pkgs.runCommand "bootstrap-shellcheck" { nativeBuildInputs = [ pkgs.shellcheck ]; }
+            ''
+              shellcheck --shell=bash ${./bootstrap.sh}
+              touch "$out"
+            '';
+
         devShells.cron = cron-shell;
         devShells.rust = rust-shell;
         # A bare `nix develop` otherwise falls back to the default *package's* build

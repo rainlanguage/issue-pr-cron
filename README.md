@@ -2349,6 +2349,7 @@ and evidence that answers a narrower question than the issue asked.
 | `cron.env.example`               | Template for deployment-specific values (PR assignee, work dir, models, run caps). Copy to `cron.env` (gitignored) and edit.                                                                                                                                                                                                                                      |
 | `pr-review-report.sh`            | Thin wrapper (flake package `pr-review-report-sh`) over the binary. Reports every open PR by its pipeline stage (approved / AI-vetted / needs-producer-fix (red) / needs-work / close / unreviewed / pending / draft — a conflicted ready PR reports as needs-work, the state it is owed), reading `ai:*`/`human:*` labels + GitHub approvals, as clickable URLs. |
 | `hooks/`                         | The two bash PreToolUse guards that close deny-list bypasses. See [PreToolUse guards](#pretooluse-guards--what-a-prompt-cannot-hold).                                                                                                                                                                                                                             |
+| `bootstrap.sh`                   | Stands the whole pipeline up on a fresh box — nix, the `claude` CLI, the clone, `cron.env`, the hooks, the kill switches, the crontab — idempotently, and PAUSED. The one script here that is not a flake package (it runs before nix exists), so `checks.bootstrap-shellcheck` lints it. See [Standing up a fresh box](#standing-up-a-fresh-box--bootstrapsh).  |
 | `.claude-plugin/`                | The marketplace listing this repo publishes. Its version must match the plugin manifest's — `pr-review-report plugin-version-lockstep` is the gate.                                                                                                                                                                                                               |
 | `plugins/human-fsm/`             | The human's slash commands as a Claude Code plugin. Prompts only: every guard is in the binary. See [The human's slash commands](#the-humans-slash-commands).                                                                                                                                                                                                     |
 | `plugins/vetter-judgement/`      | The machine vetter's judgement as a Claude Code skill — properties, never cases — loaded on demand at verdict time rather than carried in `review-prompt.txt` on every run. See [The vetter's judgement as a skill](#the-vetters-judgement-as-a-skill).                                                                                                           |
@@ -3263,6 +3264,171 @@ recording it provides.
   view is `gh search issues --label ai:close-candidate`.
 - `DISABLED` — presence pauses the cron (kill-switch).
 - `campaign.lock` — flock file (prevents overlapping runs).
+
+## Standing up a fresh box — `bootstrap.sh`
+
+`bootstrap.sh` installs this pipeline on a machine that has nothing on it. It is
+tracked here for the same reason `.claude/settings.json` is: an install path that
+lives only as prose plus whatever one box happens to have is behaviour that does
+not survive moving the FSM to another machine (#282). Standing up a second box
+is what makes that gap concrete, so the install is a script, not a session.
+
+```bash
+git clone https://github.com/rainlanguage/issue-pr-cron.git
+cd issue-pr-cron
+./bootstrap.sh --assignee <handle> --dry-run   # rehearse: prints every action, mutates nothing
+./bootstrap.sh --assignee <handle>
+```
+
+`--assignee` (`PR_ASSIGNEE`) is the one value with no usable default; it is
+prompted for on a TTY. `--help` lists the rest. Every step is **idempotent** — a
+second run changes only what is not already right — and `--dry-run` is
+load-bearing rather than a courtesy: it is the only way to rehearse an installer
+whose entire job is mutation.
+
+What it does, in order:
+
+1. **Preflight** — refuses to run as root, and requires `curl`, `git`, `python3`
+   and `crontab`.
+2. **nix**, single-user (`--no-daemon`), if `nix` is not already on PATH; then
+   `experimental-features = nix-command flakes` plus the two substituters in
+   `~/.config/nix/nix.conf`, appended only when the key is absent. Without the
+   experimental features **nothing** here runs: every cron line is a flake
+   command. A file that sets the key WITHOUT `nix-command flakes` stops the
+   script rather than being merged into, because guessing at someone's nix
+   config is how a box ends up half-configured.
+3. **The `claude` CLI** (`curl -fsSL https://claude.ai/install.sh | bash`) into
+   `~/.local/bin`, which both runners already put on PATH. Skipped if present.
+4. **The clone**, to `--install-dir` (default `$HOME/issue-pr-cron`). A non-empty
+   directory that is not an issue-pr-cron checkout is refused. The branch is then
+   asserted to have an **upstream**: `refresh-human-queue` exits 1 without one,
+   and that is the tick that publishes `human-queue.json`,
+   `human-queue-history.jsonl` and `metrics/runs.jsonl` to `main` — the runners
+   only ever append.
+5. **git identity and credentials** — `user.name` / `user.email` (the hourly
+   refresher COMMITS, and a commit with no identity fails), and
+   `credential.helper` = `!gh auth git-credential`, **unqualified**. A
+   path-qualified helper pins one copy of `gh` and every push fails the moment
+   that path moves. `gh auth setup-git` is not used: it writes per-host helper
+   lines this script would then have to reconcile on every re-run. An existing
+   value that differs is reported and left alone — the box's `~/.gitconfig` is
+   the human's.
+6. **`cron.env`**, generated by rewriting `cron.env.example` line by line. An
+   existing `cron.env` is never overwritten.
+7. **The two PreToolUse guards**, wired into `~/.claude/settings.json`.
+8. **`DISABLED` and `review-DISABLED`** — written BEFORE the crontab, always.
+9. **The crontab**, spliced as a `# BEGIN`/`# END issue-pr-cron (<dir>)` marker
+   block, so the box's other cron lines are untouched. Any unmanaged line already
+   naming this install dir's flake stops the run: splicing beside a second
+   schedule for the same pipeline doubles every tick. The `PATH=` prefix cron
+   needs to find `nix` is **derived** from `dirname "$(command -v nix)"` — right
+   for a single-user profile and a multi-user install alike, and never a baked
+   store path.
+10. **Verify** — `pr-review-report --help` under `env -i` with exactly the
+    crontab's `PATH`, because a tool that resolves only from an interactive shell
+    is a tool the 01:00 tick does not have. (`--help`, not `preflight`:
+    poppler/node/chromium live in the RUNNERS' closures, not the binary's, so
+    `preflight` would fail here for the wrong reason.)
+
+### `cron.env.example` is the contract, mechanically
+
+The generator matches `^#?\s*KEY=` in the example and replaces that line; a key
+it was given a value for that the example does **not** carry **aborts the run**.
+That is what makes "the example is the contract" a check rather than a habit — a
+knob the example never documented is a knob nothing in the repo reads. Keys with
+no flag are left commented, so the runner's own defaults apply rather than being
+frozen into a file.
+
+Two assertions run against the generated text, not against the inputs, so no
+later edit to the generator can slip past them: no `CRON_FORCE=` line (it would
+force EVERY scheduled tick, silently and for ever — both runners exit 2 while it
+is set, #245) and no retired `USAGE_SLACK_PCT=`.
+
+**`USAGE_HEADROOM_PCT=0` is written to `cron.env`, and `cron.env.example` keeps
+5.** The pace gate exists so that interactive/BAU work always has standing
+headroom and the deferrable consumer — the cron, which re-ticks every 4h — is the
+one that waits (#158). A box with its own dedicated subscription has no
+interactive consumer to leave headroom for, so the rationale does not apply and
+`USAGE_CEILING_PCT` becomes the only check. The example's 5 stays as it is: it is
+the right value for a box a human also works on.
+
+### The two custody steps, and what happens if you skip them
+
+The script stops and prints these rather than automating them:
+
+```bash
+claude                                              # OAuth login, dedicated subscription
+gh auth login                                       # push rights to every org in ORGS
+```
+
+The pace gate reads `/api/oauth/usage` with the `claude` credential and **fails
+closed** (#273): with no credential it PAUSES, and both crons pause with it —
+quietly, until someone reads a log. So the post-login check is a real command,
+not an assumption:
+
+```bash
+nix run git+file://<install-dir>#pr-review-report -- usage-gate
+```
+
+### `python3` is not optional, and its absence is silent
+
+Both `hooks/*.sh` parse the hook payload with `python3` and `exit 0` — ALLOW —
+when it yields nothing. Without `python3` the two guards are not missing, they
+are **inert**: every tool call sails through a hook that reports success. That is
+why it is a preflight requirement rather than a runtime dependency. (It is also
+how this script edits `settings.json`, which is the part you would notice.)
+
+### The third guard is left to you
+
+`bootstrap.sh` wires the two SCRIPTS. `pr-review-report require-qa-block` is the
+flake-built BINARY, and it needs a path that survives garbage collection:
+
+```bash
+nix profile install <install-dir>#pr-review-report
+```
+
+then add `{ "type": "command", "command": "pr-review-report require-qa-block" }`
+to the same PreToolUse `Bash` matcher. A `nix build --print-out-paths` store path
+is **not** GC-rooted — the hook would work until the next `nix-collect-garbage`
+and then start failing every `gh pr create` on the box. Installing it into a
+profile is a decision about this box's PATH, which is why the script does not
+make it silently.
+
+### Paused by default, and the cutover order
+
+The pipeline is installed **PAUSED**: `DISABLED` and `review-DISABLED` are
+written before the crontab is, so standing a box up is never the same act as
+starting it. Resuming is a human `rm`, and the order matters — **two producers
+over the same `ORGS` open DUPLICATE PRs for the same issues**, because the
+producer's backlog is computed from GitHub and neither box can see the other's
+in-flight work.
+
+On the OLD box, FIRST:
+
+```bash
+touch <old-install-dir>/DISABLED <old-install-dir>/review-DISABLED
+ls <old-install-dir>/campaign.lock <old-install-dir>/review.lock   # nothing in flight
+crontab -e                                                         # remove its lines
+```
+
+Only then, on the new one:
+
+```bash
+rm <install-dir>/DISABLED <install-dir>/review-DISABLED
+```
+
+### What moves, and what does not
+
+- **FSM state is GitHub.** Labels, trusted comments, `reviewDecision` — there is
+  no separate local state, so there is nothing to migrate.
+- **`runs/`, `review-runs/`, `runstate/` do not move.** They are local traces
+  bounded by `KEEP_RUNS`, and the new box starts its own.
+- **`metrics/runs.jsonl` continues by itself.** The runners only APPEND to it;
+  the hourly `refresh-human-queue` tick stages it with the queue snapshot,
+  commits to `main` and pushes with a fetch/rebase-replay retry (see
+  [How the file reaches main](#how-the-file-reaches-main)). A fresh clone picks
+  up the published ledger and appends to it, so the token/landed-work history
+  continues rather than forking — provided step 4's upstream assertion holds.
 
 ## Schedule & controls
 

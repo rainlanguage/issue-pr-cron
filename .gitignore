@@ -104,6 +104,13 @@
 # Flake exposing pr-review-report as a package (bin on the cron PATH):
 !/flake.nix
 !/flake.lock
+# Standing a FRESH box up (#282): nix, the claude CLI, the clone, cron.env, the
+# PreToolUse hooks, the kill switches and the crontab, in one idempotent script.
+# The install path has to be tracked for the same reason .claude/settings.json is
+# — an install that lives only on one box does not survive moving the FSM to
+# another machine. It is the one script here that is not a flake package (it runs
+# before nix exists), so `checks.bootstrap-shellcheck` lints it instead.
+!/bootstrap.sh
 
 # worklist read-through cache (tool-local, regenerated each run)
 .worklist-cache.json
