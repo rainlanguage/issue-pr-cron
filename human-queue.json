@@ -909,8 +909,20 @@
         ]
       },
       "un-vetted": {
-        "count": 56,
+        "count": 58,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 43,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/43",
+            "title": "test(migration-registry): exercise the orderings the docstrings assert"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 42,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/42",
+            "title": "chore: remove the submodule-era residue — dead foundry.lock, .gitmodules and lib/ references"
+          },
           {
             "repo": "rainlanguage/raindex",
             "number": 2835,
@@ -2028,12 +2040,6 @@
       "title": "`CI_DEPLOY_ARBITRUM_ETHERSCAN_API_KEY` is invalid — deploys broadcast, spend the gas, then fail verification"
     },
     {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 41,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/41",
-      "title": "`testApplyMigrationZeroMigrationCheckedFirst` never exercises the ordering its docstring asserts"
-    },
-    {
       "repo": "rainlanguage/rain.verify.interface",
       "number": 15,
       "url": "https://github.com/rainlanguage/rain.verify.interface/issues/15",
@@ -2128,12 +2134,6 @@
       "number": 69,
       "url": "https://github.com/rainlanguage/raindex.interface/issues/69",
       "title": "Remove the submodule-era residue — dead `foundry.lock`, and `CLAUDE.md` documenting a `lib/` git submodule that does not exist"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 40,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/40",
-      "title": "Remove the submodule-era residue — dead `foundry.lock`, `.gitmodules` and `lib/` references in a repo with no submodules"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -5983,7 +5983,7 @@
     }
   ],
   "counts": {
-    "unvetted": 56,
+    "unvetted": 58,
     "blockedOn": 17,
     "ready": 0,
     "needsWork": 100,
@@ -5994,18 +5994,18 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 1,
-    "totalProducerPrs": 174,
+    "totalProducerPrs": 176,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 654,
+    "uncoveredIssues": 652,
     "designPresentable": 0,
     "designNoQuestion": 0,
     "openIssues": 833
   },
   "ages": {
     "openIssues": {
-      "meanDays": 297.1,
+      "meanDays": 297.2,
       "medianDays": 108.1,
-      "oldestDays": 1664.5
+      "oldestDays": 1664.6
     }
   }
 }
