@@ -322,11 +322,30 @@ mkdir -p "$WORK_DIR"
 export WORK_DIR
 export INSTALL_DIR="$DIR"
 
+# --- the RUN BUDGET the prompt states (#288) ---------------------------------------------------
+# ONE definition — `RUN_ITEM_CAP` in pr-review-report — and it is the same constant the state-loads'
+# `limit` range is computed from, so the budget the vetter is TOLD to spend and the page its own
+# tool surface will hand it cannot disagree. They disagree silently when they can: `unvetted` and
+# `unvetted_close_candidates` REFUSE an out-of-range `limit` rather than clamping it, so a vetter
+# told to spend more items than the page can carry does not error, it just quietly does less.
+#
+# A value that is not a positive integer ABORTS: `{{ITEM_CAP}}` rendering empty leaves the vetter a
+# RUN BUDGET sentence with no number in it, which nothing rejects and every run resolves its own
+# way — the same silent-degradation class as the empty auditor brief below.
+ITEM_CAP="$(pr-review-report item-cap 2>/dev/null)"
+case "$ITEM_CAP" in
+  '' | *[!0-9]* | 0)
+    echo "$(date -u +%FT%TZ) review run ABORT: \`pr-review-report item-cap\` gave no usable run budget (got '$ITEM_CAP') — the prompt's {{ITEM_CAP}} would render empty" | _log
+    exit 1
+    ;;
+esac
+
 # substitute deployment values into the prompt template
 PROMPT="$(sed -e "s#{{ASSIGNEE}}#$PR_ASSIGNEE#g" \
               -e "s#{{OWNER_FLAGS}}#$OWNER_FLAGS#g" \
               -e "s#{{ORGS}}#$ORGS_HUMAN#g" \
               -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
+              -e "s#{{ITEM_CAP}}#$ITEM_CAP#g" \
               "$PROMPT_FILE")"
 
 # --- the STANDING BRIEF every dispatched AUDITOR starts with (#257) ----------------------------

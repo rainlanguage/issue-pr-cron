@@ -383,6 +383,25 @@ export SCRATCH_DIR
 # preflight, and the mkdir failure itself) have no scratch dir to reclaim and must not acquire one.
 trap '[ -n "${SCRATCH_DIR:-}" ] && rm -rf "$SCRATCH_DIR"' EXIT
 
+# --- the RUN BUDGET the prompt states (#288) ---------------------------------------------------
+# The per-run WORK ITEM cap has ONE definition — `RUN_ITEM_CAP` in pr-review-report — and the prompt
+# DERIVES every statement of it from `{{ITEM_CAP}}` rather than spelling the number in prose. Some
+# of those statements read as English words rather than digits, so a sweep for the digit does not
+# find them and a raise leaves them behind at the old value; a prompt is natural language, so what
+# is left behind is not a parse error but a CONTRADICTORY instruction the run resolves its own way.
+#
+# The guard is the point, not the assignment. An empty substitution does not fail: it renders "at
+# most  WORK ITEMS per run" and hands the model a budget with no number in it — the same silent
+# degradation the worker-brief guard below exists for, one stale binary on PATH away. So a value
+# that is not a positive integer ABORTS the run instead of reaching the model.
+ITEM_CAP="$(pr-review-report item-cap 2>/dev/null)"
+case "$ITEM_CAP" in
+  '' | *[!0-9]* | 0)
+    echo "$(date -u +%FT%TZ) campaign run ABORT: \`pr-review-report item-cap\` gave no usable run budget (got '$ITEM_CAP') — the prompt's {{ITEM_CAP}} would render empty" | _log
+    exit 1
+    ;;
+esac
+
 # substitute deployment values into the (path-free) prompt template at runtime
 PROMPT="$(sed -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
               -e "s#{{ASSIGNEE}}#$PR_ASSIGNEE#g" \
@@ -390,6 +409,7 @@ PROMPT="$(sed -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
               -e "s#{{ORGS}}#$ORGS_HUMAN#g" \
               -e "s#{{INSTALL_DIR}}#$DIR#g" \
               -e "s#{{SCRATCH_DIR}}#$SCRATCH_DIR#g" \
+              -e "s#{{ITEM_CAP}}#$ITEM_CAP#g" \
               "$DIR/campaign-prompt.txt")"
 
 # --- the STANDING BRIEF every dispatched worker starts with (#200) -----------------------------
