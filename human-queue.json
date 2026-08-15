@@ -909,19 +909,121 @@
         ]
       },
       "un-vetted": {
-        "count": 39,
+        "count": 56,
         "prs": [
+          {
+            "repo": "rainlanguage/raindex",
+            "number": 2835,
+            "url": "https://github.com/rainlanguage/raindex/pull/2835",
+            "title": "Remove submodule-era residue; repair the copilot build fallback"
+          },
+          {
+            "repo": "rainlanguage/rainlang",
+            "number": 554,
+            "url": "https://github.com/rainlanguage/rainlang/pull/554",
+            "title": "Remove submodule-era residue from .soldeerignore"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 312,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/312",
+            "title": "Remove the submodule-era residue: dangling REUSE.toml entries, three dead .soldeerignore lines, and the CLAUDE.md bump runbook calling soldeer pins git submodules"
+          },
+          {
+            "repo": "rainlanguage/rainlang.interface",
+            "number": 122,
+            "url": "https://github.com/rainlanguage/rainlang.interface/pull/122",
+            "title": "Remove the submodule-era residue: dead foundry.lock, .gitmodules and lib/ references"
+          },
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 174,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/174",
+            "title": "roh-scan: a real CLI, a consumers mode, and the stale-foundry-lock signal it found"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 209,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/209",
+            "title": "Remove the dead submodule-era entries from .soldeerignore"
+          },
+          {
+            "repo": "rainlanguage/rain.tofu.erc20-decimals",
+            "number": 31,
+            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/31",
+            "title": "chore: remove submodule-era residue from REUSE.toml, .soldeerignore and CLAUDE.md"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 113,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/113",
+            "title": "Remove submodule-era residue: dead foundry.lock and .gitmodules/lib references"
+          },
+          {
+            "repo": "rainlanguage/rain.verify",
+            "number": 31,
+            "url": "https://github.com/rainlanguage/rain.verify/pull/31",
+            "title": "Remove the submodule-era residue from REUSE.toml and CLAUDE.md"
+          },
+          {
+            "repo": "rainlanguage/rain.dia",
+            "number": 68,
+            "url": "https://github.com/rainlanguage/rain.dia/pull/68",
+            "title": "chore(reuse): drop four REUSE.toml paths that do not exist"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 48,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/48",
+            "title": "Remove submodule-era residue: dead foundry.lock, .gitmodules and lib/ references"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 23,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/23",
+            "title": "chore: remove submodule-era residue — dead foundry.lock, .gitmodules and lib/ references"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 259,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/259",
+            "title": "chore: remove submodule-era residue (dead foundry.lock, .gitmodules and root lib/ references)"
+          },
+          {
+            "repo": "rainlanguage/rain.merkle",
+            "number": 18,
+            "url": "https://github.com/rainlanguage/rain.merkle/pull/18",
+            "title": "Remove submodule-era residue: dead REUSE.toml annotations and dead lib/rain.interpreter workflow steps"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 30,
+            "url": "https://github.com/rainlanguage/rain.string/pull/30",
+            "title": "chore: remove submodule-era residue — dead foundry.lock, .gitmodules and lib/ references"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 263,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/263",
+            "title": "Remove the submodule-era residue: dead `foundry.lock` annotation in `REUSE.toml`"
+          },
+          {
+            "repo": "rainlanguage/rain.intorastring",
+            "number": 21,
+            "url": "https://github.com/rainlanguage/rain.intorastring/pull/21",
+            "title": "Remove the submodule-era residue — dead foundry.lock, .gitmodules and lib/ references"
+          },
+          {
+            "repo": "rainlanguage/rain.datacontract",
+            "number": 27,
+            "url": "https://github.com/rainlanguage/rain.datacontract/pull/27",
+            "title": "Remove submodule-era residue: dead foundry.lock, .gitmodules and lib/ references"
+          },
           {
             "repo": "rainlanguage/rain.solmem",
             "number": 112,
             "url": "https://github.com/rainlanguage/rain.solmem/pull/112",
             "title": "Delete LibStackPointer, dead across the whole org"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 39,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/39",
-            "title": "feat(migrations): an on-chain registry of which migrations have been applied"
           },
           {
             "repo": "rainlanguage/issue-pr-cron",
@@ -1920,51 +2022,111 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 26,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/26",
-      "title": "Remove the submodule-era residue — dead `foundry.lock`, `.gitmodules` and `lib/` references in a repo with no submodules"
+      "repo": "rainlanguage/rain.deploy",
+      "number": 41,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/41",
+      "title": "`testApplyMigrationZeroMigrationCheckedFirst` never exercises the ordering its docstring asserts"
     },
     {
-      "repo": "rainlanguage/rain.intorastring",
+      "repo": "rainlanguage/rain.verify.interface",
+      "number": 15,
+      "url": "https://github.com/rainlanguage/rain.verify.interface/issues/15",
+      "title": "Remove the submodule-era residue — dangling `.soldeerignore` entries for `.gitmodules`, `foundry.lock` and `/lib`"
+    },
+    {
+      "repo": "rainlanguage/rain.vats.flare",
+      "number": 2,
+      "url": "https://github.com/rainlanguage/rain.vats.flare/issues/2",
+      "title": "Remove the submodule-era residue — dangling `.soldeerignore` submodule entries and three `REUSE.toml` paths that do not exist"
+    },
+    {
+      "repo": "rainlanguage/rain.vats",
+      "number": 334,
+      "url": "https://github.com/rainlanguage/rain.vats/issues/334",
+      "title": "Remove the submodule-era residue — dangling `.soldeerignore` submodule entries and a template-copied block, plus a `REUSE.toml` path that does not exist"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 35,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/35",
+      "title": "Remove the submodule-era residue — a dead `foundry.lock` pinning a dependency this repo no longer takes"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.binmaskflag",
       "number": 20,
-      "url": "https://github.com/rainlanguage/rain.intorastring/issues/20",
-      "title": "Remove the submodule-era residue — dead `foundry.lock`, `.gitmodules` and `lib/` references in a repo with no submodules"
+      "url": "https://github.com/rainlanguage/rain.sol.binmaskflag/issues/20",
+      "title": "Remove the submodule-era residue — dead `foundry.lock` and dangling `.soldeerignore` `.gitmodules`/`lib/` entries"
     },
     {
-      "repo": "rainlanguage/rain.lib.memkv",
-      "number": 22,
-      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/22",
-      "title": "Remove the submodule-era residue — dead `foundry.lock`, `.gitmodules` and `lib/` references in a repo with no submodules"
+      "repo": "rainlanguage/rain.pyth",
+      "number": 34,
+      "url": "https://github.com/rainlanguage/rain.pyth/issues/34",
+      "title": "Remove the submodule-era residue — the manual deploy workflow still runs inside `./lib/rain.interpreter`, which does not exist"
     },
     {
-      "repo": "rainlanguage/rain.string",
+      "repo": "rainlanguage/rain.metadata",
+      "number": 135,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/135",
+      "title": "Remove the submodule-era residue — dead `foundry.lock`, and three workflows still checking out submodules recursively"
+    },
+    {
+      "repo": "rainlanguage/rain.math.saturating",
+      "number": 26,
+      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/26",
+      "title": "Remove the submodule-era residue — dead `foundry.lock`, `.gitmodules`/`lib/` references, and a slither filter pointed at `lib/forge-std`"
+    },
+    {
+      "repo": "rainlanguage/rain.math.fixedpoint",
       "number": 29,
-      "url": "https://github.com/rainlanguage/rain.string/issues/29",
+      "url": "https://github.com/rainlanguage/rain.math.fixedpoint/issues/29",
+      "title": "Remove the submodule-era residue — a dead `foundry.lock` with four submodule pins, plus `.gitmodules`/`lib/` references"
+    },
+    {
+      "repo": "rainlanguage/rain.math.binary",
+      "number": 33,
+      "url": "https://github.com/rainlanguage/rain.math.binary/issues/33",
       "title": "Remove the submodule-era residue — dead `foundry.lock`, `.gitmodules` and `lib/` references in a repo with no submodules"
     },
     {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 258,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/258",
-      "title": "Remove the submodule-era residue — dead `foundry.lock`, `.gitmodules` and `lib/` references in a repo with no submodules"
+      "repo": "rainlanguage/rain.lib.typecast",
+      "number": 15,
+      "url": "https://github.com/rainlanguage/rain.lib.typecast/issues/15",
+      "title": "Remove the submodule-era residue — dead `foundry.lock`, `.gitmodules`/`lib/` references, and a slither filter pointed at `lib/forge-std`"
     },
     {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 47,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/47",
-      "title": "Remove the submodule-era residue — dead `foundry.lock`, `.gitmodules` and `lib/` references in a repo with no submodules"
+      "repo": "rainlanguage/rain.lib.hash",
+      "number": 16,
+      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/16",
+      "title": "Remove the submodule-era residue — dead `foundry.lock`, `.gitmodules`/`lib/` references, and a slither filter pointed at `lib/forge-std`"
     },
     {
-      "repo": "rainlanguage/rainlang.interface",
-      "number": 121,
-      "url": "https://github.com/rainlanguage/rainlang.interface/issues/121",
-      "title": "Remove the submodule-era residue — dead `foundry.lock`, `.gitmodules` and `lib/` references in a repo with no submodules"
+      "repo": "rainlanguage/rainix",
+      "number": 307,
+      "url": "https://github.com/rainlanguage/rainix/issues/307",
+      "title": "Remove the submodule-era residue — a dangling `.gitmodules` annotation and a `forge install` prelude in the repo that bans submodules"
     },
     {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 111,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/111",
+      "repo": "rainlanguage/rain.factory.deploy",
+      "number": 12,
+      "url": "https://github.com/rainlanguage/rain.factory.deploy/issues/12",
+      "title": "Remove the submodule-era residue — dangling `REUSE.toml`/`.soldeerignore` entries for `foundry.lock`, `.gitmodules` and `audit/`"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 52,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/52",
+      "title": "Remove the submodule-era residue — `REUSE.toml` and `.soldeerignore` still name `foundry.lock` and `.gitmodules`, neither of which exists"
+    },
+    {
+      "repo": "rainlanguage/raindex.interface",
+      "number": 69,
+      "url": "https://github.com/rainlanguage/raindex.interface/issues/69",
+      "title": "Remove the submodule-era residue — dead `foundry.lock`, and `CLAUDE.md` documenting a `lib/` git submodule that does not exist"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 40,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/40",
       "title": "Remove the submodule-era residue — dead `foundry.lock`, `.gitmodules` and `lib/` references in a repo with no submodules"
     },
     {
@@ -5815,7 +5977,7 @@
     }
   ],
   "counts": {
-    "unvetted": 39,
+    "unvetted": 56,
     "blockedOn": 17,
     "ready": 0,
     "needsWork": 100,
@@ -5826,18 +5988,18 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 1,
-    "totalProducerPrs": 157,
+    "totalProducerPrs": 174,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 643,
+    "uncoveredIssues": 653,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 806
+    "openIssues": 832
   },
   "ages": {
     "openIssues": {
-      "meanDays": 307.0,
-      "medianDays": 108.8,
-      "oldestDays": 1664.4
+      "meanDays": 297.4,
+      "medianDays": 108.0,
+      "oldestDays": 1664.5
     }
   }
 }
