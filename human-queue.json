@@ -1019,8 +1019,14 @@
         ]
       },
       "un-vetted": {
-        "count": 77,
+        "count": 78,
         "prs": [
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 327,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/327",
+            "title": "A cron run declares itself non-interactive, so the hooks stop stranding it"
+          },
           {
             "repo": "rainlanguage/rain.sol.codegen",
             "number": 137,
@@ -6401,7 +6407,7 @@
     }
   ],
   "counts": {
-    "unvetted": 77,
+    "unvetted": 78,
     "blockedOn": 23,
     "ready": 0,
     "needsWork": 111,
@@ -6412,7 +6418,7 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 1,
-    "totalProducerPrs": 214,
+    "totalProducerPrs": 215,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 669,
     "designPresentable": 2,
@@ -6423,7 +6429,7 @@
     "openIssues": {
       "meanDays": 282.2,
       "medianDays": 103.5,
-      "oldestDays": 1665.9
+      "oldestDays": 1666.0
     }
   }
 }
