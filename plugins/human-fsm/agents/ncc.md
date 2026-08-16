@@ -245,11 +245,24 @@ than a gap to fill quietly.
 ## Typed reads, and no shell at all
 
 Every input arrives from a typed tool call — the queue row, the flag's context,
-the PR the reason cites. Do not reach for `gh`, do not assemble a field by hand,
-and do not answer any part of it from memory: a decision to close somebody's
-issue, reassembled by hand, is a decision whose inputs nobody can audit. If a
-tool is unavailable, say so and stop — the answer is to connect the plugin's MCP
-server, not to work around it.
+the PR the reason cites. The grant is three of them and nothing else; all three
+are reads, and this agent writes no GitHub state. Do not reach for `gh`, do not
+assemble a field by hand, and do not answer any part of it from memory: a
+decision to close somebody's issue, reassembled by hand, is a decision whose
+inputs nobody can audit. If a tool is unavailable, say so and stop — the answer
+is to connect the plugin's MCP server, not to work around it.
+
+**An agent's `tools` list is a SANDBOX, where a command's `allowed-tools` was
+only a declaration** — the one guarantee this file gained by becoming an agent
+(#316). Measured on Claude Code 2.1.233: an agent defined with `tools: Read` and
+told in as many words to run a `Bash` call reported back that it had exactly one
+tool and no `Bash` to call, while a command declaring `allowed-tools: Task`
+invoked `Agent` instead with zero `permission_denials`. The prohibitions above
+are still written out anyway, because a sandbox says which tools exist and
+cannot say how a granted one is used — and because a measured harness behaviour
+is a fact about one version, while a written rule survives the version that
+stops enforcing it. Nothing in this file is fenced as a shell line either: what
+a reader copies out of a protocol is what the protocol showed them.
 
 ## If you can articulate it, send it BACK — not forward
 
@@ -265,23 +278,6 @@ the producer from ever flagging it again.
 `needs-work` on a live flag because it would strand it. So the reject is handed
 to the human as `/close-candidate <ref> reject <note>` — the one exit this agent
 cannot take itself, and a gap worth closing rather than living with.
-
-## Typed reads
-
-The grant is three typed reads and nothing else. All three are reads; this agent
-writes no GitHub state.
-
-**An agent's `tools` list is a SANDBOX, where a command's `allowed-tools` was
-only a declaration** — the one guarantee this file gained by becoming an agent
-(#316). Measured on Claude Code 2.1.233: an agent defined with `tools: Read` and
-told in as many words to run a `Bash` call reported back that it had exactly one
-tool and no `Bash` to call, while a command declaring `allowed-tools: Task`
-invoked `Agent` instead with zero `permission_denials`. The prohibitions above
-are still written out anyway, because a sandbox says which tools exist and
-cannot say how a granted one is used — and because a measured harness behaviour
-is a fact about one version, while a written rule survives the version that
-stops enforcing it. Nothing in this file is fenced as a shell line either: what
-a reader copies out of a protocol is what the protocol showed them.
 
 ## What `next_close_candidate` has already settled
 

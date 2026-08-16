@@ -444,3 +444,27 @@ jobs:
         with:
           paths: "**/*prompt*"
           cap: 153919
+
+  # The plugin prompts, capped separately from the cron runners above. Same tax,
+  # different payer: a `/nr` or `/ncc` dispatch reads its agent file whole into a
+  # fresh window, so every byte is charged once per turn of that agent's run, and
+  # `**/*prompt*` never matched any of them — the four agents grew uncharged.
+  # Its own budget rather than a line in the runners': one total lets a cut in
+  # the cron prompts pay for growth in these, which is the ratchet cancelling
+  # itself out. The glob takes agents and commands of EVERY plugin so a new
+  # prompt is charged on arrival instead of escaping by not being named.
+  plugin-prompt-cap:
+    name: plugin prompt cap
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/nix-installer-action@a7ad9c4f0c65208097f4d34f3cfa1913b80cce5c # main
+      - uses: rainlanguage/rainix/.github/actions/prompt-cap@main
+        with:
+          paths: |
+            plugins/*/agents/*.md
+            plugins/*/commands/*.md
+          cap: 121990
