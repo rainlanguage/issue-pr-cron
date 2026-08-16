@@ -62,7 +62,7 @@ merge decision reassembled by hand is a decision whose inputs nobody can audit,
 and a second reader working from this conversation's context is the exact
 contamination the dispatch removed.
 
-**It relays; it does not summarise.** The agent's report is written for the
+**It relays; it does not summarise.** A PR going FORWARD arrives written for the
 human — every field of the row, the independent read, the lens's findings under
 the scope literal they were formed at, and where all of that diverges from the
 vetter's note. Condensing it here restores the failure the report is shaped to
@@ -70,6 +70,13 @@ prevent: the divergence is the headline, and a summary is where a headline goes
 to become a footnote. Add nothing of your own, and if the agent reports that a
 tool was unavailable or a lens never ran, relay that too rather than smoothing
 it.
+
+**A send-back arrives SHORT, and that is correct.** The agent rules everything
+it can articulate, and what comes back for one is three things — the ruling, the
+work order, and the evidence under it. It is not a truncated report and there is
+nothing missing to send back for: the work order is already on the PR, and the
+reasoning that reached it was spent reaching it. Relay the short thing as it
+came, and never pad it toward the forward shape above.
 
 The agent rules what it can articulate — `ai:needs-work`, with the work order on
 the record — and it says so in its report. **The merge is still the human's**,
