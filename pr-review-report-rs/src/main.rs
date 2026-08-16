@@ -67199,8 +67199,13 @@ mod marketplace_tests {
     // the checkout, its release or the audit lens back out leaves a command whose prose promises a
     // read it has no tool to perform, and the sweep would still pass because the remainder is a
     // legal shape again.
+    //
+    // `human_rule` is the fifth and the only one that writes GitHub state. The command rules
+    // rather than presenting whatever it can articulate against a PR, so dropping this leaves the
+    // same defect from the other side: prose that promises a send-back with no tool to make one,
+    // and a reader who reaches for `pr-review-report` through a shell instead.
     #[test]
-    fn nr_grants_the_two_reads_the_source_it_audits_and_the_lens() {
+    fn nr_grants_the_two_reads_the_source_it_audits_the_lens_and_the_send_back() {
         let Some(text) = repo_root_text("plugins/human-fsm/commands/nr.md") else {
             return; // not checked out (nix build sandbox)
         };
@@ -67216,11 +67221,12 @@ mod marketplace_tests {
                     plugin_mcp_tool_name("human-fsm", "fsm", "pr_context"),
                     plugin_mcp_tool_name("human-fsm", "fsm", "pr_checkout"),
                     plugin_mcp_tool_name("human-fsm", "fsm", "clone_release"),
+                    plugin_mcp_tool_name("human-fsm", "fsm", "human_rule"),
                 ],
                 native: vec!["Skill".to_string(), "Read".to_string()],
             }),
-            "/nr reads the queue row, the PR behind it, and the SOURCE the audit skill needs — and \
-             releases the checkout it took"
+            "/nr reads the queue row, the PR behind it, and the SOURCE the audit skill needs, \
+             releases the checkout it took, and sends back what it can articulate against"
         );
     }
 
