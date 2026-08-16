@@ -18525,7 +18525,30 @@ enum CommandKind {
         /// lens (#150). Empty for a command that only reads typed results.
         native: Vec<String>,
     },
+    /// The whole grant is [`COMMAND_DISPATCH_TOOL`]: the command runs no protocol of its own, and
+    /// the protocol it used to hold lives in an agent this plugin SHIPS, named in the body and
+    /// resolved against the shipped set in [`command_check`].
+    ///
+    /// It is neither of the other two — it fences no transition and it grants no typed read — so
+    /// modelling it as either is what made #316's shape unrepresentable (#321).
+    Dispatcher,
 }
+
+/// The one harness tool a DISPATCHER command grants, and the whole of what it may grant.
+///
+/// `Agent`, not `Task`: MEASURED on Claude Code 2.1.233, a command declaring `allowed-tools: Task`
+/// invoked `Agent` when it dispatched, with zero `permission_denials` — so `Task` is a name this
+/// harness binds nothing to, and admitting it would bless a grant that was never the one reviewed.
+#[cfg(test)]
+const COMMAND_DISPATCH_TOOL: &str = "Agent";
+
+/// Every spelling of "spawn a subagent" this contract knows about, so a grant is judged by what it
+/// DOES rather than by which of the two names its author reached for.
+///
+/// One of them ([`COMMAND_DISPATCH_TOOL`]) is a whole grant on its own and nothing else. Both are
+/// refused beside anything, on a command and on an agent alike — the two halves of #321.
+#[cfg(test)]
+const SUBAGENT_TOOLS: &[&str] = &["Agent", "Task"];
 
 /// The harness tools an MCP command may grant BESIDE its typed reads: the audit lens, and the read
 /// it performs.
@@ -18540,8 +18563,16 @@ enum CommandKind {
 /// admitted matters as much:
 ///
 /// - `Bash` — the fallback itself, and the reason this contract exists;
-/// - `Task` — a subagent's tool set is not this command's, so a spawned agent holding `Bash` is the
-///   shell fallback wearing another name;
+/// - the [`SUBAGENT_TOOLS`] — an ANONYMOUS subagent's tool set is not this command's, so a spawned
+///   agent holding `Bash` is the shell fallback wearing another name. That refusal is about the
+///   ANONYMOUS case and #321 narrowed it to exactly that: an agent this plugin SHIPS is a
+///   checked-in artefact under the same review as the command, its `tools` list is walked by
+///   [`agent_check`], and — unlike `allowed-tools` — the harness ENFORCES it (measured on 2.1.233,
+///   an agent defined with `tools: Read` and told in as many words to run a `Bash` call reported
+///   that it held one tool and had no `Bash` to call). So a whole grant of
+///   [`COMMAND_DISPATCH_TOOL`] naming a shipped agent is admitted as a [`CommandKind::Dispatcher`],
+///   and a subagent grant BESIDE a typed read is refused exactly as it always was: what the pair
+///   would buy is a read this command's own contract does not describe;
 /// - `Grep`/`Glob` — MEASURED against Claude Code 2.1.220: they are not tools in this harness at
 ///   all, neither listed in the session's `init` event nor resolvable through `ToolSearch`
 ///   (`select:Grep` → "No matching deferred tools found"). A grant naming one would be a permitted
@@ -18597,16 +18628,22 @@ const AUDIT_SCOPES: &[&str] = &[AUDIT_SCOPE_WHOLE_REPO, AUDIT_SCOPE_PR, AUDIT_SC
 /// command granting only `Read` still ran a `Bash` call under `--permission-mode default` with zero
 /// `permission_denials` — so the frontmatter narrows nothing on its own, and the BODY is the only
 /// thing that actually steers the reader. That is exactly why the fenced-shell rule below is
-/// enforced over the body rather than inferred from the grant. Two shapes ship here, with OPPOSITE
-/// obligations:
+/// enforced over the body rather than inferred from the grant. Three shapes ship here, with
+/// OPPOSITE obligations:
 ///
 /// - a **subcommand** command must fence the transition it runs, or the caller is handed a name
 ///   and nothing to run;
 /// - an **MCP** command must fence NO shell command at all, because every input is supposed to
 ///   arrive typed and a fenced shell line is precisely the `gh` fallback an all-MCP grant exists
-///   to remove.
+///   to remove;
+/// - a **dispatcher** — the whole grant is [`COMMAND_DISPATCH_TOOL`] — must fence no shell either,
+///   and must NAME an agent this plugin ships (resolved in [`command_check`], which is the only
+///   place the shipped set is known). It holds no typed read because the protocol and every typed
+///   call moved into that agent (#316), so judging it by the MCP rules refuses it for granting no
+///   typed read, and judging it by the subcommand rules refuses it for fencing no transition —
+///   which is precisely how #321 was reported, as five failures all saying the wrong thing.
 ///
-/// Mixing the two is refused rather than ranked. A command that may both call a tool and shell out
+/// Mixing them is refused rather than ranked. A command that may both call a tool and shell out
 /// has no guarantee left, and the guarantee is the reason the grant is narrow: either the tools
 /// answered or the command fails loudly, because the way a merge decision goes wrong is not a
 /// refusal, it is a plausible answer nobody can trace.
@@ -18657,6 +18694,15 @@ fn command_contract(text: &str) -> Result<CommandKind, String> {
     if tools.is_empty() {
         return Err("allowed-tools is empty — a command granted nothing can run nothing".into());
     }
+    // The dispatch grant is decided BEFORE the three bins, because it is the one grant that is a
+    // whole shape by itself. A subagent name mixed with anything else never reaches the bins: it
+    // is refused here, with the mixture named, rather than falling into the shell bin and being
+    // refused for whichever obligation the remainder happened to attract.
+    let subagent: Vec<&str> = tools
+        .iter()
+        .copied()
+        .filter(|t| SUBAGENT_TOOLS.contains(t))
+        .collect();
     // Three bins, and every grant lands in exactly one: a typed read, an admitted native read, or
     // everything else — which is a shell grant as far as this contract is concerned.
     let mcp: Vec<String> = tools
@@ -18669,7 +18715,25 @@ fn command_contract(text: &str) -> Result<CommandKind, String> {
         .filter(|t| MCP_COMMAND_NATIVE_TOOLS.contains(t))
         .map(|t| (*t).to_string())
         .collect();
-    let kind = if mcp.len() + native.len() < tools.len() {
+    let kind = if !subagent.is_empty() {
+        if tools.len() > 1 {
+            return Err(format!(
+                "grants {subagent:?} beside the rest of {granted:?} — a command that both \
+                 dispatches and reads has no guarantee left: the agent's grant is not this \
+                 command's, so what the pair may do is not what either half describes. A \
+                 dispatcher's whole grant is `{COMMAND_DISPATCH_TOOL}`"
+            ));
+        }
+        if tools[0] != COMMAND_DISPATCH_TOOL {
+            return Err(format!(
+                "grants {granted:?} as its whole grant — the dispatch grant this harness binds is \
+                 `{COMMAND_DISPATCH_TOOL}`. MEASURED on Claude Code 2.1.233, a command declaring \
+                 `allowed-tools: Task` invoked `{COMMAND_DISPATCH_TOOL}` anyway, so the other \
+                 spelling pre-approves a name nothing is granted under"
+            ));
+        }
+        CommandKind::Dispatcher
+    } else if mcp.len() + native.len() < tools.len() {
         // A shell grant beside EITHER of the other two. Refused whichever way round they are
         // written, and refused with the MCP wording it has always had, because the guarantee being
         // lost is the same one: `Bash` under an audit lens is the fallback the lens was supposed to
@@ -18733,6 +18797,19 @@ fn command_contract(text: &str) -> Result<CommandKind, String> {
                 ));
             }
         }
+        // A dispatcher hands the work to an agent and runs nothing itself, so it owes the same
+        // no-shell obligation an MCP command owes and for a sharper reason: the protocol it used
+        // to hold moved OUT of this file, and a fenced `gh` left behind is a line the dispatching
+        // reader would run in the context the dispatch exists to keep out of the read.
+        CommandKind::Dispatcher => {
+            if let Some(line) = runnable.iter().find(|l| !l.starts_with('/')) {
+                return Err(format!(
+                    "fenced line {line:?} is a shell command, but this command's whole grant is \
+                     `{COMMAND_DISPATCH_TOOL}` — a dispatcher runs nothing of its own, so a fenced \
+                     fallback is exactly what the narrow grant exists to remove"
+                ));
+            }
+        }
     }
     Ok(kind)
 }
@@ -18771,29 +18848,254 @@ fn grantable_mcp_tools(manifest: &Value) -> Result<Vec<String>, String> {
     Ok(out)
 }
 
-/// PURE: one command's contract, resolved against what the plugin actually serves.
+/// PURE: one command's contract, resolved against what the plugin actually SHIPS — the tools its
+/// manifest serves, and the agents beside its commands.
 ///
 /// EVERY named tool is resolved, not just the first: a command may grant a set, and a set whose
 /// second member is misspelled is a command that runs half of what it says it does — silently,
 /// because the loader drops the name it cannot resolve rather than refusing the command.
 ///
-/// Only the TYPED names are resolved here. The [`MCP_COMMAND_NATIVE_TOOLS`] are the harness's own
-/// tools, so no plugin manifest serves them; they are checked where they are admitted, against the
-/// set that was measured to exist.
+/// A dispatcher's AGENT is resolved here for the identical reason, and it is resolved here rather
+/// than in [`command_contract`] because the shipped set is the only thing that can answer it. The
+/// failure it catches is the same one wearing a different coat: a command whose whole grant is
+/// [`COMMAND_DISPATCH_TOOL`] and whose body names an agent that does not ship is a command that
+/// silently does nothing.
+///
+/// Only the TYPED names are resolved against the manifest. The [`MCP_COMMAND_NATIVE_TOOLS`] are the
+/// harness's own tools, so no plugin manifest serves them; they are checked where they are
+/// admitted, against the set that was measured to exist.
 #[cfg(test)]
-fn command_check(text: &str, grantable: &[String]) -> Result<CommandKind, String> {
+fn command_check(
+    text: &str,
+    grantable: &[String],
+    agents: &[String],
+) -> Result<CommandKind, String> {
     let kind = command_contract(text)?;
-    if let CommandKind::McpTools { mcp, .. } = &kind {
-        for tool in mcp {
-            if !grantable.iter().any(|g| g == tool) {
-                return Err(format!(
-                    "grants {tool:?}, which no server in the manifest serves — the grantable set \
-                     is {grantable:?}"
-                ));
+    match &kind {
+        CommandKind::McpTools { mcp, .. } => {
+            for tool in mcp {
+                if !grantable.iter().any(|g| g == tool) {
+                    return Err(format!(
+                        "grants {tool:?}, which no server in the manifest serves — the grantable \
+                         set is {grantable:?}"
+                    ));
+                }
             }
         }
+        CommandKind::Dispatcher => {
+            dispatched_agent(text, agents)?;
+        }
+        CommandKind::Subcommand => {}
     }
     Ok(kind)
+}
+
+/// PURE: the agent one dispatcher hands its work to, resolved against the agents this plugin
+/// actually ships.
+///
+/// The reference is the plugin-qualified name in backticks ([`plugin_agent_name`]) — the same
+/// string the command's own closing line tells the reader to type, because names collide across
+/// plugins. Matching against the SHIPPED set rather than against a name-shaped pattern is what
+/// makes "names an agent that does not ship" reportable at all: an unshipped reference and no
+/// reference are the same defect, a command that dispatches nothing, and the error names the set
+/// that would have satisfied it either way.
+///
+/// EXACTLY one, in the BODY. Two is not richer, it is unsaid: the command relays ONE agent's report
+/// verbatim, and a body naming two has not decided which report that is. The frontmatter is
+/// excluded because a `description` is what the loader lists, not what the reader executes — the
+/// same reason the fenced-line rule is over the body.
+#[cfg(test)]
+fn dispatched_agent(text: &str, shipped: &[String]) -> Result<String, String> {
+    let body = markdown_body(text);
+    let named: Vec<&String> = shipped
+        .iter()
+        .filter(|a| body.contains(&format!("`{a}`")))
+        .collect();
+    match named.as_slice() {
+        [one] => Ok((*one).to_string()),
+        [] => Err(format!(
+            "names no agent this plugin ships — its whole grant is `{COMMAND_DISPATCH_TOOL}`, so \
+             the agent it dispatches IS its payload, and a dispatcher naming none of {shipped:?} \
+             is a command that silently does nothing"
+        )),
+        many => Err(format!(
+            "names {} shipped agents ({many:?}) — a dispatcher relays ONE agent's report verbatim, \
+             and a body naming two has not said which one that is",
+            many.len()
+        )),
+    }
+}
+
+/// PURE: the name a dispatcher writes to reach agent `agent` of plugin `plugin`.
+///
+/// Qualified by the plugin, because agent names collide across plugins exactly as command names do
+/// — which is what every one of these commands already tells its reader in its own closing line.
+#[cfg(test)]
+fn plugin_agent_name(plugin: &str, agent: &str) -> String {
+    format!("{plugin}:{agent}")
+}
+
+/// TEST HELPER: everything after the frontmatter — the part a reader executes.
+///
+/// A document with no closing delimiter has no frontmatter to strip, and is its own body; the
+/// missing-frontmatter refusal is [`command_contract`]'s and is not duplicated here.
+#[cfg(test)]
+fn markdown_body(text: &str) -> &str {
+    text.split_once("\n---\n").map_or(text, |(_, body)| body)
+}
+
+/// What one shipped AGENT holds: the name a dispatcher reaches it by, and the grant the command
+/// that dispatches it used to hold.
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AgentGrant {
+    /// The `name` frontmatter. It is what the harness dispatches BY, so it — not the filename —
+    /// is what a dispatcher's body has to name.
+    name: String,
+    /// The typed reads, in the order granted, each resolved against the manifest in
+    /// [`agent_check`].
+    mcp: Vec<String>,
+    /// The [`MCP_COMMAND_NATIVE_TOOLS`] granted beside them, in the order granted.
+    native: Vec<String>,
+}
+
+/// PURE: what one shipped agent may do, and whether its body keeps that promise.
+///
+/// The same contract [`command_contract`] holds over an MCP command, over the file the protocol
+/// MOVED to (#316) — with one refusal that has no counterpart on the command side.
+///
+/// **No agent may grant a [`SUBAGENT_TOOLS`] name.** That is the check that keeps the audit lens
+/// INLINE. The rule was never about which conversation the reader lives in: it is that the reader
+/// which declares `pr:<number>` must be the reader which consumes the findings. A further fan-out
+/// is a scope declared by somebody who does not read the report it produces, which is exactly how
+/// `rain.deploy#21` was audited whole-repo — twelve findings, five bearing on the PR — with the
+/// scope carried as prose nothing could check.
+///
+/// The grant here is worth more than a command's, and that is why the protocol was allowed to move
+/// at all: MEASURED on Claude Code 2.1.233, an agent defined with `tools: Read` and told in as many
+/// words to run a `Bash` call reported that it held exactly one tool and had no `Bash` to call,
+/// with zero `permission_denials` because there was nothing to deny — while a command's
+/// `allowed-tools` line binds nothing. So this walk is a gate over an ENFORCED list, not over an
+/// announced one, and a rename on either side has to fail here rather than become a permitted tool
+/// that does not exist.
+#[cfg(test)]
+fn agent_contract(text: &str) -> Result<AgentGrant, String> {
+    if !text.starts_with("---\n") {
+        return Err("no frontmatter — an agent without one is not discovered at all".to_string());
+    }
+    let front = text
+        .split("\n---\n")
+        .next()
+        .ok_or("frontmatter is not delimited")?;
+    let field = |key: &str| {
+        front
+            .lines()
+            .find_map(|l| l.trim().strip_prefix(key))
+            .map(str::trim)
+    };
+    // `description` is what the DISPATCHING model reads to decide this agent is the one, so an
+    // agent without one is reachable only by a caller that already knows it exists.
+    for key in ["name:", "description:", "tools:"] {
+        if field(key).is_none() {
+            return Err(format!("frontmatter has no {key}"));
+        }
+    }
+    // A key with nothing after it is what a half-finished edit leaves behind, and it is not the
+    // same defect as an absent key — the loader has a field and it says nothing. `tools:` is not
+    // in this list because an empty grant has its own, more useful refusal below.
+    for key in ["name:", "description:"] {
+        if field(key) == Some("") {
+            return Err(format!(
+                "frontmatter's {key} is empty — a key with nothing after it is a field the loader \
+                 reads and finds nothing in"
+            ));
+        }
+    }
+    let name = field("name:").unwrap_or_default().to_string();
+    let granted = field("tools:").unwrap_or_default();
+    let tools: Vec<&str> = granted
+        .split(',')
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .collect();
+    if tools.is_empty() {
+        return Err("tools is empty — an agent granted nothing can read nothing".into());
+    }
+    // Checked BEFORE the shell refusal, so a fan-out is reported as a fan-out. `Bash` beside it
+    // would be refused either way, and the error a reader gets has to name the rule they broke.
+    let subagent: Vec<&str> = tools
+        .iter()
+        .copied()
+        .filter(|t| SUBAGENT_TOOLS.contains(t))
+        .collect();
+    if !subagent.is_empty() {
+        return Err(format!(
+            "grants {subagent:?} — no agent may fan the read out. The reader that declares \
+             `{AUDIT_SCOPE_PR}<number>` must be the reader that consumes its findings; a further \
+             sub-agent declares a scope it does not read, which is the rain.deploy#21 regression \
+             the INLINE rule was protecting against all along"
+        ));
+    }
+    let mcp: Vec<String> = tools
+        .iter()
+        .filter(|t| t.starts_with("mcp__"))
+        .map(|t| (*t).to_string())
+        .collect();
+    let native: Vec<String> = tools
+        .iter()
+        .filter(|t| MCP_COMMAND_NATIVE_TOOLS.contains(t))
+        .map(|t| (*t).to_string())
+        .collect();
+    if mcp.len() + native.len() < tools.len() {
+        return Err(format!(
+            "grants a tool that is neither a typed read nor the audit lens ({granted:?}) — an \
+             agent that can shell out has no guarantee left, `Bash` first of all, and this list is \
+             the one the harness actually enforces"
+        ));
+    }
+    if mcp.is_empty() {
+        return Err(format!(
+            "grants the audit lens ({native:?}) with no typed read beside it ({granted:?}) — the \
+             lens audits a SUBJECT, and the subject arrives typed"
+        ));
+    }
+    // The protocol moved here, so the fenced-shell rule moved with it: a fenced `gh` in the file
+    // the reader actually executes is the fallback the typed grant exists to remove, and it does
+    // not stop being one because it now lives beside `tools:` instead of `allowed-tools:`.
+    let runnable: Vec<&str> = text
+        .split("```")
+        .skip(1)
+        .step_by(2)
+        .flat_map(|b| b.lines().skip(1))
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    if let Some(line) = runnable.iter().find(|l| !l.starts_with('/')) {
+        return Err(format!(
+            "fenced line {line:?} is a shell command, but every grant here is typed ({mcp:?}) — a \
+             fenced fallback is exactly what the all-MCP grant exists to remove"
+        ));
+    }
+    Ok(AgentGrant { name, mcp, native })
+}
+
+/// PURE: one agent's contract, resolved against what the plugin's manifest actually serves.
+///
+/// [`command_check`]'s obligation, over the file the typed grant moved to: every `mcp__*` name is
+/// resolved, so a rename fails here rather than becoming a permitted tool that does not exist. The
+/// [`MCP_COMMAND_NATIVE_TOOLS`] are the harness's own and no manifest serves them.
+#[cfg(test)]
+fn agent_check(text: &str, grantable: &[String]) -> Result<AgentGrant, String> {
+    let grant = agent_contract(text)?;
+    for tool in &grant.mcp {
+        if !grantable.iter().any(|g| g == tool) {
+            return Err(format!(
+                "grants {tool:?}, which no server in the manifest serves — the grantable set is \
+                 {grantable:?}"
+            ));
+        }
+    }
+    Ok(grant)
 }
 
 /// PURE: the name Claude Code exposes for `tool` on plugin `plugin`'s MCP server `server`.
@@ -70611,35 +70913,73 @@ mod marketplace_tests {
         }
     }
 
+    /// TEST HELPER: every `.md` this plugin ships in one of its directories, as (stem, text),
+    /// sorted by stem. `None` when the tree is not checked out (nix build sandbox).
+    fn plugin_markdown(dir: &str) -> Option<Vec<(String, String)>> {
+        let mut out: Vec<(String, String)> = std::fs::read_dir(repo_root_path(dir))
+            .ok()?
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("md"))
+            .map(|p| {
+                let stem = p.file_stem().unwrap().to_string_lossy().to_string();
+                (stem, std::fs::read_to_string(&p).expect("readable"))
+            })
+            .collect();
+        out.sort();
+        Some(out)
+    }
+
+    /// TEST HELPER: this plugin's own MCP surface — what a grant is resolved against.
+    fn human_fsm_grantable(manifest: &Value) -> Vec<String> {
+        grantable_mcp_tools(manifest).expect("the manifest's own MCP surface")
+    }
+
+    /// TEST HELPER: the agents this repo ships, plugin-qualified — the set a dispatcher's body is
+    /// resolved against.
+    ///
+    /// Keyed by FILENAME, and the agent sweep asserts each file's `name` frontmatter equals its
+    /// stem, so the two ways of naming an agent cannot come apart without a test saying so.
+    ///
+    /// A tree with no `agents/` directory ships no agents, and that is a real answer rather than a
+    /// bail: every caller here has already established the tree IS checked out by reading
+    /// `commands/`. A dispatcher landing in such a tree is then refused for naming an agent that
+    /// does not ship — which is exactly what a dispatcher arriving before its agent should do.
+    fn shipped_agents(manifest: &Value) -> Vec<String> {
+        let plugin = manifest["name"]
+            .as_str()
+            .expect("the manifest names the plugin");
+        plugin_markdown("plugins/human-fsm/agents")
+            .unwrap_or_default()
+            .iter()
+            .map(|(stem, _)| plugin_agent_name(plugin, stem))
+            .collect()
+    }
+
     // The commands are the plugin's payload, and a plugin whose command directory is empty
     // installs a name and nothing else. Each one must also carry the frontmatter the loader reads,
     // or it is listed with no description and no argument hint.
     #[test]
     fn every_shipped_command_carries_its_frontmatter() {
-        let Ok(entries) = std::fs::read_dir(repo_root_path("plugins/human-fsm/commands")) else {
+        let Some(commands) = plugin_markdown("plugins/human-fsm/commands") else {
             return; // not checked out (nix build sandbox)
         };
         // The MCP grants are resolved against what this repo ACTUALLY ships — the plugin's own
         // name, the servers its manifest declares, and the tools that profile serves — so a rename
-        // on either side fails here rather than becoming a command with no tool to call.
+        // on either side fails here rather than becoming a command with no tool to call. A
+        // dispatcher's AGENT is resolved the same way and for the same reason (#321).
         let manifest = read_json("plugins/human-fsm/.claude-plugin/plugin.json")
             .expect("the plugin manifest is checked out beside its commands");
-        let grantable = grantable_mcp_tools(&manifest).expect("the manifest's own MCP surface");
+        let grantable = human_fsm_grantable(&manifest);
+        let agents = shipped_agents(&manifest);
 
         let mut seen = Vec::new();
-        for e in entries.flatten() {
-            let path = e.path();
-            if path.extension().and_then(|x| x.to_str()) != Some("md") {
-                continue;
-            }
-            let text = std::fs::read_to_string(&path).expect("readable command");
-            let name = path.file_stem().unwrap().to_string_lossy().to_string();
-            if let Err(why) = command_check(&text, &grantable) {
+        for (name, text) in &commands {
+            if let Err(why) = command_check(text, &grantable, &agents) {
                 panic!("{name}: {why}");
             }
-            seen.push(name);
+            seen.push(name.clone());
         }
-        seen.sort();
         assert_eq!(
             seen,
             vec![
@@ -70657,15 +70997,113 @@ mod marketplace_tests {
         );
     }
 
+    // The agents are the other half of the payload since #316: the four reading gates' protocols
+    // live here, and the typed grant that used to sit in `allowed-tools` sits in `tools` — where,
+    // unlike `allowed-tools`, the harness enforces it. So the directory is walked exactly as
+    // `commands/` is: frontmatter present, every `mcp__*` name resolved against what the manifest
+    // serves, `Skill` and `Read` admitted by name, everything else refused and `Bash` first of all
+    // — and no agent granting a subagent tool, which is what keeps the audit lens inline.
+    #[test]
+    fn every_shipped_agent_carries_its_frontmatter_and_grants_no_fan_out() {
+        let Some(agents) = plugin_markdown("plugins/human-fsm/agents") else {
+            return; // not checked out (nix build sandbox)
+        };
+        let manifest = read_json("plugins/human-fsm/.claude-plugin/plugin.json")
+            .expect("the plugin manifest is checked out beside its agents");
+        let grantable = human_fsm_grantable(&manifest);
+
+        let mut seen = Vec::new();
+        for (stem, text) in &agents {
+            let grant = agent_check(text, &grantable).unwrap_or_else(|why| panic!("{stem}: {why}"));
+            // A dispatcher names the agent by its frontmatter `name`, and a reader opens the FILE.
+            // Letting the two differ means the command that dispatches an agent and the file a
+            // human edits to change it are related by nothing a test can see.
+            assert_eq!(
+                &grant.name, stem,
+                "agents/{stem}.md declares `name: {}` — the file a reader opens and the name a \
+                 dispatcher writes have to be the same string",
+                grant.name
+            );
+            seen.push(stem.clone());
+        }
+        assert_eq!(
+            seen,
+            vec!["ncc", "ndd", "nm", "nr"],
+            "the shipped agent set changed"
+        );
+    }
+
+    // The pairing, asserted BOTH ways. A dispatcher pointing at an agent that does not ship is a
+    // command that silently does nothing — the same failure mode as the `agents` key in
+    // `plugin.json`, which SUPPRESSES agent discovery rather than declaring it (measured on
+    // 2.1.233, and the reason the manifest deliberately omits it). And an agent no dispatcher
+    // names is a protocol with no way in: it is discovered, it is loadable, and nothing reaches it.
+    #[test]
+    fn every_dispatcher_names_a_shipped_agent_and_every_agent_has_a_dispatcher() {
+        let Some(commands) = plugin_markdown("plugins/human-fsm/commands") else {
+            return; // not checked out (nix build sandbox)
+        };
+        let manifest = read_json("plugins/human-fsm/.claude-plugin/plugin.json")
+            .expect("the plugin manifest is checked out beside its commands");
+        let shipped = shipped_agents(&manifest);
+
+        let mut dispatched = Vec::new();
+        for (name, text) in &commands {
+            if command_contract(text) == Ok(CommandKind::Dispatcher) {
+                dispatched.push(
+                    dispatched_agent(text, &shipped).unwrap_or_else(|why| panic!("{name}: {why}")),
+                );
+            }
+        }
+        dispatched.sort();
+        assert_eq!(
+            dispatched, shipped,
+            "every shipped agent needs exactly one dispatcher and every dispatcher needs a shipped \
+             agent — an agent nothing dispatches is unreachable, and two commands dispatching one \
+             agent is two doors onto one protocol with nothing saying which is current"
+        );
+
+        // The manifest must NOT declare an `agents` key. Measured on 2.1.233: present, it
+        // SUPPRESSES discovery of the directory rather than declaring it, so the four agents
+        // become unloadable and every dispatcher above becomes a command that does nothing — with
+        // no error anywhere, which is why this is asserted rather than left to be rediscovered.
+        assert!(
+            manifest.get("agents").is_none(),
+            "plugin.json declares `agents` — measured, that SUPPRESSES agent discovery, and these \
+             agents are found by living in agents/"
+        );
+    }
+
     fn command(front: &str, body: &str) -> String {
         format!("---\ndescription: d\nargument-hint: h\nallowed-tools: {front}\n---\n\n{body}")
     }
+
+    /// A synthetic AGENT, in the frontmatter the harness reads: `name`, `description`, and the
+    /// `tools` list it actually enforces.
+    fn agent(tools: &str, body: &str) -> String {
+        format!("---\nname: a\ndescription: d\ntools: {tools}\n---\n\n{body}")
+    }
+
+    /// The shipped-agent set for a fixture that does not dispatch. A synthetic command reaches this
+    /// argument only through [`CommandKind::Dispatcher`], and the dispatcher fixtures below name
+    /// their own set, so an empty one here says "this case is not about agents" rather than
+    /// standing in for one.
+    const NO_AGENTS: &[String] = &[];
 
     /// The expected kind for a command granting typed reads and no native tool beside them.
     fn typed_only(mcp: &[&str]) -> Result<CommandKind, String> {
         Ok(CommandKind::McpTools {
             mcp: mcp.iter().map(|t| (*t).to_string()).collect(),
             native: vec![],
+        })
+    }
+
+    /// The expected grant for an agent, spelled the way the file spells it.
+    fn agent_grant(name: &str, mcp: &[&str], native: &[&str]) -> Result<AgentGrant, String> {
+        Ok(AgentGrant {
+            name: name.to_string(),
+            mcp: mcp.iter().map(|t| (*t).to_string()).collect(),
+            native: native.iter().map(|t| (*t).to_string()).collect(),
         })
     }
 
@@ -70850,7 +71288,7 @@ mod marketplace_tests {
             "prose",
         );
         assert_eq!(
-            command_check(&good, &grantable),
+            command_check(&good, &grantable, NO_AGENTS),
             typed_only(&["mcp__plugin_human-fsm_fsm__next_ready"])
         );
         // A tool the profile does not serve.
@@ -70858,12 +71296,12 @@ mod marketplace_tests {
             &plugin_mcp_tool_name("human-fsm", "fsm", "next_ready_pr"),
             "prose",
         );
-        assert!(command_check(&unserved, &grantable)
+        assert!(command_check(&unserved, &grantable, NO_AGENTS)
             .unwrap_err()
             .contains("no server in the manifest serves"));
         // The right tool under the shape the name reads like — `mcp__<server>__<tool>`.
         let wrong_shape = command("mcp__fsm__next_ready", "prose");
-        assert!(command_check(&wrong_shape, &grantable)
+        assert!(command_check(&wrong_shape, &grantable, NO_AGENTS)
             .unwrap_err()
             .contains("no server in the manifest serves"));
         // A subcommand command is not resolved against the MCP surface at all.
@@ -70871,7 +71309,10 @@ mod marketplace_tests {
             "Bash(pr-review-report human-close:*)",
             "```\npr-review-report human-close a/b 1 n\n```",
         );
-        assert_eq!(command_check(&sub, &grantable), Ok(CommandKind::Subcommand));
+        assert_eq!(
+            command_check(&sub, &grantable, NO_AGENTS),
+            Ok(CommandKind::Subcommand)
+        );
     }
 
     // A fence's LANGUAGE TAG is markdown for a renderer, not a line the caller runs, so the
@@ -70889,7 +71330,8 @@ mod marketplace_tests {
             assert_eq!(
                 command_check(
                     &command(grant, &format!("{fence}\n{order}\n```")),
-                    &grantable
+                    &grantable,
+                    NO_AGENTS
                 ),
                 Ok(CommandKind::Subcommand),
                 "{fence} is a fence, not a transition"
@@ -70903,11 +71345,13 @@ mod marketplace_tests {
                 &format!("```text\n{order}\ngh pr edit 1 --add-label ai:needs-work\n```"),
             ),
             &grantable,
+            NO_AGENTS,
         )
         .unwrap_err();
         assert!(raw.contains("is not a transition of this binary"), "{raw}");
         // And a block whose only line IS the tag still runs nothing.
-        let empty = command_check(&command(grant, "```text\n```"), &grantable).unwrap_err();
+        let empty =
+            command_check(&command(grant, "```text\n```"), &grantable, NO_AGENTS).unwrap_err();
         assert!(
             empty.contains("names no pr-review-report transition"),
             "{empty}"
@@ -70925,17 +71369,29 @@ mod marketplace_tests {
         let ctx = plugin_mcp_tool_name("human-fsm", "fsm", "pr_context");
         let bogus = plugin_mcp_tool_name("human-fsm", "fsm", "pr_contexts");
         assert_eq!(
-            command_check(&command(&format!("{next}, {ctx}"), "prose"), &grantable),
+            command_check(
+                &command(&format!("{next}, {ctx}"), "prose"),
+                &grantable,
+                NO_AGENTS
+            ),
             typed_only(&[&next, &ctx])
         );
         // Real first, unserved second.
-        let err =
-            command_check(&command(&format!("{next}, {bogus}"), "prose"), &grantable).unwrap_err();
+        let err = command_check(
+            &command(&format!("{next}, {bogus}"), "prose"),
+            &grantable,
+            NO_AGENTS,
+        )
+        .unwrap_err();
         assert!(err.contains("pr_contexts"), "{err}");
         assert!(err.contains("no server in the manifest serves"), "{err}");
         // …and unserved first, real second, so the check is not merely reading the LAST one.
-        let err =
-            command_check(&command(&format!("{bogus}, {next}"), "prose"), &grantable).unwrap_err();
+        let err = command_check(
+            &command(&format!("{bogus}, {next}"), "prose"),
+            &grantable,
+            NO_AGENTS,
+        )
+        .unwrap_err();
         assert!(err.contains("pr_contexts"), "{err}");
     }
 
@@ -70966,7 +71422,8 @@ mod marketplace_tests {
         assert_eq!(
             command_check(
                 &command(&format!("{next}, Skill, Read"), "prose"),
-                &grantable
+                &grantable,
+                NO_AGENTS
             ),
             Ok(CommandKind::McpTools {
                 mcp: vec![next.clone()],
@@ -71008,9 +71465,12 @@ mod marketplace_tests {
                 format!("{next}, Bash, Skill, Read"),
                 "bare Bash, in the middle",
             ),
-            // A SUBAGENT is the fallback wearing another name: its tool set is not this command's,
-            // and the one thing it reliably holds is a shell.
+            // A SUBAGENT beside a typed read. #321 admitted a WHOLE grant of `Agent` naming an
+            // agent this plugin ships — and narrowed nothing here: the pair is still refused,
+            // because what an anonymous subagent holds is not this command's grant, and a command
+            // that both dispatches and reads has a contract describing neither half.
             (format!("{next}, Skill, Task"), "Task"),
+            (format!("{next}, Skill, Agent"), "Agent"),
             // Writes are not part of a read that precedes a ruling.
             (format!("{next}, Skill, Write"), "Write"),
             (format!("{next}, Skill, Edit"), "Edit"),
@@ -71076,19 +71536,269 @@ mod marketplace_tests {
         assert_eq!(MCP_COMMAND_NATIVE_TOOLS, &["Skill", "Read"]);
     }
 
-    // `/nr` is why the rule was relaxed both times, so the file that motivated it is pinned here
-    // rather than left to the generic shipped-command sweep: a later edit that drops `pr_context`,
-    // the checkout, its release or the audit lens back out leaves a command whose prose promises a
+    // #321, and the relaxation it is: a command whose WHOLE grant is `Agent` and whose body names
+    // an agent this plugin ships. #316 ruled the four reading gates into a fresh context, and this
+    // is the shape that satisfies it — so before this the branch implementing the human's own
+    // ruling was red, with a dispatcher falling into the shell bin and being refused for fencing
+    // no transition it was never supposed to have.
+    #[test]
+    fn a_dispatcher_is_a_whole_grant_of_agent_and_the_agent_it_names() {
+        let nr = plugin_agent_name("human-fsm", "nr");
+        let shipped = vec![nr.clone()];
+        let body = format!("Dispatch the `{nr}` agent and relay its report verbatim.");
+        assert_eq!(
+            command_contract(&command("Agent", &body)),
+            Ok(CommandKind::Dispatcher)
+        );
+        assert_eq!(
+            command_check(&command("Agent", &body), NO_AGENTS, &shipped),
+            Ok(CommandKind::Dispatcher),
+            "a dispatcher grants no typed read, so the MCP surface has nothing to say about it"
+        );
+        assert_eq!(dispatched_agent(&command("Agent", &body), &shipped), Ok(nr));
+        // The name is read from the BODY, which is what the reader executes. A `description` is
+        // what the loader LISTS, and a command whose only mention of its agent is in frontmatter
+        // has told the reader nothing.
+        let front_only = format!(
+            "---\ndescription: dispatches `{}`\nargument-hint: h\nallowed-tools: Agent\n---\n\nprose",
+            plugin_agent_name("human-fsm", "nr")
+        );
+        assert!(command_check(&front_only, NO_AGENTS, &shipped)
+            .unwrap_err()
+            .contains("names no agent this plugin ships"));
+    }
+
+    // The floor the relaxation must not fall through, and the reason `Agent` is admitted as a
+    // WHOLE grant rather than added to the native set: a subagent's grant is not this command's,
+    // so a dispatch beside a typed read is a read whose contract describes neither half. Refused
+    // in every order and against every spelling, exactly as `Bash` is.
+    #[test]
+    fn a_dispatch_grant_beside_anything_else_is_refused() {
+        let next = plugin_mcp_tool_name("human-fsm", "fsm", "next_ready");
+        for (front, why) in [
+            (format!("{next}, Agent"), "Agent after a typed read"),
+            (format!("Agent, {next}"), "Agent before one"),
+            (
+                format!("{next}, Skill, Read, Agent"),
+                "Agent beside the lens",
+            ),
+            ("Agent, Bash(gh pr view:*)".to_string(), "Agent and a shell"),
+            (format!("{next}, Task"), "Task, the other spelling"),
+            ("Agent, Task".to_string(), "both spellings"),
+        ] {
+            let err = command_contract(&command(&front, "prose")).unwrap_err();
+            assert!(err.contains("no guarantee left"), "{why}: {err}");
+        }
+        // `Task` ALONE is not a dispatcher either. Admission is by exact name for the same reason
+        // `Skill(audit)` is refused: measured on 2.1.233, a command declaring `allowed-tools: Task`
+        // invoked `Agent` when it dispatched, so `Task` pre-approves a name nothing runs under.
+        let err = command_contract(&command("Task", "Dispatch `human-fsm:nr`.")).unwrap_err();
+        assert!(
+            err.contains("the dispatch grant this harness binds"),
+            "{err}"
+        );
+        assert_eq!(COMMAND_DISPATCH_TOOL, "Agent");
+        assert_eq!(SUBAGENT_TOOLS, &["Agent", "Task"]);
+    }
+
+    // A dispatcher pointing at an agent that does not ship. The whole grant is `Agent`, so the
+    // agent IS the payload — and the harness reports a missing one as nothing at all, which is the
+    // identical silent failure a misspelled `mcp__*` grant produces one bin over.
+    #[test]
+    fn a_dispatcher_naming_an_agent_that_does_not_ship_is_refused() {
+        let shipped = vec![plugin_agent_name("human-fsm", "nr")];
+        for body in [
+            "Dispatch the `human-fsm:nope` agent.",
+            // The bare name, unqualified: names collide across plugins, which is why every one of
+            // these commands tells its reader the qualified spelling in its own closing line.
+            "Dispatch the `nr` agent.",
+            // A dispatcher that names nothing at all.
+            "Read the queue and rule on it.",
+        ] {
+            let err = command_check(&command("Agent", body), NO_AGENTS, &shipped).unwrap_err();
+            assert!(err.contains("names no agent this plugin ships"), "{err}");
+            assert!(err.contains("silently does nothing"), "{err}");
+        }
+        // Two shipped agents named in one body is not richer, it is unsaid: the command relays ONE
+        // report verbatim and this one has not said whose.
+        let both = vec![
+            plugin_agent_name("human-fsm", "nr"),
+            plugin_agent_name("human-fsm", "ncc"),
+        ];
+        let err = command_check(
+            &command("Agent", "Dispatch `human-fsm:nr`, then `human-fsm:ncc`."),
+            NO_AGENTS,
+            &both,
+        )
+        .unwrap_err();
+        assert!(err.contains("names 2 shipped agents"), "{err}");
+    }
+
+    // A dispatcher owes the no-shell obligation an MCP command owes, for a sharper reason: the
+    // protocol moved OUT of the file, so a fenced `gh` left behind is a line the DISPATCHING
+    // reader runs — in the very context the dispatch exists to keep out of the read.
+    #[test]
+    fn a_dispatcher_fences_no_shell_either() {
+        let body = "Dispatch `human-fsm:nr`.\n\n```\ngh pr view 1 --json headRefOid\n```";
+        let err = command_contract(&command("Agent", body)).unwrap_err();
+        assert!(err.contains("gh pr view"), "{err}");
+        assert!(err.contains("runs nothing of its own"), "{err}");
+        // A cross-reference to a sibling command stays legal, exactly as it is under an MCP grant.
+        assert_eq!(
+            command_contract(&command(
+                "Agent",
+                "Dispatch `human-fsm:ncc`; see ```\n/close-candidate\n```"
+            )),
+            Ok(CommandKind::Dispatcher)
+        );
+    }
+
+    // The agent side of #321: the same three bins over the file the typed grant MOVED to, and one
+    // refusal that has no counterpart on the command side.
+    #[test]
+    fn an_agent_holds_typed_reads_and_the_lens_and_nothing_else() {
+        let next = plugin_mcp_tool_name("human-fsm", "fsm", "next_ready");
+        assert_eq!(
+            agent_contract(&agent(&format!("{next}, Skill, Read"), "the protocol")),
+            agent_grant("a", &[&next], &["Skill", "Read"])
+        );
+        assert_eq!(
+            agent_contract(&agent(&next, "the protocol")),
+            agent_grant("a", &[&next], &[]),
+            "an agent that takes no lens is a decision, not a defect — /ncc's is one"
+        );
+        // `Bash` first of all, and every other shell grant with it.
+        for spelling in [
+            "Bash",
+            "Bash(gh pr view:*)",
+            "Write",
+            "Edit",
+            "Grep",
+            "Glob",
+        ] {
+            let err = agent_contract(&agent(&format!("{next}, {spelling}"), "p")).unwrap_err();
+            assert!(err.contains("no guarantee left"), "{spelling}: {err}");
+        }
+        // The lens with no subject, refused here for the reason it is refused on a command.
+        let err = agent_contract(&agent("Skill, Read", "p")).unwrap_err();
+        assert!(err.contains("no typed read beside it"), "{err}");
+        // The protocol moved here, so the fenced-shell rule moved with it.
+        let err = agent_contract(&agent(&next, "```\ngh pr diff 1 --repo o/r\n```")).unwrap_err();
+        assert!(err.contains("gh pr diff"), "{err}");
+        // Frontmatter the harness reads. `description` is how a dispatching model tells this agent
+        // from another; `name` is what it dispatches BY. Each is refused ABSENT and refused EMPTY,
+        // because a key with nothing after it is the shape a half-finished edit leaves behind.
+        for (front, key) in [
+            (
+                format!("---\ndescription: d\ntools: {next}\n---\n\np"),
+                "name:",
+            ),
+            (
+                format!("---\nname: a\ntools: {next}\n---\n\np"),
+                "description:",
+            ),
+            (
+                "---\nname: a\ndescription: d\n---\n\np".to_string(),
+                "tools:",
+            ),
+        ] {
+            let err = agent_contract(&front).unwrap_err();
+            assert!(
+                err.contains(&format!("has no {key}")),
+                "{key} is required, and ABSENT is not the same defect as empty: {err}"
+            );
+        }
+        for (front, key) in [
+            (
+                format!("---\nname:\ndescription: d\ntools: {next}\n---\n\np"),
+                "name:",
+            ),
+            (
+                format!("---\nname: a\ndescription:\ntools: {next}\n---\n\np"),
+                "description:",
+            ),
+        ] {
+            let err = agent_contract(&front).unwrap_err();
+            assert!(
+                err.contains(&format!("{key} is empty")),
+                "a key with nothing after it is its own defect, not an absent key: {err}"
+            );
+        }
+        assert!(agent_contract(&agent("", "p"))
+            .unwrap_err()
+            .contains("granted nothing"));
+        assert!(agent_contract("name: a\n")
+            .unwrap_err()
+            .contains("no frontmatter"));
+    }
+
+    // THE check that keeps the audit lens inline, and the reason the INLINE rule survives #316 at
+    // all. The rule was never about which conversation the reader lives in: it is that the reader
+    // which declares `pr:<number>` must be the reader which consumes the findings. An agent that
+    // could dispatch would hand the audit onward to somebody who declares a scope they never read
+    // — which is how `rain.deploy#21` was swept whole-repo, twelve findings with five bearing on
+    // the PR.
+    #[test]
+    fn an_agent_may_not_fan_the_read_out() {
+        let next = plugin_mcp_tool_name("human-fsm", "fsm", "next_ready");
+        for spelling in ["Agent", "Task"] {
+            for front in [
+                format!("{next}, Skill, Read, {spelling}"),
+                format!("{spelling}, {next}"),
+                spelling.to_string(),
+            ] {
+                let err = agent_contract(&agent(&front, "the protocol")).unwrap_err();
+                assert!(err.contains("fan the read out"), "{front}: {err}");
+                assert!(
+                    err.contains(AUDIT_SCOPE_PR),
+                    "the error has to say WHY — the scope declared and the findings read are one \
+                     reader's, or the declaration binds nothing: {err}"
+                );
+            }
+        }
+    }
+
+    // Every `mcp__*` name in an agent's `tools` is resolved against what the manifest serves, for
+    // the reason a command's grant is: a plausible-but-unserved name is a permitted tool that does
+    // not exist, and the harness reports it as nothing at all. This list is the one the harness
+    // ENFORCES, so a name missing from it is a call the protocol makes and cannot complete.
+    #[test]
+    fn every_typed_grant_an_agent_holds_is_resolved_against_the_manifest() {
+        let grantable = grantable_mcp_tools(&human_manifest()).unwrap();
+        let next = plugin_mcp_tool_name("human-fsm", "fsm", "next_ready");
+        let bogus = plugin_mcp_tool_name("human-fsm", "fsm", "next_ready_pr");
+        assert_eq!(
+            agent_check(&agent(&format!("{next}, Skill"), "p"), &grantable),
+            agent_grant("a", &[&next], &["Skill"])
+        );
+        // Real first, unserved second — the member a first-wins check would miss.
+        let err = agent_check(&agent(&format!("{next}, {bogus}"), "p"), &grantable).unwrap_err();
+        assert!(err.contains("no server in the manifest serves"), "{err}");
+        assert!(err.contains("next_ready_pr"), "{err}");
+        // The native grants are the harness's own, so no manifest serves them and they must not be
+        // resolved against the set — admitting them and then refusing them is the same defect.
+        assert!(agent_check(&agent(&format!("{next}, Skill, Read"), "p"), &grantable).is_ok());
+    }
+
+    // `/nr` is why the rule was relaxed every time, so the file that motivated it is pinned here
+    // rather than left to the generic shipped-agent sweep: a later edit that drops `pr_context`,
+    // the checkout, its release or the audit lens back out leaves a protocol whose prose promises a
     // read it has no tool to perform, and the sweep would still pass because the remainder is a
     // legal shape again.
     //
-    // `human_rule` is the fifth and the only one that writes GitHub state. The command rules
-    // rather than presenting whatever it can articulate against a PR, so dropping this leaves the
-    // same defect from the other side: prose that promises a send-back with no tool to make one,
-    // and a reader who reaches for `pr-review-report` through a shell instead.
+    // The grant is read from `agents/nr.md` because that is where it now BINDS. It moved out of
+    // `commands/nr.md` with the protocol (#316), and the move is the point: `allowed-tools` is a
+    // pre-approval the harness does not enforce, while an agent's `tools` list is enforced —
+    // measured on 2.1.233, an agent granted `Read` and told in as many words to run a `Bash` call
+    // reported it had no `Bash` to call.
+    //
+    // `human_rule` is the fifth and the only one that writes GitHub state. The agent rules rather
+    // than presenting whatever it can articulate against a PR, so dropping this leaves the same
+    // defect from the other side: prose that promises a send-back with no tool to make one, and a
+    // reader who reaches for `pr-review-report` through a shell instead.
     #[test]
     fn nr_grants_the_two_reads_the_source_it_audits_the_lens_and_the_send_back() {
-        let Some(text) = repo_root_text("plugins/human-fsm/commands/nr.md") else {
+        let Some(text) = repo_root_text("plugins/human-fsm/agents/nr.md") else {
             return; // not checked out (nix build sandbox)
         };
         let grantable = grantable_mcp_tools(
@@ -71096,17 +71806,18 @@ mod marketplace_tests {
         )
         .unwrap();
         assert_eq!(
-            command_check(&text, &grantable),
-            Ok(CommandKind::McpTools {
-                mcp: vec![
-                    plugin_mcp_tool_name("human-fsm", "fsm", "next_ready"),
-                    plugin_mcp_tool_name("human-fsm", "fsm", "pr_context"),
-                    plugin_mcp_tool_name("human-fsm", "fsm", "pr_checkout"),
-                    plugin_mcp_tool_name("human-fsm", "fsm", "clone_release"),
-                    plugin_mcp_tool_name("human-fsm", "fsm", "human_rule"),
+            agent_check(&text, &grantable),
+            agent_grant(
+                "nr",
+                &[
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "next_ready"),
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "pr_context"),
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "pr_checkout"),
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "clone_release"),
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "human_rule"),
                 ],
-                native: vec!["Skill".to_string(), "Read".to_string()],
-            }),
+                &["Skill", "Read"]
+            ),
             "/nr reads the queue row, the PR behind it, and the SOURCE the audit skill needs, \
              releases the checkout it took, and sends back what it can articulate against"
         );
@@ -71120,7 +71831,7 @@ mod marketplace_tests {
     // read is a legal shape — so it is asserted here, where it has to be argued to change.
     #[test]
     fn ncc_grants_the_flag_queue_the_flag_itself_and_the_pr_its_reason_cites() {
-        let Some(text) = repo_root_text("plugins/human-fsm/commands/ncc.md") else {
+        let Some(text) = repo_root_text("plugins/human-fsm/agents/ncc.md") else {
             return; // not checked out (nix build sandbox)
         };
         let grantable = grantable_mcp_tools(
@@ -71128,32 +71839,37 @@ mod marketplace_tests {
         )
         .unwrap();
         assert_eq!(
-            command_check(&text, &grantable),
-            typed_only(&[
-                &plugin_mcp_tool_name("human-fsm", "fsm", "next_close_candidate"),
-                &plugin_mcp_tool_name("human-fsm", "fsm", "close_candidate_context"),
-                // The instrument that falsifies an "already fixed" claim: the PR the reason names,
-                // read against the path the ISSUE named. raindex#1348 is the near-miss it is for.
-                &plugin_mcp_tool_name("human-fsm", "fsm", "pr_context"),
-            ]),
+            agent_check(&text, &grantable),
+            agent_grant(
+                "ncc",
+                &[
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "next_close_candidate"),
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "close_candidate_context"),
+                    // The instrument that falsifies an "already fixed" claim: the PR the reason
+                    // names, read against the path the ISSUE named. raindex#1348 is the near-miss
+                    // it is for.
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "pr_context"),
+                ],
+                &[]
+            ),
             "/ncc reads the flag queue, the flag it heads, and the PR its reason cites — and takes \
              no audit lens, on purpose"
         );
     }
 
     // `/ndd` is the third sibling (#220), and its grant is pinned for the reason `/nr`'s is: a
-    // later edit that drops the checkout, its release, or the lens back out leaves a command whose
+    // later edit that drops the checkout, its release, or the lens back out leaves a protocol whose
     // prose promises a read it has no tool to perform, and the generic sweep would still pass
     // because the remainder is a legal shape again. The lens rides here where `/ncc` refuses it,
     // because a design question is a claim ABOUT CODE on a PR — `pr:<number>` names its subject.
     //
-    // `human_rule` is the fifth and the only one that writes GitHub state. Two of this command's
+    // `human_rule` is the fifth and the only one that writes GitHub state. Two of this gate's
     // three findings — a question already answered, a question misrouted — are answers it rules
     // itself, so dropping it leaves prose that promises a send-back with no tool to make one, and
     // a reader who reaches for `pr-review-report` through a shell instead.
     #[test]
     fn ndd_grants_the_queue_the_pr_the_source_the_lens_and_the_send_back() {
-        let Some(text) = repo_root_text("plugins/human-fsm/commands/ndd.md") else {
+        let Some(text) = repo_root_text("plugins/human-fsm/agents/ndd.md") else {
             return; // not checked out (nix build sandbox)
         };
         let grantable = grantable_mcp_tools(
@@ -71161,19 +71877,53 @@ mod marketplace_tests {
         )
         .unwrap();
         assert_eq!(
-            command_check(&text, &grantable),
-            Ok(CommandKind::McpTools {
-                mcp: vec![
-                    plugin_mcp_tool_name("human-fsm", "fsm", "next_design"),
-                    plugin_mcp_tool_name("human-fsm", "fsm", "pr_context"),
-                    plugin_mcp_tool_name("human-fsm", "fsm", "pr_checkout"),
-                    plugin_mcp_tool_name("human-fsm", "fsm", "clone_release"),
-                    plugin_mcp_tool_name("human-fsm", "fsm", "human_rule"),
+            agent_check(&text, &grantable),
+            agent_grant(
+                "ndd",
+                &[
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "next_design"),
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "pr_context"),
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "pr_checkout"),
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "clone_release"),
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "human_rule"),
                 ],
-                native: vec!["Skill".to_string(), "Read".to_string()],
-            }),
+                &["Skill", "Read"]
+            ),
             "/ndd reads the design queue, the PR behind its head, and the SOURCE the question \
              turns on, releases the checkout it took, and rules the answers it can articulate"
+        );
+    }
+
+    // `/nm` is the fourth, and it had no pinned grant at all while its protocol lived in a command
+    // — the one of the four the generic sweep was the only thing holding. Its subject is a PR whose
+    // RECORD is wrong, so it takes the same five reads `/ndd` does: the leak row, the PR behind it,
+    // the source the diagnosis turns on, the release of what it took, and the send-back it rules.
+    // Dropping any of them leaves a diagnosis made from the trusted note alone, which is precisely
+    // the unauditable input this queue exists to find.
+    #[test]
+    fn nm_grants_the_leak_row_the_pr_the_source_the_lens_and_the_send_back() {
+        let Some(text) = repo_root_text("plugins/human-fsm/agents/nm.md") else {
+            return; // not checked out (nix build sandbox)
+        };
+        let grantable = grantable_mcp_tools(
+            &read_json("plugins/human-fsm/.claude-plugin/plugin.json").expect("the manifest"),
+        )
+        .unwrap();
+        assert_eq!(
+            agent_check(&text, &grantable),
+            agent_grant(
+                "nm",
+                &[
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "next_leak"),
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "pr_context"),
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "pr_checkout"),
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "clone_release"),
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "human_rule"),
+                ],
+                &["Skill", "Read"]
+            ),
+            "/nm reads the leak row, the PR behind it, and the SOURCE its diagnosis turns on, \
+             releases the checkout it took, and files the send-back it can locate"
         );
     }
 
@@ -71182,9 +71932,14 @@ mod marketplace_tests {
     // `Skill audit` loaded a document whose first rule is "whole-repo snapshot, never a diff". The
     // fix is a declared literal, and three things about it are pinned here: it is IN the invocation,
     // it is the PR one, and the file states the closed vocabulary it comes from.
+    //
+    // Read from `agents/nr.md`, where the invocation now lives (#316). The scope declaration has to
+    // sit in the file that HOLDS the `Skill` grant, because the reader that declares it is the
+    // reader that consumes the findings — which is the same rule `an_agent_may_not_fan_the_read_out`
+    // enforces from the other end.
     #[test]
     fn nr_declares_the_lens_scope_as_a_value_from_the_skills_own_vocabulary() {
-        let Some(text) = repo_root_text("plugins/human-fsm/commands/nr.md") else {
+        let Some(text) = repo_root_text("plugins/human-fsm/agents/nr.md") else {
             return; // not checked out (nix build sandbox)
         };
         // Asserted on the INVOCATION bullet, not on the file. The literal appearing somewhere in a
@@ -71222,8 +71977,8 @@ mod marketplace_tests {
         // spelling gets invented in good faith.
         let Some((_, after)) = text.split_once("**A scope is one of three literals") else {
             panic!(
-                "nr.md states no scope VOCABULARY — a command told to declare a literal, and not \
-                 told which literals exist, is one invented spelling away from free text again"
+                "agents/nr.md states no scope VOCABULARY — a reader told to declare a literal, and \
+                 not told which literals exist, is one invented spelling away from free text again"
             )
         };
         let vocabulary = after.split("\n- ").next().unwrap_or(after);
