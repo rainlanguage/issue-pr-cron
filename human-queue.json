@@ -741,12 +741,6 @@
     "ai:ready": [
       {
         "repo": "S01-Issuer/st0x.deploy",
-        "number": 312,
-        "url": "https://github.com/S01-Issuer/st0x.deploy/pull/312",
-        "title": "Remove the submodule-era residue: dangling REUSE.toml entries, three dead .soldeerignore lines, and the CLAUDE.md bump runbook calling soldeer pins git submodules"
-      },
-      {
-        "repo": "S01-Issuer/st0x.deploy",
         "number": 308,
         "url": "https://github.com/S01-Issuer/st0x.deploy/pull/308",
         "title": "codegen: use LibCodeGen.addressConstantString instead of a local copy"
@@ -2138,14 +2132,8 @@
         ]
       },
       "ai:ready": {
-        "count": 3,
+        "count": 2,
         "prs": [
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 312,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/312",
-            "title": "Remove the submodule-era residue: dangling REUSE.toml entries, three dead .soldeerignore lines, and the CLAUDE.md bump runbook calling soldeer pins git submodules"
-          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 308,
@@ -6297,7 +6285,7 @@
   "counts": {
     "unvetted": 88,
     "blockedOn": 20,
-    "ready": 3,
+    "ready": 2,
     "needsWork": 99,
     "relink": 0,
     "design": 3,
@@ -6306,17 +6294,17 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 2,
-    "totalProducerPrs": 215,
+    "totalProducerPrs": 214,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 654,
     "designPresentable": 3,
     "designNoQuestion": 0,
-    "openIssues": 875
+    "openIssues": 874
   },
   "ages": {
     "openIssues": {
-      "meanDays": 283.7,
-      "medianDays": 102.9,
+      "meanDays": 284.1,
+      "medianDays": 103.0,
       "oldestDays": 1665.4
     }
   }
