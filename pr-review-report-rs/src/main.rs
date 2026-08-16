@@ -297,13 +297,315 @@ fn classify_gh_failure(head: Option<&HttpHead>, body: &[u8]) -> GhFailure {
         .unwrap_or(GhFailure::Unknown)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// `gh` call timing — off unless PRR_GH_TIMING is set.
+//
+// Every `gh` this binary runs goes through `gh_output`, so the whole surface is covered from one
+// place and no subcommand has to opt in. What it answers is per-call latency: how long a run spent
+// in `gh`, and which calls that was.
+//
+// IT WRITES TO STDERR AND NOWHERE ELSE. On the MCP server stdout IS the JSON-RPC stream and a line
+// there is a protocol violation, so the timing shares the channel `gh_run` already folds child
+// output into.
+//
+// `std::time::Instant` and a Vec are the whole mechanism: the question is wall time per child
+// process, which needs no span tree and no subscriber.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Set to any value other than empty or `0` to time every `gh` call.
+const GH_TIMING_ENV: &str = "PRR_GH_TIMING";
+
+/// Marks every line this instrumentation writes, so a run's timing greps out of a log that also
+/// carries gh's own stderr.
+const GH_TIMING_PREFIX: &str = "gh-timing:";
+
+/// How many of a span's slowest calls the summary names.
+const GH_TIMING_SLOWEST: usize = 3;
+
+/// Leading argv words a label keeps, and the longest token it will quote as a subject.
+const GH_LABEL_WORDS: usize = 4;
+const GH_LABEL_TOKEN_MAX: usize = 60;
+
+/// Is the instrumentation on? Read per call rather than cached, so the answer is the environment
+/// the process actually has.
+fn gh_timing_enabled() -> bool {
+    match std::env::var(GH_TIMING_ENV) {
+        Ok(v) => !v.is_empty() && v != "0",
+        Err(_) => false,
+    }
+}
+
+/// One timed `gh` invocation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct GhTiming {
+    label: String,
+    ms: u64,
+}
+
+/// Timed calls not yet summarised. A summary DRAINS what it reports, which is what bounds this in
+/// the MCP server — one process serving many tool calls, each of which reports and clears.
+static GH_TIMINGS: std::sync::Mutex<Vec<GhTiming>> = std::sync::Mutex::new(Vec::new());
+
+/// PURE: is this argv token the subject of the call — a slug or an api path?
+///
+/// One word containing `/` and short. The whitespace test excludes
+/// `-H 'Accept: application/vnd.github.raw'`; the length test excludes a query or a body that
+/// happens to carry a slash.
+fn gh_subject_token(arg: &str) -> bool {
+    arg.contains('/')
+        && !arg.starts_with('-')
+        && arg.len() <= GH_LABEL_TOKEN_MAX
+        && !arg.chars().any(char::is_whitespace)
+}
+
+/// PURE: the part of a `gh` argv that says WHICH call this was.
+///
+/// Never the whole array — a `--json` field list or a `-f body=…` is most of the argv and none of
+/// it distinguishes one call from another. The leading run of non-flag words carries
+/// `pr view <slug> <n>`; a subject reached through a flag (`-R <slug>`, `api --include repos/…`)
+/// comes from the second pass.
+fn gh_call_label(args: &[&str]) -> String {
+    let mut words: Vec<&str> = args
+        .iter()
+        .copied()
+        .take_while(|a| !a.starts_with('-'))
+        .take(GH_LABEL_WORDS)
+        .collect();
+    if !words.iter().any(|w| w.contains('/')) {
+        if let Some(subject) = args.iter().copied().find(|a| gh_subject_token(a)) {
+            words.push(subject);
+        }
+    }
+    if words.is_empty() {
+        "gh".to_string()
+    } else {
+        words.join(" ")
+    }
+}
+
+/// PURE: the per-call line.
+fn gh_timing_line(t: &GhTiming) -> String {
+    format!("{GH_TIMING_PREFIX} {}ms {}", t.ms, t.label)
+}
+
+/// PURE: the summary lines for one span, slowest first, or nothing at all for a span that ran no
+/// `gh`. Silence is what keeps an instrumented run that made no calls quiet.
+fn gh_timing_summary(span: &str, calls: &[GhTiming]) -> Vec<String> {
+    if calls.is_empty() {
+        return Vec::new();
+    }
+    let total: u64 = calls.iter().map(|c| c.ms).sum();
+    let mut lines = vec![format!(
+        "{GH_TIMING_PREFIX} {span}: {} calls, {total}ms in gh",
+        calls.len()
+    )];
+    let mut slowest: Vec<&GhTiming> = calls.iter().collect();
+    // Stable sort: equal timings stay in the order they ran.
+    slowest.sort_by_key(|c| std::cmp::Reverse(c.ms));
+    lines.extend(
+        slowest
+            .iter()
+            .take(GH_TIMING_SLOWEST)
+            .map(|c| format!("{GH_TIMING_PREFIX} {span}: slowest {}ms {}", c.ms, c.label)),
+    );
+    lines
+}
+
+/// Where the current span starts. Every call after this mark belongs to it.
+fn gh_timing_mark() -> usize {
+    GH_TIMINGS.lock().map_or(0, |v| v.len())
+}
+
+/// Report a call as it lands and hold it for the span summary.
+fn gh_timing_record(label: String, elapsed: std::time::Duration) {
+    let t = GhTiming {
+        label,
+        ms: u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+    };
+    eprintln!("{}", gh_timing_line(&t));
+    if let Ok(mut v) = GH_TIMINGS.lock() {
+        v.push(t);
+    }
+}
+
+/// Summarise the calls made since `mark` and forget them.
+fn gh_timing_report(span: &str, mark: usize) {
+    let calls = match GH_TIMINGS.lock() {
+        Ok(mut v) if mark <= v.len() => v.split_off(mark),
+        _ => return,
+    };
+    for line in gh_timing_summary(span, &calls) {
+        eprintln!("{line}");
+    }
+}
+
+/// The span name for a whole CLI invocation: the subcommand as it was typed.
+fn gh_timing_process_span() -> String {
+    std::env::args()
+        .nth(1)
+        .filter(|a| !a.starts_with('-'))
+        .unwrap_or_else(|| "run".to_string())
+}
+
+/// A `gh` command over `args`, un-run.
+fn gh_command(args: &[&str]) -> Command {
+    let mut cmd = Command::new("gh");
+    cmd.args(args);
+    cmd
+}
+
+/// Run a `gh` command to completion, timed when [`GH_TIMING_ENV`] is set. THE chokepoint: every
+/// `gh` invocation in this binary is one of these, so what is measured here is the whole of the
+/// time this process spends in `gh`.
+fn gh_output(mut cmd: Command, args: &[&str]) -> std::io::Result<std::process::Output> {
+    if !gh_timing_enabled() {
+        return cmd.output();
+    }
+    let started = std::time::Instant::now();
+    let out = cmd.output();
+    // A spawn failure is recorded too — an absent `gh` then reads as calls that cost nothing,
+    // rather than as a run that made no calls.
+    gh_timing_record(gh_call_label(args), started.elapsed());
+    out
+}
+
+/// [`gh_output`] for the callers that need no control over the command.
+fn gh_exec(args: &[&str]) -> std::io::Result<std::process::Output> {
+    gh_output(gh_command(args), args)
+}
+
+#[cfg(test)]
+mod gh_timing_tests {
+    use super::*;
+
+    fn t(label: &str, ms: u64) -> GhTiming {
+        GhTiming {
+            label: label.to_string(),
+            ms,
+        }
+    }
+
+    /// The shape the motivating call has: subcommand words then the subject, positionally.
+    #[test]
+    fn a_label_keeps_the_subcommand_and_the_subject_and_drops_the_field_list() {
+        assert_eq!(
+            gh_call_label(&[
+                "pr",
+                "view",
+                "rainlanguage/rain.orderbook",
+                "123",
+                "--json",
+                "headRefOid,labels,comments",
+            ]),
+            "pr view rainlanguage/rain.orderbook 123"
+        );
+    }
+
+    /// A subject reached through a flag still lands in the label — otherwise every
+    /// `-R <slug>` call and every `api --include <path>` is attributed to its verb alone.
+    #[test]
+    fn a_subject_behind_a_flag_is_still_named() {
+        assert_eq!(
+            gh_call_label(&[
+                "pr",
+                "view",
+                "12",
+                "-R",
+                "rainlanguage/rainix",
+                "--json",
+                "comments"
+            ]),
+            "pr view 12 rainlanguage/rainix"
+        );
+        assert_eq!(
+            gh_call_label(&[
+                "api",
+                "--include",
+                "repos/rainlanguage/rainix/issues/9/comments"
+            ]),
+            "api repos/rainlanguage/rainix/issues/9/comments"
+        );
+    }
+
+    /// A header value and a query body both carry slashes and neither identifies a call.
+    #[test]
+    fn a_flag_value_that_is_not_a_subject_stays_out() {
+        let query = "q=a/b".repeat(40);
+        assert_eq!(
+            gh_call_label(&[
+                "api",
+                "-H",
+                "Accept: application/vnd.github.raw",
+                "-f",
+                query.as_str(),
+            ]),
+            "api"
+        );
+    }
+
+    #[test]
+    fn a_label_is_bounded_and_never_empty() {
+        assert_eq!(gh_call_label(&["a", "b", "c", "d", "e", "f"]), "a b c d");
+        assert_eq!(gh_call_label(&[]), "gh");
+        assert_eq!(gh_call_label(&["--version"]), "gh");
+    }
+
+    /// A span that ran no `gh` prints nothing, which is what lets an instrumented run stay quiet
+    /// where there is nothing to attribute.
+    #[test]
+    fn a_span_with_no_calls_has_no_summary() {
+        assert!(gh_timing_summary("next_design", &[]).is_empty());
+    }
+
+    /// Count and total are over EVERY call; only the naming is limited to the slowest few.
+    #[test]
+    fn a_summary_counts_every_call_and_names_the_slowest_few() {
+        let calls = [
+            t("search issues", 5600),
+            t("pr view a/b 1", 5300),
+            t("pr view a/b 2", 100),
+            t("pr view a/b 3", 4000),
+        ];
+        assert_eq!(
+            gh_timing_summary("next_design", &calls),
+            vec![
+                "gh-timing: next_design: 4 calls, 15000ms in gh",
+                "gh-timing: next_design: slowest 5600ms search issues",
+                "gh-timing: next_design: slowest 5300ms pr view a/b 1",
+                "gh-timing: next_design: slowest 4000ms pr view a/b 3",
+            ]
+        );
+    }
+
+    /// Equal timings read in the order they ran, so the summary of a uniform run is not a shuffle.
+    #[test]
+    fn ties_keep_call_order() {
+        let calls = [t("first", 7), t("second", 7)];
+        assert_eq!(
+            gh_timing_summary("s", &calls)[1..],
+            [
+                "gh-timing: s: slowest 7ms first".to_string(),
+                "gh-timing: s: slowest 7ms second".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_call_line_carries_the_prefix_the_summary_uses() {
+        assert_eq!(
+            gh_timing_line(&t("pr view a/b 1", 2713)),
+            "gh-timing: 2713ms pr view a/b 1"
+        );
+    }
+}
+
 /// Run `gh` and parse stdout as JSON, with a TYPED failure.
 ///
 /// The classes are only as good as the structure the invocation returns: a `gh pr view` failure is
 /// [`GhFailure::Unknown`] and can be nothing else, because an empty stdout supports nothing else.
 /// Use [`gh_api_result`] where the class has to be known.
 fn gh_result(args: &[&str]) -> Result<Value, GhFailure> {
-    let Ok(out) = Command::new("gh").args(args).output() else {
+    let Ok(out) = gh_exec(args) else {
         // `gh` never ran: there is no response, so there is nothing typed to read.
         return Err(GhFailure::Unknown);
     };
@@ -1118,7 +1420,7 @@ fn gh_output_report(out: &std::process::Output) -> (bool, String) {
 /// Capturing it keeps both invariants at once: the protocol stream stays ours, and the URL is read
 /// rather than leaked into a log.
 fn gh_capture(args: &[&str]) -> Result<String, String> {
-    match Command::new("gh").args(args).output() {
+    match gh_exec(args) {
         Ok(out) => {
             let (ok, text) = gh_output_report(&out);
             if ok {
@@ -1134,7 +1436,7 @@ fn gh_capture(args: &[&str]) -> Result<String, String> {
 /// Run gh for a WRITE that returns no JSON (label/comment/edit); true on success. The seam that keeps
 /// `--record-verdict`'s logic testable without network.
 fn gh_run(args: &[&str]) -> bool {
-    match Command::new("gh").args(args).output() {
+    match gh_exec(args) {
         Ok(out) => {
             let (ok, text) = gh_output_report(&out);
             if !text.is_empty() {
@@ -21509,7 +21811,7 @@ fn fmt_decl(decl: &[WorkflowInput]) -> String {
 /// Run gh and return raw stdout as text; None on non-zero exit / spawn failure. The text sibling of
 /// [`gh_json`], used to read a raw file via the contents API and to tail a run log.
 fn gh_text(args: &[&str]) -> Option<String> {
-    let out = Command::new("gh").args(args).output().ok()?;
+    let out = gh_exec(args).ok()?;
     if !out.status.success() {
         return None;
     }
@@ -24084,14 +24386,12 @@ fn checkout_failure_error(pr: &str, dir: &str, why: &str) -> String {
 /// Run `gh` for its exit status only, optionally inside `dir`, capturing BOTH streams (nothing leaks
 /// to this process's stdout — the MCP JSON-RPC stream lives there).
 fn gh_quiet(dir: Option<&std::path::Path>, args: &[&str]) -> Result<(), String> {
-    let mut cmd = Command::new("gh");
-    cmd.args(args);
+    let mut cmd = gh_command(args);
     if let Some(d) = dir {
         cmd.current_dir(d);
     }
-    let out = cmd
-        .output()
-        .map_err(|e| format!("failed to run gh {}: {e}", args.join(" ")))?;
+    let out =
+        gh_output(cmd, args).map_err(|e| format!("failed to run gh {}: {e}", args.join(" ")))?;
     if out.status.success() {
         return Ok(());
     }
@@ -33276,7 +33576,13 @@ fn mcp_handle(
                     // narrowing advice is read off the tool NAME instead (#117), so it survives the
                     // call being consumed and comes from the same table entry as the schema.
                     let budget = call_result_budget(&call);
-                    match exec(call) {
+                    // The span is ONE tool call, because that is the unit a caller waits on and
+                    // times out. The server outlives it, so a process-wide total would attribute
+                    // nothing.
+                    let mark = gh_timing_mark();
+                    let result = exec(call);
+                    gh_timing_report(name, mark);
+                    match result {
                         // A result over budget is THIS server's error to raise. Handing it back and
                         // letting the harness reject it is what left the vetter improvising (#78).
                         Ok(text) if text.len() > budget => tool_result(
@@ -48236,6 +48542,7 @@ fn already_fixed_mode(refs: &[String], json_out: bool) -> i32 {
 }
 
 fn main() {
+    let mark = gh_timing_mark();
     let code = match Cli::parse().command {
         Cmd::Queue { n } => {
             queue_mode(n.unwrap_or(20));
@@ -48525,6 +48832,9 @@ fn main() {
             }
         },
     };
+    // Whatever the subcommand did not report itself: everything for a CLI run, and for `mcp` only
+    // calls made outside a tool call, which the empty-span rule keeps silent.
+    gh_timing_report(&gh_timing_process_span(), mark);
     std::process::exit(code);
 }
 

@@ -2888,6 +2888,32 @@ uses `{{WORK_DIR}}` / `{{SCRATCH_DIR}}` / `{{INSTALL_DIR}}` / `{{ASSIGNEE}}` /
 `{{OWNER_FLAGS}}` / `{{ORGS}}` placeholders that the runner substitutes at run
 time.
 
+### Timing the `gh` calls — `PRR_GH_TIMING`
+
+Set `PRR_GH_TIMING` to anything but empty or `0` and every `gh` the binary runs
+is timed. Unset, nothing is emitted and the run is unchanged, so it is safe on
+the shipped binary.
+
+Everything goes to **stderr**, never stdout: on `pr-review-report mcp` stdout is
+the JSON-RPC stream and a line there is a protocol violation.
+
+```
+gh-timing: 2713ms pr view 42 rainlanguage/rainix
+gh-timing: next_design: 2 calls, 10913ms in gh
+gh-timing: next_design: slowest 8200ms search issues
+```
+
+A call line carries the child's wall time and enough argv to attribute it — the
+subcommand words plus the slug or api path, never the `--json` field list. A
+summary closes each span and names its slowest three. The span is one MCP TOOL
+CALL, because that is the unit a client waits on and times out; for a CLI run it
+is the subcommand.
+
+Every figure is ONE child process's wall time, so a rate-limit retry shows up as
+a second line and its backoff sleep sits between the two rather than inside
+either. Time the binary spends on anything other than `gh` is the difference
+between the summary total and the run's own duration.
+
 ### The producer's scratch dir
 
 Each producer run gets `$WORK_DIR/scratch/<run-id>`, created before the model
