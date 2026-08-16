@@ -783,7 +783,7 @@ question from the classifier is the `cc_gate` precedent one lane over: a
 facts.
 
 **A body repair is not a hand-off.** `repair-qa-block` and `weaken-closes`
-rewrite body text and move no state, so the trusted note each posts is a RECEIPT:
+rewrite body text and move no state, so the note each posts is a RECEIPT:
 `leak_reason` walks past it to whatever marker stands behind. An unlabelled PR a
 repair touched is left un-vetted, which the vetter's own population — every open
 producer PR, unfiltered by label — reaches. The receipt is built by the single
