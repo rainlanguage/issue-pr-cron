@@ -220,12 +220,6 @@
         "title": "fix(dia): fail-closed staleness — stale at exact boundary and on zero timestamp"
       },
       {
-        "repo": "rainlanguage/rain.sol.codegen",
-        "number": 32,
-        "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/32",
-        "title": "feat(script): BuildScript base — regenerate and cut are separate entrypoints"
-      },
-      {
         "repo": "rainlanguage/rain.math.float",
         "number": 253,
         "url": "https://github.com/rainlanguage/rain.math.float/pull/253",
@@ -987,32 +981,8 @@
         ]
       },
       "un-vetted": {
-        "count": 50,
+        "count": 46,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.sol.codegen",
-            "number": 49,
-            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/49",
-            "title": "audit: record the adversarial mutation-test scan of sol-v0.1.6"
-          },
-          {
-            "repo": "rainlanguage/rain.sol.codegen",
-            "number": 39,
-            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/39",
-            "title": "LibCodeGen: cover every unprobed function and pin the four wrap decisions"
-          },
-          {
-            "repo": "rainlanguage/rain.sol.codegen",
-            "number": 37,
-            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/37",
-            "title": "LibHexString.bytesToHex gets a test file"
-          },
-          {
-            "repo": "rainlanguage/rain.sol.codegen",
-            "number": 36,
-            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/36",
-            "title": "Cover LibFs: path structure and what buildFileForContract actually writes"
-          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 131,
@@ -1294,7 +1264,7 @@
     },
     "vetter-verdicts": {
       "ai:needs-work": {
-        "count": 106,
+        "count": 105,
         "prs": [
           {
             "repo": "rainlanguage/rain.tofu.erc20-decimals",
@@ -1385,12 +1355,6 @@
             "number": 57,
             "url": "https://github.com/rainlanguage/rain.dia/pull/57",
             "title": "fix(dia): fail-closed staleness — stale at exact boundary and on zero timestamp"
-          },
-          {
-            "repo": "rainlanguage/rain.sol.codegen",
-            "number": 32,
-            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/32",
-            "title": "feat(script): BuildScript base — regenerate and cut are separate entrypoints"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -2117,6 +2081,42 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/adversarial-mutation-test",
+      "number": 15,
+      "url": "https://github.com/rainlanguage/adversarial-mutation-test/issues/15",
+      "title": "A probe can outlive the agent that started it: two orphans ran for two hours and a successor nearly raced them on the same clones"
+    },
+    {
+      "repo": "rainlanguage/adversarial-mutation-test",
+      "number": 14,
+      "url": "https://github.com/rainlanguage/adversarial-mutation-test/issues/14",
+      "title": "Size a fan-out group by behaviours, not by 'a module': one 314-line library died on context twice while its 28- and 42-line siblings finished clean"
+    },
+    {
+      "repo": "rainlanguage/adversarial-mutation-test",
+      "number": 13,
+      "url": "https://github.com/rainlanguage/adversarial-mutation-test/issues/13",
+      "title": "fail-pattern silently misattributes killers: abort when it matches the baseline's own output, and ship known-good patterns"
+    },
+    {
+      "repo": "rainlanguage/adversarial-mutation-test",
+      "number": 12,
+      "url": "https://github.com/rainlanguage/adversarial-mutation-test/issues/12",
+      "title": "Probe each mutant against a narrow selection first, escalating to the whole suite only on apparent survival"
+    },
+    {
+      "repo": "rainlanguage/adversarial-mutation-test",
+      "number": 11,
+      "url": "https://github.com/rainlanguage/adversarial-mutation-test/issues/11",
+      "title": "The per-unit loop should probe the pre-existing suite BEFORE any test is written — writing first costs a second clone and a second full pass"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 132,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/132",
+      "title": "Host the BuildScript base here: run() and cutRelease() concrete, and move the other deploy repos onto it"
+    },
+    {
       "repo": "rainlanguage/rain.sol.codegen",
       "number": 48,
       "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/48",
@@ -2151,12 +2151,6 @@
       "number": 43,
       "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/43",
       "title": "LibHexString.bytesToHex underflows the string length if a caller-supplied Vm returns fewer than two characters"
-    },
-    {
-      "repo": "rainlanguage/rain.sol.codegen",
-      "number": 42,
-      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/42",
-      "title": "README tells consumers to write script/BuildPointers.sol, which rainix CI rejects outright — plus three more stale claims"
     },
     {
       "repo": "rainlanguage/rain.sol.codegen",
@@ -2259,12 +2253,6 @@
       "number": 334,
       "url": "https://github.com/rainlanguage/rain.vats/issues/334",
       "title": "Remove the submodule-era residue — dangling `.soldeerignore` submodule entries and a template-copied block, plus a `REUSE.toml` path that does not exist"
-    },
-    {
-      "repo": "rainlanguage/rain.sol.codegen",
-      "number": 35,
-      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/35",
-      "title": "Remove the submodule-era residue — a dead `foundry.lock` pinning a dependency this repo no longer takes"
     },
     {
       "repo": "rainlanguage/rain.sol.binmaskflag",
@@ -6177,10 +6165,10 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 50,
+    "unvetted": 46,
     "blockedOn": 21,
     "ready": 2,
-    "needsWork": 106,
+    "needsWork": 105,
     "relink": 0,
     "design": 0,
     "blockedInfra": 0,
@@ -6188,16 +6176,16 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 179,
+    "totalProducerPrs": 174,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 672,
+    "uncoveredIssues": 676,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 850
+    "openIssues": 854
   },
   "ages": {
     "openIssues": {
-      "meanDays": 292.0,
+      "meanDays": 290.7,
       "medianDays": 104.3,
       "oldestDays": 1665.8
     }
