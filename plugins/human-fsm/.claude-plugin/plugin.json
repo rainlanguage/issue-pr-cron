@@ -1,7 +1,7 @@
 {
   "name": "human-fsm",
   "displayName": "Human FSM transitions",
-  "version": "0.23.0",
+  "version": "0.24.0",
   "description": "Slash commands for the human's side of the rainlanguage issue→PR pipeline finite state machine: the reads that precede a ruling, the transitions that make it, and /observe-run — force a run, watch it, measure its context, and read the retained trace corpus for what a run still hand-rolls. Every input arrives from pr-review-report — each ruling as one subcommand, /nr, /ncc, /ndd and /nm as typed MCP reads — and the guards (vocabulary, mandatory note, provenance anchor, stranded-flag refusal, subject type, terminal-is-moot, idempotence) live in that binary, not here.",
   "author": {
     "name": "Rain Open Source Software Ltd",

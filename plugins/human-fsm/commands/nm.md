@@ -1,7 +1,7 @@
 ---
 description: The next unmodelled PR — an FSM leak the lane classifier buckets into no modeled state — located as a defect in exactly one of three places, against an independent read of the PR, its trusted comments, and the classifier's own rule.
 argument-hint: [1-3]
-allowed-tools: mcp__plugin_human-fsm_fsm__next_leak, mcp__plugin_human-fsm_fsm__pr_context, mcp__plugin_human-fsm_fsm__pr_checkout, mcp__plugin_human-fsm_fsm__clone_release, Skill, Read
+allowed-tools: mcp__plugin_human-fsm_fsm__next_leak, mcp__plugin_human-fsm_fsm__pr_context, mcp__plugin_human-fsm_fsm__pr_checkout, mcp__plugin_human-fsm_fsm__clone_release, mcp__plugin_human-fsm_fsm__human_rule, Skill, Read
 ---
 
 Arguments: `$ARGUMENTS`
@@ -22,21 +22,17 @@ deliverable of this command is naming which:
 
 - **The PR's state record is wrong.** It belongs in an existing state and the
   label went missing or was hand-mangled. The finding is the state it belongs
-  in, and the ONE command that files it there, written out in full so the human
-  can type it:
-  - `/human-fsm:needs-work <owner/repo#n> <note>` — work is owed on it; the note
-    is the work order, and the producer is the next mover.
-  - `/human-fsm:design <owner/repo#n> <note>` — the note is the ANSWER to a
-    question the PR raises, which is itself producer work.
-  - `/human-fsm:close-candidate <owner/repo#n> uphold <note>` — the PR is
-    finished or should be destroyed. This is the close: it runs `human-close`,
-    which resolves PR-or-issue by lookup, posts the ruling, closes the subject,
-    and retires any pending flag. It does NOT need an `ai:close-candidate` flag
-    to already exist, which matters here because a leaked PR by definition
-    carries no `ai:*` label at all.
+  in, and you FILE it there in one typed call rather than naming a command for
+  someone else to run:
+  - `human_rule` — `needs-work` when work is owed, `design` when the note is the
+    ANSWER to a question the PR raises. Both land `ai:needs-work`; the verb
+    records which ruled, and `rework` is what the producer executes.
+  - The close stays the human's, because destroying work is theirs to order:
+    `/human-fsm:close-candidate <owner/repo#n> uphold <note>`. It needs no
+    existing flag, which matters because a leaked PR carries no `ai:*` at all.
 
-  One command, because a state reached by a sequence of hand edits is a state
-  nothing can audit, which is how this PR got here.
+  One call, because a state reached by hand edits is a state nothing can audit —
+  which is how this PR got here.
 
   The commonest cause is a label the classifier NO LONGER RECOGNISES, and there
   are three cases worth telling apart before you diagnose one:
@@ -64,10 +60,11 @@ deliverable of this command is naming which:
   extra steps.
 - **The classifier is wrong.** The PR IS in a modeled condition and the
   machinery fails to see it. The fix is the classifier, never the instance:
-  hand-patching the PR would clear the box while leaving the defect armed for
-  the next PR shaped like it. The finding names the defect precisely enough to
-  file, and it is filed as an issue on the pipeline repo — by the human, since
-  this command writes nothing.
+  re-filing the PR would clear the box while leaving the defect armed for the
+  next PR shaped like it. So the classifier finding goes to the human, stated
+  precisely enough to file as an issue on the pipeline repo — and it does NOT
+  substitute for the send-back where this PR also has work owed on it. The
+  structural fix and the send-back are both true at once.
 
 Naming a state and its consuming transition is the whole job. A leak "processed"
 with a plausible label and no diagnosis is the machine's account of itself
@@ -155,16 +152,18 @@ checkouts are how this box filled its disk. If `pr_checkout` ERRORED there is
 nothing to release: re-call it ONCE, and if it fails again present the read
 without that half and say so in as many words.
 
-**7. Present the location, not a disposition.** Print every field of the row.
-Then say which of the three places the defect is in and the finding that follows
-from it — the state and its ONE filing command, or the missing state and its
-consuming transition for the design path, or the classifier defect stated
-precisely enough to file. Then say what you checked to conclude it: the note,
-the labels, the rule, and the code where you read any. A leak whose location you
-cannot determine is a complete and correct outcome STATED AS SUCH — say what you
-read and what would decide it, rather than defaulting to the nearest plausible
-label, because a guessed re-filing is indistinguishable from a located one and
-wrong in the way nothing downstream can detect.
+**7. Locate it, act on it, and report both.** Print every field of the row. Then
+say which of the three places the defect is in and the finding that follows from
+it — the state, or the missing state and its consuming transition, or the
+classifier defect stated precisely enough to file. Then TAKE the send-back per
+**If you can articulate it** below, and report that you took it. A located leak
+you handed onward is a leak that is still leaking. Then say what you checked to
+conclude it: the note, the labels, the rule, and the code where you read any. A
+leak whose location you cannot determine is a complete and correct outcome
+STATED AS SUCH — say what you read and what would decide it, rather than
+defaulting to the nearest plausible label, because a guessed re-filing is
+indistinguishable from a located one and wrong in the way nothing downstream can
+detect.
 
 ## Why this is a second opinion and not a dispatcher
 
@@ -194,9 +193,18 @@ typed:
 - `/human-fsm:keep-open <owner/repo#n> <note>` — protects an ISSUE from being
   re-flagged; not a move on a PR.
 
-**This command does not rule, does not label, and does not file** — it is the
-read that precedes the human's word, and on this queue the human's word is a
-diagnosis.
+## If you can articulate it, send it BACK — not forward
+
+**Anything you can put into words about why this PR is not merged is a
+send-back.** Rule it with `human_rule`; the words you were about to write for
+the human ARE the work order, and they go in `rework`.
+
+Diagnose first anyway — a leak located in the wrong place is a defect left
+armed. Then act. The structural finding and the send-back are both true at once,
+never alternatives.
+
+Not yours to move: `keep-open` on an issue, `close-candidate reject` on a
+flagged subject.
 
 ## Typed reads, and no shell at all
 
@@ -207,12 +215,17 @@ reassembled by hand outside the machine, is the same defect it is diagnosing. If
 a tool is unavailable, say so and stop — the answer is to connect the plugin's
 MCP server, not to work around it.
 
-The grant is four typed calls plus `Skill` and `Read`, and `Read` applies to the
-`pr_checkout` tree and nothing else. All four typed calls are reads except
-`clone_release`, which disposes of what this command itself created and writes
-no GitHub state. That list is a **declaration, not a sandbox**: measured on
-Claude Code 2.1.220, a command granting only `Read` still ran a `Bash` call with
-no permission denial. So the prohibition above is the thing that actually binds,
+The grant is five typed calls plus `Skill` and `Read`, and `Read` applies to the
+`pr_checkout` tree and nothing else. Four are reads; `clone_release` disposes of
+what this command itself created and writes no GitHub state.
+
+The fifth, `human_rule`, is the send-back and the only call that writes GitHub
+state. Typed for the same reason as every other input: its guards — mandatory
+work order, head-sha anchor, clearing every other `ai:*` — live in the binary,
+and a state reached by hand edits is the unauditable record this queue exists to
+diagnose. That list is a **declaration, not a sandbox**: measured on Claude Code
+2.1.220, a command granting only `Read` still ran a `Bash` call with no
+permission denial. So the prohibition above is the thing that actually binds,
 which is why it is written here rather than assumed of the frontmatter — and why
 nothing in this file is fenced as a shell line, because what a reader copies out
 of a command is what the command showed them.
