@@ -18327,10 +18327,18 @@ fn is_leak_candidate(labels: &[String]) -> bool {
 /// is un-vetted by design, not leaked. A producer note posted AFTER the clearance supersedes it —
 /// the producer acting on an unlabelled PR is exactly what the leak bucket exists to catch.
 /// Ordinary vetter verdict comments are not hand-off markers and decide nothing here.
+///
+/// A [`BodyRepair`] receipt ([`is_body_repair_note`]) is the producer note that bears NO state: it
+/// rewrites body text, hands nothing to anyone, and leaves the PR exactly where it was. The walk
+/// steps past one to whatever older marker stands behind it, so a repair cannot MAKE a leak and
+/// cannot hide one either.
 fn leak_reason(trusted_bodies: &[String]) -> Option<String> {
     for b in trusted_bodies.iter().rev() {
         if b.starts_with(BLOCKED_ON_CLEARED_MARKER) {
             return None;
+        }
+        if is_body_repair_note(b) {
+            continue;
         }
         if b.starts_with("🤖 ai:producer") {
             return Some(b.replace('\n', " "));
@@ -28641,6 +28649,36 @@ mod next_leak_tests {
         assert!(is_leak_candidate(&s(&["human:parked-forever"])));
     }
 
+    // A BODY REPAIR IS NOT A HAND-OFF, asserted where the queue is actually built: an unlabelled PR
+    // whose only trusted note is a repair receipt is nobody's leak, while the PR beside it — same
+    // labels, a real hand-off note — still is. A leak is a PR nothing will pick up, and the
+    // vetter's population is every open producer PR, unfiltered by label, so a repaired PR is in it.
+    #[test]
+    fn a_repair_receipt_is_not_a_leak_and_does_not_mask_one() {
+        let candidates = vec![
+            candidate("o/repaired", 1, "2026-01-01T00:00:00Z"),
+            candidate("o/handed-off", 2, "2026-01-02T00:00:00Z"),
+        ];
+        let receipt = body_repair_comment(BodyRepair::QaBlock, "restated the evidence block");
+        let scan = leak_scan_with(&candidates, |s| match s.repo.as_str() {
+            "o/repaired" => Some(producer_comments(&receipt)),
+            _ => Some(producer_comments(
+                "🤖 ai:producer\nDesign-question: which constant is shared?",
+            )),
+        });
+        assert_eq!(
+            scan.leaks
+                .iter()
+                .map(|l| l.subject.repo.as_str())
+                .collect::<Vec<_>>(),
+            vec!["o/handed-off"]
+        );
+        // Not a leak and not an unknown either — the read SUCCEEDED and answered "no hand-off".
+        assert!(scan.unreadable.is_empty());
+        // And the receipt is no shield: the read failing over the same PR is still unknown.
+        assert_eq!(leak_scan_with(&candidates, |_| None).unreadable.len(), 2);
+    }
+
     // OLDEST FIRST, and the ranking is the tool's own decision rather than `gh search prs`'s.
     // The search returns newest-first, so the longest-unmodelled PR sank below the page cap: on the
     // measured population the oldest leak was also the only genuine one and it sorted fifth.
@@ -35833,17 +35871,152 @@ fn body_edit_vet_note(prj: &Value) -> Option<String> {
     })
 }
 
+/// A transition that rewrites PR BODY TEXT and moves no state.
+///
+/// Its trusted note is a RECEIPT for a rewrite, not a hand-off: nothing is handed to the vetter, to
+/// a human or to the producer's next run, and the PR is left in the state it already had. So
+/// [`leak_reason`] walks past one — an unlabelled PR a body repair touched is the ordinary
+/// un-vetted PR the vetter's unfiltered enumeration reaches, not a PR in nobody's queue.
+///
+/// [`write_repaired_body`] is the ONE writer of these notes and builds every one from a variant
+/// here, so the marker the leak walk skips and the marker actually posted cannot be two facts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BodyRepair {
+    /// `repair-qa-block`.
+    QaBlock,
+    /// `weaken-closes`.
+    Linkage,
+}
+
+impl BodyRepair {
+    /// Every variant — the skip set [`is_body_repair_note`] reads. A repair whose marker is missing
+    /// here posts a note the leak walk reads as a hand-off, and `the_skip_set_is_every_repair` is
+    /// what catches that.
+    const ALL: [BodyRepair; 2] = [BodyRepair::QaBlock, BodyRepair::Linkage];
+
+    /// The line-2 marker naming this repair. Distinct from every state noun ([`state_noun`]), which
+    /// is what keeps a hand-off from being skipped as a repair.
+    fn marker(self) -> &'static str {
+        match self {
+            BodyRepair::QaBlock => "QA-block repair:",
+            BodyRepair::Linkage => "Linkage repair:",
+        }
+    }
+}
+
+/// PURE: the trusted note a body repair posts — `🤖 ai:producer`, the repair's marker, the detail.
+fn body_repair_comment(repair: BodyRepair, detail: &str) -> String {
+    format!("🤖 ai:producer\n{} {detail}", repair.marker())
+}
+
+/// PURE: is this trusted body a body-repair receipt? The marker counts under the producer head, on
+/// the note's own second line, nowhere else — so no other note is skipped for quoting one.
+fn is_body_repair_note(body: &str) -> bool {
+    body.strip_prefix("🤖 ai:producer\n").is_some_and(|rest| {
+        BodyRepair::ALL
+            .iter()
+            .any(|repair| rest.starts_with(repair.marker()))
+    })
+}
+
+#[cfg(test)]
+mod body_repair_note_tests {
+    use super::*;
+
+    const DETAIL: &str = "rewrote one span of the body";
+
+    /// Every variant, written out HERE rather than read off [`BodyRepair::ALL`] — a repair the skip
+    /// set omits is then a test failure rather than a note the leak walk misreads. The `match` is
+    /// the compile error a variant added to neither list hits.
+    const EVERY: [BodyRepair; 2] = [BodyRepair::QaBlock, BodyRepair::Linkage];
+
+    fn cleared() -> String {
+        blocked_on_cleared_comment(&[(BlockedByRef::parse("o/r#2").unwrap(), DepState::Merged)])
+    }
+
+    #[test]
+    fn the_skip_set_is_every_repair() {
+        for repair in EVERY {
+            match repair {
+                BodyRepair::QaBlock | BodyRepair::Linkage => {}
+            }
+            assert!(
+                BodyRepair::ALL.contains(&repair),
+                "{repair:?} is outside the skip set"
+            );
+        }
+        assert_eq!(BodyRepair::ALL.len(), EVERY.len());
+    }
+
+    /// Every repair's receipt is walked past — and walked PAST, not stopped at: whatever marker
+    /// stands behind it still decides.
+    #[test]
+    fn every_body_repair_note_is_walked_past() {
+        let hand_off = state_comment(STATE_DESIGN.key, "which constant is shared?", &[]);
+        for repair in EVERY {
+            let note = body_repair_comment(repair, DETAIL);
+            assert!(is_body_repair_note(&note), "{note}");
+            // Nothing was handed off, so the PR is left where it already was — un-vetted, a lane
+            // the vetter's own enumeration reaches, rather than the bucket for PRs in no queue.
+            assert_eq!(leak_reason(std::slice::from_ref(&note)), None);
+            assert_eq!(
+                classify_lane(&[], None, false),
+                (Lane::VetLifecycle, STATE_UN_VETTED.key.to_string())
+            );
+            // It cannot HIDE a leak behind it…
+            assert!(leak_reason(&[hand_off.clone(), note.clone()]).is_some());
+            // …nor undo a clearance that already modelled the transition.
+            assert_eq!(leak_reason(&[cleared(), note]), None);
+        }
+    }
+
+    /// The skip is a marker read, so a repair marker must be no state noun a real hand-off spells.
+    #[test]
+    fn a_state_hand_off_is_never_read_as_a_repair() {
+        let mut notes: Vec<String> = PRODUCER_STATE_LABELS
+            .iter()
+            .map(|l| state_comment(l, "why", &[]))
+            .collect();
+        notes.push("🤖 ai:producer\nClose-candidate: already fixed on main".to_string());
+        for note in notes {
+            assert!(!is_body_repair_note(&note), "{note}");
+            assert!(leak_reason(std::slice::from_ref(&note)).is_some(), "{note}");
+        }
+    }
+
+    /// The marker counts only under the producer's own head, and only on the note's own second
+    /// line: every other placement is read as the ordinary producer note it is.
+    #[test]
+    fn only_a_producer_notes_own_marker_line_is_a_receipt() {
+        for repair in EVERY {
+            let marker = repair.marker();
+            for imposter in [
+                format!("🤖 ai:vetter\n{marker} {DETAIL}"),
+                format!("🤖 ai:producer {marker} {DETAIL}"),
+                format!("🤖 ai:producer\nBlocked-on: waiting\n{marker} {DETAIL}"),
+            ] {
+                assert!(!is_body_repair_note(&imposter), "{imposter}");
+            }
+        }
+    }
+}
+
 /// Write a repaired body and leave the trusted `🤖 ai:producer` marker that says so. GitHub hides
 /// body edit history, so without the comment the only record of a repair is the body it produced.
 /// An identical marker already present is not re-posted, which is what keeps a retried repair from
 /// accumulating notes.
+///
+/// The note is BUILT here rather than accepted as text: a repair that could hand in its own
+/// wording could hand in one [`leak_reason`] reads as a hand-off.
 fn write_repaired_body(
     slug: &str,
     pr: &str,
     prj: &Value,
     new_body: &str,
-    comment: &str,
+    repair: BodyRepair,
+    detail: &str,
 ) -> Result<(), (i32, String)> {
+    let comment = body_repair_comment(repair, detail);
     let subject = format!("{slug}#{pr}");
     if !gh_run(&["pr", "edit", pr, "-R", slug, "--body", new_body]) {
         return Err((
@@ -35853,8 +36026,8 @@ fn write_repaired_body(
     }
     let already = trusted_comments(prj, Some("🤖 ai:producer"))
         .iter()
-        .any(|b| b == comment);
-    if !already && !gh_run(&["pr", "comment", pr, "-R", slug, "--body", comment]) {
+        .any(|b| b == &comment);
+    if !already && !gh_run(&["pr", "comment", pr, "-R", slug, "--body", &comment]) {
         return Err((
             1,
             format!("error: {subject} body repaired but FAILED to post the marker comment"),
@@ -35929,14 +36102,13 @@ fn repair_qa_block_apply(
     } else {
         "replaced"
     };
-    let comment = format!(
-        "🤖 ai:producer\nQA-block repair: {verb} QA-GUIDE section 8's evidence block in the PR \
-         body via `pr-review-report repair-qa-block`. Every byte outside the `## QA` section is \
-         unchanged."
+    let detail = format!(
+        "{verb} QA-GUIDE section 8's evidence block in the PR body via `pr-review-report \
+         repair-qa-block`. Every byte outside the `## QA` section is unchanged."
     );
     let skip_comment = trusted_comments(&prj, Some("🤖 ai:producer"))
         .iter()
-        .any(|b| b == &comment);
+        .any(|b| b == &body_repair_comment(BodyRepair::QaBlock, &detail));
 
     if dry_run {
         return Ok(format!(
@@ -35954,7 +36126,7 @@ fn repair_qa_block_apply(
         ));
     }
 
-    write_repaired_body(slug, pr, &prj, &new_body, &comment)?;
+    write_repaired_body(slug, pr, &prj, &new_body, BodyRepair::QaBlock, &detail)?;
     let mut out = format!("{subject}: {verb} the QA block ({} bytes)", new_body.len());
     if let Some(note) = body_edit_vet_note(&prj) {
         out.push('\n');
@@ -35994,10 +36166,10 @@ fn weaken_closes_apply(
         Err(r) => return Err((r.exit(), r.render(&subject).trim_end().to_string())),
     };
     let new_body = apply_body_edits(body, &edits);
-    let comment = format!(
-        "🤖 ai:producer\nLinkage repair: weakened `Closes #{issue}` to `Refs #{issue}` in the PR \
-         body via `pr-review-report weaken-closes`. Every byte outside that keyword is unchanged, \
-         and the `## QA` section was not touched."
+    let detail = format!(
+        "weakened `Closes #{issue}` to `Refs #{issue}` in the PR body via `pr-review-report \
+         weaken-closes`. Every byte outside that keyword is unchanged, and the `## QA` section was \
+         not touched."
     );
 
     if dry_run {
@@ -36017,7 +36189,7 @@ fn weaken_closes_apply(
         ));
     }
 
-    write_repaired_body(slug, pr, &prj, &new_body, &comment)?;
+    write_repaired_body(slug, pr, &prj, &new_body, BodyRepair::Linkage, &detail)?;
     let still = closing_keywords(&new_body);
     let mut out = format!(
         "{subject}: weakened {} `Closes #{issue}` reference(s) to `Refs` — closing set is now {:?}",
