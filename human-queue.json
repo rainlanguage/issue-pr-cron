@@ -313,6 +313,12 @@
       },
       {
         "repo": "cyclofinance/cyclo.site",
+        "number": 405,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/405",
+        "title": "fix: Input.svelte sanitize external updates and tighten default validator (#328, #330)"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
         "number": 404,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/404",
         "title": "fix: case-insensitive symbol lookup in AccountStats (#312)"
@@ -734,6 +740,24 @@
     ],
     "ai:ready": [
       {
+        "repo": "S01-Issuer/st0x.deploy",
+        "number": 312,
+        "url": "https://github.com/S01-Issuer/st0x.deploy/pull/312",
+        "title": "Remove the submodule-era residue: dangling REUSE.toml entries, three dead .soldeerignore lines, and the CLAUDE.md bump runbook calling soldeer pins git submodules"
+      },
+      {
+        "repo": "S01-Issuer/st0x.deploy",
+        "number": 308,
+        "url": "https://github.com/S01-Issuer/st0x.deploy/pull/308",
+        "title": "codegen: use LibCodeGen.addressConstantString instead of a local copy"
+      },
+      {
+        "repo": "S01-Issuer/st0x.deploy",
+        "number": 305,
+        "url": "https://github.com/S01-Issuer/st0x.deploy/pull/305",
+        "title": "Drop snapshot-generate-cmd: rainix owns the release freeze"
+      },
+      {
         "repo": "cyclofinance/cyclo.site",
         "number": 435,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/435",
@@ -786,12 +810,6 @@
         "number": 254,
         "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/254",
         "title": "feat(deps): bump rainlang to 0.1.8 for NotAnAddress(bytes32) — REQUIRES redeploy at land"
-      },
-      {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 405,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/405",
-        "title": "fix: Input.svelte sanitize external updates and tighten default validator (#328, #330)"
       },
       {
         "repo": "rainlanguage/rain.flare",
@@ -953,7 +971,7 @@
         ]
       },
       "un-vetted": {
-        "count": 93,
+        "count": 89,
         "prs": [
           {
             "repo": "rainlanguage/issue-pr-cron",
@@ -1214,12 +1232,6 @@
             "title": "Remove submodule-era residue; repair the copilot build fallback"
           },
           {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 312,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/312",
-            "title": "Remove the submodule-era residue: dangling REUSE.toml entries, three dead .soldeerignore lines, and the CLAUDE.md bump runbook calling soldeer pins git submodules"
-          },
-          {
             "repo": "rainlanguage/rainlang.interface",
             "number": 122,
             "url": "https://github.com/rainlanguage/rainlang.interface/pull/122",
@@ -1316,12 +1328,6 @@
             "title": "feat(session-tokens): read the interactive corpus with the cron's own accounting"
           },
           {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 308,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/308",
-            "title": "codegen: use LibCodeGen.addressConstantString instead of a local copy"
-          },
-          {
             "repo": "rainlanguage/rain.verify",
             "number": 29,
             "url": "https://github.com/rainlanguage/rain.verify/pull/29",
@@ -1332,12 +1338,6 @@
             "number": 11,
             "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/11",
             "title": "codegen: use LibCodeGen.addressConstantString instead of a local copy"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 305,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/305",
-            "title": "Drop snapshot-generate-cmd: rainix owns the release freeze"
           },
           {
             "repo": "rainlanguage/rain.factory.deploy",
@@ -1478,12 +1478,6 @@
             "title": "feat(deps): bump rainlang to 0.1.8 for NotAnAddress(bytes32) — REQUIRES redeploy at land"
           },
           {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 405,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/405",
-            "title": "fix: Input.svelte sanitize external updates and tighten default validator (#328, #330)"
-          },
-          {
             "repo": "rainlanguage/rain.flare",
             "number": 196,
             "url": "https://github.com/rainlanguage/rain.flare/pull/196",
@@ -1551,7 +1545,7 @@
         }
       },
       "ai:needs-work": {
-        "count": 98,
+        "count": 99,
         "prs": [
           {
             "repo": "rainlanguage/rain.solmem",
@@ -1720,6 +1714,12 @@
             "number": 406,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/406",
             "title": "fix: use FRONTEND_PYTH_MAX_AGE_SECONDS (5 min) for footer Pyth display call (#318)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 405,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/405",
+            "title": "fix: Input.svelte sanitize external updates and tighten default validator (#328, #330)"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -2140,6 +2140,29 @@
             "number": 3,
             "url": "https://github.com/rainlanguage/rain.subgraph.docker/pull/3",
             "title": "2023 12 23 anvil"
+          }
+        ]
+      },
+      "ai:ready": {
+        "count": 3,
+        "prs": [
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 312,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/312",
+            "title": "Remove the submodule-era residue: dangling REUSE.toml entries, three dead .soldeerignore lines, and the CLAUDE.md bump runbook calling soldeer pins git submodules"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 308,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/308",
+            "title": "codegen: use LibCodeGen.addressConstantString instead of a local copy"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 305,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/305",
+            "title": "Drop snapshot-generate-cmd: rainix owns the release freeze"
           }
         ]
       }
@@ -6278,10 +6301,10 @@
     }
   ],
   "counts": {
-    "unvetted": 93,
+    "unvetted": 89,
     "blockedOn": 20,
-    "ready": 0,
-    "needsWork": 98,
+    "ready": 3,
+    "needsWork": 99,
     "relink": 0,
     "design": 3,
     "blockedInfra": 0,
@@ -6299,8 +6322,8 @@
   "ages": {
     "openIssues": {
       "meanDays": 283.6,
-      "medianDays": 102.7,
-      "oldestDays": 1665.2
+      "medianDays": 102.8,
+      "oldestDays": 1665.3
     }
   }
 }
