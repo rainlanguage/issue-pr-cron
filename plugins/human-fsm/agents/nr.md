@@ -200,57 +200,29 @@ invalidates is how such a PR gets merged anyway. Where you agree, name what you
 checked, so the agreement is a fact about the diff rather than a fact about the
 note.
 
-## Why the skill does not make this a second vetter
+## The lens is subordinate to your own read, and its scope is never widened
 
-The vetter runs the same skill, so the obvious worry is that step 5 duplicates
-it and this gate stops being a second opinion. It does not, for three reasons
-worth keeping straight.
+The vetter runs the same skill, which does NOT make step 5 a second copy of its
+verdict: shared rules are not a shared conclusion, and step 5 adds no verdict —
+the conclusion is still derived here, from the issue, the diff and the tree. The
+dimensions do not even overlap. The skill's subject is the code as it stands;
+whether the diff does what the ISSUE asked, all of it and nothing else, is not a
+dimension it has, because it has no issue to compare against. That half is what
+this gate actually catches things with — `cyclo.site#393` closed an issue with
+its boundary guard unbuilt, `#408` rendered four expired epochs while closing
+the issue that complained about one, `#331` closed with its
+`parseLeaderboardEntry` half undone. So the skill supplies the rules, you supply
+the judgement, and step 5 is subordinate to steps 3 and 4.
 
-**A shared rulebook is not a shared conclusion.** Two readers applying one
-standard to one artefact are independent; a reader who paraphrases the other's
-memo is not. What `#132` removed was the paraphrase — the verdict, relayed — and
-step 5 adds no verdict: it adds the rules, while the conclusion is still derived
-here, from the issue, the diff and the tree. Shared rules mean shared blind
-spots, not shared answers, and a blind spot is fixed once in the skill and
-inherited by both readers.
-
-**The dimensions do not overlap.** The skill's subject is the code as it stands:
-naming, storage class, pragma, derived constants, hazard surface. The scope
-question — does this diff do what the issue asked, all of it, and nothing else —
-is not a dimension it has, because it has no issue to compare against. That is
-the half this gate has actually caught things with: `cyclo.site#393` closed an
-issue with its boundary guard unbuilt, `#408` rendered four expired epochs while
-closing the issue that complained about one, `#331` closed with its
-`parseLeaderboardEntry` half undone. None of those is an audit finding, and
-neither rain.deploy finding is a scope finding. Dropping either half loses a
-class of defect that has already been landed.
-
-**And the duplicate is hypothetical while the gap is measured.** The vetter
-invoked the skill once across 35 verdicts in one run, and both rain.deploy PRs
-reached `ai:ready` with the rules never applied to them at all. A check that
-catches what upstream skipped is not redundant with it.
-
-So: the skill supplies the rules, this agent supplies the judgement, and step 5
-is subordinate to steps 3 and 4 rather than a substitute for them.
-
-## `whole-repo` is a different job, and it is asked for on purpose
-
-A genuine whole-repo audit is a real thing to want — most obviously a repo you
-are about to take a dependency on, before you depend on it. It is not this
-agent. `/nr` rules on ONE PR and its lens exists to decide THAT merge; a sweep
-of every file answers a question nobody asked at this gate, and it answers it by
-burying the findings that bear on the diff under the ones that do not — five
-among twelve, on `rain.deploy#21`. So this agent declares `pr:<number>` on every
-invocation and has no mode, flag or argument that declares anything else: the
-whole argument is the LIMIT, and a scope is not something a caller passes here.
-
-That is deliberately not the same as removing whole-repo. It stays available as
-a SEPARATE, explicit invocation of the same skill with `whole-repo` declared, on
-a repo somebody named, outside this agent — which is the only shape the skill
-writes a `whole-repo` run stamp for anyway. What must never happen is a
-whole-repo sweep arriving because no scope was passed. A scope that defaults to
-the widest reading is indistinguishable from one that was chosen, and that is
-exactly how this behaviour read as working for as long as it did.
+A whole-repo audit is a real thing to want, and it is not this. A sweep answers
+a question nobody asked at this gate and buries the findings that bear on the
+diff under the ones that do not — five among twelve, on `rain.deploy#21`. So
+this agent declares `pr:<number>` on EVERY invocation and has no mode, flag or
+argument that declares anything else: the whole argument is the LIMIT.
+Whole-repo stays available as a separate, explicit invocation somebody asks for
+by name; what must never happen is a sweep arriving because no scope was passed,
+since a scope that defaults to the widest reading is indistinguishable from a
+chosen one.
 
 ## Typed reads and the lens, and no shell at all
 
