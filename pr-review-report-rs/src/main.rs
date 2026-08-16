@@ -26253,6 +26253,37 @@ fn next_close_candidate_page(ordered: &[PresentableFlag], limit: usize) -> Vec<&
     ordered.iter().take(limit).collect()
 }
 
+/// PURE: the page's ROWS — one per paged flag, paired with the coverage already read for it, each
+/// built at the prose share a `limit`-row page leaves. `limit` is what the caller ASKED for, never
+/// the number of rows the queue happened to hold, so the clip a given argument produces is the same
+/// on every call.
+///
+/// Separate from the fetch for [`next_design_rows`]' reason: the wiring from `limit` to the clip is
+/// reachable by no test while it is folded into a network call.
+fn next_close_candidate_rows(
+    page: &[&PresentableFlag],
+    coverage: &[(PrCoverage, Vec<String>)],
+    limit: usize,
+) -> Vec<Value> {
+    page.iter()
+        .zip(coverage)
+        .map(|(f, (coverage, covering))| {
+            next_close_candidate_row(
+                &NextCcFacts {
+                    slug: &f.slug,
+                    num: f.num,
+                    detail: &f.detail,
+                    flag_at: &f.flag_at,
+                    flag_body: &f.flag_body,
+                    coverage: *coverage,
+                    covering,
+                },
+                limit,
+            )
+        })
+        .collect()
+}
+
 /// Rows one call may return, and the default.
 ///
 /// The cap is 3 for [`NEXT_READY_MAX_ROWS`]'s reason, and the argument applies here with MORE force
@@ -26269,9 +26300,9 @@ const NEXT_CC_MAX_ROWS: usize = 3;
 const NEXT_CC_DEFAULT_ROWS: usize = 1;
 
 // Per-field RAW byte caps, for the reason `next_ready`'s exist: the result is structurally unable to
-// exceed the budget rather than merely unlikely to.
-const NCC_REASON_BYTES: usize = 1_000;
-const NCC_NOTE_BYTES: usize = 1_000;
+// exceed the budget rather than merely unlikely to. The row's two PROSE fields — the flag's reason
+// and the verdict's note — have no constant here: they are [`ncc_prose_bytes`], derived from what
+// these leave, for [`nd_note_bytes`]'s reason.
 const NCC_TITLE_BYTES: usize = 200;
 const NCC_URL_BYTES: usize = 200;
 const NCC_ISSUE_BYTES: usize = 160;
@@ -26285,11 +26316,14 @@ const NCC_PR_REF_BYTES: usize = 160;
 const NCC_MAX_PRS: usize = 3;
 const NCC_ERROR_BYTES: usize = 200;
 
-/// Every capped field in one row, summed. Three timestamps (the issue's `createdAt`, the flag's, and
-/// the one the vetter's verdict pinned) are counted at their own cap.
-const NCC_ROW_FIELD_BYTES: usize = NCC_REASON_BYTES
-    + NCC_NOTE_BYTES
-    + NCC_TITLE_BYTES
+/// The row's two prose fields: the flag's `reason` and the verdict's `note`. They split the share
+/// evenly — the ruling is the second checked against the first, so a page that carried one whole
+/// and cut the other would be answering half the question.
+const NCC_PROSE_FIELDS: usize = 2;
+
+/// Every capped field in one row EXCEPT those two, summed. Three timestamps (the issue's
+/// `createdAt`, the flag's, and the one the vetter's verdict pinned) are counted at their own cap.
+const NCC_ROW_FIELD_BYTES_LESS_PROSE: usize = NCC_TITLE_BYTES
     + NCC_URL_BYTES
     + NCC_ISSUE_BYTES
     + 3 * NCC_TIME_BYTES
@@ -26302,7 +26336,11 @@ const NCC_ROW_FIELD_BYTES: usize = NCC_REASON_BYTES
 /// The row's FIXED cost — keys, punctuation, typed enum strings, numbers. Held honest by
 /// `the_fixed_allowances_cover_a_row_a_withheld_entry_and_an_envelope`, which measures a real one.
 const NCC_ROW_FIXED_BYTES: usize = 1_200;
-const NCC_ROW_CEILING: usize = NCC_ROW_FIELD_BYTES * JSON_ESCAPE_WORST_CASE + NCC_ROW_FIXED_BYTES;
+
+/// What one row costs BEFORE its prose: its other fields at their caps, escaped, plus that fixed
+/// cost.
+const NCC_ROW_LESS_PROSE_CEILING: usize =
+    NCC_ROW_FIELD_BYTES_LESS_PROSE * JSON_ESCAPE_WORST_CASE + NCC_ROW_FIXED_BYTES;
 
 // The two withheld lists. They are CAPPED and their overflow COUNTED, rather than unbounded,
 // because they ride inside the same one budget the rows do — and an unbounded list of stranded
@@ -26317,15 +26355,56 @@ const NCC_WITHHELD_CEILING: usize =
 /// The document minus its rows and its withheld lists: `counts`, `queue`, the keys around them.
 const NCC_ENVELOPE_BYTES: usize = 1_500;
 
-/// THE GUARANTEE, as arithmetic the compiler checks — a full page of maximal rows PLUS both withheld
-/// lists at their caps cannot reach [`MCP_MAX_RESULT_BYTES`]. Raise a cap past what fits and this
-/// crate does not build.
-const _: () = assert!(
-    NEXT_CC_MAX_ROWS * NCC_ROW_CEILING
+/// Everything in the document that is NOT prose, for a page of `rows`.
+const fn ncc_non_prose_bytes(rows: usize) -> usize {
+    rows * NCC_ROW_LESS_PROSE_CEILING
         + (NCC_MAX_STRANDED + NCC_MAX_ERRORS) * NCC_WITHHELD_CEILING
         + NCC_ENVELOPE_BYTES
-        <= MCP_MAX_RESULT_BYTES
-);
+}
+
+/// The allowance for ONE prose field of ONE row of a `rows`-row page — DERIVED from the budget,
+/// never picked, for [`nd_note_bytes`]'s reason: a constant has to be sized for the WIDEST page,
+/// and the caller asking the tool's own question then pays for rows it did not ask for out of the
+/// two fields it cannot reconstruct.
+/// A `rows` outside the page sizes [`next_close_candidate_limit`] admits is clamped to the SAFE
+/// side, for [`nd_note_rows`]'s reason: zero divides, and a number past the cap wraps a subtraction
+/// into an unbounded share.
+const fn ncc_prose_rows(rows: usize) -> usize {
+    if rows < 1 {
+        1
+    } else if rows > NEXT_CC_MAX_ROWS {
+        NEXT_CC_MAX_ROWS
+    } else {
+        rows
+    }
+}
+
+const fn ncc_prose_bytes(rows: usize) -> usize {
+    let rows = ncc_prose_rows(rows);
+    (MCP_MAX_RESULT_BYTES - ncc_non_prose_bytes(rows))
+        / (JSON_ESCAPE_WORST_CASE * rows * NCC_PROSE_FIELDS)
+}
+
+/// The floor under [`ncc_prose_bytes`] at its tightest — [`ND_NOTE_FLOOR_BYTES`]'s job here: a
+/// field added to the row is paid for out of the prose, so the build is where that lands.
+const NCC_PROSE_FLOOR_BYTES: usize = 1_000;
+
+/// THE GUARANTEE, as arithmetic the compiler checks — for EVERY page size this tool serves, a full
+/// page of maximal rows PLUS both withheld lists at their caps cannot reach
+/// [`MCP_MAX_RESULT_BYTES`], and the prose is still worth reading. Raise a cap past what fits and
+/// this crate does not build.
+const _: () = {
+    let mut rows = 1;
+    while rows <= NEXT_CC_MAX_ROWS {
+        assert!(
+            ncc_non_prose_bytes(rows)
+                + rows * NCC_PROSE_FIELDS * ncc_prose_bytes(rows) * JSON_ESCAPE_WORST_CASE
+                <= MCP_MAX_RESULT_BYTES
+        );
+        assert!(ncc_prose_bytes(rows) >= NCC_PROSE_FLOOR_BYTES);
+        rows += 1;
+    }
+};
 
 /// PURE: this state-load's page size. Out of range is REFUSED rather than clamped, for the reason
 /// [`next_ready_limit`]'s is.
@@ -26356,15 +26435,17 @@ struct NextCcFacts<'a> {
     covering: &'a [String],
 }
 
-/// PURE: the flag decision for ONE issue. Every string is clipped, so the row's size is bounded by
-/// [`NCC_ROW_CEILING`] whatever GitHub returns.
+/// PURE: the flag decision for ONE issue. Every string is clipped — the two prose fields at the
+/// share [`ncc_prose_bytes`] leaves a `rows`-row page — so the row's size is bounded whatever
+/// GitHub returns. It takes the PAGE SIZE rather than a byte count so a row cannot be built at a
+/// share no page would have given it.
 ///
 /// The row's centre is the pair a ruling turns on: `flag.reason` is the producer's CLAIM — the thing
 /// being checked, never a fact — and `verdict` is what the vetter made of that same claim, pinned to
 /// the flag it judged so a stale one is visibly stale. They are separate objects because collapsing
 /// them into one "reason" is the restatement `/nr` was built against, in the data instead of the
 /// prose.
-fn next_close_candidate_row(f: &NextCcFacts) -> Value {
+fn next_close_candidate_row(f: &NextCcFacts, rows: usize) -> Value {
     let labels_all = label_names(f.detail);
     let labels: Vec<String> = labels_all
         .iter()
@@ -26405,9 +26486,9 @@ fn next_close_candidate_row(f: &NextCcFacts) -> Value {
             "at": clip_field(f.flag_at, NCC_TIME_BYTES),
             // The CLAIM. `close_candidate_context` carries the flag body whole; this is the payload
             // line, clipped, and `reasonTruncated` says when the whole one has to be read there.
-            "reason": clip_field(&reason_full, NCC_REASON_BYTES),
+            "reason": clip_field(&reason_full, ncc_prose_bytes(rows)),
             "reasonBytes": reason_full.len(),
-            "reasonTruncated": reason_full.len() > NCC_REASON_BYTES,
+            "reasonTruncated": reason_full.len() > ncc_prose_bytes(rows),
             // Stated because it is the second input to `openPr.blocksClose`, and a decision whose
             // inputs are not both on the row is one a reader has to take on trust. It is a fact
             // about the reason's TEXT — what it cites, never whether the citation holds.
@@ -26420,9 +26501,9 @@ fn next_close_candidate_row(f: &NextCcFacts) -> Value {
             "flagAt": parts.as_ref().map(|(at, _)| clip_field(at, NCC_TIME_BYTES)),
             "atFlag": parts.as_ref().is_some_and(|(at, _)| at == f.flag_at),
             "verdict": parts.as_ref().map(|(_, v)| clip_field(v, NCC_VERDICT_BYTES)),
-            "note": clip_field(&note_full, NCC_NOTE_BYTES),
+            "note": clip_field(&note_full, ncc_prose_bytes(rows)),
             "noteBytes": note_full.len(),
-            "noteTruncated": note_full.len() > NCC_NOTE_BYTES,
+            "noteTruncated": note_full.len() > ncc_prose_bytes(rows),
         },
         "openPr": {
             // REPORTED whatever the flag says: a human ruling on this issue must see that a PR
@@ -26886,28 +26967,22 @@ fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
         errors,
     } = ncc_classify(&found, &archived_repos, ncc_issue_detail);
     rank_flags(&mut flags);
-    let rows: Vec<Value> = next_close_candidate_page(&flags, limit)
-        .into_iter()
+    let page_flags = next_close_candidate_page(&flags, limit);
+    // The covering-PR read is an ISSUE question (GitHub answers it on the Issue type only), so a
+    // PR row states `not-applicable` rather than paying for a read that cannot answer and
+    // reporting its failure as an unread signal. Read HERE, ahead of the rows, so the row build
+    // below is pure.
+    let coverage: Vec<(PrCoverage, Vec<String>)> = page_flags
+        .iter()
         .map(|f| {
-            // The covering-PR read is an ISSUE question (GitHub answers it on the Issue type
-            // only), so a PR row states `not-applicable` rather than paying for a read that
-            // cannot answer and reporting its failure as an unread signal.
-            let (coverage, covering) = if subject_is_pr(&f.detail) {
+            if subject_is_pr(&f.detail) {
                 (PrCoverage::NotApplicable, Vec::new())
             } else {
                 covering_open_prs_fetch(&f.slug, f.num)
-            };
-            next_close_candidate_row(&NextCcFacts {
-                slug: &f.slug,
-                num: f.num,
-                detail: &f.detail,
-                flag_at: &f.flag_at,
-                flag_body: &f.flag_body,
-                coverage,
-                covering: &covering,
-            })
+            }
         })
         .collect();
+    let rows = next_close_candidate_rows(&page_flags, &coverage, limit);
     let (stranded, more_stranded) = page(stranded, Some(NCC_MAX_STRANDED));
     let (errors, more_errors) = page(errors, Some(NCC_MAX_ERRORS));
     Ok(next_close_candidate_doc(
@@ -27886,15 +27961,18 @@ mod next_close_candidate_tests {
                 vetter(at, "uphold", "diff matches the ask"),
             ],
         );
-        let row = next_close_candidate_row(&NextCcFacts {
-            slug: "o/r",
-            num: 7,
-            detail: &detail,
-            flag_at: at,
-            flag_body: body,
-            coverage: PrCoverage::Uncovered,
-            covering: &[],
-        });
+        let row = next_close_candidate_row(
+            &NextCcFacts {
+                slug: "o/r",
+                num: 7,
+                detail: &detail,
+                flag_at: at,
+                flag_body: body,
+                coverage: PrCoverage::Uncovered,
+                covering: &[],
+            },
+            NEXT_CC_DEFAULT_ROWS,
+        );
         assert_eq!(row["issue"], json!("o/r#7"));
         assert_eq!(row["url"], json!("https://github.com/o/r/issues/7"));
         assert_eq!(row["title"], json!("the thing does not work"));
@@ -27940,15 +28018,18 @@ mod next_close_candidate_tests {
                 producer(second, "already-fixed: #11"),
             ],
         );
-        let row = next_close_candidate_row(&NextCcFacts {
-            slug: "o/r",
-            num: 7,
-            detail: &detail,
-            flag_at: second,
-            flag_body: "🤖 ai:producer\nClose-candidate: already-fixed: #11",
-            coverage: PrCoverage::Uncovered,
-            covering: &[],
-        });
+        let row = next_close_candidate_row(
+            &NextCcFacts {
+                slug: "o/r",
+                num: 7,
+                detail: &detail,
+                flag_at: second,
+                flag_body: "🤖 ai:producer\nClose-candidate: already-fixed: #11",
+                coverage: PrCoverage::Uncovered,
+                covering: &[],
+            },
+            NEXT_CC_DEFAULT_ROWS,
+        );
         assert_eq!(row["flag"]["at"], json!(second));
         assert_eq!(row["verdict"]["flagAt"], json!(first));
         assert_eq!(row["verdict"]["atFlag"], json!(false));
@@ -27973,15 +28054,18 @@ mod next_close_candidate_tests {
             "o/r#111".to_string(),
             "o/r#112".to_string(),
         ];
-        let row = next_close_candidate_row(&NextCcFacts {
-            slug: "o/r",
-            num: 7,
-            detail: &detail,
-            flag_at: at,
-            flag_body: &format!("🤖 ai:producer\nClose-candidate: {reason}"),
-            coverage: PrCoverage::Covered,
-            covering: &covering,
-        });
+        let row = next_close_candidate_row(
+            &NextCcFacts {
+                slug: "o/r",
+                num: 7,
+                detail: &detail,
+                flag_at: at,
+                flag_body: &format!("🤖 ai:producer\nClose-candidate: {reason}"),
+                coverage: PrCoverage::Covered,
+                covering: &covering,
+            },
+            NEXT_CC_DEFAULT_ROWS,
+        );
         assert_eq!(row["flag"]["grounds"], json!("cites-no-landing"));
         assert_eq!(row["openPr"]["coverage"], json!("covered-by-open-pr"));
         assert_eq!(row["openPr"]["blocksClose"], json!(true));
@@ -28016,15 +28100,18 @@ mod next_close_candidate_tests {
             ],
         );
         let covering = vec!["o/r#60".to_string()];
-        let row = next_close_candidate_row(&NextCcFacts {
-            slug: "o/r",
-            num: 6,
-            detail: &detail,
-            flag_at: at,
-            flag_body: &format!("🤖 ai:producer\nClose-candidate: {reason}"),
-            coverage: PrCoverage::Covered,
-            covering: &covering,
-        });
+        let row = next_close_candidate_row(
+            &NextCcFacts {
+                slug: "o/r",
+                num: 6,
+                detail: &detail,
+                flag_at: at,
+                flag_body: &format!("🤖 ai:producer\nClose-candidate: {reason}"),
+                coverage: PrCoverage::Covered,
+                covering: &covering,
+            },
+            NEXT_CC_DEFAULT_ROWS,
+        );
         assert_eq!(row["flag"]["grounds"], json!("cites-a-landing"));
         assert_eq!(
             row["openPr"]["coverage"],
@@ -28043,31 +28130,113 @@ mod next_close_candidate_tests {
     #[test]
     fn a_clipped_claim_or_note_says_it_was_clipped() {
         let at = "2026-07-20T09:00:00Z";
-        let long = "x".repeat(NCC_REASON_BYTES + 500);
+        let cap = ncc_prose_bytes(NEXT_CC_DEFAULT_ROWS);
+        let long = "x".repeat(cap + 500);
         let detail = issue(
             &["ai:close-candidate"],
-            vec![vetter(at, "uphold", &"y".repeat(NCC_NOTE_BYTES + 500))],
+            vec![vetter(at, "uphold", &"y".repeat(cap + 500))],
         );
-        let row = next_close_candidate_row(&NextCcFacts {
-            slug: "o/r",
-            num: 7,
-            detail: &detail,
-            flag_at: at,
-            flag_body: &format!("🤖 ai:producer\nClose-candidate: {long}"),
-            coverage: PrCoverage::Uncovered,
-            covering: &[],
-        });
-        assert_eq!(
-            row["flag"]["reason"].as_str().unwrap().len(),
-            NCC_REASON_BYTES
+        let row = next_close_candidate_row(
+            &NextCcFacts {
+                slug: "o/r",
+                num: 7,
+                detail: &detail,
+                flag_at: at,
+                flag_body: &format!("🤖 ai:producer\nClose-candidate: {long}"),
+                coverage: PrCoverage::Uncovered,
+                covering: &[],
+            },
+            NEXT_CC_DEFAULT_ROWS,
         );
+        assert_eq!(row["flag"]["reason"].as_str().unwrap().len(), cap);
         assert_eq!(row["flag"]["reasonBytes"], json!(long.len()));
         assert_eq!(row["flag"]["reasonTruncated"], json!(true));
-        assert_eq!(
-            row["verdict"]["note"].as_str().unwrap().len(),
-            NCC_NOTE_BYTES
-        );
+        assert_eq!(row["verdict"]["note"].as_str().unwrap().len(), cap);
         assert_eq!(row["verdict"]["noteTruncated"], json!(true));
+    }
+
+    // The prose share is the PAGE's, so a claim the widest page cuts, the tool's own default call
+    // carries whole — and the escape from a clip is a narrower page, not only
+    // `close_candidate_context`. The wiring is the claim, so this asks for both PAGES rather than
+    // handing the row builder two numbers by hand.
+    #[test]
+    fn a_narrower_page_carries_a_longer_claim() {
+        let widest = ncc_prose_bytes(NEXT_CC_MAX_ROWS);
+        let default = ncc_prose_bytes(NEXT_CC_DEFAULT_ROWS);
+        assert!(
+            default > widest,
+            "the one-row page must not be charged for rows it did not ask for: \
+             {default} vs {widest}"
+        );
+
+        let at = "2026-07-20T09:00:00Z";
+        let long = "x".repeat(widest + 1);
+        let detail = issue(
+            &["ai:close-candidate"],
+            vec![vetter(at, "uphold", &"y".repeat(widest + 1))],
+        );
+        let ordered: Vec<PresentableFlag> = (0..NEXT_CC_MAX_ROWS)
+            .map(|i| PresentableFlag {
+                slug: "o/r".to_string(),
+                num: i as u64 + 1,
+                flag_at: at.to_string(),
+                flag_body: format!("🤖 ai:producer\nClose-candidate: {long}"),
+                detail: detail.clone(),
+            })
+            .collect();
+        let coverage: Vec<(PrCoverage, Vec<String>)> = (0..NEXT_CC_MAX_ROWS)
+            .map(|_| (PrCoverage::Uncovered, Vec::new()))
+            .collect();
+
+        let page = next_close_candidate_page(&ordered, NEXT_CC_MAX_ROWS);
+        for row in next_close_candidate_rows(&page, &coverage, NEXT_CC_MAX_ROWS) {
+            assert_eq!(row["flag"]["reasonTruncated"], json!(true));
+            assert_eq!(row["verdict"]["noteTruncated"], json!(true));
+        }
+        let page = next_close_candidate_page(&ordered, NEXT_CC_DEFAULT_ROWS);
+        let narrow = next_close_candidate_rows(&page, &coverage, NEXT_CC_DEFAULT_ROWS);
+        assert_eq!(narrow.len(), NEXT_CC_DEFAULT_ROWS);
+        assert_eq!(narrow[0]["flag"]["reasonTruncated"], json!(false));
+        assert_eq!(narrow[0]["verdict"]["noteTruncated"], json!(false));
+    }
+
+    // A page size the limit would have refused never reaches an unbounded share, for the reason
+    // `next_design`'s twin states: zero divides and a number past the cap wraps a subtraction.
+    #[test]
+    fn a_page_size_the_limit_refuses_never_reaches_an_unbounded_share() {
+        let tightest = ncc_prose_bytes(NEXT_CC_MAX_ROWS);
+        assert_eq!(ncc_prose_bytes(0), ncc_prose_bytes(1));
+        assert_eq!(ncc_prose_bytes(NEXT_CC_MAX_ROWS + 1), tightest);
+        assert_eq!(ncc_prose_bytes(usize::MAX), tightest);
+    }
+
+    // Every page size the limit admits is inside the ONE budget, and every one of them still
+    // carries prose worth reading — so a `limit` widened without re-deriving the share fails here.
+    #[test]
+    fn every_admitted_page_size_keeps_its_prose_share() {
+        for rows in 1..=NEXT_CC_MAX_ROWS {
+            let cap = ncc_prose_bytes(rows);
+            assert!(
+                cap >= NCC_PROSE_FLOOR_BYTES,
+                "a {rows}-row page leaves {cap} bytes of prose, under the \
+                 {NCC_PROSE_FLOOR_BYTES}-byte floor"
+            );
+            let total =
+                ncc_non_prose_bytes(rows) + rows * NCC_PROSE_FIELDS * cap * JSON_ESCAPE_WORST_CASE;
+            assert!(
+                total <= MCP_MAX_RESULT_BYTES,
+                "a {rows}-row page is {total} bytes, over the {MCP_MAX_RESULT_BYTES}-byte budget"
+            );
+            // And it is the WHOLE of what the page leaves, for the reason `next_design`'s twin
+            // says so: a share that merely fits is one a smaller divisor also satisfies.
+            let over = ncc_non_prose_bytes(rows)
+                + rows * NCC_PROSE_FIELDS * (cap + 1) * JSON_ESCAPE_WORST_CASE;
+            assert!(
+                over > MCP_MAX_RESULT_BYTES,
+                "a {rows}-row page leaves {cap} bytes of prose but could carry more — {over} \
+                 bytes is still inside the {MCP_MAX_RESULT_BYTES}-byte budget"
+            );
+        }
     }
 
     // --- the document ---------------------------------------------------------------------------
@@ -28269,57 +28438,67 @@ mod next_close_candidate_tests {
             }],
         });
         let covering: Vec<String> = (0..20).map(|_| h.clone()).collect();
-        let rows: Vec<Value> = (0..NEXT_CC_MAX_ROWS)
-            .map(|i| {
-                next_close_candidate_row(&NextCcFacts {
-                    slug: &h,
-                    num: u64::MAX - i as u64,
-                    detail: &detail,
-                    flag_at: &at,
-                    flag_body: &format!("🤖 ai:producer\nClose-candidate: {h}"),
-                    coverage: PrCoverage::Covered,
-                    covering: &covering,
+        for limit in 1..=NEXT_CC_MAX_ROWS {
+            let prose_bytes = ncc_prose_bytes(limit);
+            let ceiling = NCC_ROW_LESS_PROSE_CEILING
+                + NCC_PROSE_FIELDS * prose_bytes * JSON_ESCAPE_WORST_CASE;
+            let rows: Vec<Value> = (0..limit)
+                .map(|i| {
+                    next_close_candidate_row(
+                        &NextCcFacts {
+                            slug: &h,
+                            num: u64::MAX - i as u64,
+                            detail: &detail,
+                            flag_at: &at,
+                            flag_body: &format!("🤖 ai:producer\nClose-candidate: {h}"),
+                            coverage: PrCoverage::Covered,
+                            covering: &covering,
+                        },
+                        limit,
+                    )
                 })
-            })
-            .collect();
-        for (i, row) in rows.iter().enumerate() {
-            let len = row.to_string().len();
+                .collect();
+            for (i, row) in rows.iter().enumerate() {
+                let len = row.to_string().len();
+                assert!(
+                    len <= ceiling,
+                    "row {i} of a {limit}-row page is {len} bytes, over the {ceiling}-byte \
+                     ceiling the budget assertion is computed from"
+                );
+            }
+            let entry = withheld_entry(&h, &h);
+            let entry_len = entry.to_string().len();
             assert!(
-                len <= NCC_ROW_CEILING,
-                "row {i} is {len} bytes, over the {NCC_ROW_CEILING}-byte ceiling the compile-time \
-                 budget assertion is computed from"
+                entry_len <= NCC_WITHHELD_CEILING,
+                "a withheld entry is {entry_len} bytes, over the {NCC_WITHHELD_CEILING}-byte \
+                 ceiling"
+            );
+            let doc = next_close_candidate_doc(
+                rows,
+                &FlagQueueWithheld {
+                    counts: FlagQueueCounts {
+                        flagged: usize::MAX,
+                        presentable: usize::MAX,
+                        vetter_close: usize::MAX,
+                        torn_human_ruling: usize::MAX,
+                        unvetted: usize::MAX,
+                        no_flag: usize::MAX,
+                        rejected_still_flagged: usize::MAX,
+                        fetch_errors: usize::MAX,
+                    },
+                    stranded: (0..NCC_MAX_STRANDED).map(|_| entry.clone()).collect(),
+                    more_stranded: usize::MAX,
+                    errors: (0..NCC_MAX_ERRORS).map(|_| entry.clone()).collect(),
+                    more_errors: usize::MAX,
+                },
+            );
+            let len = doc.to_string().len();
+            assert!(
+                len <= MCP_MAX_RESULT_BYTES,
+                "a full adversarial {limit}-row page is {len} bytes, over the \
+                 {MCP_MAX_RESULT_BYTES}-byte budget"
             );
         }
-        let entry = withheld_entry(&h, &h);
-        let entry_len = entry.to_string().len();
-        assert!(
-            entry_len <= NCC_WITHHELD_CEILING,
-            "a withheld entry is {entry_len} bytes, over the {NCC_WITHHELD_CEILING}-byte ceiling"
-        );
-        let doc = next_close_candidate_doc(
-            rows,
-            &FlagQueueWithheld {
-                counts: FlagQueueCounts {
-                    flagged: usize::MAX,
-                    presentable: usize::MAX,
-                    vetter_close: usize::MAX,
-                    torn_human_ruling: usize::MAX,
-                    unvetted: usize::MAX,
-                    no_flag: usize::MAX,
-                    rejected_still_flagged: usize::MAX,
-                    fetch_errors: usize::MAX,
-                },
-                stranded: (0..NCC_MAX_STRANDED).map(|_| entry.clone()).collect(),
-                more_stranded: usize::MAX,
-                errors: (0..NCC_MAX_ERRORS).map(|_| entry.clone()).collect(),
-                more_errors: usize::MAX,
-            },
-        );
-        let len = doc.to_string().len();
-        assert!(
-            len <= MCP_MAX_RESULT_BYTES,
-            "a full adversarial page is {len} bytes, over the {MCP_MAX_RESULT_BYTES}-byte budget"
-        );
     }
 
     // The three fixed allowances the compile-time assertion rests on are MEASURED, not guessed. A
@@ -28327,15 +28506,18 @@ mod next_close_candidate_tests {
     #[test]
     fn the_fixed_allowances_cover_a_row_a_withheld_entry_and_an_envelope() {
         // Every enum at its longest spelling, every string empty.
-        let row = next_close_candidate_row(&NextCcFacts {
-            slug: "",
-            num: 0,
-            detail: &json!({}),
-            flag_at: "",
-            flag_body: "",
-            coverage: PrCoverage::Covered,
-            covering: &[],
-        });
+        let row = next_close_candidate_row(
+            &NextCcFacts {
+                slug: "",
+                num: 0,
+                detail: &json!({}),
+                flag_at: "",
+                flag_body: "",
+                coverage: PrCoverage::Covered,
+                covering: &[],
+            },
+            NEXT_CC_DEFAULT_ROWS,
+        );
         // Two numeric fields per row: reasonBytes and noteBytes.
         let row_len = row.to_string().len() + 2 * NCC_MAX_DIGITS;
         assert!(
@@ -29618,6 +29800,31 @@ fn next_design_page(ordered: &[PresentableDesign], limit: usize) -> Vec<&Present
     ordered.iter().take(limit).collect()
 }
 
+/// PURE: the page's ROWS — [`next_design_page`]'s prefix, each built at the note share a `limit`-row
+/// page leaves. `limit` is what the caller ASKED for, never the number of rows the queue happened
+/// to hold: the clip a given argument produces is then the same on every call, and a reader can
+/// predict it rather than discover it.
+///
+/// Separate from the fetch so that wiring is a fact a test holds: folded into a network call it is
+/// reachable by no test, and a share that collapsed back to one constant for every page size would
+/// be invisible until a reader got half a sentence.
+fn next_design_rows(ordered: &[PresentableDesign], limit: usize) -> Vec<Value> {
+    next_design_page(ordered, limit)
+        .into_iter()
+        .map(|d| {
+            next_design_row(
+                &NextDesignFacts {
+                    slug: &d.slug,
+                    num: d.num,
+                    detail: &d.detail,
+                    question: &d.question,
+                },
+                limit,
+            )
+        })
+        .collect()
+}
+
 /// Rows one call may return, and the default.
 ///
 /// The cap is 3 for [`NEXT_READY_MAX_ROWS`]'s reason, with [`NEXT_CC_MAX_ROWS`]'s sharpening:
@@ -29629,8 +29836,8 @@ const NEXT_DESIGN_MAX_ROWS: usize = 3;
 const NEXT_DESIGN_DEFAULT_ROWS: usize = 1;
 
 // Per-field RAW byte caps, for the reason `next_ready`'s exist: the result is structurally unable
-// to exceed the budget rather than merely unlikely to.
-const ND_NOTE_BYTES: usize = 2_600;
+// to exceed the budget rather than merely unlikely to. The note has no constant here: it is
+// [`nd_note_bytes`], derived from what these leave.
 const ND_TITLE_BYTES: usize = 200;
 const ND_URL_BYTES: usize = 200;
 const ND_PR_BYTES: usize = 160;
@@ -29641,21 +29848,24 @@ const ND_LABEL_BYTES: usize = 60;
 const ND_MAX_LABELS: usize = 8;
 const ND_ERROR_BYTES: usize = 200;
 
-/// Every capped field in one row, summed. Two shas (the PR's head, and the one a vetter-raised
-/// question pinned itself to) are counted at their own cap.
-const ND_ROW_FIELD_BYTES: usize = ND_PR_BYTES
+/// Every capped field in one row EXCEPT the note, summed. Two shas (the PR's head, and the one a
+/// vetter-raised question pinned itself to) are counted at their own cap.
+const ND_ROW_FIELD_BYTES_LESS_NOTE: usize = ND_PR_BYTES
     + ND_URL_BYTES
     + ND_TITLE_BYTES
     + ND_BRANCH_BYTES
     + 2 * ND_SHA_BYTES
     + ND_TIME_BYTES
-    + ND_NOTE_BYTES
     + ND_MAX_LABELS * ND_LABEL_BYTES;
 
 /// The row's FIXED cost — keys, punctuation, typed enum strings, numbers. Held honest by
 /// `the_fixed_allowances_cover_a_row_a_withheld_entry_and_an_envelope`, which measures a real one.
 const ND_ROW_FIXED_BYTES: usize = 1_200;
-const ND_ROW_CEILING: usize = ND_ROW_FIELD_BYTES * JSON_ESCAPE_WORST_CASE + ND_ROW_FIXED_BYTES;
+
+/// What one row costs BEFORE its note: its other fields at their caps, escaped, plus that fixed
+/// cost.
+const ND_ROW_LESS_NOTE_CEILING: usize =
+    ND_ROW_FIELD_BYTES_LESS_NOTE * JSON_ESCAPE_WORST_CASE + ND_ROW_FIXED_BYTES;
 
 // The two withheld lists — capped, their overflow counted, because they ride inside the same one
 // budget the rows do, which is `next_close_candidate`'s reasoning unchanged.
@@ -29669,15 +29879,63 @@ const ND_WITHHELD_CEILING: usize =
 /// The document minus its rows and its withheld lists: `counts`, `queue`, the keys around them.
 const ND_ENVELOPE_BYTES: usize = 1_500;
 
-/// THE GUARANTEE, as arithmetic the compiler checks — the same one both sibling tools hold: a full
-/// page of maximal rows plus both withheld lists at their caps cannot reach
-/// [`MCP_MAX_RESULT_BYTES`]. Raise a cap past what fits and this crate does not build.
-const _: () = assert!(
-    NEXT_DESIGN_MAX_ROWS * ND_ROW_CEILING
+/// Everything in the document that is NOT a note, for a page of `rows`: the rows' other fields,
+/// both withheld lists at their caps, and the envelope.
+const fn nd_non_note_bytes(rows: usize) -> usize {
+    rows * ND_ROW_LESS_NOTE_CEILING
         + (ND_MAX_WITHHELD + ND_MAX_ERRORS) * ND_WITHHELD_CEILING
         + ND_ENVELOPE_BYTES
-        <= MCP_MAX_RESULT_BYTES
-);
+}
+
+/// The note allowance for ONE row of a `rows`-row page — DERIVED from the budget, never picked.
+/// Whatever [`MCP_MAX_RESULT_BYTES`] has left after [`nd_non_note_bytes`] belongs to the notes,
+/// split evenly and de-escaped back to raw bytes.
+///
+/// It is a function of the page rather than a constant because a constant has to be sized for the
+/// WIDEST page, and then the caller asking the tool's own question — `limit: 1`, which is also its
+/// default — pays for two rows it did not ask for, out of the one field it cannot reconstruct.
+/// Sized per page, the narrow call carries several times what the widest can, and a `noteTruncated`
+/// on a wide page has a cheaper escape than `pr_context`: ask for a narrower page.
+/// A `rows` outside the page sizes [`next_design_limit`] admits is a caller bug — and the budget is
+/// the thing that must not bend for one. Clamped to the SAFE side rather than refused, because the
+/// refusal already happened at the argument: zero would divide by it, and a number past the cap
+/// would subtract past zero and wrap into an unbounded share. Both land on a real page's own
+/// arithmetic instead.
+const fn nd_note_rows(rows: usize) -> usize {
+    if rows < 1 {
+        1
+    } else if rows > NEXT_DESIGN_MAX_ROWS {
+        NEXT_DESIGN_MAX_ROWS
+    } else {
+        rows
+    }
+}
+
+const fn nd_note_bytes(rows: usize) -> usize {
+    let rows = nd_note_rows(rows);
+    (MCP_MAX_RESULT_BYTES - nd_non_note_bytes(rows)) / (JSON_ESCAPE_WORST_CASE * rows)
+}
+
+/// The floor under [`nd_note_bytes`] at its tightest. A field added to the row is paid for out of
+/// the notes' share, silently and only there — so the build is where that lands, rather than a
+/// reader handed the half of a sentence that survived.
+const ND_NOTE_FLOOR_BYTES: usize = 2_600;
+
+/// THE GUARANTEE, as arithmetic the compiler checks — the same one both sibling tools hold: for
+/// EVERY page size this tool serves, a full page of maximal rows plus both withheld lists at their
+/// caps cannot reach [`MCP_MAX_RESULT_BYTES`], and the note is still worth reading. Raise a cap
+/// past what fits and this crate does not build.
+const _: () = {
+    let mut rows = 1;
+    while rows <= NEXT_DESIGN_MAX_ROWS {
+        assert!(
+            nd_non_note_bytes(rows) + rows * nd_note_bytes(rows) * JSON_ESCAPE_WORST_CASE
+                <= MCP_MAX_RESULT_BYTES
+        );
+        assert!(nd_note_bytes(rows) >= ND_NOTE_FLOOR_BYTES);
+        rows += 1;
+    }
+};
 
 /// PURE: this state-load's page size. Out of range is REFUSED rather than clamped, for the reason
 /// [`next_ready_limit`]'s is: a silently clamped argument leaves the caller believing it asked for
@@ -29705,15 +29963,17 @@ struct NextDesignFacts<'a> {
     question: &'a DesignQuestion,
 }
 
-/// PURE: the design question for ONE PR. Every string is clipped, so the row's size is bounded by
-/// [`ND_ROW_CEILING`] whatever GitHub returns.
+/// PURE: the design question for ONE PR. Every string is clipped — the note at the share
+/// [`nd_note_bytes`] leaves a `rows`-row page — so the row's size is bounded whatever GitHub
+/// returns. It takes the PAGE SIZE rather than a byte count so a row cannot be built at a share no
+/// page would have given it.
 ///
 /// The row's centre is `question.note` — the raising comment itself, the CLAIM the human checks,
 /// never a fact. `sha`/`atHead` exist for the vetter-raised case exactly as `next_ready` states
 /// `verdict.sha` beside `headRefOid`: the reader can see whether the reasoning describes the code
 /// that is there now. A producer flag pins no sha, and the pair is null rather than a bool that
 /// would assert a comparison nothing performed.
-fn next_design_row(f: &NextDesignFacts) -> Value {
+fn next_design_row(f: &NextDesignFacts, rows: usize) -> Value {
     let head = f
         .detail
         .get("headRefOid")
@@ -29746,9 +30006,9 @@ fn next_design_row(f: &NextDesignFacts) -> Value {
             "at": clip_field(&f.question.at, ND_TIME_BYTES),
             "sha": sha.map(|s| clip_field(s, ND_SHA_BYTES)),
             "atHead": sha.map(|s| !head.is_empty() && s == head),
-            "note": clip_field(&f.question.body, ND_NOTE_BYTES),
+            "note": clip_field(&f.question.body, nd_note_bytes(rows)),
             "noteBytes": f.question.body.len(),
-            "noteTruncated": f.question.body.len() > ND_NOTE_BYTES,
+            "noteTruncated": f.question.body.len() > nd_note_bytes(rows),
         },
     })
 }
@@ -30187,17 +30447,7 @@ fn next_design_fetch(limit: usize) -> Result<Value, String> {
         no_question: _,
     } = nd_classify(&arr, frozen.len(), nd_pr_detail);
     rank_designs(&mut designs);
-    let rows: Vec<Value> = next_design_page(&designs, limit)
-        .into_iter()
-        .map(|d| {
-            next_design_row(&NextDesignFacts {
-                slug: &d.slug,
-                num: d.num,
-                detail: &d.detail,
-                question: &d.question,
-            })
-        })
-        .collect();
+    let rows = next_design_rows(&designs, limit);
     let (withheld, more_withheld) = page(withheld, Some(ND_MAX_WITHHELD));
     let (errors, more_errors) = page(errors, Some(ND_MAX_ERRORS));
     Ok(next_design_doc(
@@ -31663,12 +31913,15 @@ mod next_design_tests {
             "comments": [vetter_design("2026-08-01T00:00:00Z", &head, "shared or duplicated?")],
         });
         let q = last_design_question(&detail).expect("raised");
-        let row = next_design_row(&NextDesignFacts {
-            slug: "rainlanguage/raindex",
-            num: 960,
-            detail: &detail,
-            question: &q,
-        });
+        let row = next_design_row(
+            &NextDesignFacts {
+                slug: "rainlanguage/raindex",
+                num: 960,
+                detail: &detail,
+                question: &q,
+            },
+            NEXT_DESIGN_DEFAULT_ROWS,
+        );
         assert_eq!(row["pr"], json!("rainlanguage/raindex#960"));
         assert_eq!(
             row["url"],
@@ -31695,12 +31948,15 @@ mod next_design_tests {
             "comments": [vetter_design("2026-08-01T00:00:00Z", &head, "shared or duplicated?")],
         });
         let q = last_design_question(&moved).expect("raised");
-        let row = next_design_row(&NextDesignFacts {
-            slug: "o/r",
-            num: 1,
-            detail: &moved,
-            question: &q,
-        });
+        let row = next_design_row(
+            &NextDesignFacts {
+                slug: "o/r",
+                num: 1,
+                detail: &moved,
+                question: &q,
+            },
+            NEXT_DESIGN_DEFAULT_ROWS,
+        );
         assert_eq!(row["question"]["atHead"], json!(false));
     }
 
@@ -31713,12 +31969,15 @@ mod next_design_tests {
             "comments": [producer_design("2026-08-01T00:00:00Z", "version slot taken")],
         });
         let q = last_design_question(&detail).expect("raised");
-        let row = next_design_row(&NextDesignFacts {
-            slug: "o/r",
-            num: 1,
-            detail: &detail,
-            question: &q,
-        });
+        let row = next_design_row(
+            &NextDesignFacts {
+                slug: "o/r",
+                num: 1,
+                detail: &detail,
+                question: &q,
+            },
+            NEXT_DESIGN_DEFAULT_ROWS,
+        );
         assert_eq!(row["question"]["source"], json!("producer-flag"));
         assert_eq!(row["question"]["sha"], Value::Null);
         assert_eq!(row["question"]["atHead"], Value::Null);
@@ -31732,24 +31991,102 @@ mod next_design_tests {
     // it — the caller reads the rest with `pr_context`, which is on the same profile.
     #[test]
     fn an_oversized_question_is_clipped_and_says_so() {
-        let long = "z".repeat(ND_NOTE_BYTES * 2);
+        let cap = nd_note_bytes(NEXT_DESIGN_DEFAULT_ROWS);
+        let long = "z".repeat(cap * 2);
         let detail = json!({
             "headRefOid": "1".repeat(40),
             "comments": [producer_design("2026-08-01T00:00:00Z", &long)],
         });
         let q = last_design_question(&detail).expect("raised");
-        let row = next_design_row(&NextDesignFacts {
-            slug: "o/r",
-            num: 1,
-            detail: &detail,
-            question: &q,
-        });
-        assert_eq!(
-            row["question"]["note"].as_str().unwrap().len(),
-            ND_NOTE_BYTES
+        let row = next_design_row(
+            &NextDesignFacts {
+                slug: "o/r",
+                num: 1,
+                detail: &detail,
+                question: &q,
+            },
+            NEXT_DESIGN_DEFAULT_ROWS,
         );
+        assert_eq!(row["question"]["note"].as_str().unwrap().len(), cap);
         assert_eq!(row["question"]["noteTruncated"], json!(true));
-        assert!(row["question"]["noteBytes"].as_u64().unwrap() > ND_NOTE_BYTES as u64);
+        assert!(row["question"]["noteBytes"].as_u64().unwrap() > cap as u64);
+    }
+
+    // The note's share is the PAGE's, so the escape from a clip is a narrower page and not only
+    // `pr_context`: a question the widest page cuts, the tool's own default call carries whole.
+    // And the wiring is the claim — `next_design_rows` is asked for both pages, not the row
+    // builder handed two numbers by hand.
+    #[test]
+    fn a_narrower_page_carries_a_longer_question() {
+        let widest = nd_note_bytes(NEXT_DESIGN_MAX_ROWS);
+        let default = nd_note_bytes(NEXT_DESIGN_DEFAULT_ROWS);
+        assert!(
+            default > widest,
+            "the one-row page must not be charged for rows it did not ask for: \
+             {default} vs {widest}"
+        );
+
+        let body = "z".repeat(widest + 1);
+        let ordered: Vec<PresentableDesign> = (0..NEXT_DESIGN_MAX_ROWS)
+            .map(|i| PresentableDesign {
+                slug: "o/r".to_string(),
+                num: i as u64 + 1,
+                question: DesignQuestion {
+                    at: "2026-08-01T00:00:00Z".to_string(),
+                    body: format!("🤖 ai:producer\nDesign-question: {body}"),
+                    source: DesignQuestionSource::ProducerFlag,
+                },
+                detail: json!({"headRefOid": "1".repeat(40)}),
+            })
+            .collect();
+
+        for row in next_design_rows(&ordered, NEXT_DESIGN_MAX_ROWS) {
+            assert_eq!(row["question"]["noteTruncated"], json!(true));
+        }
+        let narrow = next_design_rows(&ordered, NEXT_DESIGN_DEFAULT_ROWS);
+        assert_eq!(narrow.len(), NEXT_DESIGN_DEFAULT_ROWS);
+        assert_eq!(narrow[0]["question"]["noteTruncated"], json!(false));
+    }
+
+    // A page size the limit would have refused never reaches an unbounded share: zero would divide
+    // by it, and a number past the cap would subtract past zero and wrap. Both land on a real
+    // page's arithmetic instead — zero on the one-row share, since a zero-row page has no rows to
+    // spend it on, and anything oversized on the tightest.
+    #[test]
+    fn a_page_size_the_limit_refuses_never_reaches_an_unbounded_share() {
+        let tightest = nd_note_bytes(NEXT_DESIGN_MAX_ROWS);
+        assert_eq!(nd_note_bytes(0), nd_note_bytes(1));
+        assert_eq!(nd_note_bytes(NEXT_DESIGN_MAX_ROWS + 1), tightest);
+        assert_eq!(nd_note_bytes(usize::MAX), tightest);
+    }
+
+    // Every page size the limit admits is inside the ONE budget, and every one of them still
+    // carries a note worth reading. The compile-time assertion says so; this says which sizes it
+    // was asked about, so a `limit` widened without re-deriving the share fails here.
+    #[test]
+    fn every_admitted_page_size_keeps_its_note_share() {
+        for rows in 1..=NEXT_DESIGN_MAX_ROWS {
+            let cap = nd_note_bytes(rows);
+            assert!(
+                cap >= ND_NOTE_FLOOR_BYTES,
+                "a {rows}-row page leaves {cap} bytes of note, under the \
+                 {ND_NOTE_FLOOR_BYTES}-byte floor"
+            );
+            let total = nd_non_note_bytes(rows) + rows * cap * JSON_ESCAPE_WORST_CASE;
+            assert!(
+                total <= MCP_MAX_RESULT_BYTES,
+                "a {rows}-row page is {total} bytes, over the {MCP_MAX_RESULT_BYTES}-byte budget"
+            );
+            // And it is the WHOLE of what the page leaves. Fitting is only half the claim — a share
+            // that merely fits is one a smaller divisor also satisfies, and a note clipped with
+            // budget still on the table is the same clip, quieter.
+            let over = nd_non_note_bytes(rows) + rows * (cap + 1) * JSON_ESCAPE_WORST_CASE;
+            assert!(
+                over > MCP_MAX_RESULT_BYTES,
+                "a {rows}-row page leaves {cap} bytes of note but could carry more — {over} bytes \
+                 is still inside the {MCP_MAX_RESULT_BYTES}-byte budget"
+            );
+        }
     }
 
     // An empty queue is an ANSWER: zero rows under zeroed counts says the lane is clear. A failed
@@ -32271,9 +32608,10 @@ mod next_design_tests {
         }
     }
 
-    // THE GUARANTEE, exercised rather than asserted: a full page of rows built from the worst
-    // input GitHub can hand us, plus both withheld lists at their caps, fits the ONE budget.
-    // Remove any `clip_field` in `next_design_row` and this fails.
+    // THE GUARANTEE, exercised rather than asserted, at EVERY page size the limit admits: a full
+    // page of rows built from the worst input GitHub can hand us, plus both withheld lists at
+    // their caps, fits the ONE budget. Remove any `clip_field` in `next_design_row` and this
+    // fails; widen the note's share past what the page leaves and this fails at the widest page.
     #[test]
     fn a_maximal_page_of_adversarial_rows_still_fits_the_budget() {
         let hostile = hostile_text(20_000);
@@ -32290,58 +32628,66 @@ mod next_design_tests {
             body: hostile.clone(),
             source: DesignQuestionSource::VetterVerdict,
         };
-        let rows: Vec<Value> = (0..NEXT_DESIGN_MAX_ROWS)
-            .map(|i| {
-                next_design_row(&NextDesignFacts {
-                    slug: &hostile,
-                    num: u64::MAX - i as u64,
-                    detail: &detail,
-                    question: &question,
+        for limit in 1..=NEXT_DESIGN_MAX_ROWS {
+            let note_bytes = nd_note_bytes(limit);
+            let ceiling = ND_ROW_LESS_NOTE_CEILING + note_bytes * JSON_ESCAPE_WORST_CASE;
+            let rows: Vec<Value> = (0..limit)
+                .map(|i| {
+                    next_design_row(
+                        &NextDesignFacts {
+                            slug: &hostile,
+                            num: u64::MAX - i as u64,
+                            detail: &detail,
+                            question: &question,
+                        },
+                        limit,
+                    )
                 })
-            })
-            .collect();
-        for (i, row) in rows.iter().enumerate() {
-            let len = row.to_string().len();
-            assert!(
-                len <= ND_ROW_CEILING,
-                "row {i} is {len} bytes, over the {ND_ROW_CEILING}-byte row ceiling the \
-                 compile-time budget assertion is computed from"
-            );
-        }
-        let withheld_hostile: Vec<Value> = (0..ND_MAX_WITHHELD)
-            .map(|_| nd_withheld_entry(&hostile, &hostile))
-            .collect();
-        for w in &withheld_hostile {
-            let len = w.to_string().len();
-            assert!(
-                len <= ND_WITHHELD_CEILING,
-                "a withheld entry is {len} bytes, over its {ND_WITHHELD_CEILING}-byte ceiling"
-            );
-        }
-        let len = next_design_doc(
-            rows,
-            &DesignQueueWithheld {
-                counts: DesignQueueCounts {
-                    raw: usize::MAX,
-                    draft: usize::MAX,
-                    unaddressable: usize::MAX,
-                    presentable: usize::MAX,
-                    no_question: usize::MAX,
-                    fetch_errors: usize::MAX,
-                    archived_repo: usize::MAX,
+                .collect();
+            for (i, row) in rows.iter().enumerate() {
+                let len = row.to_string().len();
+                assert!(
+                    len <= ceiling,
+                    "row {i} of a {limit}-row page is {len} bytes, over the {ceiling}-byte row \
+                     ceiling the budget assertion is computed from"
+                );
+            }
+            let withheld_hostile: Vec<Value> = (0..ND_MAX_WITHHELD)
+                .map(|_| nd_withheld_entry(&hostile, &hostile))
+                .collect();
+            for w in &withheld_hostile {
+                let len = w.to_string().len();
+                assert!(
+                    len <= ND_WITHHELD_CEILING,
+                    "a withheld entry is {len} bytes, over its {ND_WITHHELD_CEILING}-byte ceiling"
+                );
+            }
+            let len = next_design_doc(
+                rows,
+                &DesignQueueWithheld {
+                    counts: DesignQueueCounts {
+                        raw: usize::MAX,
+                        draft: usize::MAX,
+                        unaddressable: usize::MAX,
+                        presentable: usize::MAX,
+                        no_question: usize::MAX,
+                        fetch_errors: usize::MAX,
+                        archived_repo: usize::MAX,
+                    },
+                    withheld: withheld_hostile.clone(),
+                    more_withheld: usize::MAX,
+                    errors: withheld_hostile,
+                    more_errors: usize::MAX,
                 },
-                withheld: withheld_hostile.clone(),
-                more_withheld: usize::MAX,
-                errors: withheld_hostile,
-                more_errors: usize::MAX,
-            },
-        )
-        .to_string()
-        .len();
-        assert!(
-            len <= MCP_MAX_RESULT_BYTES,
-            "a full adversarial page is {len} bytes, over the {MCP_MAX_RESULT_BYTES}-byte budget"
-        );
+            )
+            .to_string()
+            .len();
+            assert!(
+                len <= MCP_MAX_RESULT_BYTES,
+                "a full adversarial {limit}-row page is {len} bytes, over the \
+                 {MCP_MAX_RESULT_BYTES}-byte budget"
+            );
+        }
     }
 
     // The allowances the compile-time assertion is built on are MEASURED, not guessed — a field
@@ -32354,12 +32700,15 @@ mod next_design_tests {
             // The longer source spelling, so the fixed cost is measured at its widest.
             source: DesignQuestionSource::VetterVerdict,
         };
-        let row = next_design_row(&NextDesignFacts {
-            slug: "",
-            num: 0,
-            detail: &json!({}),
-            question: &question,
-        });
+        let row = next_design_row(
+            &NextDesignFacts {
+                slug: "",
+                num: 0,
+                detail: &json!({}),
+                question: &question,
+            },
+            NEXT_DESIGN_DEFAULT_ROWS,
+        );
         // The numeric fields are COUNTED from the row, not asserted from a comment.
         let row_len = row.to_string().len() + numeric_fields(&row) * ND_MAX_DIGITS;
         assert!(
@@ -32615,7 +32964,7 @@ fn mcp_all_tools() -> Value {
         {
             "name": "next_close_candidate",
             "narrows": "limit",
-            "description": "The next close-candidate to rule on — an upheld flag on an ISSUE OR A PR, or a PR the vetter verdicted `close` (one mixed queue, #211/#212) — OLDEST FIRST (the flag parks the subject — it is neither the producer's work nor closed — so the wait is the cost, and evidence about a moving main decays). Per row: the subject's title/state/labels/createdAt (`url` says which subject type), the producer's stated reason (the CLAIM being checked, never a fact) with `flag.grounds` saying whether it cites a landing, and the vetter's judgement pinned to what it judged (`atFlag` false means a superseded claim; a PR close verdict reports as `close` at its own timestamp). Coverage is reported for issues; on a PR row it is `not-applicable-subject-is-a-pr` and never blocks. For issues `openPr.blocksClose` pairs coverage with the grounds — a flag citing no landing is the `merely COVERED BY AN OPEN PR` case and blocks (an unreadable answer blocks too), while a flag citing a merged commit/PR does not, since a redundant PR in flight does not un-land what landed. `counts.unvetted` is where a flag the vetter has not judged went; `counts.vetterCloseVerdict` is the PR-close-verdict share of the queue; `strandedFlags` are labels parking a subject with nothing consuming them — the vetter's state-load clears both kinds, so one listed here is a clearance that has not run yet or could not write.",
+            "description": "The next close-candidate to rule on — an upheld flag on an ISSUE OR A PR, or a PR the vetter verdicted `close` (one mixed queue, #211/#212) — OLDEST FIRST (the flag parks the subject — it is neither the producer's work nor closed — so the wait is the cost, and evidence about a moving main decays). Per row: the subject's title/state/labels/createdAt (`url` says which subject type), the producer's stated reason (the CLAIM being checked, never a fact) with `flag.grounds` saying whether it cites a landing, and the vetter's judgement pinned to what it judged (`atFlag` false means a superseded claim; a PR close verdict reports as `close` at its own timestamp). Coverage is reported for issues; on a PR row it is `not-applicable-subject-is-a-pr` and never blocks. For issues `openPr.blocksClose` pairs coverage with the grounds — a flag citing no landing is the `merely COVERED BY AN OPEN PR` case and blocks (an unreadable answer blocks too), while a flag citing a merged commit/PR does not, since a redundant PR in flight does not un-land what landed. `reasonTruncated`/`noteTruncated` say when those two were clipped — their share is the PAGE's, so a narrower `limit` carries more of them and close_candidate_context carries all of them. `counts.unvetted` is where a flag the vetter has not judged went; `counts.vetterCloseVerdict` is the PR-close-verdict share of the queue; `strandedFlags` are labels parking a subject with nothing consuming them — the vetter's state-load clears both kinds, so one listed here is a clearance that has not run yet or could not write.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -32626,7 +32975,7 @@ fn mcp_all_tools() -> Value {
         {
             "name": "next_design",
             "narrows": "limit",
-            "description": "The next ai:design PR for the human to rule on — OLDEST QUESTION FIRST (the label parks the PR outside every AI actor's queue, so the wait is the cost and FIFO bounds it). Per row: the PR's title/baseRefName/headRefOid/labels and the trusted comment that raised the live question (`question.note`; `question.source` says whether the vetter's record-verdict design note or the producer's flag-design note raised it; a vetter-raised question carries the sha it pinned and `atHead` says whether it still describes this head; `noteTruncated` says when the whole comment must be read via pr_context). The question is a CLAIM to check, never a fact. `counts` partition the whole labelled population and `withheld` NAMES the rows behind three of them — `noQuestion` (labelled, nothing trusted raised a question), `draft` (answerable, but the code is still being shaped) and `unaddressable` — so a PR you expected and did not get is findable without re-running the search; `archivedRepo` is frozen (no ruling can be written there at all). The exit is the design ruling: the answer routes the PR back to the producer as ai:needs-work + the answer as the work order, one call.",
+            "description": "The next ai:design PR for the human to rule on — OLDEST QUESTION FIRST (the label parks the PR outside every AI actor's queue, so the wait is the cost and FIFO bounds it). Per row: the PR's title/baseRefName/headRefOid/labels and the trusted comment that raised the live question (`question.note`; `question.source` says whether the vetter's record-verdict design note or the producer's flag-design note raised it; a vetter-raised question carries the sha it pinned and `atHead` says whether it still describes this head; `noteTruncated` says when the note was clipped — the note's share is the PAGE's, so a narrower `limit` carries more of it and pr_context carries all of it). The question is a CLAIM to check, never a fact. `counts` partition the whole labelled population and `withheld` NAMES the rows behind three of them — `noQuestion` (labelled, nothing trusted raised a question), `draft` (answerable, but the code is still being shaped) and `unaddressable` — so a PR you expected and did not get is findable without re-running the search; `archivedRepo` is frozen (no ruling can be written there at all). The exit is the design ruling: the answer routes the PR back to the producer as ai:needs-work + the answer as the work order, one call.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
