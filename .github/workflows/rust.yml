@@ -426,3 +426,21 @@ jobs:
             exit 1
           fi
           echo "the vetter's --add-dir flags confer reads and nothing else"
+  # A runner reads its prompt whole and re-reads it every turn, so a byte here is
+  # paid once per turn by every run, and nothing else in CI measures it. The glob is
+  # wider than the four prompts that exist so a new one is charged rather than
+  # escaping by not being named; the cap covers those files plus every repo file
+  # they name. Lowering it is the ratchet; raising it needs a reason in the diff.
+  prompt-cap:
+    name: prompt cap
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/nix-installer-action@a7ad9c4f0c65208097f4d34f3cfa1913b80cce5c # main
+      - uses: rainlanguage/rainix/.github/actions/prompt-cap@main
+        with:
+          paths: "**/*prompt*"
+          cap: 153621
