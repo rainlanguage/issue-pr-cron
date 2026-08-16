@@ -14,9 +14,9 @@ paths:
   correct verdict must never be more than ONE corrected call from being
   recorded.
 - **A claim checked against absent input is not checked.** Where the evidence a
-  guard reads is missing — a changed-file set whose diff carries no
-  `diff --git` header — refuse outright. A guard that silently stops firing is
-  the failure it exists to prevent, one level up.
+  guard reads is missing — a changed-file set whose diff carries no `diff --git`
+  header — refuse outright. A guard that silently stops firing is the failure it
+  exists to prevent, one level up.
 - **A verdict accounts for every file the PR changes**, and the claim is an
   ARGUMENT the tool verifies rather than a rule the prompt states: each
   hand-written `covered` entry carries a new-side line anchor checked against
