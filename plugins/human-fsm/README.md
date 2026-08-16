@@ -131,15 +131,6 @@ state — that `Read` is for the `pr_checkout` tree and nothing else, that the
 lens scope is a literal, that no field is assembled by hand — and `cargo test`
 holds the two to each other over both files.
 
-> **Landing note (#316).** `command_contract` in `pr-review-report-rs` does not
-> yet know this shape: it refuses `Task`/`Agent` as a grant by name, pins each
-> reading command's exact MCP grant, and has no walk over `agents/`. Those tests
-> fail on this tree until the contract learns the dispatcher/agent split — the
-> grant assertions move from `commands/*.md` to `agents/*.md`, a dispatcher is
-> admitted as a command granting `Agent` alone whose body names a shipped agent
-> of this plugin, and the agents are held to the rule the commands used to be
-> held to, plus one more: no agent may grant `Agent`.
-
 Same reason the tools exist at all. Six reads — verdict note, head sha, base
 branch, CI, CodeRabbit coverage, deploy gate — done by hand, in an order the
 reader has to remember, is a decision whose inputs are not auditable. A typed

@@ -76,7 +76,9 @@ reassembled, and never the number off a title or a URL. One call per row if the
 caller asked for several. It carries the issue BODY (step 1 does not), the whole
 flag body, and every trusted `ai:producer` and `ai:vetter` comment unclipped —
 step 1's `flag.reason` and `verdict.note` are clipped, and `reasonTruncated` /
-`noteTruncated` say when.
+`noteTruncated` say when. Their share is the PAGE's, so a clip on a multi-row
+page has a cheaper escape first: re-ask step 1 at `limit: 1`, which carries
+several times what the widest page can.
 
 **3. Derive the standard from the ISSUE, and do it before reading the flag.**
 Say in your own words what the issue asked for and what would have to be TRUE of
