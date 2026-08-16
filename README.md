@@ -2888,6 +2888,35 @@ uses `{{WORK_DIR}}` / `{{SCRATCH_DIR}}` / `{{INSTALL_DIR}}` / `{{ASSIGNEE}}` /
 `{{OWNER_FLAGS}}` / `{{ORGS}}` placeholders that the runner substitutes at run
 time.
 
+### Timing the `gh` calls — `PRR_GH_TIMING`
+
+Set `PRR_GH_TIMING` to anything but empty or `0` and every `gh` the binary runs
+is timed. Unset, nothing is emitted and the run is unchanged, so it is safe on
+the shipped binary.
+
+Everything goes to **stderr**, never stdout: on `pr-review-report mcp` stdout is
+the JSON-RPC stream and a line there is a protocol violation.
+
+```
+gh-timing: 1306ms pr view 3 rainlanguage/rain.subgraph.docker
+gh-timing: unvetted: 359 calls, 278980ms in gh
+gh-timing: unvetted: slowest 6052ms search prs
+```
+
+A call line carries the child's wall time and enough argv to attribute it — the
+subcommand words plus the slug, api path or graphql operands, never the `--json`
+field list. It prints AS THE CALL LANDS, so a run that is killed still leaves
+every call it made on the record and loses only the summary.
+
+A summary closes each span and names its slowest three. The span is one MCP TOOL
+CALL, because that is the unit a client waits on and times out; for a CLI run it
+is the subcommand.
+
+Every figure is ONE child process's wall time, so a rate-limit retry shows up as
+a second line and its backoff sleep sits between the two rather than inside
+either. Time the binary spends on anything other than `gh` is the difference
+between the summary total and the run's own duration.
+
 ### The producer's scratch dir
 
 Each producer run gets `$WORK_DIR/scratch/<run-id>`, created before the model
