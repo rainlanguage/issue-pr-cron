@@ -1,7 +1,7 @@
 ---
 description: The next ai:ready PR to rule on — the vetter's verdict, checked against an independent read of the diff, the issue it claims to close, and the audit skill run over the PR's own source at a declared pr:<number> scope.
 argument-hint: [1-3]
-allowed-tools: mcp__plugin_human-fsm_fsm__next_ready, mcp__plugin_human-fsm_fsm__pr_context, mcp__plugin_human-fsm_fsm__pr_checkout, mcp__plugin_human-fsm_fsm__clone_release, Skill, Read
+allowed-tools: mcp__plugin_human-fsm_fsm__next_ready, mcp__plugin_human-fsm_fsm__pr_context, mcp__plugin_human-fsm_fsm__pr_checkout, mcp__plugin_human-fsm_fsm__clone_release, mcp__plugin_human-fsm_fsm__human_rule, Skill, Read
 ---
 
 Arguments: `$ARGUMENTS`
@@ -230,12 +230,42 @@ what nothing can check: the scope that produced twelve findings on a
 five-finding question was typed out in full, correctly, and lost to the first
 rule of the document it was handed to.
 
-The grant is four typed calls plus `Skill` and `Read`, and `Read` applies to the
-`pr_checkout` tree and nothing else. All four typed calls are reads except
-`clone_release`, which disposes of what this command itself created and writes
-no GitHub state. The rulings remain `/needs-work`, `/design`,
-`/close-candidate`, `/keep-open`, and the merge is the human's, on a PR they
-named.
+The grant is five typed calls plus `Skill` and `Read`, and `Read` applies to the
+`pr_checkout` tree and nothing else. Four are reads; `clone_release` disposes of
+what this command itself created and writes no GitHub state.
+
+The fifth, `human_rule`, is the send-back, and it is the only call here that
+writes GitHub state. It is typed for the same reason every other input is: a
+ruling assembled by hand on a command line is a ruling whose inputs nobody can
+audit, and the guards it carries — the mandatory work order, the provenance
+anchor, the sha pin — live in the binary rather than in whoever remembered them.
+Reaching for `pr-review-report` through a shell to do this is the defect the
+no-shell rule above names, not an exception to it.
+
+The rulings remain `/needs-work`, `/design`, `/close-candidate`, `/keep-open`,
+and the merge is the human's, on a PR they named.
+
+## If you can articulate it, send it BACK — not forward
+
+**Anything you can put into words about why this is not merged is a send-back.**
+Rule it here. Do not write it up and hand it to the human to reach the same
+answer from the same words.
+
+There is no list of qualifying reasons, and no sorting of reasons into kinds
+that route differently. A defect, an unmet precondition, a dependency, a doubt
+you could not resolve within this command's grant — if you can state it, it is
+work, and `ai:needs-work` is ONE send-back state whoever ruled and whatever the
+reason. Both rulings land there; the verb only records which one ruled, so
+choosing between them is not a decision about where the PR goes.
+
+The words you were about to write for the human ARE the work order: they go in
+`--rework`, which is what makes the send-back executable. A send-back whose
+work order says nothing has sent nothing back.
+
+**What goes forward is what you have nothing to say against.** That is the
+whole of it — a PR you read against its issue, ran the lens over, and found
+nothing articulable to raise. Then the only remaining question is the human's
+to answer: merge it or not.
 
 That list is a **declaration, not a sandbox**: measured on Claude Code 2.1.220,
 a command granting only `Read` still ran a `Bash` call with no permission
@@ -292,11 +322,16 @@ bump un-pins it from the rules it was written under.
 
 ## Present the result, do not summarise it away
 
+This section is how you print a PR that goes FORWARD. One you could articulate
+something against went back instead, per **If you can articulate it, send it
+BACK**, and what you print for that is the send-back: the ruling taken, the work
+order, and the evidence under it.
+
 Print every field of the row. Then give the independent read — what the issue
 asked for, what the diff does, whether those two agree — then the audit lens's
 findings, each marked as the diff's own code or as surrounding context, and then
 say where the whole of that and the vetter's note diverge. Then say what it adds
-up to: whether anything blocks a merge — and if the legacy deploy signal is
+up to — and if the legacy deploy signal is
 `repo-not-migrated`, say that too, as repo health rather than as a gate: the
 merge does not wait on any deploy (#162), and what the signal asks for is the
 repo's migration to the split release lifecycle.
@@ -311,7 +346,11 @@ miss the diff. That is the inference this line removes.
 
 Clean is a conclusion you are allowed to reach, not one to reach for: say it
 only about a diff you read against an issue you read, with a lens you actually
-pointed at the source, and say which those were. **This command does not merge
-and does not rule.** It is the read that precedes the human's word.
+pointed at the source, and say which those were.
+
+**This command does not merge** — the merge is the human's word on a PR they
+named. It DOES rule: everything it can articulate goes back, and what reaches
+the human is the read that precedes their word on a PR with nothing said
+against it.
 
 Names collide across plugins; `/human-fsm:nr` disambiguates.
