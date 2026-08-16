@@ -2891,17 +2891,13 @@ fn queue_detail_from_node(node: &Value) -> Value {
 ///
 /// The whole point is that "the verdict is outside the window" and "there is no verdict" must not be
 /// the same answer: the first is a fetch that has to be redone, the second is the vetter's work.
+///
+/// The truncation half is [`whole_connection`], the guard the other batched reads rest on, rather
+/// than a second copy of `totalCount > nodes.len()` — so a connection missing either field reads as
+/// unread here too, and pays a refetch instead of passing as a complete window.
 fn comments_windowed_out(node: &Value, detail: &Value) -> bool {
-    let total = node
-        .pointer("/comments/totalCount")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    let returned = node
-        .pointer("/comments/nodes")
-        .and_then(|n| n.as_array())
-        .map(Vec::len)
-        .unwrap_or(0) as u64;
-    total > returned && last_vetter_comment(detail).is_none()
+    let whole = node.get("comments").and_then(whole_connection).is_some();
+    !whole && last_vetter_comment(detail).is_none()
 }
 
 /// PURE: the unresolved-thread count the batch can answer for, or `None` when only a paginated walk
@@ -3352,6 +3348,24 @@ mod one_query_queue_tests {
         );
         let d = queue_detail_from_node(&n);
         assert!(!comments_windowed_out(&n, &d));
+    }
+
+    /// A connection that does not say how many comments exist has not said the window is whole, so
+    /// it is unread rather than complete — [`whole_connection`]'s rule, which this guard now shares
+    /// with the other batched reads instead of re-deriving `totalCount > nodes.len()`. Reading a
+    /// missing count as zero would let a malformed response pass as a verdict-free PR, which is the
+    /// one answer that reaches a human.
+    #[test]
+    fn a_connection_that_omits_its_total_is_unread_not_complete() {
+        let mut n = node(1, "o/r");
+        set_comments(&mut n, 1, vec![comment("someone", "b")]);
+        n.pointer_mut("/comments")
+            .expect("comments set above")
+            .as_object_mut()
+            .expect("comments is an object")
+            .remove("totalCount");
+        let d = queue_detail_from_node(&n);
+        assert!(comments_windowed_out(&n, &d));
     }
 
     /// The window is searched with the AUTHOR filter, not for the marker text. A third party can
