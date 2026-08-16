@@ -130,37 +130,19 @@
     ],
     "ai:design": [
       {
+        "repo": "rainlanguage/rain.flare",
+        "number": 205,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/205",
+        "title": "bump rain-math-binary 0.1.1 -> 0.1.3"
+      }
+    ],
+    "ai:needs-work": [
+      {
         "repo": "rainlanguage/rain.tofu.erc20-decimals",
         "number": 31,
         "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/31",
         "title": "chore: remove submodule-era residue from REUSE.toml, .soldeerignore and CLAUDE.md"
       },
-      {
-        "repo": "rainlanguage/rain.flare",
-        "number": 205,
-        "url": "https://github.com/rainlanguage/rain.flare/pull/205",
-        "title": "bump rain-math-binary 0.1.1 -> 0.1.3"
-      },
-      {
-        "repo": "rainlanguage/rain.pyth",
-        "number": 32,
-        "url": "https://github.com/rainlanguage/rain.pyth/pull/32",
-        "title": "deps: bump rain-math-binary 0.1.1 -> 0.1.3"
-      },
-      {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 427,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/427",
-        "title": "fix(component): harden ReceiptModal — reactive receipt bindings, per-token balance key, signer/chain gating"
-      },
-      {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 408,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/408",
-        "title": "fix: drive RewardsInfo from REWARD_EPOCHS constant, remove hardcoded Jan-2025 text (#340)"
-      }
-    ],
-    "ai:needs-work": [
       {
         "repo": "S01-Issuer/st0x.deploy",
         "number": 305,
@@ -178,6 +160,12 @@
         "number": 551,
         "url": "https://github.com/rainlanguage/rainlang/pull/551",
         "title": "Bump rain-math-binary 0.1.1 -> 0.1.3"
+      },
+      {
+        "repo": "rainlanguage/rain.pyth",
+        "number": 32,
+        "url": "https://github.com/rainlanguage/rain.pyth/pull/32",
+        "title": "deps: bump rain-math-binary 0.1.1 -> 0.1.3"
       },
       {
         "repo": "rainlanguage/rain.solmem",
@@ -334,6 +322,12 @@
         "number": 409,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/409",
         "title": "fix(component): validate tokenId and surface previewRedeem errors (#359)"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 408,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/408",
+        "title": "fix: drive RewardsInfo from REWARD_EPOCHS constant, remove hardcoded Jan-2025 text (#340)"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -995,8 +989,14 @@
         ]
       },
       "un-vetted": {
-        "count": 83,
+        "count": 85,
         "prs": [
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 308,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/308",
+            "title": "ci: cap prompt bytes with rainix prompt-cap, and make the first cut"
+          },
           {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 298,
@@ -1286,6 +1286,12 @@
             "title": "Remove submodule-era residue: dead foundry.lock and .gitmodules/lib references"
           },
           {
+            "repo": "rainlanguage/rain.verify",
+            "number": 31,
+            "url": "https://github.com/rainlanguage/rain.verify/pull/31",
+            "title": "Remove the submodule-era residue from REUSE.toml and CLAUDE.md"
+          },
+          {
             "repo": "rainlanguage/rain.dia",
             "number": 68,
             "url": "https://github.com/rainlanguage/rain.dia/pull/68",
@@ -1500,41 +1506,13 @@
     },
     "vetter-verdicts": {
       "ai:design": {
-        "count": 5,
+        "count": 1,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.tofu.erc20-decimals",
-            "number": 31,
-            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/31",
-            "title": "chore: remove submodule-era residue from REUSE.toml, .soldeerignore and CLAUDE.md",
-            "bucket": "presentable"
-          },
           {
             "repo": "rainlanguage/rain.flare",
             "number": 205,
             "url": "https://github.com/rainlanguage/rain.flare/pull/205",
             "title": "bump rain-math-binary 0.1.1 -> 0.1.3",
-            "bucket": "presentable"
-          },
-          {
-            "repo": "rainlanguage/rain.pyth",
-            "number": 32,
-            "url": "https://github.com/rainlanguage/rain.pyth/pull/32",
-            "title": "deps: bump rain-math-binary 0.1.1 -> 0.1.3",
-            "bucket": "presentable"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 427,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/427",
-            "title": "fix(component): harden ReceiptModal — reactive receipt bindings, per-token balance key, signer/chain gating",
-            "bucket": "presentable"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 408,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/408",
-            "title": "fix: drive RewardsInfo from REWARD_EPOCHS constant, remove hardcoded Jan-2025 text (#340)",
             "bucket": "presentable"
           }
         ],
@@ -1542,13 +1520,19 @@
           "draft": 0,
           "fetchErrors": 0,
           "noQuestion": 0,
-          "presentable": 5,
+          "presentable": 1,
           "unaddressable": 0
         }
       },
       "ai:needs-work": {
-        "count": 102,
+        "count": 105,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.tofu.erc20-decimals",
+            "number": 31,
+            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/31",
+            "title": "chore: remove submodule-era residue from REUSE.toml, .soldeerignore and CLAUDE.md"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 305,
@@ -1566,6 +1550,12 @@
             "number": 551,
             "url": "https://github.com/rainlanguage/rainlang/pull/551",
             "title": "Bump rain-math-binary 0.1.1 -> 0.1.3"
+          },
+          {
+            "repo": "rainlanguage/rain.pyth",
+            "number": 32,
+            "url": "https://github.com/rainlanguage/rain.pyth/pull/32",
+            "title": "deps: bump rain-math-binary 0.1.1 -> 0.1.3"
           },
           {
             "repo": "rainlanguage/rain.solmem",
@@ -1722,6 +1712,12 @@
             "number": 409,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/409",
             "title": "fix(component): validate tokenId and surface previewRedeem errors (#359)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 408,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/408",
+            "title": "fix: drive RewardsInfo from REWARD_EPOCHS constant, remove hardcoded Jan-2025 text (#340)"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -2346,10 +2342,34 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
-      "repo": "rainlanguage/rainix",
-      "number": 310,
-      "url": "https://github.com/rainlanguage/rainix/issues/310",
-      "title": "Generalise agent-context-cap so a repo can point it at prompt files"
+      "repo": "rainlanguage/rainlang.interface",
+      "number": 123,
+      "url": "https://github.com/rainlanguage/rainlang.interface/issues/123",
+      "title": "Migrate rain-interpreter-interface to rain-math-binary 0.1.3 and publish — five consumer PRs block on this"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 306,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/306",
+      "title": "design-doctor: clear ai:* labels from closed and merged subjects"
+    },
+    {
+      "repo": "cyclofinance/cyclo.site",
+      "number": 440,
+      "url": "https://github.com/cyclofinance/cyclo.site/issues/440",
+      "title": "ReceiptModal residuals from #427: chain gate reads the store, dead erc1155Address arg, untested input reset"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 305,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/305",
+      "title": "render-component: stub src/generated.ts — the cyclo.site render gap is one module, not the SvelteKit stack"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 304,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/304",
+      "title": "/ndd reports omit the PR url, so the reader has to reconstruct the link"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -6308,40 +6328,31 @@
       "title": "add generic errors for integrity operand overflow and underflow"
     }
   ],
-  "leaks": [
-    {
-      "repo": "rainlanguage/rain.verify",
-      "number": 31,
-      "url": "https://github.com/rainlanguage/rain.verify/pull/31",
-      "title": "Remove the submodule-era residue from REUSE.toml and CLAUDE.md",
-      "reason": "🤖 ai:producer QA-block repair: replaced QA-GUIDE section 8's evidence block in the PR body via `pr-review-report repair-qa-block`. Every byte outside the `## QA` section is unchanged.",
-      "createdAt": "2026-08-15T07:44:56Z"
-    }
-  ],
+  "leaks": [],
   "counts": {
-    "unvetted": 83,
+    "unvetted": 85,
     "blockedOn": 21,
     "ready": 2,
-    "needsWork": 102,
+    "needsWork": 105,
     "relink": 0,
-    "design": 5,
+    "design": 1,
     "blockedInfra": 0,
     "closeCandidateIssues": 3,
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
-    "leaks": 1,
+    "leaks": 0,
     "totalProducerPrs": 214,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 656,
-    "designPresentable": 5,
+    "uncoveredIssues": 660,
+    "designPresentable": 1,
     "designNoQuestion": 0,
-    "openIssues": 875
+    "openIssues": 876
   },
   "ages": {
     "openIssues": {
-      "meanDays": 283.8,
-      "medianDays": 103.0,
-      "oldestDays": 1665.5
+      "meanDays": 283.2,
+      "medianDays": 103.1,
+      "oldestDays": 1665.6
     }
   }
 }
