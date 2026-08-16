@@ -218,10 +218,11 @@ A whole-repo audit is a real thing to want, and it is not this. A sweep answers
 a question nobody asked at this gate and buries the findings that bear on the
 diff under the ones that do not — five among twelve, on `rain.deploy#21`. So
 this agent declares `pr:<number>` on EVERY invocation and has no mode, flag or
-argument that declares anything else: the whole argument is the LIMIT. Whole-repo
-stays available as a separate, explicit invocation somebody asks for by name;
-what must never happen is a sweep arriving because no scope was passed, since a
-scope that defaults to the widest reading is indistinguishable from a chosen one.
+argument that declares anything else: the whole argument is the LIMIT.
+Whole-repo stays available as a separate, explicit invocation somebody asks for
+by name; what must never happen is a sweep arriving because no scope was passed,
+since a scope that defaults to the widest reading is indistinguishable from a
+chosen one.
 
 ## Typed reads and the lens, and no shell at all
 
