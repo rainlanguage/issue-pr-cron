@@ -8,17 +8,17 @@ halves of a decision — the read it rests on and the ruling it becomes — reac
 that binary **through typed calls and nothing else**, rather than a hand-written
 JSON-RPC frame, a Python filter over the response, and two raw `gh` calls.
 
-| Command                                      | The call it invokes                                                                                                                                                                                                                                                                                 |
-| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/nr [1-3]`                                  | `next_ready` + `pr_context` + `pr_checkout` + `clone_release` (MCP) and the `audit` skill — the next `ai:ready` PR, and the vetter's verdict checked against its diff, its issue and its source. Writes no GitHub state                                                                             |
-| `/ncc [1-3]`                                 | `next_close_candidate` + `close_candidate_context` + `pr_context` (MCP) — the next `ai:close-candidate` flag, and the producer's reason checked against the issue as filed and the code it claims about. Writes no GitHub state                                                                     |
-| `/ndd [1-3]`                                 | `next_design` + `pr_context` + `pr_checkout` + `clone_release` (MCP) and the `audit` skill — the next `ai:design` PR, and the raised question checked against its issue, its diff and its source: genuine (presented with its option space), already answered, or misrouted. Writes no GitHub state |
-| `/nm [1-3]`                                  | `next_leak` + `pr_context` + `pr_checkout` + `clone_release` (MCP) and the `audit` skill — the next FSM-conformance leak, and which of three places the defect is in: the PR's state record, the machine's vocabulary, or the classifier. Writes no GitHub state                                    |
-| `/close-candidate <owner/repo#n> uphold "…"` | `human-close` — rule, retire `ai:close-candidate`, close. Issue **or** PR, resolved by lookup                                                                                                                                                                                                       |
-| `/close-candidate <owner/repo#n> reject "…"` | `record-close-candidate-verdict … reject` — drop the flag, back to the producer (issue-only)                                                                                                                                                                                                        |
-| `/needs-work <owner/repo#n> "…"`             | `human-rule … needs-work --rework` / `human-rule-issue … needs-work --rework` — the send-back: `ai:needs-work` (PR) plus the trusted `Rework note` work order, one call, pinned to the head sha or the issue. `--rework` is REQUIRED on either subject; there is no parked needs-work               |
-| `/design <owner/repo#n> "…"`                 | `human-rule … design --rework` / `human-rule-issue … design --rework` — the answer, delegated as a work order: `ai:needs-work` on a PR (the same send-back a needs-work is, #219), comment-only on an issue. `--rework` is REQUIRED; there is no parked spelling                                    |
-| `/keep-open <owner/repo#n> "…"`              | `human-rule-issue … keep-open` — the sacred "never re-flag this" (issue-only)                                                                                                                                                                                                                       |
+| Command                                      | The call it invokes                                                                                                                                                                                                                                                                                                                                      |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/nr [1-3]`                                  | `next_ready` + `pr_context` + `pr_checkout` + `clone_release` + `human_rule` (MCP) and the `audit` skill — the next `ai:ready` PR, and the vetter's verdict checked against its diff, its issue and its source. Sends back what it can articulate; the merge is the human's                                                                              |
+| `/ncc [1-3]`                                 | `next_close_candidate` + `close_candidate_context` + `pr_context` (MCP) — the next `ai:close-candidate` flag, and the producer's reason checked against the issue as filed and the code it claims about. Writes no GitHub state — there is no typed `reject`, so the one exit it can articulate is handed over as `/close-candidate <ref> reject`        |
+| `/ndd [1-3]`                                 | `next_design` + `pr_context` + `pr_checkout` + `clone_release` + `human_rule` (MCP) and the `audit` skill — the next `ai:design` PR, and the raised question checked against its issue, its diff and its source: genuine (presented with its option space, for the human to answer), already answered or misrouted (ruled here, reported in a few lines) |
+| `/nm [1-3]`                                  | `next_leak` + `pr_context` + `pr_checkout` + `clone_release` + `human_rule` (MCP) and the `audit` skill — the next FSM-conformance leak, and which of three places the defect is in: the PR's state record, the machine's vocabulary, or the classifier. Sends back what it can articulate; the close is the human's                                     |
+| `/close-candidate <owner/repo#n> uphold "…"` | `human-close` — rule, retire `ai:close-candidate`, close. Issue **or** PR, resolved by lookup                                                                                                                                                                                                                                                            |
+| `/close-candidate <owner/repo#n> reject "…"` | `record-close-candidate-verdict … reject` — drop the flag, back to the producer (issue-only)                                                                                                                                                                                                                                                             |
+| `/needs-work <owner/repo#n> "…"`             | `human-rule … needs-work --rework` / `human-rule-issue … needs-work --rework` — the send-back: `ai:needs-work` (PR) plus the trusted `Rework note` work order, one call, pinned to the head sha or the issue. `--rework` is REQUIRED on either subject; there is no parked needs-work                                                                    |
+| `/design <owner/repo#n> "…"`                 | `human-rule … design --rework` / `human-rule-issue … design --rework` — the answer, delegated as a work order: `ai:needs-work` on a PR (the same send-back a needs-work is, #219), comment-only on an issue. `--rework` is REQUIRED; there is no parked spelling                                                                                         |
+| `/keep-open <owner/repo#n> "…"`              | `human-rule-issue … keep-open` — the sacred "never re-flag this" (issue-only)                                                                                                                                                                                                                                                                            |
 
 Names collide across plugins; `/human-fsm:close-candidate` disambiguates.
 
@@ -29,17 +29,25 @@ inbox: the merge queue, the flag queue, the design questions, and the leaks. The
 rest are the rulings. They differ in how they reach the binary, and the
 difference is the point.
 
+A read that can articulate the ruling takes it: `/nr`, `/ndd` and `/nm` carry
+`human_rule` and send back what they can put into words, so what reaches the
+human is the merge, the close, or the design question no source they can read
+settles. `/ncc` is the exception and says so in its own file: there is no typed
+`reject`, and `human_rule_issue` refuses `needs-work` on a live flag because it
+would strand it, so the reject it can articulate is handed over rather than
+taken.
+
 The rulings shell out to a `pr-review-report` subcommand. The reads call **MCP
 tools** — served by the `fsm` server this plugin ships in its own manifest — and
-**no shell at all**. `/nr` is granted `next_ready`, `pr_context`, `pr_checkout`
-and `clone_release`, plus `Skill` and `Read`, which it needs because it puts the
-PR's source on disk and audits it. `/ndd` is granted the same shape with
-`next_design` at its head, because a design question is a claim about code on a
-PR and weighing its options means reading the tree. `/nm` is granted the same
-shape with `next_leak` at its head: locating a leak sometimes turns on what the
-code actually did, so the tree has to be reachable — though most leaks are
-located from the trusted comments and the labels, and the lens is the exception
-rather than a step. `/ncc` is granted `next_close_candidate`,
+**no shell at all**. `/nr` is granted `next_ready`, `pr_context`, `pr_checkout`,
+`clone_release` and `human_rule`, plus `Skill` and `Read`, which it needs
+because it puts the PR's source on disk and audits it. `/ndd` is granted the
+same shape with `next_design` at its head, because a design question is a claim
+about code on a PR and weighing its options means reading the tree. `/nm` is
+granted the same shape with `next_leak` at its head: locating a leak sometimes
+turns on what the code actually did, so the tree has to be reachable — though
+most leaks are located from the trusted comments and the labels, and the lens is
+the exception rather than a step. `/ncc` is granted `next_close_candidate`,
 `close_candidate_context` and `pr_context`, and those three only: a flag has no
 diff and no tree to check out, so there is nothing for `Skill` or `Read` to
 reach, and a grant a command cannot use is surface it cannot account for. None

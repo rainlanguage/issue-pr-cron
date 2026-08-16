@@ -18327,10 +18327,18 @@ fn is_leak_candidate(labels: &[String]) -> bool {
 /// is un-vetted by design, not leaked. A producer note posted AFTER the clearance supersedes it —
 /// the producer acting on an unlabelled PR is exactly what the leak bucket exists to catch.
 /// Ordinary vetter verdict comments are not hand-off markers and decide nothing here.
+///
+/// A [`BodyRepair`] receipt ([`is_body_repair_note`]) is the producer note that bears NO state: it
+/// rewrites body text, hands nothing to anyone, and leaves the PR exactly where it was. The walk
+/// steps past one to whatever older marker stands behind it, so a repair cannot MAKE a leak and
+/// cannot hide one either.
 fn leak_reason(trusted_bodies: &[String]) -> Option<String> {
     for b in trusted_bodies.iter().rev() {
         if b.starts_with(BLOCKED_ON_CLEARED_MARKER) {
             return None;
+        }
+        if is_body_repair_note(b) {
+            continue;
         }
         if b.starts_with("🤖 ai:producer") {
             return Some(b.replace('\n', " "));
@@ -19653,9 +19661,10 @@ struct Leak {
 /// Leak detection: a candidate PR the producer has commented on = a hand-off with no modeled state
 /// (the FSM leaking). A candidate with NO producer comment is just freshly-open/unvetted. The pure
 /// decision is [`leak_reason`]: a vetter blocked-on CLEARANCE as the newest hand-off marker is a
-/// MODELED transition into un-vetted (#161), never a leak. Costs one `gh pr view` per candidate, on
-/// both callers alike — and the candidate set is [`is_leak_candidate`]'s, so the classifier decides
-/// who is even asked about.
+/// MODELED transition into un-vetted (#161), never a leak. Costs one batched comment read per
+/// [`LEAK_COMMENT_BATCH`] candidates on both callers alike, plus a `gh pr view` for each candidate
+/// that read did not answer for — and the candidate set is [`is_leak_candidate`]'s, so the
+/// classifier decides who is even asked about.
 struct LeakScan {
     /// The leaks, oldest first ([`rank_leaks`]).
     leaks: Vec<Leak>,
@@ -19689,9 +19698,135 @@ fn rank_leaks(leaks: &mut [Leak]) {
     leaks.sort_by(|a, b| leak_order_key(a).cmp(&leak_order_key(b)));
 }
 
-/// Live leak scan: the real `gh pr view` behind [`leak_scan_with`].
-fn leak_scan(candidates: &[LeakCandidate]) -> LeakScan {
+/// PRs one batched comment read asks GitHub about. The scan's cost is round trips, and this is how
+/// many candidates each one buys; the product with [`LEAK_COMMENT_PAGE`] is the payload one
+/// response may weigh.
+const LEAK_COMMENT_BATCH: usize = 20;
+
+/// Comments fetched per PR in a batched read, newest last — GitHub's page cap for one connection.
+/// A PR holding more is not read short: [`leak_comments_page`] reports it UNREAD and [`leak_scan`]
+/// pays a per-PR `gh pr view`, so the batch is a speed change and never a different answer.
+const LEAK_COMMENT_PAGE: usize = 100;
+
+/// PURE: the aliased GraphQL query reading `n` PRs' comments in one round trip — one `c<i>` alias
+/// per PR over three DECLARED VARIABLES each, so GitHub types and escapes every slug rather than
+/// this binary interpolating one into query text.
+fn leak_comments_query(n: usize) -> String {
+    let vars: Vec<String> = (0..n)
+        .map(|i| format!("$o{i}: String!, $r{i}: String!, $p{i}: Int!"))
+        .collect();
+    let fields: Vec<String> = (0..n)
+        .map(|i| {
+            format!(
+                "  c{i}: repository(owner: $o{i}, name: $r{i}) {{ pullRequest(number: $p{i}) \
+                 {{ comments(last: {LEAK_COMMENT_PAGE}) {{ totalCount nodes {{ author {{ login }} \
+                 body }} }} }} }}"
+            )
+        })
+        .collect();
+    format!("query({}) {{\n{}\n}}", vars.join(", "), fields.join("\n"))
+}
+
+/// PURE: the `gh api graphql` argv for one chunk.
+///
+/// The flag is decided by the variable's DECLARED TYPE, as in [`subject_query_args`]: `gh api
+/// graphql` retypes a `-F` value that parses as an integer, so an all-numeric owner or repo name
+/// passed with `-F` would send an `Int` at a `String!` and GitHub would refuse the whole chunk.
+fn leak_comments_args(chunk: &[&SubjectRef]) -> Vec<String> {
+    let mut args = vec![
+        "graphql".to_string(),
+        "-f".to_string(),
+        format!("query={}", leak_comments_query(chunk.len())),
+    ];
+    for (i, s) in chunk.iter().enumerate() {
+        let (owner, repo) = s.repo.split_once('/').unwrap_or(("", s.repo.as_str()));
+        args.push("-f".to_string());
+        args.push(format!("o{i}={owner}"));
+        args.push("-f".to_string());
+        args.push(format!("r{i}={repo}"));
+        args.push("-F".to_string());
+        args.push(format!("p{i}={}", s.number));
+    }
+    args
+}
+
+/// PURE: one chunk's response, split back into `n` per-PR reads IN ALIAS ORDER and reshaped into
+/// the `{"comments": […]}` document [`trusted_comments`] reads — so the batch and the per-PR
+/// `gh pr view` are two ways to obtain ONE shape, not two shapes to keep in step.
+///
+/// `None` at an alias means UNREAD, and every uncertainty resolves that way: a null repository or
+/// pull request, a node list that is not one, and a `totalCount` above what the page returned.
+/// That last is the truncation guard — a newest-100 page of a longer thread can hide the trusted
+/// marker [`leak_reason`] answers on, and an unread alias costs a refetch rather than a verdict.
+fn leak_comments_page(doc: &Value, n: usize) -> Vec<Option<Value>> {
+    (0..n)
+        .map(|i| {
+            let conn = doc.pointer(&format!("/data/c{i}/pullRequest/comments"))?;
+            let nodes = conn.get("nodes")?.as_array()?;
+            let total = conn.get("totalCount")?.as_u64()?;
+            if total > nodes.len() as u64 {
+                return None;
+            }
+            Some(serde_json::json!({ "comments": nodes }))
+        })
+        .collect()
+}
+
+/// LIVE: every candidate's comments, batched, keyed by `(repo, number)`.
+///
+/// An ABSENT key means this read did not answer for that PR and the caller must ask again — never
+/// "no comments". A chunk that fails outright contributes no keys, which says that of all its
+/// members at once.
+fn leak_comments_batch(
+    candidates: &[LeakCandidate],
+) -> std::collections::HashMap<(String, u64), Value> {
+    let subjects: Vec<&SubjectRef> = candidates.iter().map(|c| &c.subject).collect();
+    let chunks: Vec<&[&SubjectRef]> = subjects.chunks(LEAK_COMMENT_BATCH).collect();
+    let pages = map_bounded(&chunks, |chunk| {
+        let args = leak_comments_args(chunk);
+        let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+        match gh_retrying(|| gh_api_result(&argref)) {
+            Ok(doc) => leak_comments_page(&doc, chunk.len()),
+            Err(_) => vec![None; chunk.len()],
+        }
+    });
+    chunks
+        .into_iter()
+        .flatten()
+        .zip(pages.into_iter().flatten())
+        .filter_map(|(s, read)| read.map(|v| ((s.repo.clone(), s.number), v)))
+        .collect()
+}
+
+/// [`leak_scan_with`] over a batch that answered for SOME of the candidates, with `per_pr` asked
+/// about the rest.
+///
+/// The per-PR read is the FALLBACK, not the plan, and it is what keeps the batch a pure speed
+/// change: every candidate the batch left out is still asked about one at a time, so the scan reads
+/// the same population it always did and a PR reaches `unreadable` only when BOTH reads failed.
+/// `per_pr` is a seam for that reason — the fallback is only reachable in production when a chunk
+/// or an alias fails, so without it nothing could exercise the branch that keeps the population
+/// whole.
+fn leak_scan_batched<F>(
+    candidates: &[LeakCandidate],
+    batched: &std::collections::HashMap<(String, u64), Value>,
+    per_pr: F,
+) -> LeakScan
+where
+    F: Fn(&SubjectRef) -> Option<Value> + Sync,
+{
     leak_scan_with(candidates, |s| {
+        batched
+            .get(&(s.repo.clone(), s.number))
+            .cloned()
+            .or_else(|| per_pr(s))
+    })
+}
+
+/// Live leak scan: one batched GraphQL read for the whole candidate set, and `gh pr view` for
+/// whatever it did not answer for.
+fn leak_scan(candidates: &[LeakCandidate]) -> LeakScan {
+    leak_scan_batched(candidates, &leak_comments_batch(candidates), |s| {
         gh_json(&[
             "pr",
             "view",
@@ -19754,9 +19889,9 @@ where
 /// producer acting outside the FSM). The leak count is the conformance metric: it trends to zero as
 /// the producer is restricted to labeled transitions. The legacy `states`/`counts`/`leaks` keys are
 /// kept UNCHANGED for the dashboard's existing reads; the new `lanes` object + additive `counts` keys
-/// are the full-machine view. Runtime is O(unlabeled + ai:ready + ai:design producer PRs) extra
-/// `gh` calls (the leak/reason check, the verdict-currency check that returns an ai:ready PR to
-/// un-vetted, and — `--json` only — the design cell's split, #240).
+/// are the full-machine view. Runtime is O(ai:ready + ai:design producer PRs) extra `gh` calls (the
+/// verdict-currency check that returns an ai:ready PR to un-vetted, and — `--json` only — the
+/// design cell's split, #240), plus [`leak_scan`]'s batched read over the unlabeled ones.
 fn human_queue_mode(json_out: bool) -> i32 {
     let ProducerPrInventory {
         buckets,
@@ -28295,6 +28430,141 @@ mod next_leak_tests {
         json!({"comments": [{"author": {"login": TRUSTED_AUTHOR}, "body": body}]})
     }
 
+    // ── the batched read ──────────────────────────────────────────────────────────────────────
+
+    /// One chunk's response as GitHub returns it: an entry per alias under `data`.
+    fn batch_doc(entries: &[(usize, Value)]) -> Value {
+        let mut data = serde_json::Map::new();
+        for (i, v) in entries {
+            data.insert(format!("c{i}"), v.clone());
+        }
+        json!({ "data": data })
+    }
+
+    fn pr_with(total: u64, bodies: &[&str]) -> Value {
+        let nodes: Vec<Value> = bodies
+            .iter()
+            .map(|b| json!({"author": {"login": TRUSTED_AUTHOR}, "body": b}))
+            .collect();
+        json!({"pullRequest": {"comments": {"totalCount": total, "nodes": nodes}}})
+    }
+
+    // The argv is TYPED per variable: an all-numeric owner or repo passed with `-F` would be sent
+    // as an `Int` at a `String!` and GitHub would refuse the whole chunk.
+    #[test]
+    fn a_batched_read_declares_one_typed_alias_per_pr() {
+        let subjects = [subject("123/456", 7), subject("o/r", 9)];
+        let refs: Vec<&SubjectRef> = subjects.iter().collect();
+        let args = leak_comments_args(&refs);
+        assert_eq!(args[0], "graphql");
+        assert_eq!(args[1], "-f");
+        let query = args[2].strip_prefix("query=").expect("the query flag");
+        // Two aliases, and the last one is the second PR's — so a chunk cannot silently ask about
+        // fewer PRs than it was handed.
+        assert!(
+            query.contains("c0: repository(owner: $o0, name: $r0)"),
+            "{query}"
+        );
+        assert!(
+            query.contains("c1: repository(owner: $o1, name: $r1)"),
+            "{query}"
+        );
+        assert!(!query.contains("c2:"), "{query}");
+        assert_eq!(
+            args[3..],
+            [
+                "-f", "o0=123", "-f", "r0=456", "-F", "p0=7", //
+                "-f", "o1=o", "-f", "r1=r", "-F", "p1=9",
+            ]
+            .map(String::from)
+        );
+    }
+
+    // The split is BY ALIAS, so a response's own ordering cannot reorder the chunk, and the shape
+    // handed back is the one `trusted_comments` reads.
+    #[test]
+    fn a_batch_response_splits_by_alias_into_the_per_pr_shape() {
+        let doc = batch_doc(&[
+            (1, pr_with(1, &["🤖 ai:producer second"])),
+            (0, pr_with(1, &["🤖 ai:producer first"])),
+        ]);
+        let reads = leak_comments_page(&doc, 2);
+        assert_eq!(reads.len(), 2);
+        assert_eq!(
+            trusted_comments(reads[0].as_ref().expect("alias c0"), None),
+            vec!["🤖 ai:producer first"]
+        );
+        assert_eq!(
+            trusted_comments(reads[1].as_ref().expect("alias c1"), None),
+            vec!["🤖 ai:producer second"]
+        );
+    }
+
+    // EVERY uncertainty is UNREAD, which is what keeps the batch a speed change: an alias reported
+    // unread is refetched per-PR by `leak_scan`, and only a failure of BOTH reads reaches
+    // `unreadable`. A truncated page is in that set because the trusted marker `leak_reason`
+    // answers on can sit below the newest page.
+    #[test]
+    fn an_uncertain_alias_is_unread_rather_than_read_as_no_comments() {
+        let unread = batch_doc(&[
+            (0, json!(null)),
+            (1, json!({"pullRequest": null})),
+            (2, pr_with(300, &["🤖 ai:producer newest of many"])),
+            (3, json!({"pullRequest": {"comments": {"totalCount": 0}}})),
+        ]);
+        assert_eq!(leak_comments_page(&unread, 4), vec![None, None, None, None]);
+        // An alias the response omits entirely is unread too, never an empty thread.
+        assert_eq!(leak_comments_page(&batch_doc(&[]), 1), vec![None]);
+        // A PR with no comments at all IS read, and reads as no comments.
+        let empty = leak_comments_page(&batch_doc(&[(0, pr_with(0, &[]))]), 1);
+        assert_eq!(empty[0], Some(json!({"comments": []})));
+    }
+
+    // WHAT THE BATCH LEFT OUT IS STILL ASKED ABOUT. A candidate absent from the batch is a PR
+    // nobody has read yet, so it costs a per-PR fetch — dropping the fallback would turn every
+    // batch gap into an `unreadable`, and a chunk that failed wholesale into 20 of them.
+    #[test]
+    fn a_candidate_the_batch_missed_is_refetched_not_declared_unknown() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let candidates = vec![
+            candidate("o/batched", 1, "2026-01-01T00:00:00Z"),
+            candidate("o/missed", 2, "2026-01-02T00:00:00Z"),
+            candidate("o/gone", 3, "2026-01-03T00:00:00Z"),
+        ];
+        let batched = std::collections::HashMap::from([(
+            ("o/batched".to_string(), 1),
+            producer_comments("🤖 ai:producer from the batch"),
+        )]);
+        let fetches = AtomicUsize::new(0);
+        let scan = leak_scan_batched(&candidates, &batched, |s| {
+            fetches.fetch_add(1, Ordering::SeqCst);
+            match s.repo.as_str() {
+                "o/missed" => Some(producer_comments("🤖 ai:producer from the refetch")),
+                _ => None,
+            }
+        });
+        // The batch hit is NOT refetched; the two it missed each are.
+        assert_eq!(fetches.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            scan.leaks
+                .iter()
+                .map(|l| (l.subject.repo.as_str(), l.reason.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("o/batched", "🤖 ai:producer from the batch"),
+                ("o/missed", "🤖 ai:producer from the refetch"),
+            ]
+        );
+        // Only the PR NEITHER read answered for is unknown.
+        assert_eq!(
+            scan.unreadable
+                .iter()
+                .map(|s| s.repo.as_str())
+                .collect::<Vec<_>>(),
+            vec!["o/gone"]
+        );
+    }
+
     // THE POPULATION, and the defect it was: the leak set is [`classify_lane`]'s OWN Leak verdict,
     // never a second reading of the labels.
     //
@@ -28377,6 +28647,36 @@ mod next_leak_tests {
         // makes a DELETED state (as opposed to a retired-but-bucketed one) surface here.
         assert!(is_leak_candidate(&s(&["enhancement"])));
         assert!(is_leak_candidate(&s(&["human:parked-forever"])));
+    }
+
+    // A BODY REPAIR IS NOT A HAND-OFF, asserted where the queue is actually built: an unlabelled PR
+    // whose only trusted note is a repair receipt is nobody's leak, while the PR beside it — same
+    // labels, a real hand-off note — still is. A leak is a PR nothing will pick up, and the
+    // vetter's population is every open producer PR, unfiltered by label, so a repaired PR is in it.
+    #[test]
+    fn a_repair_receipt_is_not_a_leak_and_does_not_mask_one() {
+        let candidates = vec![
+            candidate("o/repaired", 1, "2026-01-01T00:00:00Z"),
+            candidate("o/handed-off", 2, "2026-01-02T00:00:00Z"),
+        ];
+        let receipt = body_repair_comment(BodyRepair::QaBlock, "restated the evidence block");
+        let scan = leak_scan_with(&candidates, |s| match s.repo.as_str() {
+            "o/repaired" => Some(producer_comments(&receipt)),
+            _ => Some(producer_comments(
+                "🤖 ai:producer\nDesign-question: which constant is shared?",
+            )),
+        });
+        assert_eq!(
+            scan.leaks
+                .iter()
+                .map(|l| l.subject.repo.as_str())
+                .collect::<Vec<_>>(),
+            vec!["o/handed-off"]
+        );
+        // Not a leak and not an unknown either — the read SUCCEEDED and answered "no hand-off".
+        assert!(scan.unreadable.is_empty());
+        // And the receipt is no shield: the read failing over the same PR is still unknown.
+        assert_eq!(leak_scan_with(&candidates, |_| None).unreadable.len(), 2);
     }
 
     // OLDEST FIRST, and the ranking is the tool's own decision rather than `gh search prs`'s.
@@ -35571,17 +35871,152 @@ fn body_edit_vet_note(prj: &Value) -> Option<String> {
     })
 }
 
+/// A transition that rewrites PR BODY TEXT and moves no state.
+///
+/// Its trusted note is a RECEIPT for a rewrite, not a hand-off: nothing is handed to the vetter, to
+/// a human or to the producer's next run, and the PR is left in the state it already had. So
+/// [`leak_reason`] walks past one — an unlabelled PR a body repair touched is the ordinary
+/// un-vetted PR the vetter's unfiltered enumeration reaches, not a PR in nobody's queue.
+///
+/// [`write_repaired_body`] is the ONE writer of these notes and builds every one from a variant
+/// here, so the marker the leak walk skips and the marker actually posted cannot be two facts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BodyRepair {
+    /// `repair-qa-block`.
+    QaBlock,
+    /// `weaken-closes`.
+    Linkage,
+}
+
+impl BodyRepair {
+    /// Every variant — the skip set [`is_body_repair_note`] reads. A repair whose marker is missing
+    /// here posts a note the leak walk reads as a hand-off, and `the_skip_set_is_every_repair` is
+    /// what catches that.
+    const ALL: [BodyRepair; 2] = [BodyRepair::QaBlock, BodyRepair::Linkage];
+
+    /// The line-2 marker naming this repair. Distinct from every state noun ([`state_noun`]), which
+    /// is what keeps a hand-off from being skipped as a repair.
+    fn marker(self) -> &'static str {
+        match self {
+            BodyRepair::QaBlock => "QA-block repair:",
+            BodyRepair::Linkage => "Linkage repair:",
+        }
+    }
+}
+
+/// PURE: the trusted note a body repair posts — `🤖 ai:producer`, the repair's marker, the detail.
+fn body_repair_comment(repair: BodyRepair, detail: &str) -> String {
+    format!("🤖 ai:producer\n{} {detail}", repair.marker())
+}
+
+/// PURE: is this trusted body a body-repair receipt? The marker counts under the producer head, on
+/// the note's own second line, nowhere else — so no other note is skipped for quoting one.
+fn is_body_repair_note(body: &str) -> bool {
+    body.strip_prefix("🤖 ai:producer\n").is_some_and(|rest| {
+        BodyRepair::ALL
+            .iter()
+            .any(|repair| rest.starts_with(repair.marker()))
+    })
+}
+
+#[cfg(test)]
+mod body_repair_note_tests {
+    use super::*;
+
+    const DETAIL: &str = "rewrote one span of the body";
+
+    /// Every variant, written out HERE rather than read off [`BodyRepair::ALL`] — a repair the skip
+    /// set omits is then a test failure rather than a note the leak walk misreads. The `match` is
+    /// the compile error a variant added to neither list hits.
+    const EVERY: [BodyRepair; 2] = [BodyRepair::QaBlock, BodyRepair::Linkage];
+
+    fn cleared() -> String {
+        blocked_on_cleared_comment(&[(BlockedByRef::parse("o/r#2").unwrap(), DepState::Merged)])
+    }
+
+    #[test]
+    fn the_skip_set_is_every_repair() {
+        for repair in EVERY {
+            match repair {
+                BodyRepair::QaBlock | BodyRepair::Linkage => {}
+            }
+            assert!(
+                BodyRepair::ALL.contains(&repair),
+                "{repair:?} is outside the skip set"
+            );
+        }
+        assert_eq!(BodyRepair::ALL.len(), EVERY.len());
+    }
+
+    /// Every repair's receipt is walked past — and walked PAST, not stopped at: whatever marker
+    /// stands behind it still decides.
+    #[test]
+    fn every_body_repair_note_is_walked_past() {
+        let hand_off = state_comment(STATE_DESIGN.key, "which constant is shared?", &[]);
+        for repair in EVERY {
+            let note = body_repair_comment(repair, DETAIL);
+            assert!(is_body_repair_note(&note), "{note}");
+            // Nothing was handed off, so the PR is left where it already was — un-vetted, a lane
+            // the vetter's own enumeration reaches, rather than the bucket for PRs in no queue.
+            assert_eq!(leak_reason(std::slice::from_ref(&note)), None);
+            assert_eq!(
+                classify_lane(&[], None, false),
+                (Lane::VetLifecycle, STATE_UN_VETTED.key.to_string())
+            );
+            // It cannot HIDE a leak behind it…
+            assert!(leak_reason(&[hand_off.clone(), note.clone()]).is_some());
+            // …nor undo a clearance that already modelled the transition.
+            assert_eq!(leak_reason(&[cleared(), note]), None);
+        }
+    }
+
+    /// The skip is a marker read, so a repair marker must be no state noun a real hand-off spells.
+    #[test]
+    fn a_state_hand_off_is_never_read_as_a_repair() {
+        let mut notes: Vec<String> = PRODUCER_STATE_LABELS
+            .iter()
+            .map(|l| state_comment(l, "why", &[]))
+            .collect();
+        notes.push("🤖 ai:producer\nClose-candidate: already fixed on main".to_string());
+        for note in notes {
+            assert!(!is_body_repair_note(&note), "{note}");
+            assert!(leak_reason(std::slice::from_ref(&note)).is_some(), "{note}");
+        }
+    }
+
+    /// The marker counts only under the producer's own head, and only on the note's own second
+    /// line: every other placement is read as the ordinary producer note it is.
+    #[test]
+    fn only_a_producer_notes_own_marker_line_is_a_receipt() {
+        for repair in EVERY {
+            let marker = repair.marker();
+            for imposter in [
+                format!("🤖 ai:vetter\n{marker} {DETAIL}"),
+                format!("🤖 ai:producer {marker} {DETAIL}"),
+                format!("🤖 ai:producer\nBlocked-on: waiting\n{marker} {DETAIL}"),
+            ] {
+                assert!(!is_body_repair_note(&imposter), "{imposter}");
+            }
+        }
+    }
+}
+
 /// Write a repaired body and leave the trusted `🤖 ai:producer` marker that says so. GitHub hides
 /// body edit history, so without the comment the only record of a repair is the body it produced.
 /// An identical marker already present is not re-posted, which is what keeps a retried repair from
 /// accumulating notes.
+///
+/// The note is BUILT here rather than accepted as text: a repair that could hand in its own
+/// wording could hand in one [`leak_reason`] reads as a hand-off.
 fn write_repaired_body(
     slug: &str,
     pr: &str,
     prj: &Value,
     new_body: &str,
-    comment: &str,
+    repair: BodyRepair,
+    detail: &str,
 ) -> Result<(), (i32, String)> {
+    let comment = body_repair_comment(repair, detail);
     let subject = format!("{slug}#{pr}");
     if !gh_run(&["pr", "edit", pr, "-R", slug, "--body", new_body]) {
         return Err((
@@ -35591,8 +36026,8 @@ fn write_repaired_body(
     }
     let already = trusted_comments(prj, Some("🤖 ai:producer"))
         .iter()
-        .any(|b| b == comment);
-    if !already && !gh_run(&["pr", "comment", pr, "-R", slug, "--body", comment]) {
+        .any(|b| b == &comment);
+    if !already && !gh_run(&["pr", "comment", pr, "-R", slug, "--body", &comment]) {
         return Err((
             1,
             format!("error: {subject} body repaired but FAILED to post the marker comment"),
@@ -35667,14 +36102,13 @@ fn repair_qa_block_apply(
     } else {
         "replaced"
     };
-    let comment = format!(
-        "🤖 ai:producer\nQA-block repair: {verb} QA-GUIDE section 8's evidence block in the PR \
-         body via `pr-review-report repair-qa-block`. Every byte outside the `## QA` section is \
-         unchanged."
+    let detail = format!(
+        "{verb} QA-GUIDE section 8's evidence block in the PR body via `pr-review-report \
+         repair-qa-block`. Every byte outside the `## QA` section is unchanged."
     );
     let skip_comment = trusted_comments(&prj, Some("🤖 ai:producer"))
         .iter()
-        .any(|b| b == &comment);
+        .any(|b| b == &body_repair_comment(BodyRepair::QaBlock, &detail));
 
     if dry_run {
         return Ok(format!(
@@ -35692,7 +36126,7 @@ fn repair_qa_block_apply(
         ));
     }
 
-    write_repaired_body(slug, pr, &prj, &new_body, &comment)?;
+    write_repaired_body(slug, pr, &prj, &new_body, BodyRepair::QaBlock, &detail)?;
     let mut out = format!("{subject}: {verb} the QA block ({} bytes)", new_body.len());
     if let Some(note) = body_edit_vet_note(&prj) {
         out.push('\n');
@@ -35732,10 +36166,10 @@ fn weaken_closes_apply(
         Err(r) => return Err((r.exit(), r.render(&subject).trim_end().to_string())),
     };
     let new_body = apply_body_edits(body, &edits);
-    let comment = format!(
-        "🤖 ai:producer\nLinkage repair: weakened `Closes #{issue}` to `Refs #{issue}` in the PR \
-         body via `pr-review-report weaken-closes`. Every byte outside that keyword is unchanged, \
-         and the `## QA` section was not touched."
+    let detail = format!(
+        "weakened `Closes #{issue}` to `Refs #{issue}` in the PR body via `pr-review-report \
+         weaken-closes`. Every byte outside that keyword is unchanged, and the `## QA` section was \
+         not touched."
     );
 
     if dry_run {
@@ -35755,7 +36189,7 @@ fn weaken_closes_apply(
         ));
     }
 
-    write_repaired_body(slug, pr, &prj, &new_body, &comment)?;
+    write_repaired_body(slug, pr, &prj, &new_body, BodyRepair::Linkage, &detail)?;
     let still = closing_keywords(&new_body);
     let mut out = format!(
         "{subject}: weakened {} `Closes #{issue}` reference(s) to `Refs` — closing set is now {:?}",
@@ -67264,8 +67698,13 @@ mod marketplace_tests {
     // prose promises a read it has no tool to perform, and the generic sweep would still pass
     // because the remainder is a legal shape again. The lens rides here where `/ncc` refuses it,
     // because a design question is a claim ABOUT CODE on a PR — `pr:<number>` names its subject.
+    //
+    // `human_rule` is the fifth and the only one that writes GitHub state. Two of this command's
+    // three findings — a question already answered, a question misrouted — are answers it rules
+    // itself, so dropping it leaves prose that promises a send-back with no tool to make one, and
+    // a reader who reaches for `pr-review-report` through a shell instead.
     #[test]
-    fn ndd_grants_the_queue_the_pr_the_source_and_the_lens() {
+    fn ndd_grants_the_queue_the_pr_the_source_the_lens_and_the_send_back() {
         let Some(text) = repo_root_text("plugins/human-fsm/commands/ndd.md") else {
             return; // not checked out (nix build sandbox)
         };
@@ -67281,11 +67720,12 @@ mod marketplace_tests {
                     plugin_mcp_tool_name("human-fsm", "fsm", "pr_context"),
                     plugin_mcp_tool_name("human-fsm", "fsm", "pr_checkout"),
                     plugin_mcp_tool_name("human-fsm", "fsm", "clone_release"),
+                    plugin_mcp_tool_name("human-fsm", "fsm", "human_rule"),
                 ],
                 native: vec!["Skill".to_string(), "Read".to_string()],
             }),
             "/ndd reads the design queue, the PR behind its head, and the SOURCE the question \
-             turns on — and releases the checkout it took"
+             turns on, releases the checkout it took, and rules the answers it can articulate"
         );
     }
 

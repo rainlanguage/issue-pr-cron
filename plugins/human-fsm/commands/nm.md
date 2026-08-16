@@ -115,7 +115,10 @@ so a `human:*` state still in the vocabulary disqualifies it exactly as an
 `ai:*` one does; (b) it carries no `ai:*` label at all, even a dead one, because
 the vetter absorbs those as un-vetted; and (c) its newest trusted hand-off
 marker is a `🤖 ai:producer` note — a vetter blocked-on CLEARANCE as the newest
-marker is the modeled transition into un-vetted instead, never a leak.
+marker is the modeled transition into un-vetted instead, never a leak, and a
+body-repair receipt (`QA-block repair:`, `Linkage repair:`) is no marker at all:
+it rewrites body text, moves no state, and the walk steps past it to whatever
+stands behind.
 
 Hold the row's evidence against those three as written. Clause (a) is the one
 that was wrong in the machinery itself and is worth checking first: read
