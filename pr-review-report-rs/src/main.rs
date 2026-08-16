@@ -2639,6 +2639,410 @@ fn pr_exists_probe(slug: &str, num: u64) -> Result<Value, GhFailure> {
     ])
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// THE QUEUE IN ONE QUERY (#314)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// `presentable_queue` used to answer a one-PR question with ~29 `gh` subprocesses: one
+// `gh search prs`, then a `gh pr view` plus a review-threads `gh api graphql` per candidate over
+// [`QUEUE_FETCH_CONCURRENCY`] workers, plus the org-wide `archived_repos()` walk. MEASURED at 41-56s
+// of dead time before anything reached the human, and the concurrency was COUNTERPRODUCTIVE: 8
+// concurrent full-field `gh pr view` took 19.1s wall against 3.0s for one, because a burst from one
+// token draws the secondary limit and `comments` is a heavy field.
+//
+// Everything those calls asked for is one `search(type:ISSUE)` selection set away, and GitHub bills
+// it as FOUR of 5000 rate-limit points. The two windows this opens are the two things that must be
+// handled rather than assumed:
+//
+// * `comments(last:100)` is a WINDOW where `gh pr view --json comments` reads all of them. A PR with
+//   more than 100 comments after its last `ai:vetter` comment would lose the verdict and read as
+//   un-vetted — a PR silently dropped out of the human's queue. [`comments_windowed_out`] names that
+//   case exactly (truncated AND no trusted vetter comment in the window) and it falls back to the
+//   per-PR fetch, so a window can never spell "no verdict".
+// * `reviewThreads(first:100)` is the same shape. A non-zero unresolved count inside the window is
+//   already decisive (the PR is the producer's work either way), so only "all 100 resolved and there
+//   are more" is unknown — and that falls back to the paginated [`unresolved_threads`] walk.
+//
+// And `mergeable` is computed LAZILY by GitHub: a cold batch ask answers `UNKNOWN` where a per-PR
+// view GitHub had already warmed answers `MERGEABLE`. [`presentable_state`] buckets `UNKNOWN` as
+// not-presentable, so a cold answer would silently shorten the human's queue. See
+// [`settle_merge_unknown`].
+//
+// `archived_repos()` is GONE from this path, not because the withholding is: `repository{isArchived}`
+// rides on the same query, read live off the repository object rather than out of a search index, and
+// [`archived_from_nodes`] builds the same [`ArchivedRepos`] set [`withhold_archived`] already takes.
+// Unreadable archived state is still [`GhFailure::Malformed`] and still ABORTS (#206/#199) — it is
+// the org-wide paged walk that is redundant here, never the guard.
+
+/// Every field the queue's gate chain and both its consumers read, off ONE request.
+///
+/// The selection set is not a superset of what is needed — each entry has a reader:
+/// `mergeable`/`statusCheckRollup`/`reviewDecision` are [`presentable_state`]'s inputs,
+/// `headRefOid`+`comments` are [`vetted_at_head`]'s and [`cost_from_comment`]'s,
+/// `title`/`body`/`baseRefName`/`labels`/`url`/`number` are what `next_ready` renders (`body` is the
+/// deploy-marker read in [`requires_redeploy`]), `reviewThreads` is the open-threads gate,
+/// `isDraft` is the candidate filter and `repository{nameWithOwner isArchived}` is the #206
+/// withholding.
+///
+/// `commits(last:1)` is the ONLY way to reach a PR's check rollup in GraphQL, and its
+/// `contexts` nodes carry the `name`/`status`/`conclusion`/`context`/`state` fields verbatim in the
+/// shape `gh pr view --json statusCheckRollup` hands [`classify_ci`] and [`failing_check_names`] —
+/// so the rollup is PASSED THROUGH rather than re-derived from the aggregate `state`. The aggregate
+/// would have lost `failingChecks` and `checkCount`, which `next_ready` reports.
+///
+/// MEASURED against the live 14-PR queue: 4.1s, cost 4/5000, nodeCount 40,200 of the 500,000 ceiling
+/// — and nodeCount is computed from the `first:`/`last:` arguments, not the rows returned, so 40,200
+/// is already the figure for a FULL 100-PR page.
+const QUEUE_SEARCH_QUERY: &str = "query($q:String!,$c:String){\
+     search(query:$q,type:ISSUE,first:100,after:$c){\
+     pageInfo{hasNextPage endCursor}\
+     nodes{... on PullRequest{\
+     number url title body baseRefName headRefOid mergeable reviewDecision isDraft \
+     repository{nameWithOwner isArchived}\
+     labels(first:100){nodes{name}}\
+     comments(last:100){totalCount nodes{author{login} body}}\
+     reviewThreads(first:100){nodes{isResolved}pageInfo{hasNextPage}}\
+     commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){pageInfo{hasNextPage}\
+     nodes{__typename ... on CheckRun{name status conclusion} ... on StatusContext{context state}}}}}}}\
+     }}}}";
+
+/// PURE: the search qualifiers, from the ONE org scope every other search here reads.
+///
+/// The label is QUOTED because its own name contains the qualifier separator: bare `label:ai:ready`
+/// is a different query from `label:"ai:ready"`, and the difference is silent — it returns rows.
+fn queue_search_scope(orgs: &str) -> String {
+    format!("{} label:\"ai:ready\"", org_search_query(orgs))
+}
+
+/// PURE: one page of [`QUEUE_SEARCH_QUERY`] — its PullRequest nodes and the cursor after it.
+///
+/// A response whose shape cannot be read is [`GhFailure::Malformed`], NEVER an empty page: an empty
+/// page reads as "no `ai:ready` PRs", which is the falsely-empty queue the search-layer abort has
+/// refused since the 1-vs-75 failure. `hasNextPage` with no `endCursor` is malformed for the same
+/// reason [`archived_repos_page`] treats it so — reading it as the end truncates in the direction
+/// that hides work.
+fn queue_search_page(v: &Value) -> Result<(Vec<Value>, Option<String>), GhFailure> {
+    let Some(search) = v.pointer("/data/search") else {
+        return Err(GhFailure::Malformed);
+    };
+    let Some(nodes) = search.get("nodes").and_then(|n| n.as_array()) else {
+        return Err(GhFailure::Malformed);
+    };
+    // An `... on PullRequest` fragment over a type:ISSUE search yields `{}` for any hit that is not
+    // a PR. `is:pr` means GitHub returns none, and an empty object is dropped rather than carried as
+    // a numberless candidate.
+    let prs: Vec<Value> = nodes
+        .iter()
+        .filter(|n| n.get("number").is_some())
+        .cloned()
+        .collect();
+    let has_next = search
+        .pointer("/pageInfo/hasNextPage")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !has_next {
+        return Ok((prs, None));
+    }
+    let Some(cursor) = search
+        .pointer("/pageInfo/endCursor")
+        .and_then(|c| c.as_str())
+        .filter(|c| !c.is_empty())
+    else {
+        return Err(GhFailure::Malformed);
+    };
+    Ok((prs, Some(cursor.to_string())))
+}
+
+/// LIVE: every `ai:ready` open PR in the org scope, with every field the queue needs, cursor-walked.
+///
+/// TYPED failure, not `Option`: this one call now carries what ~29 did, so an `Unauthorized` here is
+/// the same token-wide fact [`queue_abort`] aborts on one candidate down (#129), and a `RateLimited`
+/// page is retried by [`gh_retrying`] rather than counted.
+///
+/// The `scope` is an ARGUMENT rather than read here, so the org scope is named in
+/// [`presentable_queue`] — beside the withholding it obliges. #206's gate is stated over the SOURCE
+/// ("every item that builds an org-scoped search must also withhold archived repos"), and an
+/// enumeration whose scope call has moved into a helper is an enumeration that gate can no longer
+/// see.
+fn queue_search_nodes(scope: &str) -> Result<Vec<Value>, GhFailure> {
+    let q = format!("q={scope}");
+    let query = format!("query={QUEUE_SEARCH_QUERY}");
+    let mut nodes: Vec<Value> = Vec::new();
+    let mut cursor: Option<String> = None;
+    for _ in 0..SEARCH_MAX_PAGES {
+        let mut args: Vec<&str> = vec!["graphql", "-f", &query, "-f", &q];
+        let cf;
+        if let Some(c) = cursor.as_deref() {
+            cf = format!("c={c}");
+            args.push("-f");
+            args.push(&cf);
+        }
+        let v = gh_retrying(|| gh_api_result(&args))?;
+        let (page, next) = queue_search_page(&v)?;
+        nodes.extend(page);
+        let Some(next) = next else {
+            return Ok(nodes);
+        };
+        cursor = Some(next);
+    }
+    Ok(nodes)
+}
+
+/// PURE: the message a failed queue search ABORTS with.
+///
+/// `Unauthorized` keeps #129's wording because it is #129's fact — the token cannot read the
+/// candidates, and one query answering for all of them does not make that a per-candidate problem.
+/// Everything else is the falsely-empty-queue refusal the search layer has always given.
+fn queue_search_error(f: GhFailure) -> String {
+    match f {
+        GhFailure::Unauthorized => "error: `gh` is not authorised to read the ai:ready candidates \
+             (bad credentials / insufficient scopes / suspended actor) — aborting rather than \
+             report a falsely-short queue"
+            .to_string(),
+        _ => format!(
+            "error: the ai:ready queue search failed ({f:?}) — aborting rather than report a \
+             falsely-empty queue"
+        ),
+    }
+}
+
+/// PURE: the archived set, read off the candidates' OWN repository objects.
+///
+/// This replaces the org-wide `archived_repos()` walk ON THIS PATH ONLY — the flag, leak and design
+/// enumerations still take theirs from the paged query, because their hits are not all PRs of this
+/// shape. It is not a weakening: `isArchived` here is read live off the repository object in the
+/// same response, and it covers exactly the repos the candidates are in rather than the whole org.
+///
+/// A node with no readable boolean is [`GhFailure::Malformed`], so unreadable archived-state still
+/// ABORTS (#199) instead of collapsing to "not archived" — the false negative that puts a frozen row
+/// back at the head of the human's queue.
+fn archived_from_nodes(nodes: &[Value]) -> Result<ArchivedRepos, GhFailure> {
+    let mut set = std::collections::BTreeSet::new();
+    for n in nodes {
+        let Some(slug) = n
+            .pointer("/repository/nameWithOwner")
+            .and_then(|s| s.as_str())
+        else {
+            return Err(GhFailure::Malformed);
+        };
+        let Some(archived) = n.pointer("/repository/isArchived").and_then(Value::as_bool) else {
+            return Err(GhFailure::Malformed);
+        };
+        if archived {
+            set.insert(slug.to_ascii_lowercase());
+        }
+    }
+    Ok(ArchivedRepos(set))
+}
+
+/// PURE: one search node, in the shape [`queue_pr_detail`] returns — so EVERY downstream reader
+/// (`candidate_outcome`, `vetted_at_head`, `next_ready_row`, `requires_redeploy`, `classify_ci`,
+/// `failing_check_names`) is untouched by where the document came from, and the per-PR fetch stays a
+/// drop-in fallback rather than a second shape.
+///
+/// Two connections are flattened to the arrays `gh pr view --json` produces: `labels` to
+/// `[{name}]`, `comments` to `[{author:{login}, body}]`. The rollup is the `contexts` nodes as they
+/// arrive — GraphQL spells `name`/`status`/`conclusion`/`context`/`state` exactly as gh does, and
+/// gh's own array is the same connection with the same 100-entry cap.
+///
+/// A missing rollup (no configured checks) becomes an EMPTY array, which is [`Ci::NoChecks`] —
+/// `null` would be too, and an array keeps one type for the field.
+fn queue_detail_from_node(node: &Value) -> Value {
+    let comments: Vec<Value> = node
+        .pointer("/comments/nodes")
+        .and_then(|n| n.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let labels: Vec<Value> = node
+        .pointer("/labels/nodes")
+        .and_then(|n| n.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let rollup: Vec<Value> = node
+        .pointer("/commits/nodes/0/commit/statusCheckRollup/contexts/nodes")
+        .and_then(|n| n.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let field = |k: &str| node.get(k).cloned().unwrap_or(Value::Null);
+    serde_json::json!({
+        "number": field("number"),
+        "url": field("url"),
+        "title": field("title"),
+        "body": field("body"),
+        "baseRefName": field("baseRefName"),
+        "headRefOid": field("headRefOid"),
+        "mergeable": field("mergeable"),
+        "reviewDecision": field("reviewDecision"),
+        "isDraft": field("isDraft"),
+        "repository": field("repository"),
+        "labels": labels,
+        "comments": comments,
+        "statusCheckRollup": rollup,
+    })
+}
+
+/// PURE: did the `comments(last:100)` WINDOW cost this PR its verdict?
+///
+/// True only when both halves hold: GitHub says there are more comments than the window returned,
+/// AND no trusted `🤖 ai:vetter` comment is inside it. Either half alone is not the hazard — a
+/// truncated window that still contains a vetter comment contains the LAST one (any later verdict
+/// would be later still, and the window is the tail), and an untruncated window with no vetter
+/// comment is a genuinely un-vetted PR.
+///
+/// The whole point is that "the verdict is outside the window" and "there is no verdict" must not be
+/// the same answer: the first is a fetch that has to be redone, the second is the vetter's work.
+fn comments_windowed_out(node: &Value, detail: &Value) -> bool {
+    let total = node
+        .pointer("/comments/totalCount")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let returned = node
+        .pointer("/comments/nodes")
+        .and_then(|n| n.as_array())
+        .map(Vec::len)
+        .unwrap_or(0) as u64;
+    total > returned && last_vetter_comment(detail).is_none()
+}
+
+/// PURE: the unresolved-thread count the batch can answer for, or `None` when only a paginated walk
+/// can.
+///
+/// `Some(n)` for any non-zero count inside the window — one unresolved thread routes the PR to
+/// [`CandidateOutcome::OpenThreads`] whatever the rest of the pages hold, so the window is decisive.
+/// `None` ONLY for all-resolved-so-far with more pages to come: that is the case where the window
+/// says zero and the truth may not be, and a zero is the one answer that reaches a human.
+fn threads_from_node(node: &Value) -> Option<u64> {
+    let nodes = node.pointer("/reviewThreads/nodes")?.as_array()?;
+    let unresolved = nodes
+        .iter()
+        .filter(|t| t.get("isResolved").and_then(Value::as_bool) == Some(false))
+        .count() as u64;
+    if unresolved > 0 {
+        return Some(unresolved);
+    }
+    let has_next = node
+        .pointer("/reviewThreads/pageInfo/hasNextPage")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if has_next {
+        None
+    } else {
+        Some(0)
+    }
+}
+
+/// PURE: the rows whose FATE turns on a `mergeable` GitHub has not computed.
+///
+/// Not "every UNKNOWN row" — only the ones [`presentable_state`] would call presentable if the
+/// answer were `MERGEABLE`. A red, pending or already-approved PR never consults `mergeable`, so
+/// re-asking for it would spend a request on a row whose bucket cannot move.
+fn merge_unsettled(details: &[Value]) -> Vec<usize> {
+    details
+        .iter()
+        .enumerate()
+        .filter(|(_, d)| {
+            if parse_merge(d.get("mergeable").and_then(|v| v.as_str())) != Merge::Unknown {
+                return false;
+            }
+            let ci = classify_ci(d.get("statusCheckRollup").unwrap_or(&Value::Null));
+            let rev = d
+                .get("reviewDecision")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty());
+            presentable_state(ci, Merge::Mergeable, rev) == PresentState::Presentable
+        })
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// PURE: copy a settled `mergeable` from a fresh read onto the rows still holding `UNKNOWN`,
+/// matched by URL. Returns how many rows settled.
+///
+/// ONLY the `mergeable` field moves. Everything else in the row was read in one consistent snapshot
+/// and the re-ask exists to answer one question; splicing a whole second document in would let a
+/// row's CI, comments and threads come from a different instant than the ranking that used them.
+///
+/// A fresh row that is STILL `UNKNOWN` changes nothing — it is not a settled answer, and writing it
+/// back would be indistinguishable from having settled.
+fn apply_settled_merge(details: &mut [Value], fresh: &[Value]) -> usize {
+    let mut settled = 0;
+    for d in details.iter_mut() {
+        if parse_merge(d.get("mergeable").and_then(|v| v.as_str())) != Merge::Unknown {
+            continue;
+        }
+        let Some(url) = d.get("url").and_then(|u| u.as_str()) else {
+            continue;
+        };
+        let Some(f) = fresh
+            .iter()
+            .find(|f| f.get("url").and_then(|u| u.as_str()) == Some(url))
+        else {
+            continue;
+        };
+        let m = f.get("mergeable").and_then(|v| v.as_str());
+        if parse_merge(m) == Merge::Unknown {
+            continue;
+        }
+        d["mergeable"] = Value::from(m.unwrap_or("UNKNOWN"));
+        settled += 1;
+    }
+    settled
+}
+
+/// Re-asks a batch whose `mergeable` came back `UNKNOWN` gets, the first ask excluded.
+///
+/// GitHub computes mergeability LAZILY, and the ask itself is what schedules the computation. The
+/// old per-PR `gh pr view` mostly found it already warm because something had asked recently; a cold
+/// batch ask is the case that returns `UNKNOWN` — and one re-ask a moment later is the answer,
+/// because the first ask started the work.
+const MERGE_SETTLE_RETRIES: usize = 2;
+
+/// How long to give GitHub between the ask that schedules the mergeability computation and the one
+/// that reads it. Short enough that two of them stay well inside the ~4s the query itself costs.
+const MERGE_SETTLE_WAIT: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// Settle the rows whose fate turns on an uncomputed `mergeable`, in place.
+///
+/// PURE given `refetch` and `pause`, which is what makes the retry POLICY testable without a
+/// network: that a settled answer is taken, that a row nobody re-asks for stays as it was, that the
+/// budget is finite, and that a failure PROPAGATES rather than being swallowed into a shortened
+/// queue (an `Unauthorized` re-ask is the same token-wide fact [`queue_abort`] aborts on).
+///
+/// A row still `UNKNOWN` when the budget runs out is LEFT `UNKNOWN` — [`presentable_state`] buckets
+/// it as `MergeUnknown` and the human is told the count. Fail-closed is the existing contract for an
+/// unconfirmed merge and this does not relax it; it only stops a COLD answer being mistaken for one.
+fn settle_merge_unknown(
+    details: &mut [Value],
+    retries: usize,
+    mut refetch: impl FnMut() -> Result<Vec<Value>, GhFailure>,
+    mut pause: impl FnMut(),
+) -> Result<(), GhFailure> {
+    for _ in 0..retries {
+        if merge_unsettled(details).is_empty() {
+            return Ok(());
+        }
+        pause();
+        let fresh = refetch()?;
+        apply_settled_merge(details, &fresh);
+    }
+    Ok(())
+}
+
+/// ONE `ai:ready` candidate as the batch query answered for it: the identity the gates need, the
+/// `gh pr view`-shaped detail, and the two places the batch's WINDOWS cannot answer and a per-PR
+/// fetch has to.
+struct QueueCandidate {
+    slug: String,
+    num: u64,
+    url: String,
+    detail: Value,
+    /// The verdict may be outside `comments(last:100)` — see [`comments_windowed_out`].
+    refetch_detail: bool,
+    /// The unresolved-thread count, or `None` when only the paginated walk can answer — see
+    /// [`threads_from_node`].
+    threads: Option<u64>,
+}
+
 /// The `ai:ready` PRs presentable for a human decision RIGHT NOW, ALREADY in the one cheapest-first
 /// order, plus the whole-queue counts.
 ///
@@ -2647,49 +3051,31 @@ fn pr_exists_probe(slug: &str, num: u64) -> Result<Value, GhFailure> {
 /// unresolved threads — and sorts with [`queue_order`] BEFORE returning, so neither consumer sorts
 /// and neither can hold a different opinion about which PR is next.
 ///
+/// ONE `gh api graphql` answers the whole thing (#314). The gate chain is untouched:
+/// [`candidate_outcome`] still takes its two fetchers, and they are now closures over the batch that
+/// reach the network ONLY where a window could not answer.
+///
 /// `Err` rather than `exit`: an MCP tool must answer a failed enumeration with a refusal the caller
 /// reads, not by killing the server.
 fn presentable_queue() -> Result<(Vec<PresentablePr>, QueueCounts), String> {
     // Candidates come from the `ai:ready` LABEL, NOT `gh search --checks success`. That qualifier is
     // unreliable — the identical query returned 93 then 203 open PRs minutes apart, which collapsed a
-    // 75-deep review queue to "1". Label search is reliable; CI/mergeability is then verified per-PR
-    // below (statusCheckRollup + mergeable), never trusted from the search layer.
+    // 75-deep review queue to "1". Label search is reliable; CI/mergeability is then verified from
+    // each PR's own fields (statusCheckRollup + mergeable), never trusted from the search layer.
     // Org scope comes from ORGS (single source: cron.env), NOT a hardcoded owner list, so the
     // queue covers exactly the orgs the prompts do — change scope in one place.
-    let mut search_args: Vec<String> = vec!["search".to_string(), "prs".to_string()];
-    search_args.extend(org_owner_args());
-    search_args.extend(
-        [
-            "--state",
-            "open",
-            "--label",
-            "ai:ready",
-            "--limit",
-            "1000",
-            "--json",
-            "url,number,repository,isDraft,labels",
-        ]
-        .iter()
-        .map(|s| s.to_string()),
-    );
-    let search_ref: Vec<&str> = search_args.iter().map(String::as_str).collect();
-    let Some(val) = gh_json(&search_ref) else {
-        return Err("error: `gh search prs --label ai:ready` failed (transient API error / auth?) — aborting rather than report a falsely-empty queue".to_string());
-    };
-    let Some(arr) = val.as_array() else {
-        return Err("error: `gh search prs` returned non-array JSON — aborting".to_string());
-    };
+    let scope = queue_search_scope(&std::env::var("ORGS").unwrap_or_default());
+    let nodes = queue_search_nodes(&scope).map_err(queue_search_error)?;
     // An `ai:ready` PR in an ARCHIVED repo cannot be merged, relabelled or commented on, so it is
-    // not presentable however green it is (#206). Withheld BEFORE the per-PR fetch below, which
-    // costs a `gh pr view` + a threads query per candidate — paying that for a row no ruling can
-    // reach is the second cost of the same bug.
-    let archived_set = archived_repos().map_err(archived_read_error)?;
-    let (arr, frozen) = withhold_archived(arr.clone(), &archived_set, hit_slug);
+    // not presentable however green it is (#206). The archived set now comes off the candidates'
+    // own `repository{isArchived}` in the same response, so the withholding costs no request at all.
+    let archived_set = archived_from_nodes(&nodes).map_err(archived_read_error)?;
+    let (nodes, frozen) = withhold_archived(nodes, &archived_set, hit_slug);
 
-    // Candidate filter (from the search JSON, no extra call): drop drafts. No `human:*` label
+    // Candidate filter (from the same response, no extra call): drop drafts. No `human:*` label
     // parks a PR any more (#133/#230) — a live human decision is a native review or a ruling pinned
-    // to the head, neither of which a search result carries, so every survivor is re-checked per-PR.
-    let candidates: Vec<(String, u64, String)> = arr
+    // to the head, neither of which a search result carries, so every survivor is re-checked below.
+    let mut candidates: Vec<QueueCandidate> = nodes
         .iter()
         .filter(|p| !p.get("isDraft").and_then(|x| x.as_bool()).unwrap_or(false))
         .filter_map(|p| {
@@ -2700,19 +3086,49 @@ fn presentable_queue() -> Result<(Vec<PresentablePr>, QueueCounts), String> {
                 .unwrap_or("")
                 .to_string();
             let slug = pr_slug(&url)?;
-            Some((slug, num, url))
+            let detail = queue_detail_from_node(p);
+            Some(QueueCandidate {
+                slug,
+                num,
+                url,
+                refetch_detail: comments_windowed_out(p, &detail),
+                threads: threads_from_node(p),
+                detail,
+            })
         })
         .collect();
 
-    // Full per-PR pass over every candidate — after the 1-vs-75 failure, an ACCURATE queue is the
-    // whole point, so each candidate's real CI rollup + mergeable + reviewDecision is fetched.
+    // GitHub computes `mergeable` lazily and a COLD batch ask answers `UNKNOWN`. Settled here,
+    // before any gate reads it, so a not-yet-computed answer cannot silently drop a mergeable PR out
+    // of the human's queue. Costs nothing when nothing is unknown, which is the ordinary case.
+    {
+        let mut details: Vec<Value> = candidates.iter().map(|c| c.detail.clone()).collect();
+        settle_merge_unknown(
+            &mut details,
+            MERGE_SETTLE_RETRIES,
+            || {
+                Ok(queue_search_nodes(&scope)?
+                    .iter()
+                    .map(queue_detail_from_node)
+                    .collect())
+            },
+            || std::thread::sleep(MERGE_SETTLE_WAIT),
+        )
+        .map_err(queue_search_error)?;
+        for (c, d) in candidates.iter_mut().zip(details) {
+            c.detail = d;
+        }
+    }
+
+    // Full pass over every candidate — after the 1-vs-75 failure, an ACCURATE queue is the whole
+    // point, so each candidate's real CI rollup + mergeable + reviewDecision is read.
     let mut rows: Vec<PresentablePr> = Vec::new();
     let mut counts = QueueCounts {
         // `raw` stays the WHOLE `ai:ready` population, frozen rows included, so the header's
         // "N ai:ready -> M presentable" still accounts for every row the search returned and the
         // archived count explains part of the difference rather than vanishing from both sides.
-        raw: arr.len() + frozen.len(),
-        excluded: arr.len() - candidates.len(),
+        raw: nodes.len() + frozen.len(),
+        excluded: nodes.len() - candidates.len(),
         needs_work: 0,
         red: 0,
         pending: 0,
@@ -2724,12 +3140,31 @@ fn presentable_queue() -> Result<(Vec<PresentablePr>, QueueCounts), String> {
         rate_limited: 0,
         archived_repo: frozen.len(),
     };
-    // The fetches run concurrently; the COUNTING does not. `map_bounded` hands back one outcome
-    // per candidate in candidate order, and `apply_outcome` folds them serially, so the counts and
-    // the row sequence are exactly what the same GitHub state produced one at a time.
-    let outcomes = map_bounded(&candidates, |(slug, num, url)| {
-        candidate_outcome(slug, *num, url, queue_pr_detail, unresolved_threads)
-    });
+    // The gate chain is unchanged and still runs in candidate order, so the counts and the row
+    // sequence are exactly what the same GitHub state produced one PR at a time. Its two fetchers
+    // now read the BATCH — and reach the network only for the two windows the batch cannot answer:
+    // a verdict outside `comments(last:100)`, and an all-resolved thread page with more to come.
+    let outcomes: Vec<CandidateOutcome> = candidates
+        .iter()
+        .map(|c| {
+            candidate_outcome(
+                &c.slug,
+                c.num,
+                &c.url,
+                |slug, num| {
+                    if c.refetch_detail {
+                        queue_pr_detail(slug, num)
+                    } else {
+                        Ok(c.detail.clone())
+                    }
+                },
+                |owner, repo, num| match c.threads {
+                    Some(n) => Ok(n),
+                    None => unresolved_threads(owner, repo, num),
+                },
+            )
+        })
+        .collect();
     for out in outcomes {
         // Checked BEFORE the fold, in candidate order, so an unauthorised token aborts the whole
         // enumeration on the first candidate that proves it rather than being counted (#129).
@@ -2748,6 +3183,526 @@ fn presentable_queue() -> Result<(Vec<PresentablePr>, QueueCounts), String> {
 /// second sort that could hold a different opinion about which PR is next.
 fn rank_presentable(rows: &mut [PresentablePr]) {
     rows.sort_by(|a, b| queue_order(&a.row, &b.row));
+}
+
+/// The two WINDOWS and the one LAZY field the batch query opened (#314), pinned.
+///
+/// Every test here is written against the ORACLE the old fan-out was: `gh pr view --json comments`
+/// read every comment, `unresolved_threads` walked every page, and a per-PR `mergeable` was one
+/// GitHub had usually already computed. A batch answers all three at once and each answer has an
+/// edge the per-PR call did not — so what is asserted is that the edge is NAMED, never that it is
+/// unlikely.
+#[cfg(test)]
+mod one_query_queue_tests {
+    use super::*;
+    use serde_json::json;
+    use std::cell::RefCell;
+
+    /// A search node as [`QUEUE_SEARCH_QUERY`] returns one. Every default is the SHAPE of a live
+    /// response (checked against `cyclofinance/cyclo.site#428`), so a test names only the field it
+    /// is about.
+    fn node(num: u64, slug: &str) -> Value {
+        json!({
+            "number": num,
+            "url": format!("https://github.com/{slug}/pull/{num}"),
+            "title": "t",
+            "body": "b",
+            "baseRefName": "main",
+            "headRefOid": "deadbeef",
+            "mergeable": "MERGEABLE",
+            "reviewDecision": Value::Null,
+            "isDraft": false,
+            "repository": {"nameWithOwner": slug, "isArchived": false},
+            "labels": {"nodes": [{"name": "ai:ready"}]},
+            "comments": {"totalCount": 0, "nodes": []},
+            "reviewThreads": {"nodes": [], "pageInfo": {"hasNextPage": false}},
+            "commits": {"nodes": [{"commit": {"statusCheckRollup": {"contexts": {
+                "pageInfo": {"hasNextPage": false},
+                "nodes": [{"__typename": "CheckRun", "name": "test", "status": "COMPLETED", "conclusion": "SUCCESS"}],
+            }}}}]},
+        })
+    }
+
+    /// A trusted verdict body, built by the REAL writer so the protocol stamp is the one in force.
+    fn verdict(sha: &str) -> Value {
+        json!({
+            "author": {"login": TRUSTED_AUTHOR},
+            "body": verdict_comment(sha, "ready", "", Some(40), "a basis", None),
+        })
+    }
+
+    fn comment(login: &str, body: &str) -> Value {
+        json!({"author": {"login": login}, "body": body})
+    }
+
+    fn set_comments(n: &mut Value, total: u64, nodes: Vec<Value>) {
+        n["comments"] = json!({"totalCount": total, "nodes": nodes});
+    }
+
+    // ── the NORMALISER: one shape, whichever call answered ────────────────────────────────────
+
+    /// The whole reason the gate chain, `next_ready`'s row builder and the per-PR FALLBACK could be
+    /// left untouched: a search node reads as the `gh pr view --json` document they were written
+    /// against. Asserted through the REAL readers, not by comparing keys — a key that is present
+    /// and unreadable is the failure this would otherwise miss.
+    #[test]
+    fn a_search_node_reads_as_the_gh_pr_view_document_every_consumer_expects() {
+        let mut n = node(428, "cyclofinance/cyclo.site");
+        n["body"] = json!(format!("needs {REDEPLOY_MARKER} first"));
+        set_comments(&mut n, 1, vec![verdict("deadbeef")]);
+        let d = queue_detail_from_node(&n);
+
+        assert!(classify_ci(&d["statusCheckRollup"]) == Ci::Green);
+        assert!(vetted_at_head(&d, "deadbeef"));
+        assert!(!vetted_at_head(&d, "0000000"));
+        assert_eq!(cost_from_comment(last_vetter_comment(&d).as_deref()).0, 40);
+        assert!(requires_redeploy(&d));
+        assert_eq!(label_names(&d), vec!["ai:ready".to_string()]);
+        assert_eq!(d["baseRefName"], json!("main"));
+        assert_eq!(
+            d["url"],
+            json!("https://github.com/cyclofinance/cyclo.site/pull/428")
+        );
+        assert!(parse_merge(d["mergeable"].as_str()) == Merge::Mergeable);
+    }
+
+    /// A repo with NO configured checks. `statusCheckRollup` is absent from the response entirely,
+    /// and the field must still be an ARRAY — `null` would read as no checks too, but `classify_ci`
+    /// and `failing_check_names` both take `.as_array()`, and one type for the field is what keeps
+    /// the fallback document and this one interchangeable.
+    #[test]
+    fn a_pr_with_no_checks_normalises_to_an_empty_rollup_array_not_null() {
+        let mut n = node(1, "o/r");
+        n["commits"] = json!({"nodes": [{"commit": {"statusCheckRollup": Value::Null}}]});
+        let d = queue_detail_from_node(&n);
+        assert_eq!(d["statusCheckRollup"], json!([]));
+        assert!(classify_ci(&d["statusCheckRollup"]) == Ci::NoChecks);
+    }
+
+    /// The rollup is PASSED THROUGH, so a red check is red and NAMED. The aggregate
+    /// `statusCheckRollup{state}` the issue proposed would have answered `FAILURE` and known no
+    /// name — `next_ready` reports `failingChecks`, so the contexts are what the query asks for.
+    #[test]
+    fn a_failing_context_survives_the_normaliser_with_its_name() {
+        let mut n = node(1, "o/r");
+        n["commits"] = json!({"nodes": [{"commit": {"statusCheckRollup": {"contexts": {
+            "pageInfo": {"hasNextPage": false},
+            "nodes": [
+                {"__typename": "CheckRun", "name": "test", "status": "COMPLETED", "conclusion": "FAILURE"},
+                {"__typename": "StatusContext", "context": "ci/legacy", "state": "SUCCESS"},
+            ],
+        }}}}]});
+        let d = queue_detail_from_node(&n);
+        assert!(classify_ci(&d["statusCheckRollup"]) == Ci::Red);
+        assert_eq!(
+            failing_check_names(&d["statusCheckRollup"]),
+            vec!["test".to_string()]
+        );
+    }
+
+    // ── RISK 2a: `comments(last:100)` is a window ─────────────────────────────────────────────
+
+    /// THE regression this guard exists for. More comments than the window returned AND no verdict
+    /// inside it: the verdict may be one of the ones the window dropped, and reading that as "no
+    /// verdict" would count a presentable PR as un-vetted and drop it out of the human's queue.
+    #[test]
+    fn a_verdict_the_comment_window_could_have_dropped_forces_the_per_pr_refetch() {
+        let mut n = node(1, "o/r");
+        set_comments(
+            &mut n,
+            140,
+            vec![comment(TRUSTED_AUTHOR, "🤖 ai:producer\nnote")],
+        );
+        let d = queue_detail_from_node(&n);
+        assert!(
+            !vetted_at_head(&d, "deadbeef"),
+            "the window holds no verdict"
+        );
+        assert!(
+            comments_windowed_out(&n, &d),
+            "so the window cannot be trusted to say so"
+        );
+    }
+
+    /// A truncated window that STILL holds a vetter comment holds the LAST one — the window is the
+    /// TAIL, so any later verdict would be inside it too. No refetch, and the verdict is read.
+    #[test]
+    fn a_truncated_window_that_still_holds_the_verdict_is_not_refetched() {
+        let mut n = node(1, "o/r");
+        set_comments(
+            &mut n,
+            140,
+            vec![comment(TRUSTED_AUTHOR, "chatter"), verdict("deadbeef")],
+        );
+        let d = queue_detail_from_node(&n);
+        assert!(!comments_windowed_out(&n, &d));
+        assert!(vetted_at_head(&d, "deadbeef"));
+    }
+
+    /// An UNTRUNCATED window with no verdict is a genuinely un-vetted PR — the vetter's work, not a
+    /// fetch to redo. Without this the guard would pay a per-PR fetch for all twelve un-vetted rows
+    /// of the live queue and be the fan-out again.
+    #[test]
+    fn an_untruncated_window_with_no_verdict_is_genuinely_unvetted() {
+        let mut n = node(1, "o/r");
+        set_comments(
+            &mut n,
+            2,
+            vec![comment(TRUSTED_AUTHOR, "a"), comment("someone", "b")],
+        );
+        let d = queue_detail_from_node(&n);
+        assert!(!comments_windowed_out(&n, &d));
+    }
+
+    /// The window is searched with the AUTHOR filter, not for the marker text. A third party can
+    /// post `🤖 ai:vetter`, and a spoof suppressing the refetch would leave the real verdict outside
+    /// the window and unread — the trust rule and the truncation guard have to agree.
+    #[test]
+    fn a_spoofed_vetter_comment_in_the_window_does_not_suppress_the_refetch() {
+        let mut n = node(1, "o/r");
+        set_comments(
+            &mut n,
+            140,
+            vec![comment(
+                "impostor",
+                "🤖 ai:vetter\nReviewed deadbeef: ready",
+            )],
+        );
+        let d = queue_detail_from_node(&n);
+        assert!(comments_windowed_out(&n, &d));
+    }
+
+    // ── RISK 2b: `reviewThreads(first:100)` is the same window ────────────────────────────────
+
+    /// A non-zero count inside the window is DECISIVE — the PR is the producer's thread work
+    /// whatever the pages after it hold — so the batch answers and no walk is paid for.
+    #[test]
+    fn an_unresolved_thread_in_the_window_is_decisive_even_when_more_pages_exist() {
+        let mut n = node(1, "o/r");
+        n["reviewThreads"] = json!({
+            "nodes": [{"isResolved": true}, {"isResolved": false}],
+            "pageInfo": {"hasNextPage": true},
+        });
+        assert_eq!(threads_from_node(&n), Some(1));
+        assert_eq!(thread_route(Ok(1)), ThreadRoute::OpenThreads);
+    }
+
+    /// All resolved SO FAR with more pages to come is the one answer the window cannot give: a zero
+    /// here is the only value that reaches a human, so it must come from a complete read. `None`
+    /// routes to the paginated walk rather than to a fail-closed error — the PR is not unreadable.
+    #[test]
+    fn all_resolved_with_more_pages_cannot_answer_zero() {
+        let mut n = node(1, "o/r");
+        n["reviewThreads"] = json!({
+            "nodes": [{"isResolved": true}],
+            "pageInfo": {"hasNextPage": true},
+        });
+        assert_eq!(threads_from_node(&n), None);
+    }
+
+    /// A complete page of resolved threads IS the verified zero [`thread_route`] demands.
+    #[test]
+    fn all_resolved_and_complete_is_a_verified_zero() {
+        let mut n = node(1, "o/r");
+        n["reviewThreads"] = json!({
+            "nodes": [{"isResolved": true}, {"isResolved": true}],
+            "pageInfo": {"hasNextPage": false},
+        });
+        assert_eq!(threads_from_node(&n), Some(0));
+        assert_eq!(thread_route(Ok(0)), ThreadRoute::Present);
+    }
+
+    /// An unreadable connection is NOT a zero. `None` sends it to the walk, which has a typed
+    /// failure — a fabricated zero would be the laundering `thread_route` exists to refuse.
+    #[test]
+    fn an_unreadable_thread_connection_is_never_a_zero() {
+        let mut n = node(1, "o/r");
+        n["reviewThreads"] = Value::Null;
+        assert_eq!(threads_from_node(&n), None);
+    }
+
+    // ── RISK 1: `mergeable` is computed lazily ───────────────────────────────────────────────
+
+    fn detail(mergeable: &str, url: &str) -> Value {
+        let mut n = node(1, "o/r");
+        n["mergeable"] = json!(mergeable);
+        n["url"] = json!(url);
+        queue_detail_from_node(&n)
+    }
+
+    /// The whole of risk 1 in one assertion pair: a cold `UNKNOWN` and a settled `MERGEABLE` are
+    /// DIFFERENT BUCKETS for the same PR, so an uncomputed answer taken at face value shortens the
+    /// human's queue.
+    #[test]
+    fn a_cold_unknown_and_a_settled_mergeable_are_different_buckets() {
+        assert_eq!(
+            presentable_state(Ci::Green, Merge::Unknown, None),
+            PresentState::MergeUnknown
+        );
+        assert_eq!(
+            presentable_state(Ci::Green, Merge::Mergeable, None),
+            PresentState::Presentable
+        );
+    }
+
+    /// So it is RE-ASKED, and the settled answer is taken.
+    #[test]
+    fn an_unknown_row_is_re_asked_and_the_settled_answer_is_taken() {
+        let mut details = vec![detail("UNKNOWN", "u/1")];
+        let calls = RefCell::new(0);
+        settle_merge_unknown(
+            &mut details,
+            MERGE_SETTLE_RETRIES,
+            || {
+                *calls.borrow_mut() += 1;
+                Ok(vec![detail("MERGEABLE", "u/1")])
+            },
+            || {},
+        )
+        .expect("a settled re-ask is not a failure");
+        assert_eq!(details[0]["mergeable"], json!("MERGEABLE"));
+        assert_eq!(
+            *calls.borrow(),
+            1,
+            "one re-ask settles it; the budget is not spent"
+        );
+    }
+
+    /// A row whose bucket cannot MOVE is not re-asked. Red, pending and already-approved PRs never
+    /// consult `mergeable`, so a re-ask for one spends a request to change nothing — and with no
+    /// unsettled row at all the settle costs zero requests, which is the ordinary case.
+    #[test]
+    fn a_row_whose_bucket_cannot_move_is_never_re_asked() {
+        let mut red = detail("UNKNOWN", "u/1");
+        red["statusCheckRollup"] = json!([{"__typename": "CheckRun", "name": "t", "status": "COMPLETED", "conclusion": "FAILURE"}]);
+        let mut approved = detail("UNKNOWN", "u/2");
+        approved["reviewDecision"] = json!("APPROVED");
+        let mut details = vec![red, approved, detail("MERGEABLE", "u/3")];
+        assert!(merge_unsettled(&details).is_empty());
+
+        let calls = RefCell::new(0);
+        settle_merge_unknown(
+            &mut details,
+            MERGE_SETTLE_RETRIES,
+            || {
+                *calls.borrow_mut() += 1;
+                Ok(vec![])
+            },
+            || {},
+        )
+        .expect("nothing to settle is not a failure");
+        assert_eq!(*calls.borrow(), 0);
+    }
+
+    /// The budget is FINITE and a still-uncomputed row is LEFT `UNKNOWN`. Fail-closed is the
+    /// existing contract for an unconfirmed merge; guessing `MERGEABLE` to fill the queue would be
+    /// the opposite of what this guard is for.
+    #[test]
+    fn a_row_that_never_settles_stays_unknown_within_a_finite_budget() {
+        let mut details = vec![detail("UNKNOWN", "u/1")];
+        let calls = RefCell::new(0);
+        let pauses = RefCell::new(0);
+        settle_merge_unknown(
+            &mut details,
+            MERGE_SETTLE_RETRIES,
+            || {
+                *calls.borrow_mut() += 1;
+                Ok(vec![detail("UNKNOWN", "u/1")])
+            },
+            || *pauses.borrow_mut() += 1,
+        )
+        .expect("giving up is not a failure");
+        assert_eq!(details[0]["mergeable"], json!("UNKNOWN"));
+        assert_eq!(*calls.borrow(), MERGE_SETTLE_RETRIES);
+        assert_eq!(
+            *pauses.borrow(),
+            MERGE_SETTLE_RETRIES,
+            "it waits before each re-ask"
+        );
+    }
+
+    /// A FAILED re-ask propagates. An `Unauthorized` is the same token-wide fact [`queue_abort`]
+    /// aborts on (#129) — swallowing it here would report a queue silently missing every row whose
+    /// mergeability could not be settled.
+    #[test]
+    fn a_failed_re_ask_propagates_rather_than_shortening_the_queue() {
+        let mut details = vec![detail("UNKNOWN", "u/1")];
+        let err = settle_merge_unknown(
+            &mut details,
+            MERGE_SETTLE_RETRIES,
+            || Err(GhFailure::Unauthorized),
+            || {},
+        )
+        .expect_err("an unauthorised re-ask is not a settled answer");
+        assert_eq!(err, GhFailure::Unauthorized);
+        assert!(queue_search_error(err).contains("not authorised"));
+    }
+
+    /// The patch is BY URL and moves ONLY `mergeable`. A fresh document for a different PR must not
+    /// settle this one, and the rest of the row must stay on the snapshot the ranking used.
+    #[test]
+    fn the_settled_answer_is_matched_by_url_and_moves_only_mergeable() {
+        let mut details = vec![detail("UNKNOWN", "u/1")];
+        details[0]["title"] = json!("as ranked");
+        assert_eq!(
+            apply_settled_merge(&mut details, &[detail("MERGEABLE", "u/999")]),
+            0
+        );
+        assert_eq!(details[0]["mergeable"], json!("UNKNOWN"));
+
+        let mut fresh = detail("MERGEABLE", "u/1");
+        fresh["title"] = json!("a later instant");
+        assert_eq!(apply_settled_merge(&mut details, &[fresh]), 1);
+        assert_eq!(details[0]["mergeable"], json!("MERGEABLE"));
+        assert_eq!(details[0]["title"], json!("as ranked"));
+    }
+
+    // ── the ARCHIVED withholding, off the same response (#206) ────────────────────────────────
+
+    /// `repository{isArchived}` rides on the query, so the org-wide walk is redundant here — and the
+    /// withholding it fed is not. An archived candidate is still frozen out.
+    #[test]
+    fn an_archived_candidate_is_withheld_from_its_own_repository_field() {
+        let mut arch = node(9, "o/dead");
+        arch["repository"] = json!({"nameWithOwner": "o/dead", "isArchived": true});
+        let nodes = vec![node(1, "o/live"), arch];
+        let set = archived_from_nodes(&nodes).expect("readable flags");
+        let (live, frozen) = withhold_archived(nodes, &set, hit_slug);
+        assert_eq!(live.len(), 1);
+        assert_eq!(frozen.len(), 1);
+        assert_eq!(live[0]["number"], json!(1));
+    }
+
+    /// An UNREADABLE archived flag ABORTS (#199). Collapsing it to "not archived" is the false
+    /// negative that puts a frozen row back at the head of the human's queue, and the message is the
+    /// one every other surface refuses with.
+    #[test]
+    fn an_unreadable_archived_flag_aborts_rather_than_reading_as_live() {
+        let mut bad = node(1, "o/r");
+        bad["repository"] = json!({"nameWithOwner": "o/r"});
+        assert!(matches!(
+            archived_from_nodes(&[bad]),
+            Err(GhFailure::Malformed)
+        ));
+        assert!(archived_read_error(GhFailure::Malformed)
+            .contains("could not read which repos are archived"));
+    }
+
+    // ── the SEARCH: one page reader, one abort ────────────────────────────────────────────────
+
+    #[test]
+    fn a_page_yields_its_pull_requests_and_the_cursor_after_it() {
+        let v = json!({"data": {"search": {
+            "pageInfo": {"hasNextPage": true, "endCursor": "CUR"},
+            "nodes": [node(1, "o/r"), json!({})],
+        }}});
+        let (prs, cursor) = queue_search_page(&v).expect("a readable page");
+        assert_eq!(
+            prs.len(),
+            1,
+            "a non-PullRequest hit is an empty fragment, not a candidate"
+        );
+        assert_eq!(cursor.as_deref(), Some("CUR"));
+    }
+
+    #[test]
+    fn a_last_page_reports_no_cursor() {
+        let v = json!({"data": {"search": {
+            "pageInfo": {"hasNextPage": false},
+            "nodes": [node(1, "o/r")],
+        }}});
+        assert_eq!(queue_search_page(&v).expect("a readable page").1, None);
+    }
+
+    /// `hasNextPage` with no cursor is MALFORMED, not the end — reading it as the end truncates the
+    /// queue in the direction that hides work, exactly as [`archived_repos_page`] refuses to.
+    #[test]
+    fn a_page_that_says_more_with_no_cursor_is_malformed() {
+        let v = json!({"data": {"search": {
+            "pageInfo": {"hasNextPage": true, "endCursor": ""},
+            "nodes": [],
+        }}});
+        assert_eq!(queue_search_page(&v), Err(GhFailure::Malformed));
+    }
+
+    /// An unreadable response is MALFORMED and never an empty page. An empty page reads as "no
+    /// `ai:ready` PRs", which is the falsely-empty queue the 1-vs-75 failure taught this to refuse.
+    #[test]
+    fn an_unreadable_response_is_malformed_never_an_empty_queue() {
+        assert_eq!(
+            queue_search_page(&json!({"data": {}})),
+            Err(GhFailure::Malformed)
+        );
+        assert_eq!(
+            queue_search_page(&json!({"data": {"search": {"nodes": "not an array"}}})),
+            Err(GhFailure::Malformed)
+        );
+    }
+
+    /// #129 at the layer that now carries the whole fetch: an unauthorised token aborts with the
+    /// AUTH message, not the generic one — one query answering for every candidate does not make a
+    /// token-wide failure a per-candidate one.
+    #[test]
+    fn an_unauthorised_search_aborts_with_the_auth_message() {
+        assert!(queue_search_error(GhFailure::Unauthorized).contains("not authorised"));
+        for f in [
+            GhFailure::NotFound,
+            GhFailure::Malformed,
+            GhFailure::Unknown,
+            GhFailure::RateLimited { retry_after: None },
+        ] {
+            let msg = queue_search_error(f);
+            assert!(!msg.contains("not authorised"), "{msg}");
+            assert!(msg.contains("falsely-empty queue"), "{msg}");
+        }
+    }
+
+    /// The label's own name contains the qualifier separator, so an UNQUOTED `label:ai:ready` is a
+    /// different query — and a silently different one: it still returns rows.
+    #[test]
+    fn the_label_qualifier_is_quoted_and_the_org_scope_is_the_shared_one() {
+        let q = queue_search_scope("alpha, beta");
+        assert!(q.contains("label:\"ai:ready\""), "{q}");
+        assert_eq!(
+            q,
+            format!("{} label:\"ai:ready\"", org_search_query("alpha, beta"))
+        );
+        assert!(q.contains("org:alpha") && q.contains("org:beta") && q.contains("is:pr is:open"));
+    }
+
+    /// The one query has to carry EVERY field the gates and both consumers read. A dropped selection
+    /// does not fail the build — it reads back as `null`, which each reader has a default for, so
+    /// the PR quietly changes bucket. This is the only place that can notice.
+    #[test]
+    fn the_query_selects_every_field_a_consumer_reads() {
+        for field in [
+            "mergeable",
+            "reviewDecision",
+            "headRefOid",
+            "isDraft",
+            "baseRefName",
+            "title",
+            "body",
+            "number",
+            "url",
+            "isArchived",
+            "nameWithOwner",
+            "totalCount",
+            "isResolved",
+            "statusCheckRollup",
+            "conclusion",
+        ] {
+            assert!(QUEUE_SEARCH_QUERY.contains(field), "missing `{field}`");
+        }
+        assert!(
+            QUEUE_SEARCH_QUERY.contains("comments(last:100)"),
+            "the comment WINDOW is the tail"
+        );
+        assert!(
+            QUEUE_SEARCH_QUERY.contains("commits(last:1)"),
+            "the rollup is the HEAD commit's"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -53453,6 +54408,13 @@ mod repo_root_tests {
         // Assembled, so this test's own source is not a hit for the shape it hunts — the same
         // move the filesystem gate above makes, for the same reason.
         let scope = format!("org_owner{}", "_args()");
+        // #314: the human's queue names the org scope as GraphQL search QUALIFIERS now, not as
+        // gh's `--owner` flags, so the scope has a second spelling and the scan must see BOTH —
+        // otherwise an enumeration escapes this gate merely by changing how it spells the scope,
+        // which is #206 arriving through the guard written to stop it. The two spellings are
+        // provably the same scope: `queue_search_scope` is `org_search_query` plus the label
+        // qualifier, pinned by `the_label_qualifier_is_quoted_and_the_org_scope_is_the_shared_one`.
+        let queue_scope = format!("queue_search_sc{}", "ope(");
         let filter = format!("withhold_arch{}", "ived(");
 
         // The enumerations that FEED a queue, a state-load or a dashboard. Every one of these
@@ -53483,12 +54445,20 @@ mod repo_root_tests {
             // population is fixed and shrinking, and it does not OFFER work: a per-PR edit that
             // fails is already reported as a failed edit rather than queued as a task.
             "retire_blocked_infra_mode",
-            // A test.
+            // The accessor for the queue's spelling of the same scope (#314).
+            "queue_search_scope",
+            // Tests.
             "next_close_candidate_tests",
+            "one_query_queue_tests",
         ];
         let mut want: Vec<&str> = filtered.iter().chain(exempt.iter()).copied().collect();
         want.sort_unstable();
         let mut got = items_whose_code_contains(&scope);
+        for item in items_whose_code_contains(&queue_scope) {
+            if !got.contains(&item) {
+                got.push(item);
+            }
+        }
         got.sort_unstable();
         assert_eq!(
             got, want,
