@@ -19661,9 +19661,10 @@ struct Leak {
 /// Leak detection: a candidate PR the producer has commented on = a hand-off with no modeled state
 /// (the FSM leaking). A candidate with NO producer comment is just freshly-open/unvetted. The pure
 /// decision is [`leak_reason`]: a vetter blocked-on CLEARANCE as the newest hand-off marker is a
-/// MODELED transition into un-vetted (#161), never a leak. Costs one `gh pr view` per candidate, on
-/// both callers alike — and the candidate set is [`is_leak_candidate`]'s, so the classifier decides
-/// who is even asked about.
+/// MODELED transition into un-vetted (#161), never a leak. Costs one batched comment read per
+/// [`LEAK_COMMENT_BATCH`] candidates on both callers alike, plus a `gh pr view` for each candidate
+/// that read did not answer for — and the candidate set is [`is_leak_candidate`]'s, so the
+/// classifier decides who is even asked about.
 struct LeakScan {
     /// The leaks, oldest first ([`rank_leaks`]).
     leaks: Vec<Leak>,
@@ -19697,9 +19698,135 @@ fn rank_leaks(leaks: &mut [Leak]) {
     leaks.sort_by(|a, b| leak_order_key(a).cmp(&leak_order_key(b)));
 }
 
-/// Live leak scan: the real `gh pr view` behind [`leak_scan_with`].
-fn leak_scan(candidates: &[LeakCandidate]) -> LeakScan {
+/// PRs one batched comment read asks GitHub about. The scan's cost is round trips, and this is how
+/// many candidates each one buys; the product with [`LEAK_COMMENT_PAGE`] is the payload one
+/// response may weigh.
+const LEAK_COMMENT_BATCH: usize = 20;
+
+/// Comments fetched per PR in a batched read, newest last — GitHub's page cap for one connection.
+/// A PR holding more is not read short: [`leak_comments_page`] reports it UNREAD and [`leak_scan`]
+/// pays a per-PR `gh pr view`, so the batch is a speed change and never a different answer.
+const LEAK_COMMENT_PAGE: usize = 100;
+
+/// PURE: the aliased GraphQL query reading `n` PRs' comments in one round trip — one `c<i>` alias
+/// per PR over three DECLARED VARIABLES each, so GitHub types and escapes every slug rather than
+/// this binary interpolating one into query text.
+fn leak_comments_query(n: usize) -> String {
+    let vars: Vec<String> = (0..n)
+        .map(|i| format!("$o{i}: String!, $r{i}: String!, $p{i}: Int!"))
+        .collect();
+    let fields: Vec<String> = (0..n)
+        .map(|i| {
+            format!(
+                "  c{i}: repository(owner: $o{i}, name: $r{i}) {{ pullRequest(number: $p{i}) \
+                 {{ comments(last: {LEAK_COMMENT_PAGE}) {{ totalCount nodes {{ author {{ login }} \
+                 body }} }} }} }}"
+            )
+        })
+        .collect();
+    format!("query({}) {{\n{}\n}}", vars.join(", "), fields.join("\n"))
+}
+
+/// PURE: the `gh api graphql` argv for one chunk.
+///
+/// The flag is decided by the variable's DECLARED TYPE, as in [`subject_query_args`]: `gh api
+/// graphql` retypes a `-F` value that parses as an integer, so an all-numeric owner or repo name
+/// passed with `-F` would send an `Int` at a `String!` and GitHub would refuse the whole chunk.
+fn leak_comments_args(chunk: &[&SubjectRef]) -> Vec<String> {
+    let mut args = vec![
+        "graphql".to_string(),
+        "-f".to_string(),
+        format!("query={}", leak_comments_query(chunk.len())),
+    ];
+    for (i, s) in chunk.iter().enumerate() {
+        let (owner, repo) = s.repo.split_once('/').unwrap_or(("", s.repo.as_str()));
+        args.push("-f".to_string());
+        args.push(format!("o{i}={owner}"));
+        args.push("-f".to_string());
+        args.push(format!("r{i}={repo}"));
+        args.push("-F".to_string());
+        args.push(format!("p{i}={}", s.number));
+    }
+    args
+}
+
+/// PURE: one chunk's response, split back into `n` per-PR reads IN ALIAS ORDER and reshaped into
+/// the `{"comments": […]}` document [`trusted_comments`] reads — so the batch and the per-PR
+/// `gh pr view` are two ways to obtain ONE shape, not two shapes to keep in step.
+///
+/// `None` at an alias means UNREAD, and every uncertainty resolves that way: a null repository or
+/// pull request, a node list that is not one, and a `totalCount` above what the page returned.
+/// That last is the truncation guard — a newest-100 page of a longer thread can hide the trusted
+/// marker [`leak_reason`] answers on, and an unread alias costs a refetch rather than a verdict.
+fn leak_comments_page(doc: &Value, n: usize) -> Vec<Option<Value>> {
+    (0..n)
+        .map(|i| {
+            let conn = doc.pointer(&format!("/data/c{i}/pullRequest/comments"))?;
+            let nodes = conn.get("nodes")?.as_array()?;
+            let total = conn.get("totalCount")?.as_u64()?;
+            if total > nodes.len() as u64 {
+                return None;
+            }
+            Some(serde_json::json!({ "comments": nodes }))
+        })
+        .collect()
+}
+
+/// LIVE: every candidate's comments, batched, keyed by `(repo, number)`.
+///
+/// An ABSENT key means this read did not answer for that PR and the caller must ask again — never
+/// "no comments". A chunk that fails outright contributes no keys, which says that of all its
+/// members at once.
+fn leak_comments_batch(
+    candidates: &[LeakCandidate],
+) -> std::collections::HashMap<(String, u64), Value> {
+    let subjects: Vec<&SubjectRef> = candidates.iter().map(|c| &c.subject).collect();
+    let chunks: Vec<&[&SubjectRef]> = subjects.chunks(LEAK_COMMENT_BATCH).collect();
+    let pages = map_bounded(&chunks, |chunk| {
+        let args = leak_comments_args(chunk);
+        let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+        match gh_retrying(|| gh_api_result(&argref)) {
+            Ok(doc) => leak_comments_page(&doc, chunk.len()),
+            Err(_) => vec![None; chunk.len()],
+        }
+    });
+    chunks
+        .into_iter()
+        .flatten()
+        .zip(pages.into_iter().flatten())
+        .filter_map(|(s, read)| read.map(|v| ((s.repo.clone(), s.number), v)))
+        .collect()
+}
+
+/// [`leak_scan_with`] over a batch that answered for SOME of the candidates, with `per_pr` asked
+/// about the rest.
+///
+/// The per-PR read is the FALLBACK, not the plan, and it is what keeps the batch a pure speed
+/// change: every candidate the batch left out is still asked about one at a time, so the scan reads
+/// the same population it always did and a PR reaches `unreadable` only when BOTH reads failed.
+/// `per_pr` is a seam for that reason — the fallback is only reachable in production when a chunk
+/// or an alias fails, so without it nothing could exercise the branch that keeps the population
+/// whole.
+fn leak_scan_batched<F>(
+    candidates: &[LeakCandidate],
+    batched: &std::collections::HashMap<(String, u64), Value>,
+    per_pr: F,
+) -> LeakScan
+where
+    F: Fn(&SubjectRef) -> Option<Value> + Sync,
+{
     leak_scan_with(candidates, |s| {
+        batched
+            .get(&(s.repo.clone(), s.number))
+            .cloned()
+            .or_else(|| per_pr(s))
+    })
+}
+
+/// Live leak scan: one batched GraphQL read for the whole candidate set, and `gh pr view` for
+/// whatever it did not answer for.
+fn leak_scan(candidates: &[LeakCandidate]) -> LeakScan {
+    leak_scan_batched(candidates, &leak_comments_batch(candidates), |s| {
         gh_json(&[
             "pr",
             "view",
@@ -19762,9 +19889,9 @@ where
 /// producer acting outside the FSM). The leak count is the conformance metric: it trends to zero as
 /// the producer is restricted to labeled transitions. The legacy `states`/`counts`/`leaks` keys are
 /// kept UNCHANGED for the dashboard's existing reads; the new `lanes` object + additive `counts` keys
-/// are the full-machine view. Runtime is O(unlabeled + ai:ready + ai:design producer PRs) extra
-/// `gh` calls (the leak/reason check, the verdict-currency check that returns an ai:ready PR to
-/// un-vetted, and — `--json` only — the design cell's split, #240).
+/// are the full-machine view. Runtime is O(ai:ready + ai:design producer PRs) extra `gh` calls (the
+/// verdict-currency check that returns an ai:ready PR to un-vetted, and — `--json` only — the
+/// design cell's split, #240), plus [`leak_scan`]'s batched read over the unlabeled ones.
 fn human_queue_mode(json_out: bool) -> i32 {
     let ProducerPrInventory {
         buckets,
@@ -28301,6 +28428,141 @@ mod next_leak_tests {
 
     fn producer_comments(body: &str) -> Value {
         json!({"comments": [{"author": {"login": TRUSTED_AUTHOR}, "body": body}]})
+    }
+
+    // ── the batched read ──────────────────────────────────────────────────────────────────────
+
+    /// One chunk's response as GitHub returns it: an entry per alias under `data`.
+    fn batch_doc(entries: &[(usize, Value)]) -> Value {
+        let mut data = serde_json::Map::new();
+        for (i, v) in entries {
+            data.insert(format!("c{i}"), v.clone());
+        }
+        json!({ "data": data })
+    }
+
+    fn pr_with(total: u64, bodies: &[&str]) -> Value {
+        let nodes: Vec<Value> = bodies
+            .iter()
+            .map(|b| json!({"author": {"login": TRUSTED_AUTHOR}, "body": b}))
+            .collect();
+        json!({"pullRequest": {"comments": {"totalCount": total, "nodes": nodes}}})
+    }
+
+    // The argv is TYPED per variable: an all-numeric owner or repo passed with `-F` would be sent
+    // as an `Int` at a `String!` and GitHub would refuse the whole chunk.
+    #[test]
+    fn a_batched_read_declares_one_typed_alias_per_pr() {
+        let subjects = [subject("123/456", 7), subject("o/r", 9)];
+        let refs: Vec<&SubjectRef> = subjects.iter().collect();
+        let args = leak_comments_args(&refs);
+        assert_eq!(args[0], "graphql");
+        assert_eq!(args[1], "-f");
+        let query = args[2].strip_prefix("query=").expect("the query flag");
+        // Two aliases, and the last one is the second PR's — so a chunk cannot silently ask about
+        // fewer PRs than it was handed.
+        assert!(
+            query.contains("c0: repository(owner: $o0, name: $r0)"),
+            "{query}"
+        );
+        assert!(
+            query.contains("c1: repository(owner: $o1, name: $r1)"),
+            "{query}"
+        );
+        assert!(!query.contains("c2:"), "{query}");
+        assert_eq!(
+            args[3..],
+            [
+                "-f", "o0=123", "-f", "r0=456", "-F", "p0=7", //
+                "-f", "o1=o", "-f", "r1=r", "-F", "p1=9",
+            ]
+            .map(String::from)
+        );
+    }
+
+    // The split is BY ALIAS, so a response's own ordering cannot reorder the chunk, and the shape
+    // handed back is the one `trusted_comments` reads.
+    #[test]
+    fn a_batch_response_splits_by_alias_into_the_per_pr_shape() {
+        let doc = batch_doc(&[
+            (1, pr_with(1, &["🤖 ai:producer second"])),
+            (0, pr_with(1, &["🤖 ai:producer first"])),
+        ]);
+        let reads = leak_comments_page(&doc, 2);
+        assert_eq!(reads.len(), 2);
+        assert_eq!(
+            trusted_comments(reads[0].as_ref().expect("alias c0"), None),
+            vec!["🤖 ai:producer first"]
+        );
+        assert_eq!(
+            trusted_comments(reads[1].as_ref().expect("alias c1"), None),
+            vec!["🤖 ai:producer second"]
+        );
+    }
+
+    // EVERY uncertainty is UNREAD, which is what keeps the batch a speed change: an alias reported
+    // unread is refetched per-PR by `leak_scan`, and only a failure of BOTH reads reaches
+    // `unreadable`. A truncated page is in that set because the trusted marker `leak_reason`
+    // answers on can sit below the newest page.
+    #[test]
+    fn an_uncertain_alias_is_unread_rather_than_read_as_no_comments() {
+        let unread = batch_doc(&[
+            (0, json!(null)),
+            (1, json!({"pullRequest": null})),
+            (2, pr_with(300, &["🤖 ai:producer newest of many"])),
+            (3, json!({"pullRequest": {"comments": {"totalCount": 0}}})),
+        ]);
+        assert_eq!(leak_comments_page(&unread, 4), vec![None, None, None, None]);
+        // An alias the response omits entirely is unread too, never an empty thread.
+        assert_eq!(leak_comments_page(&batch_doc(&[]), 1), vec![None]);
+        // A PR with no comments at all IS read, and reads as no comments.
+        let empty = leak_comments_page(&batch_doc(&[(0, pr_with(0, &[]))]), 1);
+        assert_eq!(empty[0], Some(json!({"comments": []})));
+    }
+
+    // WHAT THE BATCH LEFT OUT IS STILL ASKED ABOUT. A candidate absent from the batch is a PR
+    // nobody has read yet, so it costs a per-PR fetch — dropping the fallback would turn every
+    // batch gap into an `unreadable`, and a chunk that failed wholesale into 20 of them.
+    #[test]
+    fn a_candidate_the_batch_missed_is_refetched_not_declared_unknown() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let candidates = vec![
+            candidate("o/batched", 1, "2026-01-01T00:00:00Z"),
+            candidate("o/missed", 2, "2026-01-02T00:00:00Z"),
+            candidate("o/gone", 3, "2026-01-03T00:00:00Z"),
+        ];
+        let batched = std::collections::HashMap::from([(
+            ("o/batched".to_string(), 1),
+            producer_comments("🤖 ai:producer from the batch"),
+        )]);
+        let fetches = AtomicUsize::new(0);
+        let scan = leak_scan_batched(&candidates, &batched, |s| {
+            fetches.fetch_add(1, Ordering::SeqCst);
+            match s.repo.as_str() {
+                "o/missed" => Some(producer_comments("🤖 ai:producer from the refetch")),
+                _ => None,
+            }
+        });
+        // The batch hit is NOT refetched; the two it missed each are.
+        assert_eq!(fetches.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            scan.leaks
+                .iter()
+                .map(|l| (l.subject.repo.as_str(), l.reason.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("o/batched", "🤖 ai:producer from the batch"),
+                ("o/missed", "🤖 ai:producer from the refetch"),
+            ]
+        );
+        // Only the PR NEITHER read answered for is unknown.
+        assert_eq!(
+            scan.unreadable
+                .iter()
+                .map(|s| s.repo.as_str())
+                .collect::<Vec<_>>(),
+            vec!["o/gone"]
+        );
     }
 
     // THE POPULATION, and the defect it was: the leak set is [`classify_lane`]'s OWN Leak verdict,
