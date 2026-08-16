@@ -990,16 +990,28 @@
         "count": 49,
         "prs": [
           {
-            "repo": "rainlanguage/rainix",
-            "number": 312,
-            "url": "https://github.com/rainlanguage/rainix/pull/312",
-            "title": "ci(sol): reusable explorer verification for contracts already on chain"
+            "repo": "rainlanguage/rain.sol.codegen",
+            "number": 39,
+            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/39",
+            "title": "LibCodeGen: cover every unprobed function and pin the four wrap decisions"
           },
           {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 320,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/320",
-            "title": "feat(human-fsm): the four reading gates run in a fresh context"
+            "repo": "rainlanguage/rain.sol.codegen",
+            "number": 37,
+            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/37",
+            "title": "LibHexString.bytesToHex gets a test file"
+          },
+          {
+            "repo": "rainlanguage/rain.sol.codegen",
+            "number": 36,
+            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/36",
+            "title": "Cover LibFs: path structure and what buildFileForContract actually writes"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 131,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/131",
+            "title": "feat(migration-registry): record a migration at the moment it ran, via MigrationRegistryV2"
           },
           {
             "repo": "rainlanguage/issue-pr-cron",
@@ -1012,18 +1024,6 @@
             "number": 126,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/126",
             "title": "Generate the released-suites aggregate instead of writing it by hand"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 113,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/113",
-            "title": "test: move shared test helpers into test/lib"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 100,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/100",
-            "title": "docs: install section names the rain-sol-codegen dependency"
           },
           {
             "repo": "rainlanguage/issue-pr-cron",
@@ -2111,6 +2111,66 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 48,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/48",
+      "title": "@param vm says 'for file operations' on all 11 functions; exactly one touches the filesystem"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 47,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/47",
+      "title": "An empty comment makes every *ConstantString emit a blank line, so the generated file is not stable under forge fmt"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 46,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/46",
+      "title": "bytecodeHashConstantString and describedByMetaHashConstantString hand-roll their bytes32 declaration and skip the wrap arithmetic — 2 characters of headroom"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 45,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/45",
+      "title": "describedByMetaHashConstantString cannot run under this repo's fs_permissions, and interpolates its name into the path unsanitised"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 44,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/44",
+      "title": "bytecodeHashConstantString emits a plausible BYTECODE_HASH for an address with no code, so the consumer's codehash check passes for any codeless address"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 43,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/43",
+      "title": "LibHexString.bytesToHex underflows the string length if a caller-supplied Vm returns fewer than two characters"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 42,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/42",
+      "title": "README tells consumers to write script/BuildPointers.sol, which rainix CI rejects outright — plus three more stale claims"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 41,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/41",
+      "title": "buildFileForContract's remove-then-write is unobservable, and its NatSpec credits it with idempotency that writeFile already provides"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 40,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/40",
+      "title": "buildFileForContract cannot bootstrap a repo that has never generated: vm.writeFile does not create src/generated"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 38,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/38",
+      "title": "LibFs.pathForContract accepts any string as a contract name: empty writes a hidden dotfile, a slash targets a subdirectory, and .. escapes under a normal fs_permissions grant"
+    },
+    {
       "repo": "rainlanguage/rain.deploy",
       "number": 129,
       "url": "https://github.com/rainlanguage/rain.deploy/issues/129",
@@ -2121,12 +2181,6 @@
       "number": 88,
       "url": "https://github.com/rainlanguage/claude-audit-skills/issues/88",
       "title": "Named-returns rule reads as neutral; the org preference for unnamed should be stated in it"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 127,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/127",
-      "title": "MigrationRegistry cannot record a migration that already ran: appliedAt is always block.timestamp"
     },
     {
       "repo": "rainlanguage/rainlang.interface",
@@ -6130,15 +6184,15 @@
     "leaks": 0,
     "totalProducerPrs": 178,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 663,
+    "uncoveredIssues": 672,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 843
+    "openIssues": 850
   },
   "ages": {
     "openIssues": {
-      "meanDays": 294.4,
-      "medianDays": 109.0,
+      "meanDays": 292.0,
+      "medianDays": 104.3,
       "oldestDays": 1665.7
     }
   }
