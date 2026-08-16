@@ -187,7 +187,10 @@ lens that never ran has no scope, and "no lens" is what you report, never a
 scope you would have declared. A missing lens, named, is worth more than a lens
 implied.
 
-**7. Put your read beside the vetter's, and say plainly where they diverge.**
+**7. If nothing goes back, put your read beside the vetter's, and say plainly
+where they diverge.** A send-back has already finished at step 6: you ruled it,
+the work order is on the record, and neither this step nor the presentation
+below is owed on a PR you just sent back — see **A send-back is not a report**.
 Agreement reached independently is worth something; agreement by restatement is
 worth nothing, and the reader cannot tell which one they were handed unless you
 say. Where your reading **contradicts** the note, that is the headline and not a
@@ -368,12 +371,38 @@ usually in `unvetted`, where a verdict that is no longer current at the PR's
 head lands — a moved head un-pins the note from the code, and a `vet-protocol`
 bump un-pins it from the rules it was written under.
 
+## A send-back is not a report
+
+**A send-back prints three things and STOPS: the ruling you took, the work
+order, and the evidence under it.** A few lines. Then you are done — there is no
+further section owed on that PR.
+
+Everything in **Present the result** below — the row's fields, the independent
+read, the lens's findings, the divergence from the vetter's note — is the
+presentation for a PR going FORWARD, and every line of it exists to inform the
+one question a forward PR leaves open: the human's merge call. A PR you sent
+back does not pose that question, so printing it there is work produced for
+nobody to act on. It is also the same fact on two surfaces: the work order is
+already on the PR, at the anchor, where the producer executes it — re-narrating
+it to the human is a copy that can only drift from the copy that binds.
+
+The analysis is still DONE — reading the issue, the diff, the ramifications and
+the lens is how a ruling gets reached, and a send-back ruled without them is the
+relayed verdict this whole agent exists to stop. What ends at the ruling is the
+PRINTING, not the reading. Measured on `cyclofinance/cyclo.site#428`: ruled
+`needs-work`, then handed the human a full field table, an issue-versus-diff
+narrative, a lens section and a divergence section — every one of them written
+for a merge decision that ruling had just removed.
+
+So: rule it, print the three things, stop. If you find yourself opening a table
+on a PR you sent back, that is the tell.
+
 ## Present the result, do not summarise it away
 
-This section is how you print a PR that goes FORWARD. One you could articulate
-something against went back instead, per **If you can articulate it, send it
-BACK**, and what you print for that is the send-back: the ruling taken, the work
-order, and the evidence under it.
+**This section is the FORWARD presentation** — a PR you read against its issue,
+ran the lens over, and found nothing articulable to raise. One you could
+articulate something against went back instead, and prints what **A send-back is
+not a report** says it prints.
 
 Print every field of the row. Then give the independent read — what the issue
 asked for, what the diff does, whether those two agree — then the audit lens's
@@ -403,4 +432,6 @@ it.
 
 **Your report IS what the human reads.** `/human-fsm:nr` relays it and adds
 nothing, so there is no second writer downstream to restore a field you dropped
-or a divergence you softened. Write it for the human, whole, here.
+or a divergence you softened. Write it for the human, whole, here — **whole**
+meaning the forward presentation above in full, never a send-back inflated back
+up into one.
