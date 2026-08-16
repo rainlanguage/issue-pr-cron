@@ -343,6 +343,22 @@ only `Read` still ran a `Bash` call with no permission denial — so what the
 contract enforces is that the declaration and the command's own prose agree, and
 that no shell line is fenced anywhere in the body.
 
+**Where `Task` was refused, and what #316 changed under it.** The refusal above
+had a stated reason — "a subagent's tool set is not this command's, so a spawned
+agent holding `Bash` is the shell fallback wearing another name" — and that
+reason is about an ANONYMOUS subagent, not about dispatch. It stops being true
+for an agent this plugin SHIPS beside the command: its tool list is a checked-in
+artefact under the same review, and, unlike `allowed-tools`, the harness
+actually enforces it (measured on 2.1.233: an agent given `tools: Read` and told
+in as many words to run `Bash` reported one tool and no `Bash` to call). #316
+ruled the four reading gates into a fresh context for a correctness reason —
+inline execution inherited the conversation, so a contaminated read and an
+independent one produced the same report — and the shape that satisfies it is a
+command granting `Agent` alone that dispatches a shipped agent holding the typed
+grant. `plugins/human-fsm/` ships that shape now; `command_contract` does not
+model it yet, so five `marketplace_tests` fail on it — see the landing note in
+that plugin's README for the exact change owed.
+
 **Why a plugin rather than files with an install step.** The org already
 distributes Claude Code assets this way — `claude-audit-skills`,
 `adversarial-mutation-test` and `rain-org-health` each publish a
