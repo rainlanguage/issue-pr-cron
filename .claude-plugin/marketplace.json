@@ -10,7 +10,7 @@
       "name": "human-fsm",
       "source": "./plugins/human-fsm",
       "description": "Slash commands for the human's side of the issue→PR pipeline FSM: read the next ai:ready PR and check the vetter's verdict against the diff and the issue it closes, read the next ai:close-candidate flag and check the producer's reason against the issue and the code it claims about, read the next ai:design PR and check the raised question against the issue and the code it is about, read the next FSM leak and locate which of three defects left the PR in no modeled state, then rule on a close-candidate, send work back as needs-work, rule a design question, or keep an issue open — plus an observation command that forces a run, watches it, measures what its context cost and reads the retained trace corpus for what a run still hand-rolls. Every input comes from pr-review-report, and the reads rule through it what they can articulate.",
-      "version": "0.26.0",
+      "version": "0.27.0",
       "author": { "name": "Rain Open Source Software Ltd" },
       "keywords": [
         "rainlanguage",
