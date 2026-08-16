@@ -1,7 +1,7 @@
 ---
-description: The next ai:design PR to rule on — the raised design question checked against the issue, the diff and the code it is about, then presented with its code-constrained option space, pointed at the answer that already exists, or named as misrouted.
+description: The next ai:design PR to rule on — the raised design question checked against the issue, the diff and the code it is about, then presented with its code-constrained option space where the answer is the human's, or ruled here where it is already answered or misrouted.
 argument-hint: [1-3]
-allowed-tools: mcp__plugin_human-fsm_fsm__next_design, mcp__plugin_human-fsm_fsm__pr_context, mcp__plugin_human-fsm_fsm__pr_checkout, mcp__plugin_human-fsm_fsm__clone_release, Skill, Read
+allowed-tools: mcp__plugin_human-fsm_fsm__next_design, mcp__plugin_human-fsm_fsm__pr_context, mcp__plugin_human-fsm_fsm__pr_checkout, mcp__plugin_human-fsm_fsm__clone_release, mcp__plugin_human-fsm_fsm__human_rule, Skill, Read
 ---
 
 Arguments: `$ARGUMENTS`
@@ -38,9 +38,8 @@ deliverables, and the whole job is telling them apart:
   of you forecloses, which it leaves open, and what each costs), and a
   recommendation. The human's answer is the exit.
 - **Already answered** — something already settles it, and the pointer IS the
-  finding: name where the answer lives, and the recommendation is to rule that
-  answer. Do not re-derive it as if it were open; a settled question re-asked is
-  how precedents drift.
+  finding: name where the answer lives, and rule that answer. Do not re-derive
+  it as if it were open; a settled question re-asked is how precedents drift.
 
   **What this command can actually reach, and what it cannot.** Two sources are
   verifiable here: a ruling or a statement in the PR's own linked issues and
@@ -62,10 +61,22 @@ deliverables, and the whole job is telling them apart:
   consult, or resting on a false premise about what the code currently does. The
   finding is the misroute, stated with **what the correct state would have
   been** — a verdict the vetter could have recorded, producer work that needed
-  no permission, or a needs-work with the defect named.
+  no permission, or a needs-work with the defect named — and that correction is
+  what you rule.
 
 Name the finding before you argue it. A presentation that drifts between the
 three is the reprint this command exists to replace.
+
+**The report is as long as the finding needs.** A genuine question earns the
+full presentation, because a human has to answer it. The other two are rulings
+you take here, and their report is the pointer or the correction, the ruling
+taken, and the work order it carries — a few lines.
+
+What shrinks is the write-up, never the read. The finding is only reachable BY
+deriving the intent from the issue, reading the diff against it, and testing the
+question's premise, and which of the three you are holding is knowable only
+afterwards. A run that started guessing which questions are real would fail in
+exactly the case this command is worth something in.
 
 ## The sequence
 
@@ -151,33 +162,39 @@ restatement is worth nothing, and the reader cannot tell which they were handed
 unless you say. A question that does not survive a second read — already
 answered, or no question at all — is the most valuable thing this command
 produces, and burying it under a faithful reprint of the question is how a
-settled matter costs a human decision anyway.
+settled matter costs a human decision anyway. Where that is what you have, TAKE
+the ruling per **If you can articulate it** below and report that you took it: a
+question you answered and handed on is a question still queued.
 
-## The exit: an answer is a send-back
+## If you can articulate it, send it BACK — not forward
 
-The ruling this read precedes is the design ruling, and answering IS routing:
-the answer lands the PR back with the producer as `ai:needs-work` with the
-answer as the trusted work order, posted in the same call at the same anchor — a
-design ruling is the same act a needs-work is, and the producer is the next
-mover from the moment it is written. There is no parked spelling and no waiting
-state: a design ruling without an executable answer is not a ruling yet, and the
-machine holds no state for half of one.
+Answering IS routing: the answer lands the PR back with the producer as
+`ai:needs-work` with the answer as the trusted work order, posted in the same
+call at the same anchor. There is no parked spelling and no waiting state — a
+design ruling without an executable answer is not a ruling yet, and the machine
+holds no state for half of one.
 
-So every finding above ends in a producer work order, and the presentation
-should make writing it cheap:
+**An answer you can put into words is a send-back.** Rule it with `human_rule`;
+the words you were about to write for the human ARE the work order, and they go
+in `rework`. Both verbs land the one `ai:needs-work` state — `design` where the
+note answers the question raised, `needs-work` where the correct move was work
+with a defect named — so the verb records which one ruled rather than deciding
+where the PR goes.
 
-- a **genuine question** exits through the human's answer — recommend the ruling
-  with the work order the answer implies already drafted;
-- an **already-answered** question exits the same way, with the existing answer
-  as the order and the pointer in the note — and where the pointer is a
-  recollection rather than something you read here, the note says so, because a
-  work order resting on an unverified precedent is one the producer will execute
-  as though it were checked;
-- a **misroute** exits as the correction: the work order says what the correct
-  move was, so the producer executes that instead of re-asking.
+Two of the three findings exit here:
 
-The ruling is `/design` on the PR the row named. This command does not rule — it
-is the read that precedes the human's word.
+- an **already-answered** question — rule that answer, with the pointer in the
+  note;
+- a **misroute** — rule the correction, so the producer executes the correct
+  move instead of re-asking.
+
+**What goes forward is the answer you do not have.** A genuine question is one
+the code admits more than one defensible design for and no source you can reach
+settles; that judgement is the human's, and their exit is `/design` on the PR
+the row named, with the work order the answer implies already drafted. So is an
+already-answered question whose pointer is a RECOLLECTION you could not verify
+here: an unverified precedent is not an answer you can articulate, and a work
+order resting on one is executed as though it were checked.
 
 ## Typed reads and the lens, and no shell at all
 
@@ -188,15 +205,24 @@ is a decision whose inputs nobody can audit. If a tool is unavailable, say so
 and stop — the answer is to connect the plugin's MCP server, not to work around
 it.
 
-The grant is four typed calls plus `Skill` and `Read`, and `Read` applies to the
-`pr_checkout` tree and nothing else. All four typed calls are reads except
-`clone_release`, which disposes of what this command itself created and writes
-no GitHub state. That list is a **declaration, not a sandbox**: measured on
-Claude Code 2.1.220, a command granting only `Read` still ran a `Bash` call with
-no permission denial. So the prohibition above is the thing that actually binds,
-which is why it is written here rather than assumed of the frontmatter — and why
-nothing in this file is fenced as a shell line, because what a reader copies out
-of a command is what the command showed them.
+The grant is five typed calls plus `Skill` and `Read`, and `Read` applies to the
+`pr_checkout` tree and nothing else. Four are reads; `clone_release` disposes of
+what this command itself created and writes no GitHub state.
+
+The fifth, `human_rule`, is the send-back and the only call that writes GitHub
+state. Typed for the same reason every input here is: its guards — the mandatory
+work order, the head-sha anchor, clearing every other `ai:*` — live in the
+binary rather than in whoever remembered them, and a ruling assembled by hand is
+a ruling whose inputs nobody can audit. Reaching for `pr-review-report` through
+a shell to make one is the defect the no-shell rule above names, not an
+exception to it.
+
+That list is a **declaration, not a sandbox**: measured on Claude Code 2.1.220,
+a command granting only `Read` still ran a `Bash` call with no permission
+denial. So the prohibition above is the thing that actually binds, which is why
+it is written here rather than assumed of the frontmatter — and why nothing in
+this file is fenced as a shell line, because what a reader copies out of a
+command is what the command showed them.
 
 ## What `next_design` has already settled
 
@@ -230,12 +256,20 @@ archived repos, where no ruling can be written at all.
 
 ## Present the result, do not summarise it away
 
-Print every field of the row. Then give the independent read — what the issue
-asked, what the diff does, whether the question is real against that — then the
-finding, named as one of the three, with the option space and recommendation
-where the question is genuine, the pointer where it is answered, and the correct
-state where it is misrouted. Where the lens ran, its findings arrive under the
+**Open with the row's `url`, verbatim, on its own line, before any analysis.**
+Every form of this report carries it, the one-line form included: a finding the
+reader cannot click through to is one they reconstruct a link for by hand.
+
+**A genuine question gets the full presentation.** The rest of the row's fields,
+then the independent read — what the issue asked, what the diff does, whether
+the question is real against that — then the option space as the code constrains
+it and the recommendation. Where the lens ran, its findings arrive under the
 scope literal you declared, or you state that there was no lens. Then the
 drafted work order the recommended ruling would carry.
+
+**The other two are a few lines**: the finding named, the pointer where the
+question is already answered or the correct state where it is misrouted, the
+ruling you took, and the work order it carried. Say what you read to reach it —
+never re-derive a settled question as if it were open.
 
 Names collide across plugins; `/human-fsm:ndd` disambiguates.
