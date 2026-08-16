@@ -2,6 +2,12 @@
   "states": {
     "ai:blocked-on": [
       {
+        "repo": "rainlanguage/rainlang",
+        "number": 554,
+        "url": "https://github.com/rainlanguage/rainlang/pull/554",
+        "title": "Remove submodule-era residue from .soldeerignore"
+      },
+      {
         "repo": "rainlanguage/rain.factory.deploy",
         "number": 8,
         "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/8",
@@ -117,6 +123,18 @@
       }
     ],
     "ai:design": [
+      {
+        "repo": "rainlanguage/rain.tofu.erc20-decimals",
+        "number": 28,
+        "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/28",
+        "title": "fix(ci): grant Package Release the token permissions its callee needs"
+      },
+      {
+        "repo": "rainlanguage/rainlang",
+        "number": 551,
+        "url": "https://github.com/rainlanguage/rainlang/pull/551",
+        "title": "Bump rain-math-binary 0.1.1 -> 0.1.3"
+      },
       {
         "repo": "cyclofinance/cyclo.site",
         "number": 408,
@@ -810,8 +828,14 @@
   "lanes": {
     "vet-lifecycle": {
       "ai:blocked-on": {
-        "count": 19,
+        "count": 20,
         "prs": [
+          {
+            "repo": "rainlanguage/rainlang",
+            "number": 554,
+            "url": "https://github.com/rainlanguage/rainlang/pull/554",
+            "title": "Remove submodule-era residue from .soldeerignore"
+          },
           {
             "repo": "rainlanguage/rain.factory.deploy",
             "number": 8,
@@ -929,7 +953,7 @@
         ]
       },
       "un-vetted": {
-        "count": 97,
+        "count": 93,
         "prs": [
           {
             "repo": "rainlanguage/issue-pr-cron",
@@ -1190,12 +1214,6 @@
             "title": "Remove submodule-era residue; repair the copilot build fallback"
           },
           {
-            "repo": "rainlanguage/rainlang",
-            "number": 554,
-            "url": "https://github.com/rainlanguage/rainlang/pull/554",
-            "title": "Remove submodule-era residue from .soldeerignore"
-          },
-          {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 312,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/312",
@@ -1230,12 +1248,6 @@
             "number": 113,
             "url": "https://github.com/rainlanguage/rain.solmem/pull/113",
             "title": "Remove submodule-era residue: dead foundry.lock and .gitmodules/lib references"
-          },
-          {
-            "repo": "rainlanguage/rain.verify",
-            "number": 31,
-            "url": "https://github.com/rainlanguage/rain.verify/pull/31",
-            "title": "Remove the submodule-era residue from REUSE.toml and CLAUDE.md"
           },
           {
             "repo": "rainlanguage/rain.dia",
@@ -1346,12 +1358,6 @@
             "title": "rainix-static: cap launch-loaded agent context at 4096 bytes (floor-only ratchet)"
           },
           {
-            "repo": "rainlanguage/rain.tofu.erc20-decimals",
-            "number": 28,
-            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/28",
-            "title": "fix(ci): grant Package Release the token permissions its callee needs"
-          },
-          {
             "repo": "rainlanguage/rain.flare",
             "number": 206,
             "url": "https://github.com/rainlanguage/rain.flare/pull/206",
@@ -1374,12 +1380,6 @@
             "number": 261,
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/261",
             "title": "bump rain-math-binary 0.1.1 -> 0.1.3"
-          },
-          {
-            "repo": "rainlanguage/rainlang",
-            "number": 551,
-            "url": "https://github.com/rainlanguage/rainlang/pull/551",
-            "title": "Bump rain-math-binary 0.1.1 -> 0.1.3"
           },
           {
             "repo": "rainlanguage/rain.flare",
@@ -1518,8 +1518,22 @@
     },
     "vetter-verdicts": {
       "ai:design": {
-        "count": 1,
+        "count": 3,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.tofu.erc20-decimals",
+            "number": 28,
+            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/28",
+            "title": "fix(ci): grant Package Release the token permissions its callee needs",
+            "bucket": "presentable"
+          },
+          {
+            "repo": "rainlanguage/rainlang",
+            "number": 551,
+            "url": "https://github.com/rainlanguage/rainlang/pull/551",
+            "title": "Bump rain-math-binary 0.1.1 -> 0.1.3",
+            "bucket": "presentable"
+          },
           {
             "repo": "cyclofinance/cyclo.site",
             "number": 408,
@@ -1532,7 +1546,7 @@
           "draft": 0,
           "fetchErrors": 0,
           "noQuestion": 0,
-          "presentable": 1,
+          "presentable": 3,
           "unaddressable": 0
         }
       },
@@ -6253,30 +6267,38 @@
       "title": "fix: guard the unchecked mul(_, 0x20) word scaling at both sites (#54)",
       "reason": "🤖 ai:producer  Rework of the 2026-08-08 ruling landed at `aa77568`. All 7 items of the rework note, in order:  1. **`LibStackPointer.unsafeList` guarded** — `src/lib/LibStackPointer.sol:148`, multiply hoisted into checked Solidity exactly as the candidate diff. 2. **`LibStackSentinel.consumeSentinelTuples` guarded** — `src/lib/LibStackSentinel.sol:181`, same treatment for `size := mul(n, 0x20)`. 3. **False documentation corrected, not supplemented** — three sites, not two: the NatSpec claim (`src/lib/LibStackSentinel.sol:109-128`), the inline comment beside the scan loop (`src/lib/LibStackSentinel.sol:185-191`), and a third instance of the same universal claim in the library preamble (`src/lib/LibStackSentinel.sol:71-75`) that the note did not name but that says the same untrue thing. All three rewritten to state what the guarded function actually does, including that an out of range `n` is **not** guaranteed to fail loudly while #110 is open. 4. **Both control tests pass, untouched** — the four repro files are byte-identical to `83db85b`, and the fix commit touches no test at all: both `git diff 83db85b..aa77568 -- test/src/lib/LibStackPointer.unsafeListWrap.t.sol test/src/lib/LibStackPointerWrapHarness.sol test/src/lib/LibStackSentinel.tupleSizeWrap.t.sol test/src/lib/LibStackSentinelWrapHarness.sol` and `git diff 064249b..aa77568 -- test/` are empty. 5. **Full suite** — `origin/main` merged in first (it had moved). 334 passed / 6 failed on the merge commit, so the merge masked nothing; **340 passed, 0 failed, 0 skipped (340 total)** with the guard, exit 0. 6. **Second defect filed separately** — #110, reproduced against this branch **with the guard applied**: `sentinelPointer` 64 bytes above `upper`, returns at 11,269 gas, no revert. 7. **Audited source drift stated in the PR body**, up top with a warning heading — Protofire-audited, ~23 downstreams, re-audit conversation and republish cascade visible now rather than at merge.  Mutation evidence, each guard broken individually with the full suite re-run:  | mutant | result | | --- | --- | | `unsafeList` scaling wrapped in `unchecked` | 337 passed, **3 failed** / 340, exit 1 — all 3 `LibStackPointerUnsafeListWrapTest` red tests fire with their original messages | | `consumeSentinelTuples` scaling wrapped in `unchecked` | 337 passed, **3 failed** / 340, exit 1 — all 3 `LibStackSentinelTupleSizeWrapTest` red tests fire with their original messages |  Both controls kept passing under both mutants, which is the expected asymmetry — they do not depend on the guard.  `pre-commit run --all-files` and `forge fmt --check` both clean. **This PR is no longer expected-red.** ",
       "createdAt": "2026-07-25T21:32:37Z"
+    },
+    {
+      "repo": "rainlanguage/rain.verify",
+      "number": 31,
+      "url": "https://github.com/rainlanguage/rain.verify/pull/31",
+      "title": "Remove the submodule-era residue from REUSE.toml and CLAUDE.md",
+      "reason": "🤖 ai:producer QA-block repair: replaced QA-GUIDE section 8's evidence block in the PR body via `pr-review-report repair-qa-block`. Every byte outside the `## QA` section is unchanged.",
+      "createdAt": "2026-08-15T07:44:56Z"
     }
   ],
   "counts": {
-    "unvetted": 97,
-    "blockedOn": 19,
+    "unvetted": 93,
+    "blockedOn": 20,
     "ready": 0,
     "needsWork": 98,
     "relink": 0,
-    "design": 1,
+    "design": 3,
     "blockedInfra": 0,
     "closeCandidateIssues": 3,
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
-    "leaks": 1,
+    "leaks": 2,
     "totalProducerPrs": 216,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 654,
-    "designPresentable": 1,
+    "designPresentable": 3,
     "designNoQuestion": 0,
     "openIssues": 875
   },
   "ages": {
     "openIssues": {
-      "meanDays": 283.5,
+      "meanDays": 283.6,
       "medianDays": 102.7,
       "oldestDays": 1665.2
     }
