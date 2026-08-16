@@ -365,6 +365,124 @@ name), and `.github/workflows/version-hygiene.yaml` runs it plus the
 change-must-bump check. It is a subcommand rather than a CI shell script for the
 reason `require-qa-block` is: everything it does is parsing.
 
+### The vetter's judgement as a skill
+
+The other thing this marketplace publishes is not a command and not for a human:
+`vetter-judgement` is ONE skill, holding the properties that decide a verdict
+where the gates and the tool's refusals stop — what the QA gate is actually
+asking and what supersedes it, what makes a locally sound PR a `design` rather
+than a `ready`, what makes it `close` rather than `needs-work`, what a moved
+head obliges, and which of a PR's own statements are premises to falsify.
+
+```
+/plugin marketplace add rainlanguage/issue-pr-cron
+/plugin install vetter-judgement@issue-pr-cron
+```
+
+**It is a second plugin rather than a `skills/` directory inside `human-fsm`,
+and the reason is the same one that made those commands commands.** `human-fsm`
+is the HUMAN's side of the machine — human-typed, deterministic, argument-taking
+transitions, every input arriving from `pr-review-report` and none of them
+writing GitHub state. This is the MACHINE vetter's judgement: nothing types it,
+it takes no argument, it reaches no tool, and the model matches it by
+description and invokes it on its own — precisely the form that section rules
+OUT for a transition and IN for this. Shipping them as one plugin would also
+weld two independent release cadences together, because a plugin's CONTENT is
+its release: every instruction added would bump the version every human
+reinstalls to get slash commands that did not change, and every command edit
+would bump the version the vetter's plugin cache keys on. They version
+separately because they change separately.
+
+**It states properties, never cases.** No PR numbers, no dates, no outcomes —
+here or, after #283, in the prompt's gates either. A rule and the case it was
+learned from are not the same artefact: once the rule is written the case is
+payload, it rots the moment that PR changes state, and it invites reasoning by
+analogy ("this looks like the flare one") in place of applying the rule. The
+argument for keeping one is that a bare prohibition is easier to argue around —
+which is an assumption nobody here has evidence for, while the context cost of
+carrying it is certain, recurring and measurable. So **the burden sits on
+keeping an example, not on cutting it**, and an instruction that seems to need
+one is underspecified: sharpen the instruction.
+
+**What replaced them is a mechanism, not a stricter tone.** `review-prompt.txt`
+now carries a **total-function exit**, mirroring the one `campaign-prompt.txt`
+has given the producer all along: an instruction the vetter cannot apply to the
+PR in front of it — ambiguous, self-contradictory, or silent on the case — is
+reported and stopped, as `design` naming what could not be applied, and arguing
+an instruction down is not an available move. Before it, a rule that did not fit
+left the vetter no recourse but to reason its way into one of the four verdicts,
+which is the arguing the anecdotes were bolted on to discourage. That was a
+structural gap, not a discipline problem.
+
+**Where it is loaded, and what it costs.** `review-prompt.txt` is read in full
+on every run, so anything living there is a fixed per-run charge whether or not
+the run has an item to spend it on. The prompt therefore carries the GATES, the
+exit above, and one line telling the vetter to invoke this skill once before the
+run's first `record_verdict`; the judgement itself loads on demand, and a run
+with an empty queue pays none of it. **Content that CALIBRATES a gate belongs in
+the skill; content a gate is INCOMPLETE without belongs in the prompt.**
+
+**It is not an audit lens and cannot become one.** `record_verdict` credits only
+a skill whose id ends in `audit` (`AUDIT_SKILL_LEAF`), so invoking this one
+neither satisfies the lens gate nor disturbs it — a verdict still requires a
+`pr_checkout` tree at the PR's head and an `audit` invocation naming that PR, at
+a declared `pr:<number>` scope.
+
+**Why it exists at all: auto-memory does not travel** (#282). This judgement
+accumulated in Claude Code auto-memory on one box, which is machine-local,
+unversioned and unreviewable — so the pipeline's behaviour was a function of one
+host's history, and moving the FSM anywhere else would have produced no error
+and a quietly worse vetter. An autonomous pipeline's behaviour is a pure
+function of its committed code and prompts, and a rule worth remembering is a
+rule worth shipping.
+
+### The standing conventions as a skill
+
+The third thing this marketplace publishes is for **neither** actor in
+particular: `rain-repo-conventions` is ONE skill holding what is true around the
+work in any rainlanguage repo — the isolation a parallel agent needs, the
+irreversible acts reserved to the human, the gate a `gh pr create` passes
+through, what makes a wait terminate, and the environment facts whose shape a
+run breaks on.
+
+```
+/plugin marketplace add rainlanguage/issue-pr-cron
+/plugin install rain-repo-conventions@issue-pr-cron
+```
+
+**A brief is the wrong place for something that never varies.** These
+constraints were hand-copied into agent brief after agent brief, which pays to
+restate an invariant every time it is needed and offers a fresh chance to
+restate it wrongly or omit one — the same argument that moved the worker rules
+out of the improvised dispatch prompt and into
+[`campaign-worker-prompt.txt`](#briefing-a-dispatched-worker--rules-not-state).
+A `--agents` brief reaches only agents the cron itself dispatches; a marketplace
+skill reaches every session on any box that installed it, which is where the
+hand-copying was happening.
+
+**It is grouped by the KIND of rule, and the grouping is the content.** _Rules_
+are chosen and do not expire. _Facts_ are true of the environment rather than of
+the work — each stated so a reader can check it, because the day the box changes
+the entry is simply wrong, and a stale fact carried as belief is worse than no
+entry. _Workarounds_ route around a defect elsewhere and each names what would
+retire it. An agent that cannot tell which it is holding argues with a fact,
+verifies a prohibition, or treats a piece of debt as permanent.
+
+**The split disciplines the entries themselves.** `pgrep -f` matching the
+searching process's own command line is a FACT — checkable, and about the box.
+"Every wait carries a maximum iteration count and is never keyed on a pattern
+its own command line contains" is a RULE. Written as one entry they collapsed
+into a ban on the whole `until <cond>; do sleep; done` shape, which is stronger
+than the fact underneath it: a bounded loop terminates correctly, so the ban
+forbade something safe while naming neither thing that actually strands a wait.
+A rule that overreaches its fact is the failure this grouping is built to catch.
+
+**It states properties, never cases**, for the reasons the section above gives.
+It is also not a gate: the `## QA` block's substance stays in
+[QA-GUIDE.md](QA-GUIDE.md) where `require-qa-block` and the vetter enforce it,
+and this records only that the gate exists and what shape it refuses — one fact,
+one surface. Where it and a repo's own `CLAUDE.md` disagree, the repo wins.
+
 ### The vetter's transitions as an MCP surface
 
 For the producer, routing through the tool is enforced by the **prompt**, and a
@@ -2216,23 +2334,25 @@ and evidence that answers a narrower question than the issue asked.
 
 ## Files (tracked here)
 
-| File                         | Purpose                                                                                                                                                                                                                                                                                                                                                           |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `campaign-run.sh`            | Durable runner (built as the `campaign-run` flake package): `flock` single-run lock, `DISABLED` kill-switch, `timeout`, invokes `claude --print` with the prompt + settings, logs to `campaign.log` (+ per-run JSONL traces in `runs/`). Nix builds its PATH; it sets none itself.                                                                                |
-| `campaign-prompt.txt`        | The campaign instructions fed to the model.                                                                                                                                                                                                                                                                                                                       |
-| `campaign-worker-prompt.txt` | The standing brief every DISPATCHED worker starts with. `campaign-run.sh` wraps it into the `pr-worker` subagent type with `jq` and passes it as `--agents`, so the harness loads it straight into each dispatched agent and the main loop pays none of those bytes. See [Briefing a dispatched worker](#briefing-a-dispatched-worker--rules-not-state).          |
-| `campaign-settings.json`     | Tool allow/deny list passed via `--settings` (the permission guardrails).                                                                                                                                                                                                                                                                                         |
-| `review-run.sh`              | Vetting runner (same hardened pattern as `campaign-run.sh`): vets open PRs on the MCP surface, logs to `review.log`. Its one GitHub write is `record_verdict`. Kill-switch `review-DISABLED`.                                                                                                                                                                     |
-| `review-prompt.txt`          | The AI-vetting instructions fed to the model: the judgement gates only — every `gh` recipe is a tool schema instead.                                                                                                                                                                                                                                              |
-| `review-auditor-prompt.txt`  | The standing brief every DISPATCHED auditor starts with. `review-run.sh` wraps it into the `pr-auditor` subagent type with `jq` and passes it as `--agents`, with a `tools` list that is the READ half of the vetter's surface and no write at all. See [Fanning the audit out](#fanning-the-audit-out--and-keeping-the-verdict).                                 |
-| `review-settings.json`       | Tool allow/deny for the vetter: the eight `mcp__fsm__*` tools + `Read`/`Glob`/`Grep`/`Skill`/`Task`/`ToolSearch`, **Bash denied outright**. `Task` is the dispatch tool the audit fan-out needs; every write tool stays denied, and a session deny reaches inside a dispatched agent too.                                                                         |
-| `review-mcp.json`            | The vetter's MCP config: one stdio server, `pr-review-report mcp`, named `fsm` (so its tools are `mcp__fsm__*`).                                                                                                                                                                                                                                                  |
-| `campaign-mcp.json`          | MCP config for the producer's clone-lifecycle surface: one stdio server, `pr-review-report mcp --profile producer`, named `fsm`. Additive — the producer keeps its Bash.                                                                                                                                                                                          |
-| `cron.env.example`           | Template for deployment-specific values (PR assignee, work dir, models, run caps). Copy to `cron.env` (gitignored) and edit.                                                                                                                                                                                                                                      |
-| `pr-review-report.sh`        | Thin wrapper (flake package `pr-review-report-sh`) over the binary. Reports every open PR by its pipeline stage (approved / AI-vetted / needs-producer-fix (red) / needs-work / close / unreviewed / pending / draft — a conflicted ready PR reports as needs-work, the state it is owed), reading `ai:*`/`human:*` labels + GitHub approvals, as clickable URLs. |
-| `hooks/`                     | The two bash PreToolUse guards that close deny-list bypasses. See [PreToolUse guards](#pretooluse-guards--what-a-prompt-cannot-hold).                                                                                                                                                                                                                             |
-| `.claude-plugin/`            | The marketplace listing this repo publishes. Its version must match the plugin manifest's — `pr-review-report plugin-version-lockstep` is the gate.                                                                                                                                                                                                               |
-| `plugins/human-fsm/`         | The human's slash commands as a Claude Code plugin. Prompts only: every guard is in the binary. See [The human's slash commands](#the-humans-slash-commands).                                                                                                                                                                                                     |
+| File                             | Purpose                                                                                                                                                                                                                                                                                                                                                           |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `campaign-run.sh`                | Durable runner (built as the `campaign-run` flake package): `flock` single-run lock, `DISABLED` kill-switch, `timeout`, invokes `claude --print` with the prompt + settings, logs to `campaign.log` (+ per-run JSONL traces in `runs/`). Nix builds its PATH; it sets none itself.                                                                                |
+| `campaign-prompt.txt`            | The campaign instructions fed to the model.                                                                                                                                                                                                                                                                                                                       |
+| `campaign-worker-prompt.txt`     | The standing brief every DISPATCHED worker starts with. `campaign-run.sh` wraps it into the `pr-worker` subagent type with `jq` and passes it as `--agents`, so the harness loads it straight into each dispatched agent and the main loop pays none of those bytes. See [Briefing a dispatched worker](#briefing-a-dispatched-worker--rules-not-state).          |
+| `campaign-settings.json`         | Tool allow/deny list passed via `--settings` (the permission guardrails).                                                                                                                                                                                                                                                                                         |
+| `review-run.sh`                  | Vetting runner (same hardened pattern as `campaign-run.sh`): vets open PRs on the MCP surface, logs to `review.log`. Its one GitHub write is `record_verdict`. Kill-switch `review-DISABLED`.                                                                                                                                                                     |
+| `review-prompt.txt`              | The AI-vetting instructions fed to the model: the judgement gates only — every `gh` recipe is a tool schema instead.                                                                                                                                                                                                                                              |
+| `review-auditor-prompt.txt`      | The standing brief every DISPATCHED auditor starts with. `review-run.sh` wraps it into the `pr-auditor` subagent type with `jq` and passes it as `--agents`, with a `tools` list that is the READ half of the vetter's surface and no write at all. See [Fanning the audit out](#fanning-the-audit-out--and-keeping-the-verdict).                                 |
+| `review-settings.json`           | Tool allow/deny for the vetter: the eight `mcp__fsm__*` tools + `Read`/`Glob`/`Grep`/`Skill`/`Task`/`ToolSearch`, **Bash denied outright**. `Task` is the dispatch tool the audit fan-out needs; every write tool stays denied, and a session deny reaches inside a dispatched agent too.                                                                         |
+| `review-mcp.json`                | The vetter's MCP config: one stdio server, `pr-review-report mcp`, named `fsm` (so its tools are `mcp__fsm__*`).                                                                                                                                                                                                                                                  |
+| `campaign-mcp.json`              | MCP config for the producer's clone-lifecycle surface: one stdio server, `pr-review-report mcp --profile producer`, named `fsm`. Additive — the producer keeps its Bash.                                                                                                                                                                                          |
+| `cron.env.example`               | Template for deployment-specific values (PR assignee, work dir, models, run caps). Copy to `cron.env` (gitignored) and edit.                                                                                                                                                                                                                                      |
+| `pr-review-report.sh`            | Thin wrapper (flake package `pr-review-report-sh`) over the binary. Reports every open PR by its pipeline stage (approved / AI-vetted / needs-producer-fix (red) / needs-work / close / unreviewed / pending / draft — a conflicted ready PR reports as needs-work, the state it is owed), reading `ai:*`/`human:*` labels + GitHub approvals, as clickable URLs. |
+| `hooks/`                         | The two bash PreToolUse guards that close deny-list bypasses. See [PreToolUse guards](#pretooluse-guards--what-a-prompt-cannot-hold).                                                                                                                                                                                                                             |
+| `.claude-plugin/`                | The marketplace listing this repo publishes. Its version must match the plugin manifest's — `pr-review-report plugin-version-lockstep` is the gate.                                                                                                                                                                                                               |
+| `plugins/human-fsm/`             | The human's slash commands as a Claude Code plugin. Prompts only: every guard is in the binary. See [The human's slash commands](#the-humans-slash-commands).                                                                                                                                                                                                     |
+| `plugins/vetter-judgement/`      | The machine vetter's judgement as a Claude Code skill — properties, never cases — loaded on demand at verdict time rather than carried in `review-prompt.txt` on every run. See [The vetter's judgement as a skill](#the-vetters-judgement-as-a-skill).                                                                                                           |
+| `plugins/rain-repo-conventions/` | What is true around the work in ANY rainlanguage repo, as a Claude Code skill — grouped into rules that do not expire, environment facts to check, and workarounds that name what would retire them. See [The standing conventions as a skill](#the-standing-conventions-as-a-skill).                                                                             |
 
 ## Briefing a dispatched worker — rules, not state
 
@@ -3434,8 +3554,8 @@ evidence is not evidence, and a false abort here costs a whole tick.
 
 ### The producer's state-load is one pre-grouped result
 
-`pr-review-report state-load --json` composes `worklist` and `uncovered-issues`
-and returns the groupings the producer traces show runs actually derive:
+`pr-review-report state-load` composes `worklist` and `uncovered-issues` and
+returns the groupings the producer traces show runs actually derive:
 
 | Grouping                                        | Runs asking for it |
 | ----------------------------------------------- | ------------------ |
@@ -3454,6 +3574,41 @@ three of the four are wanted by every run. The payload argument runs the other
 way too — `green-ready`, `wait` and `parked-skip` rows are **counted, not
 listed**, because no step acts on one, and they were 70–95% of the ~123 KB raw
 fleet across the measured runs.
+
+**The default output IS the digest, and the rows are flags** (#290). Composing
+the groupings removed the API calls and left the **re-slicing**: run
+`20260815T110709Z` opened by taking `--json` (95,370 bytes), redirecting it to a
+scratch file, and paying three main-thread `jq` calls before doing anything
+else. The first rebuilt, key by key, the digest the **bare** call already prints
+— 488 bytes and 19 lines as that run measured it, 21 lines now that the digest
+ends by naming the row calls — same answer, different route, and the route cost
+a scratch file plus an interpreter invocation in the run's most expensive
+position. That one was the prompt's fault, not the tool's: step 2 prescribed
+`--json`, so the run reached for it reflexively and then had a blob it had to
+reduce. It now prescribes the bare call and says the default output is the
+digest.
+
+The other two `jq` calls were the tool's fault, and they select **rows** —
+`nextAction == "rework-needs-work"` as
+`repo / number / ci / mergeState /
+closes / title`, and the first 12 actionable
+rows. The `--help` claimed the result contains "the rows that name work", and it
+did: inside 95 KB, reachable only by re-slicing. So every row list the digest
+counts now has a **selector** that projects it — `--action <nextAction>` (any
+action the histogram names, including the ones no step acts on), `--actionable`,
+`--approved`, `--audit`, each with `--limit N` — printing compact TSV columns
+under a `#` header, led by a `#` count line that states what a `--limit` cut so
+a truncated list is never read as the whole set. A row call after the digest
+re-fetches nothing per PR: it reads through the fleet cache the digest just
+wrote.
+
+That is **projection, not a query language**, and it does not undo the paragraph
+above. The selectors name the digest's own row lists and one `nextAction`; none
+of them groups, sorts or computes anything, so the digest stays the opening call
+and stays the thing a run reasons from. What changed is that the rows behind its
+counts are now reachable without an interpreter, which leaves `--json` as the
+escape hatch it was meant to be — and taken **with** a selector, so the escape
+hatch returns the rows rather than the whole document.
 
 Two of these are not merely round trips. `reviewDecision` was already in
 `WORKLIST_DETAIL_FIELDS` and thrown away, so every run re-asked GitHub for it
@@ -3507,8 +3662,8 @@ merged PR, never a finding that the issue is fixed — establishing that is
 
 Per-subject is a **cost** decision, measured: the uncovered set is 617 issues
 and the read is one GraphQL round trip each (~0.65 s over a 40-issue sample, so
-~6.7 minutes of network per run), against a producer budget of 3 work items.
-Folding it into the backlog buys ~614 answers per run that nothing reads.
+~6.7 minutes of network per run), against a producer budget of 5 work items.
+Folding it into the backlog buys ~612 answers per run that nothing reads.
 
 It reads `timelineItems(CROSS_REFERENCED_EVENT)` and **not**
 `closedByPullRequestsReferences(includeClosedPrs: true)`, which is the field
@@ -3619,7 +3774,9 @@ design question about that component and its message is the finding to quote, a
 
 1. `campaign-run.sh` asserts the environment before the model starts
    (`preflight --gh-auth --sol-shell`); unsatisfied ends the run.
-2. Load the whole opening state in one call (`state-load --json`).
+2. Load the whole opening state in one call (`state-load`, whose default output
+   is the digest; rows come from its `--action` / `--actionable` / `--approved`
+   / `--audit` selectors, never from `jq` over `--json`).
 3. Cheaply dedup against open PRs (single `jq` pass; byte-grepping the PR JSON
    is forbidden).
 4. For each tractable, genuinely-uncovered issue: clone, branch, implement a

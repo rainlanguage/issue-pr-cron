@@ -52,6 +52,16 @@
 !/.claude-plugin/
 !/plugins/
 
+# Claude Code project settings, for the same reason as the two above: they must be
+# TRACKED because they configure how the pipeline BEHAVES, and behaviour that lives
+# only on one box is behaviour that does not survive moving the FSM to another
+# machine (#282). `autoMemoryEnabled: false` is here rather than in a crontab env var
+# so it travels with the repo. Only settings.json — never settings.local.json, which
+# is a person's own machine.
+!/.claude/
+/.claude/*
+!/.claude/settings.json
+
 # NEVER track the real deployment env (it holds the account handle / box-specific values):
 /cron.env
 
