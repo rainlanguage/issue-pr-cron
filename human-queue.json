@@ -252,6 +252,12 @@
         "title": "fix(dia): revert ZeroDiaPrice on any zero price, not only the (0,0) sentinel"
       },
       {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 428,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/428",
+        "title": "fix(layout): swallow blockNumberStore.refresh rejections in the polling loop"
+      },
+      {
         "repo": "rainlanguage/rain.math.float",
         "number": 256,
         "url": "https://github.com/rainlanguage/rain.math.float/pull/256",
@@ -812,12 +818,6 @@
         "title": "fix(receipts): preserve display precision by truncating the decimal string"
       },
       {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 428,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/428",
-        "title": "fix(layout): swallow blockNumberStore.refresh rejections in the polling loop"
-      },
-      {
         "repo": "rainlanguage/rain.erc4626.words",
         "number": 259,
         "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/259",
@@ -1019,13 +1019,121 @@
         ]
       },
       "un-vetted": {
-        "count": 41,
+        "count": 58,
         "prs": [
           {
+            "repo": "rainlanguage/rain.sol.codegen",
+            "number": 111,
+            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/111",
+            "title": "test: parse the literal the library emitted, not one the test formatted"
+          },
+          {
+            "repo": "rainlanguage/rain.sol.codegen",
+            "number": 110,
+            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/110",
+            "title": "Unlink a symlink with no target before writing the generated file"
+          },
+          {
+            "repo": "rainlanguage/rain.sol.codegen",
+            "number": 109,
+            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/109",
+            "title": "Cover buildFileForContract's unlink with a hard link, and enable ffi to reach it"
+          },
+          {
+            "repo": "rainlanguage/rain.sol.codegen",
+            "number": 108,
+            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/108",
+            "title": "Check the hex charset in LibHexString.bytesToHex"
+          },
+          {
+            "repo": "rainlanguage/rain.sol.codegen",
+            "number": 107,
+            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/107",
+            "title": "Share commentPrefix's rule in one place in LibCodeGenSlow"
+          },
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 315,
+            "url": "https://github.com/rainlanguage/rainix/pull/315",
+            "title": "ci: currency check sees files regeneration wrote but nothing committed"
+          },
+          {
+            "repo": "rainlanguage/rain.sol.codegen",
+            "number": 106,
+            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/106",
+            "title": "Replace the inlined implementation copy in the identifier fuzz oracle"
+          },
+          {
+            "repo": "rainlanguage/rain.sol.codegen",
+            "number": 105,
+            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/105",
+            "title": "Deduplicate LibHexStringExternal and NonConformingVm construction in the bytesToHex suite"
+          },
+          {
+            "repo": "rainlanguage/rain.sol.codegen",
+            "number": 104,
+            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/104",
+            "title": "Caret pragma on `test/lib/LibCodeGenSlow.sol`, plus a repo wide lint for the convention"
+          },
+          {
+            "repo": "rainlanguage/rain.sol.codegen",
+            "number": 103,
+            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/103",
+            "title": "A meta file that holds no bytes is refused rather than hashed to keccak256(\"\")"
+          },
+          {
+            "repo": "rainlanguage/rain.sol.codegen",
+            "number": 102,
+            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/102",
+            "title": "test: construct the conforming half of the bytesToHex Vm-output property"
+          },
+          {
+            "repo": "rainlanguage/rain.sol.codegen",
+            "number": 101,
+            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/101",
+            "title": "Prove the traversal property over the identifier alphabets"
+          },
+          {
+            "repo": "rainlanguage/rain.sol.codegen",
+            "number": 100,
+            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/100",
+            "title": "LibFs: build the generated file content before touching disk"
+          },
+          {
             "repo": "rainlanguage/issue-pr-cron",
-            "number": 324,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/324",
-            "title": "fix(preflight): the sol-shell probe takes a GC root for the closure it realises"
+            "number": 326,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/326",
+            "title": "feat(ci): cap the plugin prompts, and cut 1,620 bytes to set it"
+          },
+          {
+            "repo": "rainlanguage/rain.sol.codegen",
+            "number": 99,
+            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/99",
+            "title": "test: drop two assertions a sibling in the same file already implies"
+          },
+          {
+            "repo": "rainlanguage/rain.sol.codegen",
+            "number": 98,
+            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/98",
+            "title": "Regenerate the committed artifact and compare it whole, not just its header"
+          },
+          {
+            "repo": "rainlanguage/rain.sol.codegen",
+            "number": 97,
+            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/97",
+            "title": "Delete the longhand copy of assertRejected"
+          },
+          {
+            "repo": "rainlanguage/rain.sol.codegen",
+            "number": 96,
+            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/96",
+            "title": "Correct LibHexString's library notice to match its Vm parameter"
+          },
+          {
+            "repo": "rainlanguage/rain.sol.codegen",
+            "number": 56,
+            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/56",
+            "title": "Move every .t.sol into the test/src/lib mirror tree"
           },
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -1050,12 +1158,6 @@
             "number": 19,
             "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/19",
             "title": "The restore invariant is per-restore, not per-first-probe: scope it to what the probe wrote, and check before restoring"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 131,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/131",
-            "title": "feat(migration-registry): record a migration at the moment it ran, via MigrationRegistryV2"
           },
           {
             "repo": "rainlanguage/issue-pr-cron",
@@ -1298,7 +1400,7 @@
         }
       },
       "ai:needs-work": {
-        "count": 108,
+        "count": 109,
         "prs": [
           {
             "repo": "rainlanguage/rain.tofu.erc20-decimals",
@@ -1395,6 +1497,12 @@
             "number": 61,
             "url": "https://github.com/rainlanguage/rain.dia/pull/61",
             "title": "fix(dia): revert ZeroDiaPrice on any zero price, not only the (0,0) sentinel"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 428,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/428",
+            "title": "fix(layout): swallow blockNumberStore.refresh rejections in the polling loop"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -1951,19 +2059,13 @@
         ]
       },
       "ai:ready": {
-        "count": 3,
+        "count": 2,
         "prs": [
           {
             "repo": "cyclofinance/cyclo.site",
             "number": 435,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/435",
             "title": "fix(receipts): preserve display precision by truncating the decimal string"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 428,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/428",
-            "title": "fix(layout): swallow blockNumberStore.refresh rejections in the polling loop"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -2138,6 +2240,162 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 95,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/95",
+      "title": "All five interface docstrings point consumers at .github/workflows/build-pointers.yaml, which .soldeerignore strips from the published package"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 94,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/94",
+      "title": "No @return on any of the five tooling interface functions, so the pointer encoding is documented nowhere the compiler carries"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 93,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/93",
+      "title": "All four tooling interfaces fold their whole description into @title, emitting no contract-level @notice"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 92,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/92",
+      "title": "IParserToolingV1 and ISubParserToolingV1 declare their builders pure, which forbids every implementation that reads storage or an immutable"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 91,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/91",
+      "title": ".soldeerignore carries entries for .vscode and /docs, paths that have never existed in this repo"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 90,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/90",
+      "title": "Stale soldeer pin: foundry.toml pins forge-std 1.16.1 with 1.16.2 published, and the version is baked into every import prefix"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 89,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/89",
+      "title": "audit/mutation-test-scans.json holds one record 35 commits and 5 published tags behind HEAD, with no stated ordering rule"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 88,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/88",
+      "title": "README's \"On top of the above\" mis-attributes the four listed checks away from rainix.yaml, which is what runs them"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 87,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/87",
+      "title": "README's opening describes only the function-pointer use case, contradicted by LibCodeGen's surface and by the repo's own committed example"
+    },
+    {
+      "repo": "rainlanguage/adversarial-mutation-test",
+      "number": 23,
+      "url": "https://github.com/rainlanguage/adversarial-mutation-test/issues/23",
+      "title": "Scan record schema has no field naming the tree its after-campaign counts describe, so testsAfter is unfalsifiable in place"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 86,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/86",
+      "title": "audit/mutation-test-scans.json testsAfter reads 102, a count that occurs at no commit in the range, and no field names the tree it describes"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 85,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/85",
+      "title": "REUSE.toml redundantly annotates src/lib/LibCodeGen.sol, which already carries its own SPDX header"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 84,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/84",
+      "title": "Dead gas-snapshot apparatus: an empty tracked .gas-snapshot plus three config entries servicing it, and no snapshot taken anywhere"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 83,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/83",
+      "title": "Dead fs_permissions grant: foundry.toml grants read on foundry.toml and nothing reads it"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 82,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/82",
+      "title": "The published rain-sol-codegen package ships no dependency metadata, and the README never names the forge-std version its imports require"
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 314,
+      "url": "https://github.com/rainlanguage/rainix/issues/314",
+      "title": "rainix-copy-artifacts runs codegen exactly once, so a non-converging build is indistinguishable from a forgotten regeneration"
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 313,
+      "url": "https://github.com/rainlanguage/rainix/issues/313",
+      "title": "Three rainix mechanisms hardcode src/generated independently instead of reading one canonical value"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 81,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/81",
+      "title": "The generation fixed point is a human loop with no bound and no diagnosis"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 80,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/80",
+      "title": "The emitted constant name is unvalidated while the contract name is, in the same generated file"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 79,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/79",
+      "title": "The wrap arithmetic encodes forge fmt's defaults, nothing pins them, and CI absorbs the mismatch"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 78,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/78",
+      "title": "The per-tag frozen-snapshot layout the org enforces is unreachable through this library"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 77,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/77",
+      "title": "src/generated is a bare string literal replicated across two repos' code, config and CI"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 76,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/76",
+      "title": "The published package is never compiled as published, and ships a file whose import it excludes"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 75,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/75",
+      "title": "filePrefix() stamps this org's licence and copyright into other repos' generated files"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 74,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/74",
+      "title": "The four published tooling interfaces have no conformance test and no interface-ID pin"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 71,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/71",
+      "title": "testPathForContractDistinctNamesDistinctPaths states a distinct-files guarantee its string-inequality assertion does not prove"
+    },
     {
       "repo": "rainlanguage/claude-audit-skills",
       "number": 89,
@@ -6155,31 +6413,40 @@
       "title": "add generic errors for integrity operand overflow and underflow"
     }
   ],
-  "leaks": [],
+  "leaks": [
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 131,
+      "url": "https://github.com/rainlanguage/rain.deploy/pull/131",
+      "title": "feat(migration-registry): record a migration at the moment it ran, via MigrationRegistryV2",
+      "reason": "🤖 ai:producer  Producer note: this PR is now GREEN, and two claims in the body above are stale — correcting the record here since the body itself is not mine to edit.  - **\"Pre-existing red: `rainix / static / static` ... fails on `main` too\" is no longer true, and the diagnosis was wrong on its own terms.** It was accurate when written: at this branch's merge base (`ad1e00c`), `CLAUDE.md` was 24016 bytes, over the 4096-byte `agent-context-cap`. But `main` has since cut that file to 2344 bytes, under the cap. The red was this branch's alone — the branch was 91 commits behind, and the PR *added* 62 lines of V2 prose to the fat file. - **The \"307 tests\" figure is stale** — 342 after merging `main`.  Fixed by merging `origin/main`. `CLAUDE.md` resolved to main's cut-down version verbatim (the PR's additions were exactly the architecture prose main's new bar deletes; the V2 rationale already lives in `src/interface/IMigrationRegistryV2.sol` natspec). A second commit carries across main's correction to the `checkCodeHash` natspec, which `LibMigrationRegistryV2.sol` had inherited from V1 in its factually-wrong form (it claimed a call into an empty account \"decodes as zero\"; solc actually reverts when returndata is too short to decode). Comments only — creation code and every generated snapshot are unchanged, and `forge script script/Build.sol` regenerates byte-identical.  This is **not** the split-release-lifecycle migration case: the failing check was `agent-context-cap`, not a prod-pin / `testProdDeploy*` / deploy-pinned-constant check. Nothing was deployed.  Worth a reviewer's attention: because the static job fails fast at step 4, steps 5–11 had **never run** on this branch until now. Verified locally in the checkout's own toolchain: slither 0 findings over 54 contracts, `forge fmt --check` clean, `rainix-sol-single-contract` OK, `snapshots-append-only` clean, `agent-context-cap` 2209/4096. `forge test` 291 passed / 51 failed, every failure an `ARBITRUM_RPC_URL`/`BASE_RPC_URL` fork-env failure with no local RPC secrets — zero code failures. ",
+      "createdAt": "2026-08-16T13:32:32Z"
+    }
+  ],
   "counts": {
-    "unvetted": 41,
+    "unvetted": 58,
     "blockedOn": 23,
-    "ready": 3,
-    "needsWork": 108,
+    "ready": 2,
+    "needsWork": 109,
     "relink": 0,
     "design": 2,
     "blockedInfra": 0,
     "closeCandidateIssues": 3,
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
-    "leaks": 0,
-    "totalProducerPrs": 177,
+    "leaks": 1,
+    "totalProducerPrs": 195,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 665,
+    "uncoveredIssues": 691,
     "designPresentable": 2,
     "designNoQuestion": 0,
-    "openIssues": 844
+    "openIssues": 886
   },
   "ages": {
     "openIssues": {
-      "meanDays": 294.1,
-      "medianDays": 109.0,
-      "oldestDays": 1665.8
+      "meanDays": 280.2,
+      "medianDays": 102.0,
+      "oldestDays": 1665.9
     }
   }
 }
