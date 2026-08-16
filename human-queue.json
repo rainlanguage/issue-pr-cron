@@ -8,6 +8,12 @@
         "title": "Remove submodule-era residue from .soldeerignore"
       },
       {
+        "repo": "rainlanguage/rain.math.float",
+        "number": 259,
+        "url": "https://github.com/rainlanguage/rain.math.float/pull/259",
+        "title": "chore: remove submodule-era residue (dead foundry.lock, .gitmodules and root lib/ references)"
+      },
+      {
         "repo": "rainlanguage/rain.factory.deploy",
         "number": 8,
         "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/8",
@@ -125,15 +131,27 @@
     "ai:design": [
       {
         "repo": "rainlanguage/rain.tofu.erc20-decimals",
-        "number": 28,
-        "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/28",
-        "title": "fix(ci): grant Package Release the token permissions its callee needs"
+        "number": 31,
+        "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/31",
+        "title": "chore: remove submodule-era residue from REUSE.toml, .soldeerignore and CLAUDE.md"
       },
       {
-        "repo": "rainlanguage/rainlang",
-        "number": 551,
-        "url": "https://github.com/rainlanguage/rainlang/pull/551",
-        "title": "Bump rain-math-binary 0.1.1 -> 0.1.3"
+        "repo": "rainlanguage/rain.flare",
+        "number": 205,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/205",
+        "title": "bump rain-math-binary 0.1.1 -> 0.1.3"
+      },
+      {
+        "repo": "rainlanguage/rain.pyth",
+        "number": 32,
+        "url": "https://github.com/rainlanguage/rain.pyth/pull/32",
+        "title": "deps: bump rain-math-binary 0.1.1 -> 0.1.3"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 427,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/427",
+        "title": "fix(component): harden ReceiptModal — reactive receipt bindings, per-token balance key, signer/chain gating"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -148,6 +166,18 @@
         "number": 305,
         "url": "https://github.com/S01-Issuer/st0x.deploy/pull/305",
         "title": "Drop snapshot-generate-cmd: rainix owns the release freeze"
+      },
+      {
+        "repo": "rainlanguage/rain.tofu.erc20-decimals",
+        "number": 28,
+        "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/28",
+        "title": "fix(ci): grant Package Release the token permissions its callee needs"
+      },
+      {
+        "repo": "rainlanguage/rainlang",
+        "number": 551,
+        "url": "https://github.com/rainlanguage/rainlang/pull/551",
+        "title": "Bump rain-math-binary 0.1.1 -> 0.1.3"
       },
       {
         "repo": "rainlanguage/rain.solmem",
@@ -250,12 +280,6 @@
         "number": 199,
         "url": "https://github.com/rainlanguage/rain.flare/pull/199",
         "title": "test: assert authoringMetaV2 descriptions state correct operand input counts"
-      },
-      {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 421,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/421",
-        "title": "fix(security): reject protocol-relative and backslash paths in sanitizeHref"
       },
       {
         "repo": "rainlanguage/claude-audit-skills",
@@ -782,12 +806,6 @@
         "title": "fix(layout): swallow blockNumberStore.refresh rejections in the polling loop"
       },
       {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 427,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/427",
-        "title": "fix(component): harden ReceiptModal — reactive receipt bindings, per-token balance key, signer/chain gating"
-      },
-      {
         "repo": "rainlanguage/rain.erc4626.words",
         "number": 259,
         "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/259",
@@ -798,6 +816,12 @@
         "number": 28,
         "url": "https://github.com/rainlanguage/rain.pyth/pull/28",
         "title": "chore(release): adopt next-version Soldeer lifecycle (closes #27)"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 421,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/421",
+        "title": "fix(security): reject protocol-relative and backslash paths in sanitizeHref"
       },
       {
         "repo": "rainlanguage/rain.erc4626.words",
@@ -840,13 +864,19 @@
   "lanes": {
     "vet-lifecycle": {
       "ai:blocked-on": {
-        "count": 20,
+        "count": 21,
         "prs": [
           {
             "repo": "rainlanguage/rainlang",
             "number": 554,
             "url": "https://github.com/rainlanguage/rainlang/pull/554",
             "title": "Remove submodule-era residue from .soldeerignore"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 259,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/259",
+            "title": "chore: remove submodule-era residue (dead foundry.lock, .gitmodules and root lib/ references)"
           },
           {
             "repo": "rainlanguage/rain.factory.deploy",
@@ -965,7 +995,7 @@
         ]
       },
       "un-vetted": {
-        "count": 89,
+        "count": 83,
         "prs": [
           {
             "repo": "rainlanguage/issue-pr-cron",
@@ -1250,12 +1280,6 @@
             "title": "Remove the dead submodule-era entries from .soldeerignore"
           },
           {
-            "repo": "rainlanguage/rain.tofu.erc20-decimals",
-            "number": 31,
-            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/31",
-            "title": "chore: remove submodule-era residue from REUSE.toml, .soldeerignore and CLAUDE.md"
-          },
-          {
             "repo": "rainlanguage/rain.solmem",
             "number": 113,
             "url": "https://github.com/rainlanguage/rain.solmem/pull/113",
@@ -1278,12 +1302,6 @@
             "number": 23,
             "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/23",
             "title": "chore: remove submodule-era residue — dead foundry.lock, .gitmodules and lib/ references"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 259,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/259",
-            "title": "chore: remove submodule-era residue (dead foundry.lock, .gitmodules and root lib/ references)"
           },
           {
             "repo": "rainlanguage/rain.merkle",
@@ -1376,18 +1394,6 @@
             "title": "bump rain-math-binary 0.1.1 -> 0.1.3"
           },
           {
-            "repo": "rainlanguage/rain.flare",
-            "number": 205,
-            "url": "https://github.com/rainlanguage/rain.flare/pull/205",
-            "title": "bump rain-math-binary 0.1.1 -> 0.1.3"
-          },
-          {
-            "repo": "rainlanguage/rain.pyth",
-            "number": 32,
-            "url": "https://github.com/rainlanguage/rain.pyth/pull/32",
-            "title": "deps: bump rain-math-binary 0.1.1 -> 0.1.3"
-          },
-          {
             "repo": "rainlanguage/adversarial-mutation-test",
             "number": 10,
             "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/10",
@@ -1442,18 +1448,6 @@
             "title": "fix(lock): freeze token select, LOCK button and network auto-switch while a tx is in flight"
           },
           {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 428,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/428",
-            "title": "fix(layout): swallow blockNumberStore.refresh rejections in the polling loop"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 427,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/427",
-            "title": "fix(component): harden ReceiptModal — reactive receipt bindings, per-token balance key, signer/chain gating"
-          },
-          {
             "repo": "rainlanguage/rain.erc4626.words",
             "number": 259,
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/259",
@@ -1506,20 +1500,34 @@
     },
     "vetter-verdicts": {
       "ai:design": {
-        "count": 3,
+        "count": 5,
         "prs": [
           {
             "repo": "rainlanguage/rain.tofu.erc20-decimals",
-            "number": 28,
-            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/28",
-            "title": "fix(ci): grant Package Release the token permissions its callee needs",
+            "number": 31,
+            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/31",
+            "title": "chore: remove submodule-era residue from REUSE.toml, .soldeerignore and CLAUDE.md",
             "bucket": "presentable"
           },
           {
-            "repo": "rainlanguage/rainlang",
-            "number": 551,
-            "url": "https://github.com/rainlanguage/rainlang/pull/551",
-            "title": "Bump rain-math-binary 0.1.1 -> 0.1.3",
+            "repo": "rainlanguage/rain.flare",
+            "number": 205,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/205",
+            "title": "bump rain-math-binary 0.1.1 -> 0.1.3",
+            "bucket": "presentable"
+          },
+          {
+            "repo": "rainlanguage/rain.pyth",
+            "number": 32,
+            "url": "https://github.com/rainlanguage/rain.pyth/pull/32",
+            "title": "deps: bump rain-math-binary 0.1.1 -> 0.1.3",
+            "bucket": "presentable"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 427,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/427",
+            "title": "fix(component): harden ReceiptModal — reactive receipt bindings, per-token balance key, signer/chain gating",
             "bucket": "presentable"
           },
           {
@@ -1534,18 +1542,30 @@
           "draft": 0,
           "fetchErrors": 0,
           "noQuestion": 0,
-          "presentable": 3,
+          "presentable": 5,
           "unaddressable": 0
         }
       },
       "ai:needs-work": {
-        "count": 101,
+        "count": 102,
         "prs": [
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 305,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/305",
             "title": "Drop snapshot-generate-cmd: rainix owns the release freeze"
+          },
+          {
+            "repo": "rainlanguage/rain.tofu.erc20-decimals",
+            "number": 28,
+            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/28",
+            "title": "fix(ci): grant Package Release the token permissions its callee needs"
+          },
+          {
+            "repo": "rainlanguage/rainlang",
+            "number": 551,
+            "url": "https://github.com/rainlanguage/rainlang/pull/551",
+            "title": "Bump rain-math-binary 0.1.1 -> 0.1.3"
           },
           {
             "repo": "rainlanguage/rain.solmem",
@@ -1648,12 +1668,6 @@
             "number": 199,
             "url": "https://github.com/rainlanguage/rain.flare/pull/199",
             "title": "test: assert authoringMetaV2 descriptions state correct operand input counts"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 421,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/421",
-            "title": "fix(security): reject protocol-relative and backslash paths in sanitizeHref"
           },
           {
             "repo": "rainlanguage/claude-audit-skills",
@@ -2148,6 +2162,23 @@
             "title": "2023 12 23 anvil"
           }
         ]
+      },
+      "ai:ready": {
+        "count": 2,
+        "prs": [
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 428,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/428",
+            "title": "fix(layout): swallow blockNumberStore.refresh rejections in the polling loop"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 421,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/421",
+            "title": "fix(security): reject protocol-relative and backslash paths in sanitizeHref"
+          }
+        ]
       }
     }
   },
@@ -2315,10 +2346,10 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 299,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/299",
-      "title": "next_leak exceeds the 120s MCP call timeout: 76 gh subprocesses at concurrency 8"
+      "repo": "rainlanguage/rainix",
+      "number": 310,
+      "url": "https://github.com/rainlanguage/rainix/issues/310",
+      "title": "Generalise agent-context-cap so a repo can point it at prompt files"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -6288,12 +6319,12 @@
     }
   ],
   "counts": {
-    "unvetted": 89,
-    "blockedOn": 20,
-    "ready": 0,
-    "needsWork": 101,
+    "unvetted": 83,
+    "blockedOn": 21,
+    "ready": 2,
+    "needsWork": 102,
     "relink": 0,
-    "design": 3,
+    "design": 5,
     "blockedInfra": 0,
     "closeCandidateIssues": 3,
     "closeCandidateUnvetted": 3,
@@ -6302,7 +6333,7 @@
     "totalProducerPrs": 214,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 656,
-    "designPresentable": 3,
+    "designPresentable": 5,
     "designNoQuestion": 0,
     "openIssues": 875
   },
