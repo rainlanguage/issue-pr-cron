@@ -20997,45 +20997,31 @@ fn rank_leaks(leaks: &mut [Leak]) {
     leaks.sort_by(|a, b| leak_order_key(a).cmp(&leak_order_key(b)));
 }
 
-/// PRs one batched comment read asks GitHub about. The scan's cost is round trips, and this is how
-/// many candidates each one buys; the product with [`LEAK_COMMENT_PAGE`] is the payload one
-/// response may weigh.
-const LEAK_COMMENT_BATCH: usize = 20;
+// ─────────────────────────────────────────────────────────────────────────────
+// ALIASED PER-PR GRAPHQL — the shape both batched reads are built from
+// ─────────────────────────────────────────────────────────────────────────────
 
-/// Comments fetched per PR in a batched read, newest last — GitHub's page cap for one connection.
-/// A PR holding more is not read short: [`leak_comments_page`] reports it UNREAD and [`leak_scan`]
-/// pays a per-PR `gh pr view`, so the batch is a speed change and never a different answer.
-const LEAK_COMMENT_PAGE: usize = 100;
-
-/// PURE: the aliased GraphQL query reading `n` PRs' comments in one round trip — one `c<i>` alias
-/// per PR over three DECLARED VARIABLES each, so GitHub types and escapes every slug rather than
-/// this binary interpolating one into query text.
-fn leak_comments_query(n: usize) -> String {
-    let vars: Vec<String> = (0..n)
+/// PURE: the `$o<i>/$r<i>/$p<i>` declarations `n` aliased per-PR reads share, so GitHub types and
+/// escapes every slug rather than this binary interpolating one into query text.
+fn aliased_pr_vars(n: usize) -> String {
+    (0..n)
         .map(|i| format!("$o{i}: String!, $r{i}: String!, $p{i}: Int!"))
-        .collect();
-    let fields: Vec<String> = (0..n)
-        .map(|i| {
-            format!(
-                "  c{i}: repository(owner: $o{i}, name: $r{i}) {{ pullRequest(number: $p{i}) \
-                 {{ comments(last: {LEAK_COMMENT_PAGE}) {{ totalCount nodes {{ author {{ login }} \
-                 body }} }} }} }}"
-            )
-        })
-        .collect();
-    format!("query({}) {{\n{}\n}}", vars.join(", "), fields.join("\n"))
+        .collect::<Vec<String>>()
+        .join(", ")
 }
 
-/// PURE: the `gh api graphql` argv for one chunk.
+/// PURE: the `gh api graphql` argv for one chunk — the query, then the three operands each alias
+/// declared, in alias order.
 ///
 /// The flag is decided by the variable's DECLARED TYPE, as in [`subject_query_args`]: `gh api
 /// graphql` retypes a `-F` value that parses as an integer, so an all-numeric owner or repo name
 /// passed with `-F` would send an `Int` at a `String!` and GitHub would refuse the whole chunk.
-fn leak_comments_args(chunk: &[&SubjectRef]) -> Vec<String> {
+/// One copy of that rule, because two could disagree about it.
+fn aliased_pr_args(query: String, chunk: &[&SubjectRef]) -> Vec<String> {
     let mut args = vec![
         "graphql".to_string(),
         "-f".to_string(),
-        format!("query={}", leak_comments_query(chunk.len())),
+        format!("query={query}"),
     ];
     for (i, s) in chunk.iter().enumerate() {
         let (owner, repo) = s.repo.split_once('/').unwrap_or(("", s.repo.as_str()));
@@ -21047,6 +21033,53 @@ fn leak_comments_args(chunk: &[&SubjectRef]) -> Vec<String> {
         args.push(format!("p{i}={}", s.number));
     }
     args
+}
+
+/// PURE: a GraphQL connection's nodes, or `None` when the page did NOT carry the whole set.
+///
+/// The truncation guard both batched reads rest on: a page shorter than `totalCount` has hidden
+/// something, and an alias reported unread costs a refetch rather than a verdict computed over a
+/// partial set. A connection missing either field is unread for the same reason.
+fn whole_connection(conn: &Value) -> Option<&Vec<Value>> {
+    let nodes = conn.get("nodes")?.as_array()?;
+    if conn.get("totalCount")?.as_u64()? > nodes.len() as u64 {
+        return None;
+    }
+    Some(nodes)
+}
+
+/// PRs one batched comment read asks GitHub about. The scan's cost is round trips, and this is how
+/// many candidates each one buys; the product with [`LEAK_COMMENT_PAGE`] is the payload one
+/// response may weigh.
+const LEAK_COMMENT_BATCH: usize = 20;
+
+/// Comments fetched per PR in a batched read, newest last — GitHub's page cap for one connection.
+/// A PR holding more is not read short: [`leak_comments_page`] reports it UNREAD and [`leak_scan`]
+/// pays a per-PR `gh pr view`, so the batch is a speed change and never a different answer.
+const LEAK_COMMENT_PAGE: usize = 100;
+
+/// PURE: the aliased GraphQL query reading `n` PRs' comments in one round trip — one `c<i>` alias
+/// per PR over [`aliased_pr_vars`]'s three declared variables each.
+fn leak_comments_query(n: usize) -> String {
+    let fields: Vec<String> = (0..n)
+        .map(|i| {
+            format!(
+                "  c{i}: repository(owner: $o{i}, name: $r{i}) {{ pullRequest(number: $p{i}) \
+                 {{ comments(last: {LEAK_COMMENT_PAGE}) {{ totalCount nodes {{ author {{ login }} \
+                 body }} }} }} }}"
+            )
+        })
+        .collect();
+    format!(
+        "query({}) {{\n{}\n}}",
+        aliased_pr_vars(n),
+        fields.join("\n")
+    )
+}
+
+/// PURE: the `gh api graphql` argv for one chunk.
+fn leak_comments_args(chunk: &[&SubjectRef]) -> Vec<String> {
+    aliased_pr_args(leak_comments_query(chunk.len()), chunk)
 }
 
 /// PURE: one chunk's response, split back into `n` per-PR reads IN ALIAS ORDER and reshaped into
@@ -21061,12 +21094,7 @@ fn leak_comments_page(doc: &Value, n: usize) -> Vec<Option<Value>> {
     (0..n)
         .map(|i| {
             let conn = doc.pointer(&format!("/data/c{i}/pullRequest/comments"))?;
-            let nodes = conn.get("nodes")?.as_array()?;
-            let total = conn.get("totalCount")?.as_u64()?;
-            if total > nodes.len() as u64 {
-                return None;
-            }
-            Some(serde_json::json!({ "comments": nodes }))
+            Some(serde_json::json!({ "comments": whole_connection(conn)? }))
         })
         .collect()
 }
@@ -24846,7 +24874,7 @@ fn blocked_on_state_load_row(
                 "-R",
                 slug,
                 "--json",
-                "headRefOid,baseRefName,labels,reviewDecision,mergeable,statusCheckRollup,comments,isDraft",
+                UNVETTED_DETAIL_FIELDS,
             ]) else {
                 return Err(format!(
                     "error: `gh pr view {slug}#{num}` failed after blocked-on clearance — \
@@ -24862,6 +24890,235 @@ fn blocked_on_state_load_row(
             ))
         }
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE STATE-LOAD'S DETAIL READ — one round trip per [`UNVETTED_DETAIL_BATCH`] PRs (#312)
+//
+// `unvetted` classifies NOTHING off the search JSON, and that reasoning stands ([`unvetted_fetch`]
+// states it). What did not follow from it was a round trip per PR: the measured state-load spent
+// 287s in 354 `gh` calls — one `gh pr view` per open PR, plus one [`unresolved_threads`] query per
+// PR that reached the vet gate. The population is the same population and every read it ever made
+// is still made; only the number of round trips it costs changes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The `gh pr view --json` field list the state-load classifies a PR from. ONE constant because
+/// three call sites read it — the batch below, its per-PR fallback, and the post-clearance re-fetch
+/// in [`blocked_on_state_load_row`] — and a batch fetching a different set from the fallback is a
+/// PR classified differently depending on which read answered for it.
+const UNVETTED_DETAIL_FIELDS: &str =
+    "headRefOid,baseRefName,labels,reviewDecision,mergeable,statusCheckRollup,comments,isDraft";
+
+/// PRs one batched detail read asks GitHub about. Same trade as [`LEAK_COMMENT_BATCH`] — round
+/// trips bought per response — over a wider field set, so the response one chunk may weigh is
+/// larger for the same count.
+const UNVETTED_DETAIL_BATCH: usize = 20;
+
+/// Comments, labels and check contexts fetched per PR in a batched read — GitHub's page cap for one
+/// connection. A PR holding more is not read short: [`whole_connection`] reports it UNREAD and the
+/// per-PR `gh pr view` answers for it instead, so the batch is a speed change and never a different
+/// answer.
+const UNVETTED_DETAIL_PAGE: usize = 100;
+
+/// PURE: the aliased GraphQL query reading `n` PRs' whole detail in one round trip — one `d<i>`
+/// alias per PR over [`aliased_pr_vars`]'s three declared variables each.
+///
+/// The selection is [`UNVETTED_DETAIL_FIELDS`] expressed in GraphQL, and the check rollup is where
+/// the two spellings differ: `gh pr view` FLATTENS the head commit's rollup contexts into one array
+/// and that is the shape [`classify_ci`] reads, so the connection is walked here and flattened by
+/// [`unvetted_detail_page`] rather than the classifier learning a second shape.
+///
+/// `reviewThreads` rides along because it is a read of the SAME PR the same loop already made
+/// ([`gate_open_threads`]'s, one query per PR that reached the vet gate) and asking for it here
+/// costs no round trip at all. The gate is unchanged in what it decides: a first page short of its
+/// own `totalCount` answers for nobody, and the per-PR [`unresolved_threads`] walk — which pages —
+/// is still what those PRs are gated on.
+fn unvetted_detail_query(n: usize) -> String {
+    let fields: Vec<String> = (0..n)
+        .map(|i| {
+            format!(
+                "  d{i}: repository(owner: $o{i}, name: $r{i}) {{ pullRequest(number: $p{i}) {{ \
+                 headRefOid baseRefName isDraft reviewDecision mergeable \
+                 labels(first: {UNVETTED_DETAIL_PAGE}) {{ totalCount nodes {{ name }} }} \
+                 comments(last: {UNVETTED_DETAIL_PAGE}) {{ totalCount nodes {{ author {{ login }} \
+                 body }} }} \
+                 reviewThreads(first: {UNVETTED_DETAIL_PAGE}) {{ totalCount nodes {{ isResolved }} }} \
+                 commits(last: 1) {{ nodes {{ commit {{ statusCheckRollup {{ \
+                 contexts(last: {UNVETTED_DETAIL_PAGE}) {{ totalCount nodes {{ __typename \
+                 ... on StatusContext {{ state }} \
+                 ... on CheckRun {{ status conclusion }} }} }} }} }} }} }} }} }}"
+            )
+        })
+        .collect();
+    format!(
+        "query({}) {{\n{}\n}}",
+        aliased_pr_vars(n),
+        fields.join("\n")
+    )
+}
+
+/// PURE: the `gh api graphql` argv for one chunk.
+fn unvetted_detail_args(chunk: &[&SubjectRef]) -> Vec<String> {
+    aliased_pr_args(unvetted_detail_query(chunk.len()), chunk)
+}
+
+/// PURE: the head commit's check rollup, flattened into the array `gh pr view --json
+/// statusCheckRollup` returns — or `None` for UNREAD.
+///
+/// A null `statusCheckRollup` is an ANSWER, not a gap: GitHub spells "this head has no checks"
+/// that way and `gh` spells the same PR's rollup `[]`, which [`classify_ci`] reads as
+/// [`Ci::NoChecks`]. A missing commit node is the gap — nothing was said about the head at all.
+fn unvetted_detail_rollup(pr: &Value) -> Option<Value> {
+    let commit = pr
+        .pointer("/commits/nodes")?
+        .as_array()?
+        .first()?
+        .get("commit")?;
+    match commit.get("statusCheckRollup")? {
+        Value::Null => Some(Value::Array(Vec::new())),
+        rollup => Some(Value::Array(
+            whole_connection(rollup.get("contexts")?)?.clone(),
+        )),
+    }
+}
+
+/// ONE PR as the batched read answers for it: the document the classifier reads, and the
+/// unresolved-thread count the vet gate reads.
+#[derive(Clone, Debug, PartialEq)]
+struct UnvettedDetail {
+    /// The `gh pr view --json {UNVETTED_DETAIL_FIELDS}` document, whichever read produced it.
+    detail: Value,
+    /// Unresolved review threads, or `None` when THIS read did not answer for them — a first page
+    /// short of `totalCount` is not a count, and the gate gets the per-PR paginated walk instead of
+    /// a number derived from part of the threads.
+    threads: Option<u64>,
+}
+
+/// PURE: one chunk's response, split back into `n` per-PR reads IN ALIAS ORDER and reshaped into
+/// the `gh pr view --json {UNVETTED_DETAIL_FIELDS}` document the classifier reads — so the batch
+/// and the per-PR fetch are two ways to obtain ONE shape, not two shapes to keep in step.
+///
+/// `None` at an alias means UNREAD and every uncertainty resolves that way: a null repository or
+/// pull request, a field of the wrong type, a missing head commit, and any connection
+/// [`whole_connection`] found short of its own `totalCount`. An unread alias costs a per-PR
+/// `gh pr view`, never a classification off a partial read.
+///
+/// `reviewDecision` is the one null that is NOT a gap: nobody having reviewed is what GitHub means
+/// by it, and `gh` renders that as the empty string [`unvetted_row`] already discards.
+///
+/// The thread count is unread INDEPENDENTLY of the rest. A long review history is the one thing on
+/// a PR that routinely outruns a single page, and there is no reason a PR's classification should
+/// be refetched because its threads did not fit.
+fn unvetted_detail_page(doc: &Value, n: usize) -> Vec<Option<UnvettedDetail>> {
+    (0..n)
+        .map(|i| {
+            let pr = doc.pointer(&format!("/data/d{i}/pullRequest"))?;
+            let review = match pr.get("reviewDecision")? {
+                Value::Null => "",
+                v => v.as_str()?,
+            };
+            Some(UnvettedDetail {
+                detail: serde_json::json!({
+                    "headRefOid": pr.get("headRefOid")?.as_str()?,
+                    "baseRefName": pr.get("baseRefName")?.as_str()?,
+                    "isDraft": pr.get("isDraft")?.as_bool()?,
+                    "reviewDecision": review,
+                    "mergeable": pr.get("mergeable")?.as_str()?,
+                    "labels": whole_connection(pr.get("labels")?)?,
+                    "statusCheckRollup": unvetted_detail_rollup(pr)?,
+                    "comments": whole_connection(pr.get("comments")?)?,
+                }),
+                threads: pr
+                    .get("reviewThreads")
+                    .and_then(whole_connection)
+                    .map(|nodes| {
+                        nodes
+                            .iter()
+                            .filter(|t| t.get("isResolved") == Some(&Value::Bool(false)))
+                            .count() as u64
+                    }),
+            })
+        })
+        .collect()
+}
+
+/// LIVE: every PR's detail, batched, keyed by `(repo, number)`.
+///
+/// An ABSENT key means this read did not answer for that PR and the caller must ask again — never
+/// "no detail". A chunk that fails outright contributes no keys, which says that of all its members
+/// at once.
+fn unvetted_detail_batch(
+    subjects: &[SubjectRef],
+) -> std::collections::HashMap<(String, u64), UnvettedDetail> {
+    let refs: Vec<&SubjectRef> = subjects.iter().collect();
+    let chunks: Vec<&[&SubjectRef]> = refs.chunks(UNVETTED_DETAIL_BATCH).collect();
+    let pages = map_bounded(&chunks, |chunk| {
+        let args = unvetted_detail_args(chunk);
+        let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+        match gh_retrying(|| gh_api_result(&argref)) {
+            Ok(doc) => unvetted_detail_page(&doc, chunk.len()),
+            Err(_) => vec![None; chunk.len()],
+        }
+    });
+    chunks
+        .into_iter()
+        .flatten()
+        .zip(pages.into_iter().flatten())
+        .filter_map(|(s, read)| read.map(|v| ((s.repo.clone(), s.number), v)))
+        .collect()
+}
+
+/// One PR's detail: the batch's answer, or `per_pr` for whatever it did not answer for, or the
+/// ABORT.
+///
+/// The per-PR read is the FALLBACK, not the plan, and it is what keeps the batch a pure speed
+/// change: every PR the batch left out is still fetched one at a time, so the state-load classifies
+/// the same population it always did. The `Err` is the failure seam #302 established and it is
+/// louder here than a per-PR one, because it stops the whole run: a PR silently dropped from this
+/// queue reads as "nothing to vet", and a queue of dropped PRs reports healthy. `per_pr` is a seam
+/// for that reason — both branches are only reachable in production when GitHub fails.
+fn unvetted_detail_with<F>(
+    subject: &SubjectRef,
+    batched: &std::collections::HashMap<(String, u64), UnvettedDetail>,
+    per_pr: F,
+) -> Result<UnvettedDetail, String>
+where
+    F: Fn(&SubjectRef) -> Option<Value>,
+{
+    if let Some(d) = batched.get(&(subject.repo.clone(), subject.number)) {
+        return Ok(d.clone());
+    }
+    per_pr(subject)
+        .map(|detail| UnvettedDetail {
+            detail,
+            // `gh pr view` says nothing about review threads, so a refetched PR is gated on the
+            // per-PR walk exactly as it always was.
+            threads: None,
+        })
+        .ok_or_else(|| {
+            format!(
+                "error: `gh pr view {}#{}` failed — aborting rather than report an incomplete vet queue",
+                subject.repo, subject.number
+            )
+        })
+}
+
+/// LIVE: [`unvetted_detail_with`] over the real per-PR `gh pr view`.
+fn unvetted_detail(
+    subject: &SubjectRef,
+    batched: &std::collections::HashMap<(String, u64), UnvettedDetail>,
+) -> Result<UnvettedDetail, String> {
+    unvetted_detail_with(subject, batched, |s| {
+        gh_json(&[
+            "pr",
+            "view",
+            &s.number.to_string(),
+            "-R",
+            &s.repo,
+            "--json",
+            UNVETTED_DETAIL_FIELDS,
+        ])
+    })
 }
 
 fn unvetted_fetch(include_skipped: bool, limit: Option<usize>) -> Result<Value, String> {
@@ -24913,39 +25170,53 @@ fn unvetted_fetch(include_skipped: bool, limit: Option<usize>) -> Result<Value, 
             }),
         ));
     }
-    for p in &prs {
-        let url = p.get("url").and_then(|u| u.as_str()).unwrap_or("");
-        let (Some(slug), Some(num)) = (pr_slug(url), p.get("number").and_then(|n| n.as_u64()))
-        else {
-            continue;
-        };
-        let title = p.get("title").and_then(|t| t.as_str()).unwrap_or("");
-        // NOTHING is classified off the search JSON. No `human:*` label parks a PR any more
-        // (#133/#230), the two forms a human decision does take — a native REVIEW and a ruling
-        // comment — are invisible to search, and the draft send-back's currency check reads the
-        // comment thread, so every open PR is fetched and classified from its detail below.
-        let Some(detail) = gh_json(&[
-            "pr",
-            "view",
-            &num.to_string(),
-            "-R",
-            &slug,
-            "--json",
-            "headRefOid,baseRefName,labels,reviewDecision,mergeable,statusCheckRollup,comments,isDraft",
-        ]) else {
-            return Err(format!(
-                "error: `gh pr view {slug}#{num}` failed — aborting rather than report an incomplete vet queue"
-            ));
-        };
+    // NOTHING is classified off the search JSON. No `human:*` label parks a PR any more
+    // (#133/#230), the two forms a human decision does take — a native REVIEW and a ruling
+    // comment — are invisible to search, and the draft send-back's currency check reads the
+    // comment thread, so every open PR is fetched and classified from its detail.
+    //
+    // The whole population is read FIRST, [`UNVETTED_DETAIL_BATCH`] PRs to a round trip (#312), and
+    // the loop below is unchanged in what it reads: a PR the batch did not answer for still costs
+    // its own `gh pr view`. A row unreachable from its search entry (an unparseable url) is dropped
+    // here exactly as the loop dropped it, so nothing enters the batch that the loop would skip.
+    let subjects: Vec<SubjectRef> = prs
+        .iter()
+        .filter_map(|p| {
+            let url = p.get("url").and_then(|u| u.as_str()).unwrap_or("");
+            Some(SubjectRef::new(
+                pr_slug(url)?,
+                p.get("number").and_then(|n| n.as_u64())?,
+                url,
+                p.get("title").and_then(|t| t.as_str()).unwrap_or(""),
+            ))
+        })
+        .collect();
+    let details = unvetted_detail_batch(&subjects);
+
+    // SERIAL, in search order: this loop WRITES (the send-backs and the blocked-on clearance), and
+    // the rows it pushes are the order everything downstream ranks and pages.
+    for subject in &subjects {
+        let (slug, num, url, title) = (
+            subject.repo.as_str(),
+            subject.number,
+            subject.url.as_str(),
+            subject.title.as_str(),
+        );
+        let UnvettedDetail { detail, threads } = unvetted_detail(subject, &details)?;
         // #161: an `ai:blocked-on` PR takes the clearance path, not the vet path — see
         // [`blocked_on_state_load_row`]. Checked on the DETAIL labels (fresh), not the search row.
         let row = if label_names(&detail).iter().any(|l| l == "ai:blocked-on") {
-            blocked_on_state_load_row(&slug, num, url, title, &detail)?
+            blocked_on_state_load_row(slug, num, url, title, &detail)?
         } else {
             // Classify first, THEN gate on open threads — the gate's `fetch` runs only for a row that
             // would actually be vetted, so an already-skipped PR costs no extra GraphQL round-trip.
             // An unsplittable slug fails the fetch (fail-closed: not vetted this run), never a dropped PR.
-            gate_open_threads(unvetted_row(&slug, num, url, title, &detail), || {
+            gate_open_threads(unvetted_row(slug, num, url, title, &detail), || {
+                // The batch answered for most PRs' threads at no extra round trip; the walk is what
+                // a PR whose threads outran one page still costs.
+                if let Some(open) = threads {
+                    return Ok(open);
+                }
                 let (owner, repo) = slug.split_once('/').ok_or(GhFailure::Malformed)?;
                 unresolved_threads(owner, repo, num)
             })
@@ -24957,10 +25228,10 @@ fn unvetted_fetch(include_skipped: bool, limit: Option<usize>) -> Result<Value, 
         // modeled state). The two are mutually exclusive by [`vet_action`]'s arm order, so at most
         // one `write` fires per PR.
         let row = send_back_conflict(row, |head, labels, base| {
-            record_conflict_send_back(&slug, num, head, labels, base)
+            record_conflict_send_back(slug, num, head, labels, base)
         });
         rows.push(send_back_draft(row, |head, labels| {
-            record_draft_send_back(&slug, num, head, labels)
+            record_draft_send_back(slug, num, head, labels)
         }));
     }
     Ok(unvetted_doc(&rows, include_skipped, limit))
@@ -27208,6 +27479,37 @@ fn next_close_candidate_page(ordered: &[PresentableFlag], limit: usize) -> Vec<&
     ordered.iter().take(limit).collect()
 }
 
+/// PURE: the page's ROWS — one per paged flag, paired with the coverage already read for it, each
+/// built at the prose share a `limit`-row page leaves. `limit` is what the caller ASKED for, never
+/// the number of rows the queue happened to hold, so the clip a given argument produces is the same
+/// on every call.
+///
+/// Separate from the fetch for [`next_design_rows`]' reason: the wiring from `limit` to the clip is
+/// reachable by no test while it is folded into a network call.
+fn next_close_candidate_rows(
+    page: &[&PresentableFlag],
+    coverage: &[(PrCoverage, Vec<String>)],
+    limit: usize,
+) -> Vec<Value> {
+    page.iter()
+        .zip(coverage)
+        .map(|(f, (coverage, covering))| {
+            next_close_candidate_row(
+                &NextCcFacts {
+                    slug: &f.slug,
+                    num: f.num,
+                    detail: &f.detail,
+                    flag_at: &f.flag_at,
+                    flag_body: &f.flag_body,
+                    coverage: *coverage,
+                    covering,
+                },
+                limit,
+            )
+        })
+        .collect()
+}
+
 /// Rows one call may return, and the default.
 ///
 /// The cap is 3 for [`NEXT_READY_MAX_ROWS`]'s reason, and the argument applies here with MORE force
@@ -27224,9 +27526,9 @@ const NEXT_CC_MAX_ROWS: usize = 3;
 const NEXT_CC_DEFAULT_ROWS: usize = 1;
 
 // Per-field RAW byte caps, for the reason `next_ready`'s exist: the result is structurally unable to
-// exceed the budget rather than merely unlikely to.
-const NCC_REASON_BYTES: usize = 1_000;
-const NCC_NOTE_BYTES: usize = 1_000;
+// exceed the budget rather than merely unlikely to. The row's two PROSE fields — the flag's reason
+// and the verdict's note — have no constant here: they are [`ncc_prose_bytes`], derived from what
+// these leave, for [`nd_note_bytes`]'s reason.
 const NCC_TITLE_BYTES: usize = 200;
 const NCC_URL_BYTES: usize = 200;
 const NCC_ISSUE_BYTES: usize = 160;
@@ -27240,11 +27542,14 @@ const NCC_PR_REF_BYTES: usize = 160;
 const NCC_MAX_PRS: usize = 3;
 const NCC_ERROR_BYTES: usize = 200;
 
-/// Every capped field in one row, summed. Three timestamps (the issue's `createdAt`, the flag's, and
-/// the one the vetter's verdict pinned) are counted at their own cap.
-const NCC_ROW_FIELD_BYTES: usize = NCC_REASON_BYTES
-    + NCC_NOTE_BYTES
-    + NCC_TITLE_BYTES
+/// The row's two prose fields: the flag's `reason` and the verdict's `note`. They split the share
+/// evenly — the ruling is the second checked against the first, so a page that carried one whole
+/// and cut the other would be answering half the question.
+const NCC_PROSE_FIELDS: usize = 2;
+
+/// Every capped field in one row EXCEPT those two, summed. Three timestamps (the issue's
+/// `createdAt`, the flag's, and the one the vetter's verdict pinned) are counted at their own cap.
+const NCC_ROW_FIELD_BYTES_LESS_PROSE: usize = NCC_TITLE_BYTES
     + NCC_URL_BYTES
     + NCC_ISSUE_BYTES
     + 3 * NCC_TIME_BYTES
@@ -27257,7 +27562,11 @@ const NCC_ROW_FIELD_BYTES: usize = NCC_REASON_BYTES
 /// The row's FIXED cost — keys, punctuation, typed enum strings, numbers. Held honest by
 /// `the_fixed_allowances_cover_a_row_a_withheld_entry_and_an_envelope`, which measures a real one.
 const NCC_ROW_FIXED_BYTES: usize = 1_200;
-const NCC_ROW_CEILING: usize = NCC_ROW_FIELD_BYTES * JSON_ESCAPE_WORST_CASE + NCC_ROW_FIXED_BYTES;
+
+/// What one row costs BEFORE its prose: its other fields at their caps, escaped, plus that fixed
+/// cost.
+const NCC_ROW_LESS_PROSE_CEILING: usize =
+    NCC_ROW_FIELD_BYTES_LESS_PROSE * JSON_ESCAPE_WORST_CASE + NCC_ROW_FIXED_BYTES;
 
 // The two withheld lists. They are CAPPED and their overflow COUNTED, rather than unbounded,
 // because they ride inside the same one budget the rows do — and an unbounded list of stranded
@@ -27272,15 +27581,56 @@ const NCC_WITHHELD_CEILING: usize =
 /// The document minus its rows and its withheld lists: `counts`, `queue`, the keys around them.
 const NCC_ENVELOPE_BYTES: usize = 1_500;
 
-/// THE GUARANTEE, as arithmetic the compiler checks — a full page of maximal rows PLUS both withheld
-/// lists at their caps cannot reach [`MCP_MAX_RESULT_BYTES`]. Raise a cap past what fits and this
-/// crate does not build.
-const _: () = assert!(
-    NEXT_CC_MAX_ROWS * NCC_ROW_CEILING
+/// Everything in the document that is NOT prose, for a page of `rows`.
+const fn ncc_non_prose_bytes(rows: usize) -> usize {
+    rows * NCC_ROW_LESS_PROSE_CEILING
         + (NCC_MAX_STRANDED + NCC_MAX_ERRORS) * NCC_WITHHELD_CEILING
         + NCC_ENVELOPE_BYTES
-        <= MCP_MAX_RESULT_BYTES
-);
+}
+
+/// The allowance for ONE prose field of ONE row of a `rows`-row page — DERIVED from the budget,
+/// never picked, for [`nd_note_bytes`]'s reason: a constant has to be sized for the WIDEST page,
+/// and the caller asking the tool's own question then pays for rows it did not ask for out of the
+/// two fields it cannot reconstruct.
+/// A `rows` outside the page sizes [`next_close_candidate_limit`] admits is clamped to the SAFE
+/// side, for [`nd_note_rows`]'s reason: zero divides, and a number past the cap wraps a subtraction
+/// into an unbounded share.
+const fn ncc_prose_rows(rows: usize) -> usize {
+    if rows < 1 {
+        1
+    } else if rows > NEXT_CC_MAX_ROWS {
+        NEXT_CC_MAX_ROWS
+    } else {
+        rows
+    }
+}
+
+const fn ncc_prose_bytes(rows: usize) -> usize {
+    let rows = ncc_prose_rows(rows);
+    (MCP_MAX_RESULT_BYTES - ncc_non_prose_bytes(rows))
+        / (JSON_ESCAPE_WORST_CASE * rows * NCC_PROSE_FIELDS)
+}
+
+/// The floor under [`ncc_prose_bytes`] at its tightest — [`ND_NOTE_FLOOR_BYTES`]'s job here: a
+/// field added to the row is paid for out of the prose, so the build is where that lands.
+const NCC_PROSE_FLOOR_BYTES: usize = 1_000;
+
+/// THE GUARANTEE, as arithmetic the compiler checks — for EVERY page size this tool serves, a full
+/// page of maximal rows PLUS both withheld lists at their caps cannot reach
+/// [`MCP_MAX_RESULT_BYTES`], and the prose is still worth reading. Raise a cap past what fits and
+/// this crate does not build.
+const _: () = {
+    let mut rows = 1;
+    while rows <= NEXT_CC_MAX_ROWS {
+        assert!(
+            ncc_non_prose_bytes(rows)
+                + rows * NCC_PROSE_FIELDS * ncc_prose_bytes(rows) * JSON_ESCAPE_WORST_CASE
+                <= MCP_MAX_RESULT_BYTES
+        );
+        assert!(ncc_prose_bytes(rows) >= NCC_PROSE_FLOOR_BYTES);
+        rows += 1;
+    }
+};
 
 /// PURE: this state-load's page size. Out of range is REFUSED rather than clamped, for the reason
 /// [`next_ready_limit`]'s is.
@@ -27311,15 +27661,17 @@ struct NextCcFacts<'a> {
     covering: &'a [String],
 }
 
-/// PURE: the flag decision for ONE issue. Every string is clipped, so the row's size is bounded by
-/// [`NCC_ROW_CEILING`] whatever GitHub returns.
+/// PURE: the flag decision for ONE issue. Every string is clipped — the two prose fields at the
+/// share [`ncc_prose_bytes`] leaves a `rows`-row page — so the row's size is bounded whatever
+/// GitHub returns. It takes the PAGE SIZE rather than a byte count so a row cannot be built at a
+/// share no page would have given it.
 ///
 /// The row's centre is the pair a ruling turns on: `flag.reason` is the producer's CLAIM — the thing
 /// being checked, never a fact — and `verdict` is what the vetter made of that same claim, pinned to
 /// the flag it judged so a stale one is visibly stale. They are separate objects because collapsing
 /// them into one "reason" is the restatement `/nr` was built against, in the data instead of the
 /// prose.
-fn next_close_candidate_row(f: &NextCcFacts) -> Value {
+fn next_close_candidate_row(f: &NextCcFacts, rows: usize) -> Value {
     let labels_all = label_names(f.detail);
     let labels: Vec<String> = labels_all
         .iter()
@@ -27360,9 +27712,9 @@ fn next_close_candidate_row(f: &NextCcFacts) -> Value {
             "at": clip_field(f.flag_at, NCC_TIME_BYTES),
             // The CLAIM. `close_candidate_context` carries the flag body whole; this is the payload
             // line, clipped, and `reasonTruncated` says when the whole one has to be read there.
-            "reason": clip_field(&reason_full, NCC_REASON_BYTES),
+            "reason": clip_field(&reason_full, ncc_prose_bytes(rows)),
             "reasonBytes": reason_full.len(),
-            "reasonTruncated": reason_full.len() > NCC_REASON_BYTES,
+            "reasonTruncated": reason_full.len() > ncc_prose_bytes(rows),
             // Stated because it is the second input to `openPr.blocksClose`, and a decision whose
             // inputs are not both on the row is one a reader has to take on trust. It is a fact
             // about the reason's TEXT — what it cites, never whether the citation holds.
@@ -27375,9 +27727,9 @@ fn next_close_candidate_row(f: &NextCcFacts) -> Value {
             "flagAt": parts.as_ref().map(|(at, _)| clip_field(at, NCC_TIME_BYTES)),
             "atFlag": parts.as_ref().is_some_and(|(at, _)| at == f.flag_at),
             "verdict": parts.as_ref().map(|(_, v)| clip_field(v, NCC_VERDICT_BYTES)),
-            "note": clip_field(&note_full, NCC_NOTE_BYTES),
+            "note": clip_field(&note_full, ncc_prose_bytes(rows)),
             "noteBytes": note_full.len(),
-            "noteTruncated": note_full.len() > NCC_NOTE_BYTES,
+            "noteTruncated": note_full.len() > ncc_prose_bytes(rows),
         },
         "openPr": {
             // REPORTED whatever the flag says: a human ruling on this issue must see that a PR
@@ -27841,28 +28193,22 @@ fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
         errors,
     } = ncc_classify(&found, &archived_repos, ncc_issue_detail);
     rank_flags(&mut flags);
-    let rows: Vec<Value> = next_close_candidate_page(&flags, limit)
-        .into_iter()
+    let page_flags = next_close_candidate_page(&flags, limit);
+    // The covering-PR read is an ISSUE question (GitHub answers it on the Issue type only), so a
+    // PR row states `not-applicable` rather than paying for a read that cannot answer and
+    // reporting its failure as an unread signal. Read HERE, ahead of the rows, so the row build
+    // below is pure.
+    let coverage: Vec<(PrCoverage, Vec<String>)> = page_flags
+        .iter()
         .map(|f| {
-            // The covering-PR read is an ISSUE question (GitHub answers it on the Issue type
-            // only), so a PR row states `not-applicable` rather than paying for a read that
-            // cannot answer and reporting its failure as an unread signal.
-            let (coverage, covering) = if subject_is_pr(&f.detail) {
+            if subject_is_pr(&f.detail) {
                 (PrCoverage::NotApplicable, Vec::new())
             } else {
                 covering_open_prs_fetch(&f.slug, f.num)
-            };
-            next_close_candidate_row(&NextCcFacts {
-                slug: &f.slug,
-                num: f.num,
-                detail: &f.detail,
-                flag_at: &f.flag_at,
-                flag_body: &f.flag_body,
-                coverage,
-                covering: &covering,
-            })
+            }
         })
         .collect();
+    let rows = next_close_candidate_rows(&page_flags, &coverage, limit);
     let (stranded, more_stranded) = page(stranded, Some(NCC_MAX_STRANDED));
     let (errors, more_errors) = page(errors, Some(NCC_MAX_ERRORS));
     Ok(next_close_candidate_doc(
@@ -28841,15 +29187,18 @@ mod next_close_candidate_tests {
                 vetter(at, "uphold", "diff matches the ask"),
             ],
         );
-        let row = next_close_candidate_row(&NextCcFacts {
-            slug: "o/r",
-            num: 7,
-            detail: &detail,
-            flag_at: at,
-            flag_body: body,
-            coverage: PrCoverage::Uncovered,
-            covering: &[],
-        });
+        let row = next_close_candidate_row(
+            &NextCcFacts {
+                slug: "o/r",
+                num: 7,
+                detail: &detail,
+                flag_at: at,
+                flag_body: body,
+                coverage: PrCoverage::Uncovered,
+                covering: &[],
+            },
+            NEXT_CC_DEFAULT_ROWS,
+        );
         assert_eq!(row["issue"], json!("o/r#7"));
         assert_eq!(row["url"], json!("https://github.com/o/r/issues/7"));
         assert_eq!(row["title"], json!("the thing does not work"));
@@ -28895,15 +29244,18 @@ mod next_close_candidate_tests {
                 producer(second, "already-fixed: #11"),
             ],
         );
-        let row = next_close_candidate_row(&NextCcFacts {
-            slug: "o/r",
-            num: 7,
-            detail: &detail,
-            flag_at: second,
-            flag_body: "🤖 ai:producer\nClose-candidate: already-fixed: #11",
-            coverage: PrCoverage::Uncovered,
-            covering: &[],
-        });
+        let row = next_close_candidate_row(
+            &NextCcFacts {
+                slug: "o/r",
+                num: 7,
+                detail: &detail,
+                flag_at: second,
+                flag_body: "🤖 ai:producer\nClose-candidate: already-fixed: #11",
+                coverage: PrCoverage::Uncovered,
+                covering: &[],
+            },
+            NEXT_CC_DEFAULT_ROWS,
+        );
         assert_eq!(row["flag"]["at"], json!(second));
         assert_eq!(row["verdict"]["flagAt"], json!(first));
         assert_eq!(row["verdict"]["atFlag"], json!(false));
@@ -28928,15 +29280,18 @@ mod next_close_candidate_tests {
             "o/r#111".to_string(),
             "o/r#112".to_string(),
         ];
-        let row = next_close_candidate_row(&NextCcFacts {
-            slug: "o/r",
-            num: 7,
-            detail: &detail,
-            flag_at: at,
-            flag_body: &format!("🤖 ai:producer\nClose-candidate: {reason}"),
-            coverage: PrCoverage::Covered,
-            covering: &covering,
-        });
+        let row = next_close_candidate_row(
+            &NextCcFacts {
+                slug: "o/r",
+                num: 7,
+                detail: &detail,
+                flag_at: at,
+                flag_body: &format!("🤖 ai:producer\nClose-candidate: {reason}"),
+                coverage: PrCoverage::Covered,
+                covering: &covering,
+            },
+            NEXT_CC_DEFAULT_ROWS,
+        );
         assert_eq!(row["flag"]["grounds"], json!("cites-no-landing"));
         assert_eq!(row["openPr"]["coverage"], json!("covered-by-open-pr"));
         assert_eq!(row["openPr"]["blocksClose"], json!(true));
@@ -28971,15 +29326,18 @@ mod next_close_candidate_tests {
             ],
         );
         let covering = vec!["o/r#60".to_string()];
-        let row = next_close_candidate_row(&NextCcFacts {
-            slug: "o/r",
-            num: 6,
-            detail: &detail,
-            flag_at: at,
-            flag_body: &format!("🤖 ai:producer\nClose-candidate: {reason}"),
-            coverage: PrCoverage::Covered,
-            covering: &covering,
-        });
+        let row = next_close_candidate_row(
+            &NextCcFacts {
+                slug: "o/r",
+                num: 6,
+                detail: &detail,
+                flag_at: at,
+                flag_body: &format!("🤖 ai:producer\nClose-candidate: {reason}"),
+                coverage: PrCoverage::Covered,
+                covering: &covering,
+            },
+            NEXT_CC_DEFAULT_ROWS,
+        );
         assert_eq!(row["flag"]["grounds"], json!("cites-a-landing"));
         assert_eq!(
             row["openPr"]["coverage"],
@@ -28998,31 +29356,113 @@ mod next_close_candidate_tests {
     #[test]
     fn a_clipped_claim_or_note_says_it_was_clipped() {
         let at = "2026-07-20T09:00:00Z";
-        let long = "x".repeat(NCC_REASON_BYTES + 500);
+        let cap = ncc_prose_bytes(NEXT_CC_DEFAULT_ROWS);
+        let long = "x".repeat(cap + 500);
         let detail = issue(
             &["ai:close-candidate"],
-            vec![vetter(at, "uphold", &"y".repeat(NCC_NOTE_BYTES + 500))],
+            vec![vetter(at, "uphold", &"y".repeat(cap + 500))],
         );
-        let row = next_close_candidate_row(&NextCcFacts {
-            slug: "o/r",
-            num: 7,
-            detail: &detail,
-            flag_at: at,
-            flag_body: &format!("🤖 ai:producer\nClose-candidate: {long}"),
-            coverage: PrCoverage::Uncovered,
-            covering: &[],
-        });
-        assert_eq!(
-            row["flag"]["reason"].as_str().unwrap().len(),
-            NCC_REASON_BYTES
+        let row = next_close_candidate_row(
+            &NextCcFacts {
+                slug: "o/r",
+                num: 7,
+                detail: &detail,
+                flag_at: at,
+                flag_body: &format!("🤖 ai:producer\nClose-candidate: {long}"),
+                coverage: PrCoverage::Uncovered,
+                covering: &[],
+            },
+            NEXT_CC_DEFAULT_ROWS,
         );
+        assert_eq!(row["flag"]["reason"].as_str().unwrap().len(), cap);
         assert_eq!(row["flag"]["reasonBytes"], json!(long.len()));
         assert_eq!(row["flag"]["reasonTruncated"], json!(true));
-        assert_eq!(
-            row["verdict"]["note"].as_str().unwrap().len(),
-            NCC_NOTE_BYTES
-        );
+        assert_eq!(row["verdict"]["note"].as_str().unwrap().len(), cap);
         assert_eq!(row["verdict"]["noteTruncated"], json!(true));
+    }
+
+    // The prose share is the PAGE's, so a claim the widest page cuts, the tool's own default call
+    // carries whole — and the escape from a clip is a narrower page, not only
+    // `close_candidate_context`. The wiring is the claim, so this asks for both PAGES rather than
+    // handing the row builder two numbers by hand.
+    #[test]
+    fn a_narrower_page_carries_a_longer_claim() {
+        let widest = ncc_prose_bytes(NEXT_CC_MAX_ROWS);
+        let default = ncc_prose_bytes(NEXT_CC_DEFAULT_ROWS);
+        assert!(
+            default > widest,
+            "the one-row page must not be charged for rows it did not ask for: \
+             {default} vs {widest}"
+        );
+
+        let at = "2026-07-20T09:00:00Z";
+        let long = "x".repeat(widest + 1);
+        let detail = issue(
+            &["ai:close-candidate"],
+            vec![vetter(at, "uphold", &"y".repeat(widest + 1))],
+        );
+        let ordered: Vec<PresentableFlag> = (0..NEXT_CC_MAX_ROWS)
+            .map(|i| PresentableFlag {
+                slug: "o/r".to_string(),
+                num: i as u64 + 1,
+                flag_at: at.to_string(),
+                flag_body: format!("🤖 ai:producer\nClose-candidate: {long}"),
+                detail: detail.clone(),
+            })
+            .collect();
+        let coverage: Vec<(PrCoverage, Vec<String>)> = (0..NEXT_CC_MAX_ROWS)
+            .map(|_| (PrCoverage::Uncovered, Vec::new()))
+            .collect();
+
+        let page = next_close_candidate_page(&ordered, NEXT_CC_MAX_ROWS);
+        for row in next_close_candidate_rows(&page, &coverage, NEXT_CC_MAX_ROWS) {
+            assert_eq!(row["flag"]["reasonTruncated"], json!(true));
+            assert_eq!(row["verdict"]["noteTruncated"], json!(true));
+        }
+        let page = next_close_candidate_page(&ordered, NEXT_CC_DEFAULT_ROWS);
+        let narrow = next_close_candidate_rows(&page, &coverage, NEXT_CC_DEFAULT_ROWS);
+        assert_eq!(narrow.len(), NEXT_CC_DEFAULT_ROWS);
+        assert_eq!(narrow[0]["flag"]["reasonTruncated"], json!(false));
+        assert_eq!(narrow[0]["verdict"]["noteTruncated"], json!(false));
+    }
+
+    // A page size the limit would have refused never reaches an unbounded share, for the reason
+    // `next_design`'s twin states: zero divides and a number past the cap wraps a subtraction.
+    #[test]
+    fn a_page_size_the_limit_refuses_never_reaches_an_unbounded_share() {
+        let tightest = ncc_prose_bytes(NEXT_CC_MAX_ROWS);
+        assert_eq!(ncc_prose_bytes(0), ncc_prose_bytes(1));
+        assert_eq!(ncc_prose_bytes(NEXT_CC_MAX_ROWS + 1), tightest);
+        assert_eq!(ncc_prose_bytes(usize::MAX), tightest);
+    }
+
+    // Every page size the limit admits is inside the ONE budget, and every one of them still
+    // carries prose worth reading — so a `limit` widened without re-deriving the share fails here.
+    #[test]
+    fn every_admitted_page_size_keeps_its_prose_share() {
+        for rows in 1..=NEXT_CC_MAX_ROWS {
+            let cap = ncc_prose_bytes(rows);
+            assert!(
+                cap >= NCC_PROSE_FLOOR_BYTES,
+                "a {rows}-row page leaves {cap} bytes of prose, under the \
+                 {NCC_PROSE_FLOOR_BYTES}-byte floor"
+            );
+            let total =
+                ncc_non_prose_bytes(rows) + rows * NCC_PROSE_FIELDS * cap * JSON_ESCAPE_WORST_CASE;
+            assert!(
+                total <= MCP_MAX_RESULT_BYTES,
+                "a {rows}-row page is {total} bytes, over the {MCP_MAX_RESULT_BYTES}-byte budget"
+            );
+            // And it is the WHOLE of what the page leaves, for the reason `next_design`'s twin
+            // says so: a share that merely fits is one a smaller divisor also satisfies.
+            let over = ncc_non_prose_bytes(rows)
+                + rows * NCC_PROSE_FIELDS * (cap + 1) * JSON_ESCAPE_WORST_CASE;
+            assert!(
+                over > MCP_MAX_RESULT_BYTES,
+                "a {rows}-row page leaves {cap} bytes of prose but could carry more — {over} \
+                 bytes is still inside the {MCP_MAX_RESULT_BYTES}-byte budget"
+            );
+        }
     }
 
     // --- the document ---------------------------------------------------------------------------
@@ -29224,57 +29664,67 @@ mod next_close_candidate_tests {
             }],
         });
         let covering: Vec<String> = (0..20).map(|_| h.clone()).collect();
-        let rows: Vec<Value> = (0..NEXT_CC_MAX_ROWS)
-            .map(|i| {
-                next_close_candidate_row(&NextCcFacts {
-                    slug: &h,
-                    num: u64::MAX - i as u64,
-                    detail: &detail,
-                    flag_at: &at,
-                    flag_body: &format!("🤖 ai:producer\nClose-candidate: {h}"),
-                    coverage: PrCoverage::Covered,
-                    covering: &covering,
+        for limit in 1..=NEXT_CC_MAX_ROWS {
+            let prose_bytes = ncc_prose_bytes(limit);
+            let ceiling = NCC_ROW_LESS_PROSE_CEILING
+                + NCC_PROSE_FIELDS * prose_bytes * JSON_ESCAPE_WORST_CASE;
+            let rows: Vec<Value> = (0..limit)
+                .map(|i| {
+                    next_close_candidate_row(
+                        &NextCcFacts {
+                            slug: &h,
+                            num: u64::MAX - i as u64,
+                            detail: &detail,
+                            flag_at: &at,
+                            flag_body: &format!("🤖 ai:producer\nClose-candidate: {h}"),
+                            coverage: PrCoverage::Covered,
+                            covering: &covering,
+                        },
+                        limit,
+                    )
                 })
-            })
-            .collect();
-        for (i, row) in rows.iter().enumerate() {
-            let len = row.to_string().len();
+                .collect();
+            for (i, row) in rows.iter().enumerate() {
+                let len = row.to_string().len();
+                assert!(
+                    len <= ceiling,
+                    "row {i} of a {limit}-row page is {len} bytes, over the {ceiling}-byte \
+                     ceiling the budget assertion is computed from"
+                );
+            }
+            let entry = withheld_entry(&h, &h);
+            let entry_len = entry.to_string().len();
             assert!(
-                len <= NCC_ROW_CEILING,
-                "row {i} is {len} bytes, over the {NCC_ROW_CEILING}-byte ceiling the compile-time \
-                 budget assertion is computed from"
+                entry_len <= NCC_WITHHELD_CEILING,
+                "a withheld entry is {entry_len} bytes, over the {NCC_WITHHELD_CEILING}-byte \
+                 ceiling"
+            );
+            let doc = next_close_candidate_doc(
+                rows,
+                &FlagQueueWithheld {
+                    counts: FlagQueueCounts {
+                        flagged: usize::MAX,
+                        presentable: usize::MAX,
+                        vetter_close: usize::MAX,
+                        torn_human_ruling: usize::MAX,
+                        unvetted: usize::MAX,
+                        no_flag: usize::MAX,
+                        rejected_still_flagged: usize::MAX,
+                        fetch_errors: usize::MAX,
+                    },
+                    stranded: (0..NCC_MAX_STRANDED).map(|_| entry.clone()).collect(),
+                    more_stranded: usize::MAX,
+                    errors: (0..NCC_MAX_ERRORS).map(|_| entry.clone()).collect(),
+                    more_errors: usize::MAX,
+                },
+            );
+            let len = doc.to_string().len();
+            assert!(
+                len <= MCP_MAX_RESULT_BYTES,
+                "a full adversarial {limit}-row page is {len} bytes, over the \
+                 {MCP_MAX_RESULT_BYTES}-byte budget"
             );
         }
-        let entry = withheld_entry(&h, &h);
-        let entry_len = entry.to_string().len();
-        assert!(
-            entry_len <= NCC_WITHHELD_CEILING,
-            "a withheld entry is {entry_len} bytes, over the {NCC_WITHHELD_CEILING}-byte ceiling"
-        );
-        let doc = next_close_candidate_doc(
-            rows,
-            &FlagQueueWithheld {
-                counts: FlagQueueCounts {
-                    flagged: usize::MAX,
-                    presentable: usize::MAX,
-                    vetter_close: usize::MAX,
-                    torn_human_ruling: usize::MAX,
-                    unvetted: usize::MAX,
-                    no_flag: usize::MAX,
-                    rejected_still_flagged: usize::MAX,
-                    fetch_errors: usize::MAX,
-                },
-                stranded: (0..NCC_MAX_STRANDED).map(|_| entry.clone()).collect(),
-                more_stranded: usize::MAX,
-                errors: (0..NCC_MAX_ERRORS).map(|_| entry.clone()).collect(),
-                more_errors: usize::MAX,
-            },
-        );
-        let len = doc.to_string().len();
-        assert!(
-            len <= MCP_MAX_RESULT_BYTES,
-            "a full adversarial page is {len} bytes, over the {MCP_MAX_RESULT_BYTES}-byte budget"
-        );
     }
 
     // The three fixed allowances the compile-time assertion rests on are MEASURED, not guessed. A
@@ -29282,15 +29732,18 @@ mod next_close_candidate_tests {
     #[test]
     fn the_fixed_allowances_cover_a_row_a_withheld_entry_and_an_envelope() {
         // Every enum at its longest spelling, every string empty.
-        let row = next_close_candidate_row(&NextCcFacts {
-            slug: "",
-            num: 0,
-            detail: &json!({}),
-            flag_at: "",
-            flag_body: "",
-            coverage: PrCoverage::Covered,
-            covering: &[],
-        });
+        let row = next_close_candidate_row(
+            &NextCcFacts {
+                slug: "",
+                num: 0,
+                detail: &json!({}),
+                flag_at: "",
+                flag_body: "",
+                coverage: PrCoverage::Covered,
+                covering: &[],
+            },
+            NEXT_CC_DEFAULT_ROWS,
+        );
         // Two numeric fields per row: reasonBytes and noteBytes.
         let row_len = row.to_string().len() + 2 * NCC_MAX_DIGITS;
         assert!(
@@ -30573,6 +31026,31 @@ fn next_design_page(ordered: &[PresentableDesign], limit: usize) -> Vec<&Present
     ordered.iter().take(limit).collect()
 }
 
+/// PURE: the page's ROWS — [`next_design_page`]'s prefix, each built at the note share a `limit`-row
+/// page leaves. `limit` is what the caller ASKED for, never the number of rows the queue happened
+/// to hold: the clip a given argument produces is then the same on every call, and a reader can
+/// predict it rather than discover it.
+///
+/// Separate from the fetch so that wiring is a fact a test holds: folded into a network call it is
+/// reachable by no test, and a share that collapsed back to one constant for every page size would
+/// be invisible until a reader got half a sentence.
+fn next_design_rows(ordered: &[PresentableDesign], limit: usize) -> Vec<Value> {
+    next_design_page(ordered, limit)
+        .into_iter()
+        .map(|d| {
+            next_design_row(
+                &NextDesignFacts {
+                    slug: &d.slug,
+                    num: d.num,
+                    detail: &d.detail,
+                    question: &d.question,
+                },
+                limit,
+            )
+        })
+        .collect()
+}
+
 /// Rows one call may return, and the default.
 ///
 /// The cap is 3 for [`NEXT_READY_MAX_ROWS`]'s reason, with [`NEXT_CC_MAX_ROWS`]'s sharpening:
@@ -30584,8 +31062,8 @@ const NEXT_DESIGN_MAX_ROWS: usize = 3;
 const NEXT_DESIGN_DEFAULT_ROWS: usize = 1;
 
 // Per-field RAW byte caps, for the reason `next_ready`'s exist: the result is structurally unable
-// to exceed the budget rather than merely unlikely to.
-const ND_NOTE_BYTES: usize = 2_600;
+// to exceed the budget rather than merely unlikely to. The note has no constant here: it is
+// [`nd_note_bytes`], derived from what these leave.
 const ND_TITLE_BYTES: usize = 200;
 const ND_URL_BYTES: usize = 200;
 const ND_PR_BYTES: usize = 160;
@@ -30596,21 +31074,24 @@ const ND_LABEL_BYTES: usize = 60;
 const ND_MAX_LABELS: usize = 8;
 const ND_ERROR_BYTES: usize = 200;
 
-/// Every capped field in one row, summed. Two shas (the PR's head, and the one a vetter-raised
-/// question pinned itself to) are counted at their own cap.
-const ND_ROW_FIELD_BYTES: usize = ND_PR_BYTES
+/// Every capped field in one row EXCEPT the note, summed. Two shas (the PR's head, and the one a
+/// vetter-raised question pinned itself to) are counted at their own cap.
+const ND_ROW_FIELD_BYTES_LESS_NOTE: usize = ND_PR_BYTES
     + ND_URL_BYTES
     + ND_TITLE_BYTES
     + ND_BRANCH_BYTES
     + 2 * ND_SHA_BYTES
     + ND_TIME_BYTES
-    + ND_NOTE_BYTES
     + ND_MAX_LABELS * ND_LABEL_BYTES;
 
 /// The row's FIXED cost — keys, punctuation, typed enum strings, numbers. Held honest by
 /// `the_fixed_allowances_cover_a_row_a_withheld_entry_and_an_envelope`, which measures a real one.
 const ND_ROW_FIXED_BYTES: usize = 1_200;
-const ND_ROW_CEILING: usize = ND_ROW_FIELD_BYTES * JSON_ESCAPE_WORST_CASE + ND_ROW_FIXED_BYTES;
+
+/// What one row costs BEFORE its note: its other fields at their caps, escaped, plus that fixed
+/// cost.
+const ND_ROW_LESS_NOTE_CEILING: usize =
+    ND_ROW_FIELD_BYTES_LESS_NOTE * JSON_ESCAPE_WORST_CASE + ND_ROW_FIXED_BYTES;
 
 // The two withheld lists — capped, their overflow counted, because they ride inside the same one
 // budget the rows do, which is `next_close_candidate`'s reasoning unchanged.
@@ -30624,15 +31105,63 @@ const ND_WITHHELD_CEILING: usize =
 /// The document minus its rows and its withheld lists: `counts`, `queue`, the keys around them.
 const ND_ENVELOPE_BYTES: usize = 1_500;
 
-/// THE GUARANTEE, as arithmetic the compiler checks — the same one both sibling tools hold: a full
-/// page of maximal rows plus both withheld lists at their caps cannot reach
-/// [`MCP_MAX_RESULT_BYTES`]. Raise a cap past what fits and this crate does not build.
-const _: () = assert!(
-    NEXT_DESIGN_MAX_ROWS * ND_ROW_CEILING
+/// Everything in the document that is NOT a note, for a page of `rows`: the rows' other fields,
+/// both withheld lists at their caps, and the envelope.
+const fn nd_non_note_bytes(rows: usize) -> usize {
+    rows * ND_ROW_LESS_NOTE_CEILING
         + (ND_MAX_WITHHELD + ND_MAX_ERRORS) * ND_WITHHELD_CEILING
         + ND_ENVELOPE_BYTES
-        <= MCP_MAX_RESULT_BYTES
-);
+}
+
+/// The note allowance for ONE row of a `rows`-row page — DERIVED from the budget, never picked.
+/// Whatever [`MCP_MAX_RESULT_BYTES`] has left after [`nd_non_note_bytes`] belongs to the notes,
+/// split evenly and de-escaped back to raw bytes.
+///
+/// It is a function of the page rather than a constant because a constant has to be sized for the
+/// WIDEST page, and then the caller asking the tool's own question — `limit: 1`, which is also its
+/// default — pays for two rows it did not ask for, out of the one field it cannot reconstruct.
+/// Sized per page, the narrow call carries several times what the widest can, and a `noteTruncated`
+/// on a wide page has a cheaper escape than `pr_context`: ask for a narrower page.
+/// A `rows` outside the page sizes [`next_design_limit`] admits is a caller bug — and the budget is
+/// the thing that must not bend for one. Clamped to the SAFE side rather than refused, because the
+/// refusal already happened at the argument: zero would divide by it, and a number past the cap
+/// would subtract past zero and wrap into an unbounded share. Both land on a real page's own
+/// arithmetic instead.
+const fn nd_note_rows(rows: usize) -> usize {
+    if rows < 1 {
+        1
+    } else if rows > NEXT_DESIGN_MAX_ROWS {
+        NEXT_DESIGN_MAX_ROWS
+    } else {
+        rows
+    }
+}
+
+const fn nd_note_bytes(rows: usize) -> usize {
+    let rows = nd_note_rows(rows);
+    (MCP_MAX_RESULT_BYTES - nd_non_note_bytes(rows)) / (JSON_ESCAPE_WORST_CASE * rows)
+}
+
+/// The floor under [`nd_note_bytes`] at its tightest. A field added to the row is paid for out of
+/// the notes' share, silently and only there — so the build is where that lands, rather than a
+/// reader handed the half of a sentence that survived.
+const ND_NOTE_FLOOR_BYTES: usize = 2_600;
+
+/// THE GUARANTEE, as arithmetic the compiler checks — the same one both sibling tools hold: for
+/// EVERY page size this tool serves, a full page of maximal rows plus both withheld lists at their
+/// caps cannot reach [`MCP_MAX_RESULT_BYTES`], and the note is still worth reading. Raise a cap
+/// past what fits and this crate does not build.
+const _: () = {
+    let mut rows = 1;
+    while rows <= NEXT_DESIGN_MAX_ROWS {
+        assert!(
+            nd_non_note_bytes(rows) + rows * nd_note_bytes(rows) * JSON_ESCAPE_WORST_CASE
+                <= MCP_MAX_RESULT_BYTES
+        );
+        assert!(nd_note_bytes(rows) >= ND_NOTE_FLOOR_BYTES);
+        rows += 1;
+    }
+};
 
 /// PURE: this state-load's page size. Out of range is REFUSED rather than clamped, for the reason
 /// [`next_ready_limit`]'s is: a silently clamped argument leaves the caller believing it asked for
@@ -30660,15 +31189,17 @@ struct NextDesignFacts<'a> {
     question: &'a DesignQuestion,
 }
 
-/// PURE: the design question for ONE PR. Every string is clipped, so the row's size is bounded by
-/// [`ND_ROW_CEILING`] whatever GitHub returns.
+/// PURE: the design question for ONE PR. Every string is clipped — the note at the share
+/// [`nd_note_bytes`] leaves a `rows`-row page — so the row's size is bounded whatever GitHub
+/// returns. It takes the PAGE SIZE rather than a byte count so a row cannot be built at a share no
+/// page would have given it.
 ///
 /// The row's centre is `question.note` — the raising comment itself, the CLAIM the human checks,
 /// never a fact. `sha`/`atHead` exist for the vetter-raised case exactly as `next_ready` states
 /// `verdict.sha` beside `headRefOid`: the reader can see whether the reasoning describes the code
 /// that is there now. A producer flag pins no sha, and the pair is null rather than a bool that
 /// would assert a comparison nothing performed.
-fn next_design_row(f: &NextDesignFacts) -> Value {
+fn next_design_row(f: &NextDesignFacts, rows: usize) -> Value {
     let head = f
         .detail
         .get("headRefOid")
@@ -30701,9 +31232,9 @@ fn next_design_row(f: &NextDesignFacts) -> Value {
             "at": clip_field(&f.question.at, ND_TIME_BYTES),
             "sha": sha.map(|s| clip_field(s, ND_SHA_BYTES)),
             "atHead": sha.map(|s| !head.is_empty() && s == head),
-            "note": clip_field(&f.question.body, ND_NOTE_BYTES),
+            "note": clip_field(&f.question.body, nd_note_bytes(rows)),
             "noteBytes": f.question.body.len(),
-            "noteTruncated": f.question.body.len() > ND_NOTE_BYTES,
+            "noteTruncated": f.question.body.len() > nd_note_bytes(rows),
         },
     })
 }
@@ -31142,17 +31673,7 @@ fn next_design_fetch(limit: usize) -> Result<Value, String> {
         no_question: _,
     } = nd_classify(&arr, frozen.len(), nd_pr_detail);
     rank_designs(&mut designs);
-    let rows: Vec<Value> = next_design_page(&designs, limit)
-        .into_iter()
-        .map(|d| {
-            next_design_row(&NextDesignFacts {
-                slug: &d.slug,
-                num: d.num,
-                detail: &d.detail,
-                question: &d.question,
-            })
-        })
-        .collect();
+    let rows = next_design_rows(&designs, limit);
     let (withheld, more_withheld) = page(withheld, Some(ND_MAX_WITHHELD));
     let (errors, more_errors) = page(errors, Some(ND_MAX_ERRORS));
     Ok(next_design_doc(
@@ -32618,12 +33139,15 @@ mod next_design_tests {
             "comments": [vetter_design("2026-08-01T00:00:00Z", &head, "shared or duplicated?")],
         });
         let q = last_design_question(&detail).expect("raised");
-        let row = next_design_row(&NextDesignFacts {
-            slug: "rainlanguage/raindex",
-            num: 960,
-            detail: &detail,
-            question: &q,
-        });
+        let row = next_design_row(
+            &NextDesignFacts {
+                slug: "rainlanguage/raindex",
+                num: 960,
+                detail: &detail,
+                question: &q,
+            },
+            NEXT_DESIGN_DEFAULT_ROWS,
+        );
         assert_eq!(row["pr"], json!("rainlanguage/raindex#960"));
         assert_eq!(
             row["url"],
@@ -32650,12 +33174,15 @@ mod next_design_tests {
             "comments": [vetter_design("2026-08-01T00:00:00Z", &head, "shared or duplicated?")],
         });
         let q = last_design_question(&moved).expect("raised");
-        let row = next_design_row(&NextDesignFacts {
-            slug: "o/r",
-            num: 1,
-            detail: &moved,
-            question: &q,
-        });
+        let row = next_design_row(
+            &NextDesignFacts {
+                slug: "o/r",
+                num: 1,
+                detail: &moved,
+                question: &q,
+            },
+            NEXT_DESIGN_DEFAULT_ROWS,
+        );
         assert_eq!(row["question"]["atHead"], json!(false));
     }
 
@@ -32668,12 +33195,15 @@ mod next_design_tests {
             "comments": [producer_design("2026-08-01T00:00:00Z", "version slot taken")],
         });
         let q = last_design_question(&detail).expect("raised");
-        let row = next_design_row(&NextDesignFacts {
-            slug: "o/r",
-            num: 1,
-            detail: &detail,
-            question: &q,
-        });
+        let row = next_design_row(
+            &NextDesignFacts {
+                slug: "o/r",
+                num: 1,
+                detail: &detail,
+                question: &q,
+            },
+            NEXT_DESIGN_DEFAULT_ROWS,
+        );
         assert_eq!(row["question"]["source"], json!("producer-flag"));
         assert_eq!(row["question"]["sha"], Value::Null);
         assert_eq!(row["question"]["atHead"], Value::Null);
@@ -32687,24 +33217,102 @@ mod next_design_tests {
     // it — the caller reads the rest with `pr_context`, which is on the same profile.
     #[test]
     fn an_oversized_question_is_clipped_and_says_so() {
-        let long = "z".repeat(ND_NOTE_BYTES * 2);
+        let cap = nd_note_bytes(NEXT_DESIGN_DEFAULT_ROWS);
+        let long = "z".repeat(cap * 2);
         let detail = json!({
             "headRefOid": "1".repeat(40),
             "comments": [producer_design("2026-08-01T00:00:00Z", &long)],
         });
         let q = last_design_question(&detail).expect("raised");
-        let row = next_design_row(&NextDesignFacts {
-            slug: "o/r",
-            num: 1,
-            detail: &detail,
-            question: &q,
-        });
-        assert_eq!(
-            row["question"]["note"].as_str().unwrap().len(),
-            ND_NOTE_BYTES
+        let row = next_design_row(
+            &NextDesignFacts {
+                slug: "o/r",
+                num: 1,
+                detail: &detail,
+                question: &q,
+            },
+            NEXT_DESIGN_DEFAULT_ROWS,
         );
+        assert_eq!(row["question"]["note"].as_str().unwrap().len(), cap);
         assert_eq!(row["question"]["noteTruncated"], json!(true));
-        assert!(row["question"]["noteBytes"].as_u64().unwrap() > ND_NOTE_BYTES as u64);
+        assert!(row["question"]["noteBytes"].as_u64().unwrap() > cap as u64);
+    }
+
+    // The note's share is the PAGE's, so the escape from a clip is a narrower page and not only
+    // `pr_context`: a question the widest page cuts, the tool's own default call carries whole.
+    // And the wiring is the claim — `next_design_rows` is asked for both pages, not the row
+    // builder handed two numbers by hand.
+    #[test]
+    fn a_narrower_page_carries_a_longer_question() {
+        let widest = nd_note_bytes(NEXT_DESIGN_MAX_ROWS);
+        let default = nd_note_bytes(NEXT_DESIGN_DEFAULT_ROWS);
+        assert!(
+            default > widest,
+            "the one-row page must not be charged for rows it did not ask for: \
+             {default} vs {widest}"
+        );
+
+        let body = "z".repeat(widest + 1);
+        let ordered: Vec<PresentableDesign> = (0..NEXT_DESIGN_MAX_ROWS)
+            .map(|i| PresentableDesign {
+                slug: "o/r".to_string(),
+                num: i as u64 + 1,
+                question: DesignQuestion {
+                    at: "2026-08-01T00:00:00Z".to_string(),
+                    body: format!("🤖 ai:producer\nDesign-question: {body}"),
+                    source: DesignQuestionSource::ProducerFlag,
+                },
+                detail: json!({"headRefOid": "1".repeat(40)}),
+            })
+            .collect();
+
+        for row in next_design_rows(&ordered, NEXT_DESIGN_MAX_ROWS) {
+            assert_eq!(row["question"]["noteTruncated"], json!(true));
+        }
+        let narrow = next_design_rows(&ordered, NEXT_DESIGN_DEFAULT_ROWS);
+        assert_eq!(narrow.len(), NEXT_DESIGN_DEFAULT_ROWS);
+        assert_eq!(narrow[0]["question"]["noteTruncated"], json!(false));
+    }
+
+    // A page size the limit would have refused never reaches an unbounded share: zero would divide
+    // by it, and a number past the cap would subtract past zero and wrap. Both land on a real
+    // page's arithmetic instead — zero on the one-row share, since a zero-row page has no rows to
+    // spend it on, and anything oversized on the tightest.
+    #[test]
+    fn a_page_size_the_limit_refuses_never_reaches_an_unbounded_share() {
+        let tightest = nd_note_bytes(NEXT_DESIGN_MAX_ROWS);
+        assert_eq!(nd_note_bytes(0), nd_note_bytes(1));
+        assert_eq!(nd_note_bytes(NEXT_DESIGN_MAX_ROWS + 1), tightest);
+        assert_eq!(nd_note_bytes(usize::MAX), tightest);
+    }
+
+    // Every page size the limit admits is inside the ONE budget, and every one of them still
+    // carries a note worth reading. The compile-time assertion says so; this says which sizes it
+    // was asked about, so a `limit` widened without re-deriving the share fails here.
+    #[test]
+    fn every_admitted_page_size_keeps_its_note_share() {
+        for rows in 1..=NEXT_DESIGN_MAX_ROWS {
+            let cap = nd_note_bytes(rows);
+            assert!(
+                cap >= ND_NOTE_FLOOR_BYTES,
+                "a {rows}-row page leaves {cap} bytes of note, under the \
+                 {ND_NOTE_FLOOR_BYTES}-byte floor"
+            );
+            let total = nd_non_note_bytes(rows) + rows * cap * JSON_ESCAPE_WORST_CASE;
+            assert!(
+                total <= MCP_MAX_RESULT_BYTES,
+                "a {rows}-row page is {total} bytes, over the {MCP_MAX_RESULT_BYTES}-byte budget"
+            );
+            // And it is the WHOLE of what the page leaves. Fitting is only half the claim — a share
+            // that merely fits is one a smaller divisor also satisfies, and a note clipped with
+            // budget still on the table is the same clip, quieter.
+            let over = nd_non_note_bytes(rows) + rows * (cap + 1) * JSON_ESCAPE_WORST_CASE;
+            assert!(
+                over > MCP_MAX_RESULT_BYTES,
+                "a {rows}-row page leaves {cap} bytes of note but could carry more — {over} bytes \
+                 is still inside the {MCP_MAX_RESULT_BYTES}-byte budget"
+            );
+        }
     }
 
     // An empty queue is an ANSWER: zero rows under zeroed counts says the lane is clear. A failed
@@ -33226,9 +33834,10 @@ mod next_design_tests {
         }
     }
 
-    // THE GUARANTEE, exercised rather than asserted: a full page of rows built from the worst
-    // input GitHub can hand us, plus both withheld lists at their caps, fits the ONE budget.
-    // Remove any `clip_field` in `next_design_row` and this fails.
+    // THE GUARANTEE, exercised rather than asserted, at EVERY page size the limit admits: a full
+    // page of rows built from the worst input GitHub can hand us, plus both withheld lists at
+    // their caps, fits the ONE budget. Remove any `clip_field` in `next_design_row` and this
+    // fails; widen the note's share past what the page leaves and this fails at the widest page.
     #[test]
     fn a_maximal_page_of_adversarial_rows_still_fits_the_budget() {
         let hostile = hostile_text(20_000);
@@ -33245,58 +33854,66 @@ mod next_design_tests {
             body: hostile.clone(),
             source: DesignQuestionSource::VetterVerdict,
         };
-        let rows: Vec<Value> = (0..NEXT_DESIGN_MAX_ROWS)
-            .map(|i| {
-                next_design_row(&NextDesignFacts {
-                    slug: &hostile,
-                    num: u64::MAX - i as u64,
-                    detail: &detail,
-                    question: &question,
+        for limit in 1..=NEXT_DESIGN_MAX_ROWS {
+            let note_bytes = nd_note_bytes(limit);
+            let ceiling = ND_ROW_LESS_NOTE_CEILING + note_bytes * JSON_ESCAPE_WORST_CASE;
+            let rows: Vec<Value> = (0..limit)
+                .map(|i| {
+                    next_design_row(
+                        &NextDesignFacts {
+                            slug: &hostile,
+                            num: u64::MAX - i as u64,
+                            detail: &detail,
+                            question: &question,
+                        },
+                        limit,
+                    )
                 })
-            })
-            .collect();
-        for (i, row) in rows.iter().enumerate() {
-            let len = row.to_string().len();
-            assert!(
-                len <= ND_ROW_CEILING,
-                "row {i} is {len} bytes, over the {ND_ROW_CEILING}-byte row ceiling the \
-                 compile-time budget assertion is computed from"
-            );
-        }
-        let withheld_hostile: Vec<Value> = (0..ND_MAX_WITHHELD)
-            .map(|_| nd_withheld_entry(&hostile, &hostile))
-            .collect();
-        for w in &withheld_hostile {
-            let len = w.to_string().len();
-            assert!(
-                len <= ND_WITHHELD_CEILING,
-                "a withheld entry is {len} bytes, over its {ND_WITHHELD_CEILING}-byte ceiling"
-            );
-        }
-        let len = next_design_doc(
-            rows,
-            &DesignQueueWithheld {
-                counts: DesignQueueCounts {
-                    raw: usize::MAX,
-                    draft: usize::MAX,
-                    unaddressable: usize::MAX,
-                    presentable: usize::MAX,
-                    no_question: usize::MAX,
-                    fetch_errors: usize::MAX,
-                    archived_repo: usize::MAX,
+                .collect();
+            for (i, row) in rows.iter().enumerate() {
+                let len = row.to_string().len();
+                assert!(
+                    len <= ceiling,
+                    "row {i} of a {limit}-row page is {len} bytes, over the {ceiling}-byte row \
+                     ceiling the budget assertion is computed from"
+                );
+            }
+            let withheld_hostile: Vec<Value> = (0..ND_MAX_WITHHELD)
+                .map(|_| nd_withheld_entry(&hostile, &hostile))
+                .collect();
+            for w in &withheld_hostile {
+                let len = w.to_string().len();
+                assert!(
+                    len <= ND_WITHHELD_CEILING,
+                    "a withheld entry is {len} bytes, over its {ND_WITHHELD_CEILING}-byte ceiling"
+                );
+            }
+            let len = next_design_doc(
+                rows,
+                &DesignQueueWithheld {
+                    counts: DesignQueueCounts {
+                        raw: usize::MAX,
+                        draft: usize::MAX,
+                        unaddressable: usize::MAX,
+                        presentable: usize::MAX,
+                        no_question: usize::MAX,
+                        fetch_errors: usize::MAX,
+                        archived_repo: usize::MAX,
+                    },
+                    withheld: withheld_hostile.clone(),
+                    more_withheld: usize::MAX,
+                    errors: withheld_hostile,
+                    more_errors: usize::MAX,
                 },
-                withheld: withheld_hostile.clone(),
-                more_withheld: usize::MAX,
-                errors: withheld_hostile,
-                more_errors: usize::MAX,
-            },
-        )
-        .to_string()
-        .len();
-        assert!(
-            len <= MCP_MAX_RESULT_BYTES,
-            "a full adversarial page is {len} bytes, over the {MCP_MAX_RESULT_BYTES}-byte budget"
-        );
+            )
+            .to_string()
+            .len();
+            assert!(
+                len <= MCP_MAX_RESULT_BYTES,
+                "a full adversarial {limit}-row page is {len} bytes, over the \
+                 {MCP_MAX_RESULT_BYTES}-byte budget"
+            );
+        }
     }
 
     // The allowances the compile-time assertion is built on are MEASURED, not guessed — a field
@@ -33309,12 +33926,15 @@ mod next_design_tests {
             // The longer source spelling, so the fixed cost is measured at its widest.
             source: DesignQuestionSource::VetterVerdict,
         };
-        let row = next_design_row(&NextDesignFacts {
-            slug: "",
-            num: 0,
-            detail: &json!({}),
-            question: &question,
-        });
+        let row = next_design_row(
+            &NextDesignFacts {
+                slug: "",
+                num: 0,
+                detail: &json!({}),
+                question: &question,
+            },
+            NEXT_DESIGN_DEFAULT_ROWS,
+        );
         // The numeric fields are COUNTED from the row, not asserted from a comment.
         let row_len = row.to_string().len() + numeric_fields(&row) * ND_MAX_DIGITS;
         assert!(
@@ -33570,7 +34190,7 @@ fn mcp_all_tools() -> Value {
         {
             "name": "next_close_candidate",
             "narrows": "limit",
-            "description": "The next close-candidate to rule on — an upheld flag on an ISSUE OR A PR, or a PR the vetter verdicted `close` (one mixed queue, #211/#212) — OLDEST FIRST (the flag parks the subject — it is neither the producer's work nor closed — so the wait is the cost, and evidence about a moving main decays). Per row: the subject's title/state/labels/createdAt (`url` says which subject type), the producer's stated reason (the CLAIM being checked, never a fact) with `flag.grounds` saying whether it cites a landing, and the vetter's judgement pinned to what it judged (`atFlag` false means a superseded claim; a PR close verdict reports as `close` at its own timestamp). Coverage is reported for issues; on a PR row it is `not-applicable-subject-is-a-pr` and never blocks. For issues `openPr.blocksClose` pairs coverage with the grounds — a flag citing no landing is the `merely COVERED BY AN OPEN PR` case and blocks (an unreadable answer blocks too), while a flag citing a merged commit/PR does not, since a redundant PR in flight does not un-land what landed. `counts.unvetted` is where a flag the vetter has not judged went; `counts.vetterCloseVerdict` is the PR-close-verdict share of the queue; `strandedFlags` are labels parking a subject with nothing consuming them — the vetter's state-load clears both kinds, so one listed here is a clearance that has not run yet or could not write.",
+            "description": "The next close-candidate to rule on — an upheld flag on an ISSUE OR A PR, or a PR the vetter verdicted `close` (one mixed queue, #211/#212) — OLDEST FIRST (the flag parks the subject — it is neither the producer's work nor closed — so the wait is the cost, and evidence about a moving main decays). Per row: the subject's title/state/labels/createdAt (`url` says which subject type), the producer's stated reason (the CLAIM being checked, never a fact) with `flag.grounds` saying whether it cites a landing, and the vetter's judgement pinned to what it judged (`atFlag` false means a superseded claim; a PR close verdict reports as `close` at its own timestamp). Coverage is reported for issues; on a PR row it is `not-applicable-subject-is-a-pr` and never blocks. For issues `openPr.blocksClose` pairs coverage with the grounds — a flag citing no landing is the `merely COVERED BY AN OPEN PR` case and blocks (an unreadable answer blocks too), while a flag citing a merged commit/PR does not, since a redundant PR in flight does not un-land what landed. `reasonTruncated`/`noteTruncated` say when those two were clipped — their share is the PAGE's, so a narrower `limit` carries more of them and close_candidate_context carries all of them. `counts.unvetted` is where a flag the vetter has not judged went; `counts.vetterCloseVerdict` is the PR-close-verdict share of the queue; `strandedFlags` are labels parking a subject with nothing consuming them — the vetter's state-load clears both kinds, so one listed here is a clearance that has not run yet or could not write.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -33581,7 +34201,7 @@ fn mcp_all_tools() -> Value {
         {
             "name": "next_design",
             "narrows": "limit",
-            "description": "The next ai:design PR for the human to rule on — OLDEST QUESTION FIRST (the label parks the PR outside every AI actor's queue, so the wait is the cost and FIFO bounds it). Per row: the PR's title/baseRefName/headRefOid/labels and the trusted comment that raised the live question (`question.note`; `question.source` says whether the vetter's record-verdict design note or the producer's flag-design note raised it; a vetter-raised question carries the sha it pinned and `atHead` says whether it still describes this head; `noteTruncated` says when the whole comment must be read via pr_context). The question is a CLAIM to check, never a fact. `counts` partition the whole labelled population and `withheld` NAMES the rows behind three of them — `noQuestion` (labelled, nothing trusted raised a question), `draft` (answerable, but the code is still being shaped) and `unaddressable` — so a PR you expected and did not get is findable without re-running the search; `archivedRepo` is frozen (no ruling can be written there at all). The exit is the design ruling: the answer routes the PR back to the producer as ai:needs-work + the answer as the work order, one call.",
+            "description": "The next ai:design PR for the human to rule on — OLDEST QUESTION FIRST (the label parks the PR outside every AI actor's queue, so the wait is the cost and FIFO bounds it). Per row: the PR's title/baseRefName/headRefOid/labels and the trusted comment that raised the live question (`question.note`; `question.source` says whether the vetter's record-verdict design note or the producer's flag-design note raised it; a vetter-raised question carries the sha it pinned and `atHead` says whether it still describes this head; `noteTruncated` says when the note was clipped — the note's share is the PAGE's, so a narrower `limit` carries more of it and pr_context carries all of it). The question is a CLAIM to check, never a fact. `counts` partition the whole labelled population and `withheld` NAMES the rows behind three of them — `noQuestion` (labelled, nothing trusted raised a question), `draft` (answerable, but the code is still being shaped) and `unaddressable` — so a PR you expected and did not get is findable without re-running the search; `archivedRepo` is frozen (no ruling can be written there at all). The exit is the design ruling: the answer routes the PR back to the producer as ai:needs-work + the answer as the work order, one call.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -52452,6 +53072,262 @@ mod open_threads_tests {
             vec!["o/r#1"],
             "a gated PR is not handed to the vetter"
         );
+    }
+
+    // --- the state-load's BATCHED detail read (#312) ----------------------------------------------
+
+    /// One chunk's response as GitHub returns it: an entry per alias under `data`.
+    fn detail_doc(entries: &[(usize, Value)]) -> Value {
+        let mut data = serde_json::Map::new();
+        for (i, v) in entries {
+            data.insert(format!("d{i}"), v.clone());
+        }
+        json!({ "data": data })
+    }
+
+    /// A whole PR node as the query selects it, with every connection at its full width.
+    fn detail_node(head: &str, rollup: Value) -> Value {
+        json!({"pullRequest": {
+            "headRefOid": head,
+            "baseRefName": "main",
+            "isDraft": false,
+            "reviewDecision": null,
+            "mergeable": "MERGEABLE",
+            "labels": {"totalCount": 1, "nodes": [{"name": "ai:ready"}]},
+            "comments": {"totalCount": 1, "nodes": [
+                {"author": {"login": TRUSTED_AUTHOR}, "body": "🤖 ai:vetter Reviewed x: ready"}
+            ]},
+            // Asymmetric on purpose: resolved and unresolved counts differ, so counting the wrong
+            // half — or the whole list — is a different number.
+            "reviewThreads": {"totalCount": 3, "nodes": [
+                {"isResolved": true}, {"isResolved": false}, {"isResolved": true}
+            ]},
+            "commits": {"nodes": [{"commit": {"statusCheckRollup": rollup}}]},
+        }})
+    }
+
+    fn rollup_of(nodes: Vec<Value>) -> Value {
+        json!({"contexts": {"totalCount": nodes.len(), "nodes": nodes}})
+    }
+
+    // The argv is TYPED per variable, for the reason `aliased_pr_args` states: an all-numeric owner
+    // or repo passed with `-F` would be sent as an `Int` at a `String!` and GitHub would refuse the
+    // whole chunk.
+    #[test]
+    fn a_batched_detail_read_declares_one_typed_alias_per_pr() {
+        let subjects = [
+            SubjectRef::new("123/456", 7, "u", "t"),
+            SubjectRef::new("o/r", 9, "u", "t"),
+        ];
+        let refs: Vec<&SubjectRef> = subjects.iter().collect();
+        let args = unvetted_detail_args(&refs);
+        assert_eq!(args[0], "graphql");
+        assert_eq!(args[1], "-f");
+        let query = args[2].strip_prefix("query=").expect("the query flag");
+        assert!(
+            query.contains("d0: repository(owner: $o0, name: $r0)"),
+            "{query}"
+        );
+        assert!(
+            query.contains("d1: repository(owner: $o1, name: $r1)"),
+            "{query}"
+        );
+        assert!(!query.contains("d2:"), "{query}");
+        // EVERY field the classifier reads is asked for. A selection short of
+        // `UNVETTED_DETAIL_FIELDS` classifies a batched PR differently from a refetched one.
+        for field in [
+            "headRefOid",
+            "baseRefName",
+            "isDraft",
+            "reviewDecision",
+            "mergeable",
+            "labels(first: 100)",
+            "comments(last: 100)",
+            "reviewThreads(first: 100)",
+            "contexts(last: 100)",
+        ] {
+            assert!(query.contains(field), "{field} missing from {query}");
+        }
+        assert_eq!(
+            args[3..],
+            [
+                "-f", "o0=123", "-f", "r0=456", "-F", "p0=7", //
+                "-f", "o1=o", "-f", "r1=r", "-F", "p1=9",
+            ]
+            .map(String::from)
+        );
+    }
+
+    // The split is BY ALIAS, so a response's own ordering cannot reorder the chunk, and what comes
+    // out is the `gh pr view --json` document ITSELF — the check rollup flattened, `reviewDecision`
+    // null rendered as gh's empty string — not a second shape the classifier would have to learn.
+    #[test]
+    fn a_detail_response_splits_by_alias_into_the_gh_pr_view_shape() {
+        let check =
+            json!({"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "SUCCESS"});
+        let status = json!({"__typename": "StatusContext", "state": "SUCCESS"});
+        let doc = detail_doc(&[
+            (1, detail_node("second", rollup_of(vec![status.clone()]))),
+            (0, detail_node("first", rollup_of(vec![check.clone()]))),
+        ]);
+        let reads = unvetted_detail_page(&doc, 2);
+        assert_eq!(reads.len(), 2);
+        assert_eq!(
+            reads[0],
+            Some(UnvettedDetail {
+                detail: json!({
+                    "headRefOid": "first",
+                    "baseRefName": "main",
+                    "isDraft": false,
+                    "reviewDecision": "",
+                    "mergeable": "MERGEABLE",
+                    "labels": [{"name": "ai:ready"}],
+                    "statusCheckRollup": [check],
+                    "comments": [{"author": {"login": TRUSTED_AUTHOR}, "body": "🤖 ai:vetter Reviewed x: ready"}],
+                }),
+                // The UNRESOLVED ones only — a resolved thread never withheld a PR from the vetter.
+                threads: Some(1),
+            })
+        );
+        let second = reads[1].as_ref().expect("alias d1");
+        assert_eq!(second.detail["headRefOid"], json!("second"));
+        assert_eq!(second.detail["statusCheckRollup"], json!([status]));
+        // And the classifier reads it: green CI, mergeable, `ai:ready` with no verdict at this head.
+        let first = reads[0].as_ref().expect("alias d0");
+        let (action, _, row) = unvetted_row("o/r", 1, "u", "t", &first.detail);
+        assert_eq!(action, VetAction::Vet);
+        assert_eq!(row["ci"], json!("green"));
+        assert_eq!(row["mergeable"], json!("MERGEABLE"));
+        assert_eq!(row["labels"], json!(["ai:ready"]));
+        // And the vet gate withholds it on the batched count, with no query of its own.
+        let (gated, _, grow) = gate_open_threads((action, 0, row), || {
+            Ok(first.threads.expect("the batch counted this PR's threads"))
+        });
+        assert_eq!(gated, VetAction::SkipOpenThreads);
+        assert_eq!(grow["unresolvedThreads"], json!(1));
+    }
+
+    // EVERY uncertainty is UNREAD, which is what keeps the batch a speed change: an unread alias is
+    // refetched per-PR, and only a failure of BOTH reads stops the run. A truncated connection is in
+    // that set — a label or a verdict below the page decides the PR's whole classification.
+    #[test]
+    fn an_uncertain_detail_alias_is_unread_rather_than_read_as_a_bare_pr() {
+        let full = |mutate: fn(&mut Value)| {
+            let mut n = detail_node("h", rollup_of(vec![]));
+            mutate(&mut n);
+            n
+        };
+        let unread = detail_doc(&[
+            (0, json!(null)),
+            (1, json!({"pullRequest": null})),
+            // A head nothing was said about: no commit node, so no rollup either way.
+            (
+                2,
+                full(|n| n["pullRequest"]["commits"]["nodes"] = json!([])),
+            ),
+            // Truncated connections, one per connection the query pages.
+            (
+                3,
+                full(|n| n["pullRequest"]["comments"]["totalCount"] = json!(300)),
+            ),
+            (
+                4,
+                full(|n| n["pullRequest"]["labels"]["totalCount"] = json!(300)),
+            ),
+            (
+                5,
+                full(|n| {
+                    n["pullRequest"]["commits"]["nodes"][0]["commit"]["statusCheckRollup"] =
+                        json!({"contexts": {"totalCount": 300, "nodes": []}})
+                }),
+            ),
+            // A field of the wrong type says nothing usable about the PR.
+            (6, full(|n| n["pullRequest"]["headRefOid"] = json!(null))),
+            (7, full(|n| n["pullRequest"]["mergeable"] = json!(null))),
+            (8, full(|n| n["pullRequest"]["isDraft"] = json!("no"))),
+        ]);
+        assert_eq!(unvetted_detail_page(&unread, 9), vec![None; 9]);
+        // An alias the response omits entirely is unread too.
+        assert_eq!(unvetted_detail_page(&detail_doc(&[]), 1), vec![None]);
+        // A NULL rollup is GitHub's answer for a head with no checks, and it is an ANSWER: gh
+        // spells the same PR `[]`, which classifies as no-checks rather than unread.
+        let none = unvetted_detail_page(&detail_doc(&[(0, detail_node("h", json!(null)))]), 1);
+        let rollup = &none[0].as_ref().expect("alias d0").detail["statusCheckRollup"];
+        assert_eq!(rollup, &json!([]));
+        assert_eq!(ci_str(classify_ci(rollup)), ci_str(Ci::NoChecks));
+    }
+
+    // A thread list that outran its page is unread ON ITS OWN — the PR is still classified off the
+    // batch, and only the GATE pays the paginated walk. Nothing about a long review history should
+    // make a PR's labels or CI worth a second fetch.
+    #[test]
+    fn a_truncated_thread_list_is_unread_without_making_the_pr_unread() {
+        let mut node = detail_node("h", rollup_of(vec![]));
+        node["pullRequest"]["reviewThreads"]["totalCount"] = json!(300);
+        let read = unvetted_detail_page(&detail_doc(&[(0, node)]), 1);
+        let d = read[0].as_ref().expect("the PR is still read");
+        assert_eq!(d.detail["headRefOid"], json!("h"));
+        assert_eq!(d.threads, None, "a partial page is not a count");
+        // A connection GitHub said nothing about at all is unread for the same reason.
+        let mut bare = detail_node("h", rollup_of(vec![]));
+        bare["pullRequest"]
+            .as_object_mut()
+            .expect("object")
+            .remove("reviewThreads");
+        let bare = unvetted_detail_page(&detail_doc(&[(0, bare)]), 1);
+        assert_eq!(
+            bare[0].as_ref().expect("the PR is still read").threads,
+            None
+        );
+    }
+
+    // WHAT THE BATCH LEFT OUT IS STILL ASKED ABOUT — dropping the fallback would turn every batch
+    // gap into an aborted state-load, and a failed chunk into 20 of them.
+    #[test]
+    fn a_pr_the_batch_missed_is_refetched_rather_than_dropped() {
+        let from_batch = UnvettedDetail {
+            detail: json!({"headRefOid": "from-the-batch"}),
+            threads: Some(0),
+        };
+        let batched = std::collections::HashMap::from([(
+            ("o/batched".to_string(), 1u64),
+            from_batch.clone(),
+        )]);
+        let hit = SubjectRef::new("o/batched", 1, "u", "t");
+        let missed = SubjectRef::new("o/missed", 2, "u", "t");
+        let fetches = Cell::new(0);
+        let per_pr = |s: &SubjectRef| {
+            fetches.set(fetches.get() + 1);
+            Some(json!({"headRefOid": format!("refetched {}", s.repo)}))
+        };
+        assert_eq!(unvetted_detail_with(&hit, &batched, per_pr), Ok(from_batch));
+        assert_eq!(fetches.get(), 0, "a batch hit must not be refetched");
+        assert_eq!(
+            unvetted_detail_with(&missed, &batched, per_pr),
+            // `gh pr view` carries no thread count, so the refetched PR is gated on the per-PR walk.
+            Ok(UnvettedDetail {
+                detail: json!({"headRefOid": "refetched o/missed"}),
+                threads: None,
+            })
+        );
+        assert_eq!(fetches.get(), 1);
+    }
+
+    // THE FAILURE SEAM. A PR NEITHER read answered for aborts the whole state-load — it is never
+    // skipped, because a dropped PR reads as "nothing to vet" and a queue of them reports healthy.
+    #[test]
+    fn a_pr_neither_read_answered_for_aborts_the_state_load() {
+        let err = unvetted_detail_with(
+            &SubjectRef::new("o/gone", 3, "u", "t"),
+            &std::collections::HashMap::new(),
+            |_| None,
+        )
+        .expect_err("an unreadable PR must not yield a row");
+        assert!(
+            err.starts_with("error: `gh pr view o/gone#3` failed"),
+            "{err}"
+        );
+        assert!(err.contains("incomplete vet queue"), "{err}");
     }
 }
 
