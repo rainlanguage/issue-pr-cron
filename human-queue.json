@@ -128,14 +128,6 @@
         "title": "Add \"remove and withdraw all\" option to order removal (#2024)"
       }
     ],
-    "ai:design": [
-      {
-        "repo": "rainlanguage/rain.flare",
-        "number": 205,
-        "url": "https://github.com/rainlanguage/rain.flare/pull/205",
-        "title": "bump rain-math-binary 0.1.1 -> 0.1.3"
-      }
-    ],
     "ai:needs-work": [
       {
         "repo": "rainlanguage/rain.tofu.erc20-decimals",
@@ -160,6 +152,12 @@
         "number": 551,
         "url": "https://github.com/rainlanguage/rainlang/pull/551",
         "title": "Bump rain-math-binary 0.1.1 -> 0.1.3"
+      },
+      {
+        "repo": "rainlanguage/rain.flare",
+        "number": 205,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/205",
+        "title": "bump rain-math-binary 0.1.1 -> 0.1.3"
       },
       {
         "repo": "rainlanguage/rain.pyth",
@@ -989,20 +987,8 @@
         ]
       },
       "un-vetted": {
-        "count": 85,
+        "count": 83,
         "prs": [
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 308,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/308",
-            "title": "ci: cap prompt bytes with rainix prompt-cap, and make the first cut"
-          },
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 298,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/298",
-            "title": "/nm and /ncc send back what they can articulate"
-          },
           {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 295,
@@ -1505,27 +1491,8 @@
       }
     },
     "vetter-verdicts": {
-      "ai:design": {
-        "count": 1,
-        "prs": [
-          {
-            "repo": "rainlanguage/rain.flare",
-            "number": 205,
-            "url": "https://github.com/rainlanguage/rain.flare/pull/205",
-            "title": "bump rain-math-binary 0.1.1 -> 0.1.3",
-            "bucket": "presentable"
-          }
-        ],
-        "breakdown": {
-          "draft": 0,
-          "fetchErrors": 0,
-          "noQuestion": 0,
-          "presentable": 1,
-          "unaddressable": 0
-        }
-      },
       "ai:needs-work": {
-        "count": 105,
+        "count": 106,
         "prs": [
           {
             "repo": "rainlanguage/rain.tofu.erc20-decimals",
@@ -1550,6 +1517,12 @@
             "number": 551,
             "url": "https://github.com/rainlanguage/rainlang/pull/551",
             "title": "Bump rain-math-binary 0.1.1 -> 0.1.3"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 205,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/205",
+            "title": "bump rain-math-binary 0.1.1 -> 0.1.3"
           },
           {
             "repo": "rainlanguage/rain.pyth",
@@ -2341,6 +2314,18 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 312,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/312",
+      "title": "unvetted --limit 3 makes 354 gh calls and spends 287s in them: --limit bounds rows, not work"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 311,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/311",
+      "title": "ND_NOTE_BYTES clips design notes 22-29 bytes short, costing a pr_context round trip for the sentence that decides the ruling"
+    },
     {
       "repo": "rainlanguage/rainlang.interface",
       "number": 123,
@@ -6330,27 +6315,27 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 85,
+    "unvetted": 83,
     "blockedOn": 21,
     "ready": 2,
-    "needsWork": 105,
+    "needsWork": 106,
     "relink": 0,
-    "design": 1,
+    "design": 0,
     "blockedInfra": 0,
     "closeCandidateIssues": 3,
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 214,
+    "totalProducerPrs": 212,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 660,
-    "designPresentable": 1,
+    "uncoveredIssues": 662,
+    "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 876
+    "openIssues": 878
   },
   "ages": {
     "openIssues": {
-      "meanDays": 283.2,
+      "meanDays": 282.6,
       "medianDays": 103.1,
       "oldestDays": 1665.6
     }
