@@ -782,6 +782,14 @@ question from the classifier is the `cc_gate` precedent one lane over: a
 `classify_lane`, so the tool's definition and its population cannot be two
 facts.
 
+**A body repair is not a hand-off.** `repair-qa-block` and `weaken-closes`
+rewrite body text and move no state, so the note each posts is a RECEIPT:
+`leak_reason` walks past it to whatever marker stands behind. An unlabelled PR a
+repair touched is left un-vetted, which the vetter's own population — every open
+producer PR, unfiltered by label — reaches. The receipt is built by the single
+writer both repairs share (`write_repaired_body`, from a `BodyRepair` variant),
+so the marker the walk skips and the marker actually posted are one fact.
+
 **A deleted state is two different cases, and only one of them leaks.** A
 deleted `ai:*` label lands its PR in `un-vetted`: the vetter absorbs it and the
 verdict that judges it strips the dead string, so the machine heals it without a

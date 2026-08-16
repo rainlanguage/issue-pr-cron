@@ -3,8 +3,8 @@
 The reference for the clone tools: what creates and destroys a work clone, the
 path guards that make any other deletion inexpressible, the release decision the
 attended release and the unattended sweep share, and the one result budget every
-tool answers to. [CLAUDE.md](CLAUDE.md) holds the half that auto-loads — the FSM
-framing, the tool surface, the invariants.
+tool answers to. [CLAUDE.md](CLAUDE.md) holds the half that auto-loads — the
+rulings that bind every reader.
 
 WHO READS THIS. Whoever changes a guard or a clone tool, and the two actors
 whose clones these are: the producer, whose cwd is `$WORK_DIR` so it never
