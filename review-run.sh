@@ -329,6 +329,21 @@ PROMPT="$(sed -e "s#{{ASSIGNEE}}#$PR_ASSIGNEE#g" \
               -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
               "$PROMPT_FILE")"
 
+# --- the NON-INTERACTIVE pragma (claude-config hooks/noninteractive.py) ------------------------
+# Same reason as the producer's: this is `claude --print`, nothing re-wakes it when a backgrounded
+# command finishes (#249), and the two `background-*` PreToolUse hooks would rewrite every long
+# build and every wait into exactly that. Stamped into the CONTEXT, because the hook is handed a
+# `transcript_path` and reads it, and into BOTH the main prompt and the auditor brief so it is
+# present whichever trace a dispatched agent's `transcript_path` names.
+#
+# The vetter builds nothing itself (it is read-only on the filesystem), so the build half of this
+# is the producer's problem -- but a WAIT is not a build, and the poll-loop hook rewrites `sleep`,
+# `until ... do` and `tail -f` for any caller.
+NONINTERACTIVE_PRAGMA="CLAUDE-PRAGMA-NONINTERACTIVE-6b1f9d4e"
+PROMPT="$PROMPT
+
+$NONINTERACTIVE_PRAGMA"
+
 # --- the STANDING BRIEF every dispatched AUDITOR starts with (#257) ----------------------------
 # The vetter's audit lens is deep source reading, and until now every byte of it landed in the ONE
 # main-loop context that is re-read on every turn. Measured on 20260810T091521Z: 72 tool calls,
@@ -362,7 +377,8 @@ if ! grep -q '[^[:space:]]' "$DIR/review-auditor-prompt.txt" 2>/dev/null; then
   exit 1
 fi
 AUDITOR_JSON="$(jq -nc --rawfile brief "$DIR/review-auditor-prompt.txt" \
-  '{"pr-auditor":{"description":"Vetter auditor: runs the audit lens over ONE PR and reports findings, recording nothing.","prompt":$brief,"tools":["Read","Glob","Grep","Skill","ToolSearch","mcp__fsm__pr_checkout"]}}')"
+  --arg pragma "$NONINTERACTIVE_PRAGMA" \
+  '{"pr-auditor":{"description":"Vetter auditor: runs the audit lens over ONE PR and reports findings, recording nothing.","prompt":($brief + "\n\n" + $pragma),"tools":["Read","Glob","Grep","Skill","ToolSearch","mcp__fsm__pr_checkout"]}}')"
 if [ -z "$AUDITOR_JSON" ]; then
   echo "$(date -u +%FT%TZ) review run ABORT: could not build the auditor brief from review-auditor-prompt.txt" | _log
   exit 1
