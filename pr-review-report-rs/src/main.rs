@@ -38309,7 +38309,9 @@ impl NrRun {
 
     /// The first turn that made this call.
     fn first_call(&self, tool: &str) -> Option<usize> {
-        self.turns.iter().position(|t| t.tools.iter().any(|x| x == tool))
+        self.turns
+            .iter()
+            .position(|t| t.tools.iter().any(|x| x == tool))
     }
 
     /// Required calls that never fired.
@@ -38323,7 +38325,8 @@ impl NrRun {
 
     /// Tools used outside the command's grant, with how often.
     fn off_protocol(&self) -> Vec<(String, usize)> {
-        let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+        let mut counts: std::collections::BTreeMap<String, usize> =
+            std::collections::BTreeMap::new();
         for t in self.turns.iter().flat_map(|t| t.tools.iter()) {
             if !NR_GRANTED_TOOLS.contains(&t.as_str()) {
                 *counts.entry(t.clone()).or_default() += 1;
@@ -38522,7 +38525,9 @@ fn nr_phase_stats(run: &NrRun) -> Vec<NrPhaseStat> {
         }
         (i < n).then_some(i)
     };
-    let lens_start = run.first_call("Skill").or_else(|| run.first_call("pr_checkout"));
+    let lens_start = run
+        .first_call("Skill")
+        .or_else(|| run.first_call("pr_checkout"));
     let mut starts: [Option<usize>; 6] = [
         (n > 0).then_some(0),
         run.first_call("next_ready"),
@@ -38569,7 +38574,12 @@ fn nr_phase_stats(run: &NrRun) -> Vec<NrPhaseStat> {
         .iter()
         .enumerate()
         .map(|(p, phase)| {
-            let end = starts[p + 1..].iter().flatten().next().copied().unwrap_or(n);
+            let end = starts[p + 1..]
+                .iter()
+                .flatten()
+                .next()
+                .copied()
+                .unwrap_or(n);
             let range = starts[p].map(|i| i..end.max(i)).unwrap_or(0..0);
             NrPhaseStat {
                 phase: *phase,
@@ -38579,7 +38589,9 @@ fn nr_phase_stats(run: &NrRun) -> Vec<NrPhaseStat> {
                     .map(|t| t.output_tokens)
                     .sum(),
                 turns: range.len(),
-                called: phase.wall_call().is_none_or(|c| run.first_call(c).is_some()),
+                called: phase
+                    .wall_call()
+                    .is_none_or(|c| run.first_call(c).is_some()),
             }
         })
         .collect()
@@ -38654,8 +38666,10 @@ fn nr_profile_mode(path: &str, run: Option<usize>, json: bool) -> i32 {
     println!("transcript  {path}");
     println!("/nr runs    {}", all.len());
     if all.is_empty() {
-        println!("\n! no `/nr` invocation in this transcript — a run is found by its own \
-                  `<command-name>` line, so a session that never typed the command has none");
+        println!(
+            "\n! no `/nr` invocation in this transcript — a run is found by its own \
+                  `<command-name>` line, so a session that never typed the command has none"
+        );
         return 0;
     }
     for (n, r) in &picked {
@@ -38669,7 +38683,10 @@ fn nr_profile_mode(path: &str, run: Option<usize>, json: bool) -> i32 {
             r.tool_calls(),
             r.ended_by.key()
         );
-        println!("  {:<31}{:>9}{:>9}{:>8}", "phase", "wall", "output", "share");
+        println!(
+            "  {:<31}{:>9}{:>9}{:>8}",
+            "phase", "wall", "output", "share"
+        );
         for s in &stats {
             let share = if total_out == 0 {
                 "—".to_string()
@@ -38713,7 +38730,10 @@ fn nr_profile_mode(path: &str, run: Option<usize>, json: bool) -> i32 {
                         .join(", ")
                 ));
             }
-            println!("  protocol                     OFF-PROTOCOL — {}", why.join("; "));
+            println!(
+                "  protocol                     OFF-PROTOCOL — {}",
+                why.join("; ")
+            );
         }
         if stats.iter().any(|s| !s.called) {
             println!(
@@ -38805,7 +38825,13 @@ mod nr_profile_tests {
             invoke("2026-08-16T06:56:22.145Z"),
             meta("2026-08-16T06:56:22.145Z"),
             ev("2026-08-16T06:56:28.724Z", "m1", 374, 336_538, &[]),
-            ev("2026-08-16T06:56:29.816Z", "m1", 374, 336_538, &["ToolSearch"]),
+            ev(
+                "2026-08-16T06:56:29.816Z",
+                "m1",
+                374,
+                336_538,
+                &["ToolSearch"],
+            ),
             result("2026-08-16T06:56:29.823Z"),
             ev("2026-08-16T06:56:34.219Z", "m2", 45, 343_131, &[&nr]),
             result("2026-08-16T06:57:30.491Z"),
@@ -38818,7 +38844,13 @@ mod nr_profile_tests {
             ev("2026-08-16T06:58:21.989Z", "m4", 2_871, 345_233, &[&co]),
             result("2026-08-16T06:58:28.303Z"),
             ev("2026-08-16T06:58:35.236Z", "m5", 496, 356_129, &[]),
-            ev("2026-08-16T06:58:36.684Z", "m5", 496, 356_129, &["Skill:audit"]),
+            ev(
+                "2026-08-16T06:58:36.684Z",
+                "m5",
+                496,
+                356_129,
+                &["Skill:audit"],
+            ),
             result("2026-08-16T06:58:36.712Z"),
             meta("2026-08-16T06:58:36.711Z"),
             ev("2026-08-16T06:58:55.167Z", "m6", 1_098, 359_179, &[]),
@@ -38909,7 +38941,10 @@ mod nr_profile_tests {
         assert_eq!(stats[3].output_tokens, 496);
         // Wall: the lens phase opens at that same turn's first event, 43.085s into the run, not at
         // the turn its tokens went to.
-        assert_eq!(stats[0].wall_ms + stats[1].wall_ms + stats[2].wall_ms, 116_414);
+        assert_eq!(
+            stats[0].wall_ms + stats[1].wall_ms + stats[2].wall_ms,
+            116_414
+        );
         // And the same shape again at the other end: `clone_release` rides the audit's last turn.
         assert_eq!(stats[4].turns, 6);
         assert_eq!(stats[4].output_tokens, 7_072);
@@ -38977,7 +39012,13 @@ mod nr_profile_tests {
         let trace = [
             invoke("2026-08-16T08:03:27.011Z"),
             meta("2026-08-16T08:03:27.011Z"),
-            ev("2026-08-16T08:03:32.725Z", "p1", 45, 42_545, &[&q("next_ready")]),
+            ev(
+                "2026-08-16T08:03:32.725Z",
+                "p1",
+                45,
+                42_545,
+                &[&q("next_ready")],
+            ),
             result("2026-08-16T08:04:13.935Z"),
             ev("2026-08-16T08:04:23.189Z", "p2", 363, 42_545, &[]),
             human("2026-08-16T08:04:50.878Z", "next"),
@@ -39082,11 +39123,29 @@ mod nr_profile_tests {
     fn an_interrupted_run_is_not_a_sample_either() {
         let trace = [
             invoke("2026-08-16T11:29:21.683Z"),
-            ev("2026-08-16T11:29:30.000Z", "i1", 40, 500, &[&q("next_ready")]),
+            ev(
+                "2026-08-16T11:29:30.000Z",
+                "i1",
+                40,
+                500,
+                &[&q("next_ready")],
+            ),
             result("2026-08-16T11:30:24.000Z"),
-            ev("2026-08-16T11:30:30.000Z", "i2", 90, 600, &[&q("pr_context")]),
+            ev(
+                "2026-08-16T11:30:30.000Z",
+                "i2",
+                90,
+                600,
+                &[&q("pr_context")],
+            ),
             result("2026-08-16T11:30:40.000Z"),
-            ev("2026-08-16T11:30:50.000Z", "i3", 700, 700, &[&q("pr_checkout")]),
+            ev(
+                "2026-08-16T11:30:50.000Z",
+                "i3",
+                700,
+                700,
+                &[&q("pr_checkout")],
+            ),
         ]
         .concat();
         let r = &nr_runs(&trace)[0];
@@ -39098,17 +39157,17 @@ mod nr_profile_tests {
         assert_eq!(stats[5].turns, 0);
         assert_eq!(stats[5].wall_ms, 0);
         // Every phase that did happen still accounts for its turns.
-        assert_eq!(
-            stats.iter().map(|s| s.turns).sum::<usize>(),
-            r.turns.len()
-        );
+        assert_eq!(stats.iter().map(|s| s.turns).sum::<usize>(), r.turns.len());
     }
 
     /// Every turn lands in exactly one phase, on every shape above — a decomposition that drops or
     /// double-counts a turn is not one.
     #[test]
     fn the_phases_partition_the_run() {
-        for trace in [full_protocol_run(), [full_protocol_run(), full_protocol_run()].concat()] {
+        for trace in [
+            full_protocol_run(),
+            [full_protocol_run(), full_protocol_run()].concat(),
+        ] {
             for r in nr_runs(&trace) {
                 let stats = nr_phase_stats(&r);
                 assert_eq!(stats.iter().map(|s| s.turns).sum::<usize>(), r.turns.len());
@@ -39154,9 +39213,21 @@ mod nr_profile_tests {
     fn one_turn_opening_two_phases_lands_in_the_later_one() {
         let trace = [
             invoke("2026-08-16T11:29:21.683Z"),
-            ev("2026-08-16T11:29:26.000Z", "c1", 186, 42_545, &["ToolSearch"]),
+            ev(
+                "2026-08-16T11:29:26.000Z",
+                "c1",
+                186,
+                42_545,
+                &["ToolSearch"],
+            ),
             result("2026-08-16T11:29:27.000Z"),
-            ev("2026-08-16T11:29:30.000Z", "c2", 45, 42_545, &[&q("next_ready")]),
+            ev(
+                "2026-08-16T11:29:30.000Z",
+                "c2",
+                45,
+                42_545,
+                &[&q("next_ready")],
+            ),
             result("2026-08-16T11:30:20.000Z"),
             ev(
                 "2026-08-16T11:30:26.000Z",
@@ -39171,7 +39242,10 @@ mod nr_profile_tests {
         let stats = nr_phase_stats(&nr_runs(&trace)[0]);
         assert_eq!(stats[2].turns, 0);
         assert_eq!(stats[2].wall_ms, 0);
-        assert!(stats[2].called, "`pr_context` DID fire — the phase is empty, not absent");
+        assert!(
+            stats[2].called,
+            "`pr_context` DID fire — the phase is empty, not absent"
+        );
         assert_eq!(stats[3].turns, 1);
         assert_eq!(stats[3].output_tokens, 262);
     }
@@ -39190,7 +39264,10 @@ mod nr_profile_tests {
     /// The server prefix on an MCP tool is deployment detail; the protocol is about the name.
     #[test]
     fn mcp_tool_names_normalise_past_the_server_prefix() {
-        assert_eq!(nr_tool_name("mcp__plugin_human-fsm_fsm__next_ready"), "next_ready");
+        assert_eq!(
+            nr_tool_name("mcp__plugin_human-fsm_fsm__next_ready"),
+            "next_ready"
+        );
         assert_eq!(nr_tool_name("mcp__other_server__pr_context"), "pr_context");
         assert_eq!(nr_tool_name("Read"), "Read");
         assert_eq!(nr_tool_name(""), "");
@@ -39201,7 +39278,13 @@ mod nr_profile_tests {
     fn off_protocol_counts_every_call() {
         let trace = [
             invoke("2026-08-16T09:00:00.000Z"),
-            ev("2026-08-16T09:00:05.000Z", "y1", 10, 1, &["Bash", "Bash", "Write"]),
+            ev(
+                "2026-08-16T09:00:05.000Z",
+                "y1",
+                10,
+                1,
+                &["Bash", "Bash", "Write"],
+            ),
         ]
         .concat();
         let r = &nr_runs(&trace)[0];
@@ -39217,7 +39300,13 @@ mod nr_profile_tests {
     fn peak_context_is_the_widest_turn() {
         let trace = [
             invoke("2026-08-16T09:00:00.000Z"),
-            ev("2026-08-16T09:00:05.000Z", "z1", 10, 588_209, &[&q("next_ready")]),
+            ev(
+                "2026-08-16T09:00:05.000Z",
+                "z1",
+                10,
+                588_209,
+                &[&q("next_ready")],
+            ),
             result("2026-08-16T09:00:06.000Z"),
             ev("2026-08-16T09:00:10.000Z", "z2", 10, 1_000, &[]),
         ]
