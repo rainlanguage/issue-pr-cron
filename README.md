@@ -2898,9 +2898,9 @@ Everything goes to **stderr**, never stdout: on `pr-review-report mcp` stdout is
 the JSON-RPC stream and a line there is a protocol violation.
 
 ```
-gh-timing: 2713ms pr view 42 rainlanguage/rainix
-gh-timing: next_design: 2 calls, 10913ms in gh
-gh-timing: next_design: slowest 8200ms search issues
+gh-timing: 1306ms pr view 3 rainlanguage/rain.subgraph.docker
+gh-timing: unvetted: 359 calls, 278980ms in gh
+gh-timing: unvetted: slowest 6052ms search prs
 ```
 
 A call line carries the child's wall time and enough argv to attribute it — the
