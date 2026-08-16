@@ -20042,45 +20042,31 @@ fn rank_leaks(leaks: &mut [Leak]) {
     leaks.sort_by(|a, b| leak_order_key(a).cmp(&leak_order_key(b)));
 }
 
-/// PRs one batched comment read asks GitHub about. The scan's cost is round trips, and this is how
-/// many candidates each one buys; the product with [`LEAK_COMMENT_PAGE`] is the payload one
-/// response may weigh.
-const LEAK_COMMENT_BATCH: usize = 20;
+// ─────────────────────────────────────────────────────────────────────────────
+// ALIASED PER-PR GRAPHQL — the shape both batched reads are built from
+// ─────────────────────────────────────────────────────────────────────────────
 
-/// Comments fetched per PR in a batched read, newest last — GitHub's page cap for one connection.
-/// A PR holding more is not read short: [`leak_comments_page`] reports it UNREAD and [`leak_scan`]
-/// pays a per-PR `gh pr view`, so the batch is a speed change and never a different answer.
-const LEAK_COMMENT_PAGE: usize = 100;
-
-/// PURE: the aliased GraphQL query reading `n` PRs' comments in one round trip — one `c<i>` alias
-/// per PR over three DECLARED VARIABLES each, so GitHub types and escapes every slug rather than
-/// this binary interpolating one into query text.
-fn leak_comments_query(n: usize) -> String {
-    let vars: Vec<String> = (0..n)
+/// PURE: the `$o<i>/$r<i>/$p<i>` declarations `n` aliased per-PR reads share, so GitHub types and
+/// escapes every slug rather than this binary interpolating one into query text.
+fn aliased_pr_vars(n: usize) -> String {
+    (0..n)
         .map(|i| format!("$o{i}: String!, $r{i}: String!, $p{i}: Int!"))
-        .collect();
-    let fields: Vec<String> = (0..n)
-        .map(|i| {
-            format!(
-                "  c{i}: repository(owner: $o{i}, name: $r{i}) {{ pullRequest(number: $p{i}) \
-                 {{ comments(last: {LEAK_COMMENT_PAGE}) {{ totalCount nodes {{ author {{ login }} \
-                 body }} }} }} }}"
-            )
-        })
-        .collect();
-    format!("query({}) {{\n{}\n}}", vars.join(", "), fields.join("\n"))
+        .collect::<Vec<String>>()
+        .join(", ")
 }
 
-/// PURE: the `gh api graphql` argv for one chunk.
+/// PURE: the `gh api graphql` argv for one chunk — the query, then the three operands each alias
+/// declared, in alias order.
 ///
 /// The flag is decided by the variable's DECLARED TYPE, as in [`subject_query_args`]: `gh api
 /// graphql` retypes a `-F` value that parses as an integer, so an all-numeric owner or repo name
 /// passed with `-F` would send an `Int` at a `String!` and GitHub would refuse the whole chunk.
-fn leak_comments_args(chunk: &[&SubjectRef]) -> Vec<String> {
+/// One copy of that rule, because two could disagree about it.
+fn aliased_pr_args(query: String, chunk: &[&SubjectRef]) -> Vec<String> {
     let mut args = vec![
         "graphql".to_string(),
         "-f".to_string(),
-        format!("query={}", leak_comments_query(chunk.len())),
+        format!("query={query}"),
     ];
     for (i, s) in chunk.iter().enumerate() {
         let (owner, repo) = s.repo.split_once('/').unwrap_or(("", s.repo.as_str()));
@@ -20092,6 +20078,53 @@ fn leak_comments_args(chunk: &[&SubjectRef]) -> Vec<String> {
         args.push(format!("p{i}={}", s.number));
     }
     args
+}
+
+/// PURE: a GraphQL connection's nodes, or `None` when the page did NOT carry the whole set.
+///
+/// The truncation guard both batched reads rest on: a page shorter than `totalCount` has hidden
+/// something, and an alias reported unread costs a refetch rather than a verdict computed over a
+/// partial set. A connection missing either field is unread for the same reason.
+fn whole_connection(conn: &Value) -> Option<&Vec<Value>> {
+    let nodes = conn.get("nodes")?.as_array()?;
+    if conn.get("totalCount")?.as_u64()? > nodes.len() as u64 {
+        return None;
+    }
+    Some(nodes)
+}
+
+/// PRs one batched comment read asks GitHub about. The scan's cost is round trips, and this is how
+/// many candidates each one buys; the product with [`LEAK_COMMENT_PAGE`] is the payload one
+/// response may weigh.
+const LEAK_COMMENT_BATCH: usize = 20;
+
+/// Comments fetched per PR in a batched read, newest last — GitHub's page cap for one connection.
+/// A PR holding more is not read short: [`leak_comments_page`] reports it UNREAD and [`leak_scan`]
+/// pays a per-PR `gh pr view`, so the batch is a speed change and never a different answer.
+const LEAK_COMMENT_PAGE: usize = 100;
+
+/// PURE: the aliased GraphQL query reading `n` PRs' comments in one round trip — one `c<i>` alias
+/// per PR over [`aliased_pr_vars`]'s three declared variables each.
+fn leak_comments_query(n: usize) -> String {
+    let fields: Vec<String> = (0..n)
+        .map(|i| {
+            format!(
+                "  c{i}: repository(owner: $o{i}, name: $r{i}) {{ pullRequest(number: $p{i}) \
+                 {{ comments(last: {LEAK_COMMENT_PAGE}) {{ totalCount nodes {{ author {{ login }} \
+                 body }} }} }} }}"
+            )
+        })
+        .collect();
+    format!(
+        "query({}) {{\n{}\n}}",
+        aliased_pr_vars(n),
+        fields.join("\n")
+    )
+}
+
+/// PURE: the `gh api graphql` argv for one chunk.
+fn leak_comments_args(chunk: &[&SubjectRef]) -> Vec<String> {
+    aliased_pr_args(leak_comments_query(chunk.len()), chunk)
 }
 
 /// PURE: one chunk's response, split back into `n` per-PR reads IN ALIAS ORDER and reshaped into
@@ -20106,12 +20139,7 @@ fn leak_comments_page(doc: &Value, n: usize) -> Vec<Option<Value>> {
     (0..n)
         .map(|i| {
             let conn = doc.pointer(&format!("/data/c{i}/pullRequest/comments"))?;
-            let nodes = conn.get("nodes")?.as_array()?;
-            let total = conn.get("totalCount")?.as_u64()?;
-            if total > nodes.len() as u64 {
-                return None;
-            }
-            Some(serde_json::json!({ "comments": nodes }))
+            Some(serde_json::json!({ "comments": whole_connection(conn)? }))
         })
         .collect()
 }
@@ -23891,7 +23919,7 @@ fn blocked_on_state_load_row(
                 "-R",
                 slug,
                 "--json",
-                "headRefOid,baseRefName,labels,reviewDecision,mergeable,statusCheckRollup,comments,isDraft",
+                UNVETTED_DETAIL_FIELDS,
             ]) else {
                 return Err(format!(
                     "error: `gh pr view {slug}#{num}` failed after blocked-on clearance — \
@@ -23907,6 +23935,235 @@ fn blocked_on_state_load_row(
             ))
         }
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE STATE-LOAD'S DETAIL READ — one round trip per [`UNVETTED_DETAIL_BATCH`] PRs (#312)
+//
+// `unvetted` classifies NOTHING off the search JSON, and that reasoning stands ([`unvetted_fetch`]
+// states it). What did not follow from it was a round trip per PR: the measured state-load spent
+// 287s in 354 `gh` calls — one `gh pr view` per open PR, plus one [`unresolved_threads`] query per
+// PR that reached the vet gate. The population is the same population and every read it ever made
+// is still made; only the number of round trips it costs changes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The `gh pr view --json` field list the state-load classifies a PR from. ONE constant because
+/// three call sites read it — the batch below, its per-PR fallback, and the post-clearance re-fetch
+/// in [`blocked_on_state_load_row`] — and a batch fetching a different set from the fallback is a
+/// PR classified differently depending on which read answered for it.
+const UNVETTED_DETAIL_FIELDS: &str =
+    "headRefOid,baseRefName,labels,reviewDecision,mergeable,statusCheckRollup,comments,isDraft";
+
+/// PRs one batched detail read asks GitHub about. Same trade as [`LEAK_COMMENT_BATCH`] — round
+/// trips bought per response — over a wider field set, so the response one chunk may weigh is
+/// larger for the same count.
+const UNVETTED_DETAIL_BATCH: usize = 20;
+
+/// Comments, labels and check contexts fetched per PR in a batched read — GitHub's page cap for one
+/// connection. A PR holding more is not read short: [`whole_connection`] reports it UNREAD and the
+/// per-PR `gh pr view` answers for it instead, so the batch is a speed change and never a different
+/// answer.
+const UNVETTED_DETAIL_PAGE: usize = 100;
+
+/// PURE: the aliased GraphQL query reading `n` PRs' whole detail in one round trip — one `d<i>`
+/// alias per PR over [`aliased_pr_vars`]'s three declared variables each.
+///
+/// The selection is [`UNVETTED_DETAIL_FIELDS`] expressed in GraphQL, and the check rollup is where
+/// the two spellings differ: `gh pr view` FLATTENS the head commit's rollup contexts into one array
+/// and that is the shape [`classify_ci`] reads, so the connection is walked here and flattened by
+/// [`unvetted_detail_page`] rather than the classifier learning a second shape.
+///
+/// `reviewThreads` rides along because it is a read of the SAME PR the same loop already made
+/// ([`gate_open_threads`]'s, one query per PR that reached the vet gate) and asking for it here
+/// costs no round trip at all. The gate is unchanged in what it decides: a first page short of its
+/// own `totalCount` answers for nobody, and the per-PR [`unresolved_threads`] walk — which pages —
+/// is still what those PRs are gated on.
+fn unvetted_detail_query(n: usize) -> String {
+    let fields: Vec<String> = (0..n)
+        .map(|i| {
+            format!(
+                "  d{i}: repository(owner: $o{i}, name: $r{i}) {{ pullRequest(number: $p{i}) {{ \
+                 headRefOid baseRefName isDraft reviewDecision mergeable \
+                 labels(first: {UNVETTED_DETAIL_PAGE}) {{ totalCount nodes {{ name }} }} \
+                 comments(last: {UNVETTED_DETAIL_PAGE}) {{ totalCount nodes {{ author {{ login }} \
+                 body }} }} \
+                 reviewThreads(first: {UNVETTED_DETAIL_PAGE}) {{ totalCount nodes {{ isResolved }} }} \
+                 commits(last: 1) {{ nodes {{ commit {{ statusCheckRollup {{ \
+                 contexts(last: {UNVETTED_DETAIL_PAGE}) {{ totalCount nodes {{ __typename \
+                 ... on StatusContext {{ state }} \
+                 ... on CheckRun {{ status conclusion }} }} }} }} }} }} }} }} }}"
+            )
+        })
+        .collect();
+    format!(
+        "query({}) {{\n{}\n}}",
+        aliased_pr_vars(n),
+        fields.join("\n")
+    )
+}
+
+/// PURE: the `gh api graphql` argv for one chunk.
+fn unvetted_detail_args(chunk: &[&SubjectRef]) -> Vec<String> {
+    aliased_pr_args(unvetted_detail_query(chunk.len()), chunk)
+}
+
+/// PURE: the head commit's check rollup, flattened into the array `gh pr view --json
+/// statusCheckRollup` returns — or `None` for UNREAD.
+///
+/// A null `statusCheckRollup` is an ANSWER, not a gap: GitHub spells "this head has no checks"
+/// that way and `gh` spells the same PR's rollup `[]`, which [`classify_ci`] reads as
+/// [`Ci::NoChecks`]. A missing commit node is the gap — nothing was said about the head at all.
+fn unvetted_detail_rollup(pr: &Value) -> Option<Value> {
+    let commit = pr
+        .pointer("/commits/nodes")?
+        .as_array()?
+        .first()?
+        .get("commit")?;
+    match commit.get("statusCheckRollup")? {
+        Value::Null => Some(Value::Array(Vec::new())),
+        rollup => Some(Value::Array(
+            whole_connection(rollup.get("contexts")?)?.clone(),
+        )),
+    }
+}
+
+/// ONE PR as the batched read answers for it: the document the classifier reads, and the
+/// unresolved-thread count the vet gate reads.
+#[derive(Clone, Debug, PartialEq)]
+struct UnvettedDetail {
+    /// The `gh pr view --json {UNVETTED_DETAIL_FIELDS}` document, whichever read produced it.
+    detail: Value,
+    /// Unresolved review threads, or `None` when THIS read did not answer for them — a first page
+    /// short of `totalCount` is not a count, and the gate gets the per-PR paginated walk instead of
+    /// a number derived from part of the threads.
+    threads: Option<u64>,
+}
+
+/// PURE: one chunk's response, split back into `n` per-PR reads IN ALIAS ORDER and reshaped into
+/// the `gh pr view --json {UNVETTED_DETAIL_FIELDS}` document the classifier reads — so the batch
+/// and the per-PR fetch are two ways to obtain ONE shape, not two shapes to keep in step.
+///
+/// `None` at an alias means UNREAD and every uncertainty resolves that way: a null repository or
+/// pull request, a field of the wrong type, a missing head commit, and any connection
+/// [`whole_connection`] found short of its own `totalCount`. An unread alias costs a per-PR
+/// `gh pr view`, never a classification off a partial read.
+///
+/// `reviewDecision` is the one null that is NOT a gap: nobody having reviewed is what GitHub means
+/// by it, and `gh` renders that as the empty string [`unvetted_row`] already discards.
+///
+/// The thread count is unread INDEPENDENTLY of the rest. A long review history is the one thing on
+/// a PR that routinely outruns a single page, and there is no reason a PR's classification should
+/// be refetched because its threads did not fit.
+fn unvetted_detail_page(doc: &Value, n: usize) -> Vec<Option<UnvettedDetail>> {
+    (0..n)
+        .map(|i| {
+            let pr = doc.pointer(&format!("/data/d{i}/pullRequest"))?;
+            let review = match pr.get("reviewDecision")? {
+                Value::Null => "",
+                v => v.as_str()?,
+            };
+            Some(UnvettedDetail {
+                detail: serde_json::json!({
+                    "headRefOid": pr.get("headRefOid")?.as_str()?,
+                    "baseRefName": pr.get("baseRefName")?.as_str()?,
+                    "isDraft": pr.get("isDraft")?.as_bool()?,
+                    "reviewDecision": review,
+                    "mergeable": pr.get("mergeable")?.as_str()?,
+                    "labels": whole_connection(pr.get("labels")?)?,
+                    "statusCheckRollup": unvetted_detail_rollup(pr)?,
+                    "comments": whole_connection(pr.get("comments")?)?,
+                }),
+                threads: pr
+                    .get("reviewThreads")
+                    .and_then(whole_connection)
+                    .map(|nodes| {
+                        nodes
+                            .iter()
+                            .filter(|t| t.get("isResolved") == Some(&Value::Bool(false)))
+                            .count() as u64
+                    }),
+            })
+        })
+        .collect()
+}
+
+/// LIVE: every PR's detail, batched, keyed by `(repo, number)`.
+///
+/// An ABSENT key means this read did not answer for that PR and the caller must ask again — never
+/// "no detail". A chunk that fails outright contributes no keys, which says that of all its members
+/// at once.
+fn unvetted_detail_batch(
+    subjects: &[SubjectRef],
+) -> std::collections::HashMap<(String, u64), UnvettedDetail> {
+    let refs: Vec<&SubjectRef> = subjects.iter().collect();
+    let chunks: Vec<&[&SubjectRef]> = refs.chunks(UNVETTED_DETAIL_BATCH).collect();
+    let pages = map_bounded(&chunks, |chunk| {
+        let args = unvetted_detail_args(chunk);
+        let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+        match gh_retrying(|| gh_api_result(&argref)) {
+            Ok(doc) => unvetted_detail_page(&doc, chunk.len()),
+            Err(_) => vec![None; chunk.len()],
+        }
+    });
+    chunks
+        .into_iter()
+        .flatten()
+        .zip(pages.into_iter().flatten())
+        .filter_map(|(s, read)| read.map(|v| ((s.repo.clone(), s.number), v)))
+        .collect()
+}
+
+/// One PR's detail: the batch's answer, or `per_pr` for whatever it did not answer for, or the
+/// ABORT.
+///
+/// The per-PR read is the FALLBACK, not the plan, and it is what keeps the batch a pure speed
+/// change: every PR the batch left out is still fetched one at a time, so the state-load classifies
+/// the same population it always did. The `Err` is the failure seam #302 established and it is
+/// louder here than a per-PR one, because it stops the whole run: a PR silently dropped from this
+/// queue reads as "nothing to vet", and a queue of dropped PRs reports healthy. `per_pr` is a seam
+/// for that reason — both branches are only reachable in production when GitHub fails.
+fn unvetted_detail_with<F>(
+    subject: &SubjectRef,
+    batched: &std::collections::HashMap<(String, u64), UnvettedDetail>,
+    per_pr: F,
+) -> Result<UnvettedDetail, String>
+where
+    F: Fn(&SubjectRef) -> Option<Value>,
+{
+    if let Some(d) = batched.get(&(subject.repo.clone(), subject.number)) {
+        return Ok(d.clone());
+    }
+    per_pr(subject)
+        .map(|detail| UnvettedDetail {
+            detail,
+            // `gh pr view` says nothing about review threads, so a refetched PR is gated on the
+            // per-PR walk exactly as it always was.
+            threads: None,
+        })
+        .ok_or_else(|| {
+            format!(
+                "error: `gh pr view {}#{}` failed — aborting rather than report an incomplete vet queue",
+                subject.repo, subject.number
+            )
+        })
+}
+
+/// LIVE: [`unvetted_detail_with`] over the real per-PR `gh pr view`.
+fn unvetted_detail(
+    subject: &SubjectRef,
+    batched: &std::collections::HashMap<(String, u64), UnvettedDetail>,
+) -> Result<UnvettedDetail, String> {
+    unvetted_detail_with(subject, batched, |s| {
+        gh_json(&[
+            "pr",
+            "view",
+            &s.number.to_string(),
+            "-R",
+            &s.repo,
+            "--json",
+            UNVETTED_DETAIL_FIELDS,
+        ])
+    })
 }
 
 fn unvetted_fetch(include_skipped: bool, limit: Option<usize>) -> Result<Value, String> {
@@ -23958,39 +24215,53 @@ fn unvetted_fetch(include_skipped: bool, limit: Option<usize>) -> Result<Value, 
             }),
         ));
     }
-    for p in &prs {
-        let url = p.get("url").and_then(|u| u.as_str()).unwrap_or("");
-        let (Some(slug), Some(num)) = (pr_slug(url), p.get("number").and_then(|n| n.as_u64()))
-        else {
-            continue;
-        };
-        let title = p.get("title").and_then(|t| t.as_str()).unwrap_or("");
-        // NOTHING is classified off the search JSON. No `human:*` label parks a PR any more
-        // (#133/#230), the two forms a human decision does take — a native REVIEW and a ruling
-        // comment — are invisible to search, and the draft send-back's currency check reads the
-        // comment thread, so every open PR is fetched and classified from its detail below.
-        let Some(detail) = gh_json(&[
-            "pr",
-            "view",
-            &num.to_string(),
-            "-R",
-            &slug,
-            "--json",
-            "headRefOid,baseRefName,labels,reviewDecision,mergeable,statusCheckRollup,comments,isDraft",
-        ]) else {
-            return Err(format!(
-                "error: `gh pr view {slug}#{num}` failed — aborting rather than report an incomplete vet queue"
-            ));
-        };
+    // NOTHING is classified off the search JSON. No `human:*` label parks a PR any more
+    // (#133/#230), the two forms a human decision does take — a native REVIEW and a ruling
+    // comment — are invisible to search, and the draft send-back's currency check reads the
+    // comment thread, so every open PR is fetched and classified from its detail.
+    //
+    // The whole population is read FIRST, [`UNVETTED_DETAIL_BATCH`] PRs to a round trip (#312), and
+    // the loop below is unchanged in what it reads: a PR the batch did not answer for still costs
+    // its own `gh pr view`. A row unreachable from its search entry (an unparseable url) is dropped
+    // here exactly as the loop dropped it, so nothing enters the batch that the loop would skip.
+    let subjects: Vec<SubjectRef> = prs
+        .iter()
+        .filter_map(|p| {
+            let url = p.get("url").and_then(|u| u.as_str()).unwrap_or("");
+            Some(SubjectRef::new(
+                pr_slug(url)?,
+                p.get("number").and_then(|n| n.as_u64())?,
+                url,
+                p.get("title").and_then(|t| t.as_str()).unwrap_or(""),
+            ))
+        })
+        .collect();
+    let details = unvetted_detail_batch(&subjects);
+
+    // SERIAL, in search order: this loop WRITES (the send-backs and the blocked-on clearance), and
+    // the rows it pushes are the order everything downstream ranks and pages.
+    for subject in &subjects {
+        let (slug, num, url, title) = (
+            subject.repo.as_str(),
+            subject.number,
+            subject.url.as_str(),
+            subject.title.as_str(),
+        );
+        let UnvettedDetail { detail, threads } = unvetted_detail(subject, &details)?;
         // #161: an `ai:blocked-on` PR takes the clearance path, not the vet path — see
         // [`blocked_on_state_load_row`]. Checked on the DETAIL labels (fresh), not the search row.
         let row = if label_names(&detail).iter().any(|l| l == "ai:blocked-on") {
-            blocked_on_state_load_row(&slug, num, url, title, &detail)?
+            blocked_on_state_load_row(slug, num, url, title, &detail)?
         } else {
             // Classify first, THEN gate on open threads — the gate's `fetch` runs only for a row that
             // would actually be vetted, so an already-skipped PR costs no extra GraphQL round-trip.
             // An unsplittable slug fails the fetch (fail-closed: not vetted this run), never a dropped PR.
-            gate_open_threads(unvetted_row(&slug, num, url, title, &detail), || {
+            gate_open_threads(unvetted_row(slug, num, url, title, &detail), || {
+                // The batch answered for most PRs' threads at no extra round trip; the walk is what
+                // a PR whose threads outran one page still costs.
+                if let Some(open) = threads {
+                    return Ok(open);
+                }
                 let (owner, repo) = slug.split_once('/').ok_or(GhFailure::Malformed)?;
                 unresolved_threads(owner, repo, num)
             })
@@ -24002,10 +24273,10 @@ fn unvetted_fetch(include_skipped: bool, limit: Option<usize>) -> Result<Value, 
         // modeled state). The two are mutually exclusive by [`vet_action`]'s arm order, so at most
         // one `write` fires per PR.
         let row = send_back_conflict(row, |head, labels, base| {
-            record_conflict_send_back(&slug, num, head, labels, base)
+            record_conflict_send_back(slug, num, head, labels, base)
         });
         rows.push(send_back_draft(row, |head, labels| {
-            record_draft_send_back(&slug, num, head, labels)
+            record_draft_send_back(slug, num, head, labels)
         }));
     }
     Ok(unvetted_doc(&rows, include_skipped, limit))
@@ -51497,6 +51768,262 @@ mod open_threads_tests {
             vec!["o/r#1"],
             "a gated PR is not handed to the vetter"
         );
+    }
+
+    // --- the state-load's BATCHED detail read (#312) ----------------------------------------------
+
+    /// One chunk's response as GitHub returns it: an entry per alias under `data`.
+    fn detail_doc(entries: &[(usize, Value)]) -> Value {
+        let mut data = serde_json::Map::new();
+        for (i, v) in entries {
+            data.insert(format!("d{i}"), v.clone());
+        }
+        json!({ "data": data })
+    }
+
+    /// A whole PR node as the query selects it, with every connection at its full width.
+    fn detail_node(head: &str, rollup: Value) -> Value {
+        json!({"pullRequest": {
+            "headRefOid": head,
+            "baseRefName": "main",
+            "isDraft": false,
+            "reviewDecision": null,
+            "mergeable": "MERGEABLE",
+            "labels": {"totalCount": 1, "nodes": [{"name": "ai:ready"}]},
+            "comments": {"totalCount": 1, "nodes": [
+                {"author": {"login": TRUSTED_AUTHOR}, "body": "🤖 ai:vetter Reviewed x: ready"}
+            ]},
+            // Asymmetric on purpose: resolved and unresolved counts differ, so counting the wrong
+            // half — or the whole list — is a different number.
+            "reviewThreads": {"totalCount": 3, "nodes": [
+                {"isResolved": true}, {"isResolved": false}, {"isResolved": true}
+            ]},
+            "commits": {"nodes": [{"commit": {"statusCheckRollup": rollup}}]},
+        }})
+    }
+
+    fn rollup_of(nodes: Vec<Value>) -> Value {
+        json!({"contexts": {"totalCount": nodes.len(), "nodes": nodes}})
+    }
+
+    // The argv is TYPED per variable, for the reason `aliased_pr_args` states: an all-numeric owner
+    // or repo passed with `-F` would be sent as an `Int` at a `String!` and GitHub would refuse the
+    // whole chunk.
+    #[test]
+    fn a_batched_detail_read_declares_one_typed_alias_per_pr() {
+        let subjects = [
+            SubjectRef::new("123/456", 7, "u", "t"),
+            SubjectRef::new("o/r", 9, "u", "t"),
+        ];
+        let refs: Vec<&SubjectRef> = subjects.iter().collect();
+        let args = unvetted_detail_args(&refs);
+        assert_eq!(args[0], "graphql");
+        assert_eq!(args[1], "-f");
+        let query = args[2].strip_prefix("query=").expect("the query flag");
+        assert!(
+            query.contains("d0: repository(owner: $o0, name: $r0)"),
+            "{query}"
+        );
+        assert!(
+            query.contains("d1: repository(owner: $o1, name: $r1)"),
+            "{query}"
+        );
+        assert!(!query.contains("d2:"), "{query}");
+        // EVERY field the classifier reads is asked for. A selection short of
+        // `UNVETTED_DETAIL_FIELDS` classifies a batched PR differently from a refetched one.
+        for field in [
+            "headRefOid",
+            "baseRefName",
+            "isDraft",
+            "reviewDecision",
+            "mergeable",
+            "labels(first: 100)",
+            "comments(last: 100)",
+            "reviewThreads(first: 100)",
+            "contexts(last: 100)",
+        ] {
+            assert!(query.contains(field), "{field} missing from {query}");
+        }
+        assert_eq!(
+            args[3..],
+            [
+                "-f", "o0=123", "-f", "r0=456", "-F", "p0=7", //
+                "-f", "o1=o", "-f", "r1=r", "-F", "p1=9",
+            ]
+            .map(String::from)
+        );
+    }
+
+    // The split is BY ALIAS, so a response's own ordering cannot reorder the chunk, and what comes
+    // out is the `gh pr view --json` document ITSELF — the check rollup flattened, `reviewDecision`
+    // null rendered as gh's empty string — not a second shape the classifier would have to learn.
+    #[test]
+    fn a_detail_response_splits_by_alias_into_the_gh_pr_view_shape() {
+        let check =
+            json!({"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "SUCCESS"});
+        let status = json!({"__typename": "StatusContext", "state": "SUCCESS"});
+        let doc = detail_doc(&[
+            (1, detail_node("second", rollup_of(vec![status.clone()]))),
+            (0, detail_node("first", rollup_of(vec![check.clone()]))),
+        ]);
+        let reads = unvetted_detail_page(&doc, 2);
+        assert_eq!(reads.len(), 2);
+        assert_eq!(
+            reads[0],
+            Some(UnvettedDetail {
+                detail: json!({
+                    "headRefOid": "first",
+                    "baseRefName": "main",
+                    "isDraft": false,
+                    "reviewDecision": "",
+                    "mergeable": "MERGEABLE",
+                    "labels": [{"name": "ai:ready"}],
+                    "statusCheckRollup": [check],
+                    "comments": [{"author": {"login": TRUSTED_AUTHOR}, "body": "🤖 ai:vetter Reviewed x: ready"}],
+                }),
+                // The UNRESOLVED ones only — a resolved thread never withheld a PR from the vetter.
+                threads: Some(1),
+            })
+        );
+        let second = reads[1].as_ref().expect("alias d1");
+        assert_eq!(second.detail["headRefOid"], json!("second"));
+        assert_eq!(second.detail["statusCheckRollup"], json!([status]));
+        // And the classifier reads it: green CI, mergeable, `ai:ready` with no verdict at this head.
+        let first = reads[0].as_ref().expect("alias d0");
+        let (action, _, row) = unvetted_row("o/r", 1, "u", "t", &first.detail);
+        assert_eq!(action, VetAction::Vet);
+        assert_eq!(row["ci"], json!("green"));
+        assert_eq!(row["mergeable"], json!("MERGEABLE"));
+        assert_eq!(row["labels"], json!(["ai:ready"]));
+        // And the vet gate withholds it on the batched count, with no query of its own.
+        let (gated, _, grow) = gate_open_threads((action, 0, row), || {
+            Ok(first.threads.expect("the batch counted this PR's threads"))
+        });
+        assert_eq!(gated, VetAction::SkipOpenThreads);
+        assert_eq!(grow["unresolvedThreads"], json!(1));
+    }
+
+    // EVERY uncertainty is UNREAD, which is what keeps the batch a speed change: an unread alias is
+    // refetched per-PR, and only a failure of BOTH reads stops the run. A truncated connection is in
+    // that set — a label or a verdict below the page decides the PR's whole classification.
+    #[test]
+    fn an_uncertain_detail_alias_is_unread_rather_than_read_as_a_bare_pr() {
+        let full = |mutate: fn(&mut Value)| {
+            let mut n = detail_node("h", rollup_of(vec![]));
+            mutate(&mut n);
+            n
+        };
+        let unread = detail_doc(&[
+            (0, json!(null)),
+            (1, json!({"pullRequest": null})),
+            // A head nothing was said about: no commit node, so no rollup either way.
+            (
+                2,
+                full(|n| n["pullRequest"]["commits"]["nodes"] = json!([])),
+            ),
+            // Truncated connections, one per connection the query pages.
+            (
+                3,
+                full(|n| n["pullRequest"]["comments"]["totalCount"] = json!(300)),
+            ),
+            (
+                4,
+                full(|n| n["pullRequest"]["labels"]["totalCount"] = json!(300)),
+            ),
+            (
+                5,
+                full(|n| {
+                    n["pullRequest"]["commits"]["nodes"][0]["commit"]["statusCheckRollup"] =
+                        json!({"contexts": {"totalCount": 300, "nodes": []}})
+                }),
+            ),
+            // A field of the wrong type says nothing usable about the PR.
+            (6, full(|n| n["pullRequest"]["headRefOid"] = json!(null))),
+            (7, full(|n| n["pullRequest"]["mergeable"] = json!(null))),
+            (8, full(|n| n["pullRequest"]["isDraft"] = json!("no"))),
+        ]);
+        assert_eq!(unvetted_detail_page(&unread, 9), vec![None; 9]);
+        // An alias the response omits entirely is unread too.
+        assert_eq!(unvetted_detail_page(&detail_doc(&[]), 1), vec![None]);
+        // A NULL rollup is GitHub's answer for a head with no checks, and it is an ANSWER: gh
+        // spells the same PR `[]`, which classifies as no-checks rather than unread.
+        let none = unvetted_detail_page(&detail_doc(&[(0, detail_node("h", json!(null)))]), 1);
+        let rollup = &none[0].as_ref().expect("alias d0").detail["statusCheckRollup"];
+        assert_eq!(rollup, &json!([]));
+        assert_eq!(ci_str(classify_ci(rollup)), ci_str(Ci::NoChecks));
+    }
+
+    // A thread list that outran its page is unread ON ITS OWN — the PR is still classified off the
+    // batch, and only the GATE pays the paginated walk. Nothing about a long review history should
+    // make a PR's labels or CI worth a second fetch.
+    #[test]
+    fn a_truncated_thread_list_is_unread_without_making_the_pr_unread() {
+        let mut node = detail_node("h", rollup_of(vec![]));
+        node["pullRequest"]["reviewThreads"]["totalCount"] = json!(300);
+        let read = unvetted_detail_page(&detail_doc(&[(0, node)]), 1);
+        let d = read[0].as_ref().expect("the PR is still read");
+        assert_eq!(d.detail["headRefOid"], json!("h"));
+        assert_eq!(d.threads, None, "a partial page is not a count");
+        // A connection GitHub said nothing about at all is unread for the same reason.
+        let mut bare = detail_node("h", rollup_of(vec![]));
+        bare["pullRequest"]
+            .as_object_mut()
+            .expect("object")
+            .remove("reviewThreads");
+        let bare = unvetted_detail_page(&detail_doc(&[(0, bare)]), 1);
+        assert_eq!(
+            bare[0].as_ref().expect("the PR is still read").threads,
+            None
+        );
+    }
+
+    // WHAT THE BATCH LEFT OUT IS STILL ASKED ABOUT — dropping the fallback would turn every batch
+    // gap into an aborted state-load, and a failed chunk into 20 of them.
+    #[test]
+    fn a_pr_the_batch_missed_is_refetched_rather_than_dropped() {
+        let from_batch = UnvettedDetail {
+            detail: json!({"headRefOid": "from-the-batch"}),
+            threads: Some(0),
+        };
+        let batched = std::collections::HashMap::from([(
+            ("o/batched".to_string(), 1u64),
+            from_batch.clone(),
+        )]);
+        let hit = SubjectRef::new("o/batched", 1, "u", "t");
+        let missed = SubjectRef::new("o/missed", 2, "u", "t");
+        let fetches = Cell::new(0);
+        let per_pr = |s: &SubjectRef| {
+            fetches.set(fetches.get() + 1);
+            Some(json!({"headRefOid": format!("refetched {}", s.repo)}))
+        };
+        assert_eq!(unvetted_detail_with(&hit, &batched, per_pr), Ok(from_batch));
+        assert_eq!(fetches.get(), 0, "a batch hit must not be refetched");
+        assert_eq!(
+            unvetted_detail_with(&missed, &batched, per_pr),
+            // `gh pr view` carries no thread count, so the refetched PR is gated on the per-PR walk.
+            Ok(UnvettedDetail {
+                detail: json!({"headRefOid": "refetched o/missed"}),
+                threads: None,
+            })
+        );
+        assert_eq!(fetches.get(), 1);
+    }
+
+    // THE FAILURE SEAM. A PR NEITHER read answered for aborts the whole state-load — it is never
+    // skipped, because a dropped PR reads as "nothing to vet" and a queue of them reports healthy.
+    #[test]
+    fn a_pr_neither_read_answered_for_aborts_the_state_load() {
+        let err = unvetted_detail_with(
+            &SubjectRef::new("o/gone", 3, "u", "t"),
+            &std::collections::HashMap::new(),
+            |_| None,
+        )
+        .expect_err("an unreadable PR must not yield a row");
+        assert!(
+            err.starts_with("error: `gh pr view o/gone#3` failed"),
+            "{err}"
+        );
+        assert!(err.contains("incomplete vet queue"), "{err}");
     }
 }
 
