@@ -144,6 +144,12 @@
     ],
     "ai:needs-work": [
       {
+        "repo": "S01-Issuer/st0x.deploy",
+        "number": 305,
+        "url": "https://github.com/S01-Issuer/st0x.deploy/pull/305",
+        "title": "Drop snapshot-generate-cmd: rainix owns the release freeze"
+      },
+      {
         "repo": "rainlanguage/rain.solmem",
         "number": 103,
         "url": "https://github.com/rainlanguage/rain.solmem/pull/103",
@@ -154,6 +160,12 @@
         "number": 101,
         "url": "https://github.com/rainlanguage/rain.solmem/pull/101",
         "title": "fix: guard the matrix itemCount unchecked sum and flatten allocation scaling (#62)"
+      },
+      {
+        "repo": "rainlanguage/rain.solmem",
+        "number": 100,
+        "url": "https://github.com/rainlanguage/rain.solmem/pull/100",
+        "title": "fix: guard the unchecked mul(_, 0x20) word scaling at both sites (#54)"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -740,18 +752,6 @@
     ],
     "ai:ready": [
       {
-        "repo": "S01-Issuer/st0x.deploy",
-        "number": 308,
-        "url": "https://github.com/S01-Issuer/st0x.deploy/pull/308",
-        "title": "codegen: use LibCodeGen.addressConstantString instead of a local copy"
-      },
-      {
-        "repo": "S01-Issuer/st0x.deploy",
-        "number": 305,
-        "url": "https://github.com/S01-Issuer/st0x.deploy/pull/305",
-        "title": "Drop snapshot-generate-cmd: rainix owns the release freeze"
-      },
-      {
         "repo": "cyclofinance/cyclo.site",
         "number": 435,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/435",
@@ -965,8 +965,14 @@
         ]
       },
       "un-vetted": {
-        "count": 88,
+        "count": 89,
         "prs": [
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 298,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/298",
+            "title": "/nm and /ncc send back what they can articulate"
+          },
           {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 295,
@@ -1533,8 +1539,14 @@
         }
       },
       "ai:needs-work": {
-        "count": 99,
+        "count": 101,
         "prs": [
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 305,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/305",
+            "title": "Drop snapshot-generate-cmd: rainix owns the release freeze"
+          },
           {
             "repo": "rainlanguage/rain.solmem",
             "number": 103,
@@ -1546,6 +1558,12 @@
             "number": 101,
             "url": "https://github.com/rainlanguage/rain.solmem/pull/101",
             "title": "fix: guard the matrix itemCount unchecked sum and flatten allocation scaling (#62)"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 100,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/100",
+            "title": "fix: guard the unchecked mul(_, 0x20) word scaling at both sites (#54)"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -2130,23 +2148,6 @@
             "title": "2023 12 23 anvil"
           }
         ]
-      },
-      "ai:ready": {
-        "count": 2,
-        "prs": [
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 308,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/308",
-            "title": "codegen: use LibCodeGen.addressConstantString instead of a local copy"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 305,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/305",
-            "title": "Drop snapshot-generate-cmd: rainix owns the release freeze"
-          }
-        ]
       }
     }
   },
@@ -2313,6 +2314,18 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 299,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/299",
+      "title": "next_leak exceeds the 120s MCP call timeout: 76 gh subprocesses at concurrency 8"
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 309,
+      "url": "https://github.com/rainlanguage/rainix/issues/309",
+      "title": "Cap the ratio of comment lines to source lines, charging non-doc comments only"
+    },
     {
       "repo": "rainlanguage/issue-pr-cron",
       "number": 291,
@@ -6266,14 +6279,6 @@
   ],
   "leaks": [
     {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 100,
-      "url": "https://github.com/rainlanguage/rain.solmem/pull/100",
-      "title": "fix: guard the unchecked mul(_, 0x20) word scaling at both sites (#54)",
-      "reason": "🤖 ai:producer  Rework of the 2026-08-08 ruling landed at `aa77568`. All 7 items of the rework note, in order:  1. **`LibStackPointer.unsafeList` guarded** — `src/lib/LibStackPointer.sol:148`, multiply hoisted into checked Solidity exactly as the candidate diff. 2. **`LibStackSentinel.consumeSentinelTuples` guarded** — `src/lib/LibStackSentinel.sol:181`, same treatment for `size := mul(n, 0x20)`. 3. **False documentation corrected, not supplemented** — three sites, not two: the NatSpec claim (`src/lib/LibStackSentinel.sol:109-128`), the inline comment beside the scan loop (`src/lib/LibStackSentinel.sol:185-191`), and a third instance of the same universal claim in the library preamble (`src/lib/LibStackSentinel.sol:71-75`) that the note did not name but that says the same untrue thing. All three rewritten to state what the guarded function actually does, including that an out of range `n` is **not** guaranteed to fail loudly while #110 is open. 4. **Both control tests pass, untouched** — the four repro files are byte-identical to `83db85b`, and the fix commit touches no test at all: both `git diff 83db85b..aa77568 -- test/src/lib/LibStackPointer.unsafeListWrap.t.sol test/src/lib/LibStackPointerWrapHarness.sol test/src/lib/LibStackSentinel.tupleSizeWrap.t.sol test/src/lib/LibStackSentinelWrapHarness.sol` and `git diff 064249b..aa77568 -- test/` are empty. 5. **Full suite** — `origin/main` merged in first (it had moved). 334 passed / 6 failed on the merge commit, so the merge masked nothing; **340 passed, 0 failed, 0 skipped (340 total)** with the guard, exit 0. 6. **Second defect filed separately** — #110, reproduced against this branch **with the guard applied**: `sentinelPointer` 64 bytes above `upper`, returns at 11,269 gas, no revert. 7. **Audited source drift stated in the PR body**, up top with a warning heading — Protofire-audited, ~23 downstreams, re-audit conversation and republish cascade visible now rather than at merge.  Mutation evidence, each guard broken individually with the full suite re-run:  | mutant | result | | --- | --- | | `unsafeList` scaling wrapped in `unchecked` | 337 passed, **3 failed** / 340, exit 1 — all 3 `LibStackPointerUnsafeListWrapTest` red tests fire with their original messages | | `consumeSentinelTuples` scaling wrapped in `unchecked` | 337 passed, **3 failed** / 340, exit 1 — all 3 `LibStackSentinelTupleSizeWrapTest` red tests fire with their original messages |  Both controls kept passing under both mutants, which is the expected asymmetry — they do not depend on the guard.  `pre-commit run --all-files` and `forge fmt --check` both clean. **This PR is no longer expected-red.** ",
-      "createdAt": "2026-07-25T21:32:37Z"
-    },
-    {
       "repo": "rainlanguage/rain.verify",
       "number": 31,
       "url": "https://github.com/rainlanguage/rain.verify/pull/31",
@@ -6283,29 +6288,29 @@
     }
   ],
   "counts": {
-    "unvetted": 88,
+    "unvetted": 89,
     "blockedOn": 20,
-    "ready": 2,
-    "needsWork": 99,
+    "ready": 0,
+    "needsWork": 101,
     "relink": 0,
     "design": 3,
     "blockedInfra": 0,
     "closeCandidateIssues": 3,
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
-    "leaks": 2,
+    "leaks": 1,
     "totalProducerPrs": 214,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 654,
+    "uncoveredIssues": 656,
     "designPresentable": 3,
     "designNoQuestion": 0,
-    "openIssues": 874
+    "openIssues": 875
   },
   "ages": {
     "openIssues": {
-      "meanDays": 284.1,
+      "meanDays": 283.8,
       "medianDays": 103.0,
-      "oldestDays": 1665.4
+      "oldestDays": 1665.5
     }
   }
 }
