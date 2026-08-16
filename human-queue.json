@@ -987,8 +987,14 @@
         ]
       },
       "un-vetted": {
-        "count": 49,
+        "count": 50,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.sol.codegen",
+            "number": 49,
+            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/49",
+            "title": "audit: record the adversarial mutation-test scan of sol-v0.1.6"
+          },
           {
             "repo": "rainlanguage/rain.sol.codegen",
             "number": 39,
@@ -6171,7 +6177,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 49,
+    "unvetted": 50,
     "blockedOn": 21,
     "ready": 2,
     "needsWork": 106,
@@ -6182,7 +6188,7 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 178,
+    "totalProducerPrs": 179,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 672,
     "designPresentable": 0,
@@ -6193,7 +6199,7 @@
     "openIssues": {
       "meanDays": 292.0,
       "medianDays": 104.3,
-      "oldestDays": 1665.7
+      "oldestDays": 1665.8
     }
   }
 }
