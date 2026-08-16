@@ -2904,8 +2904,11 @@ gh-timing: next_design: slowest 8200ms search issues
 ```
 
 A call line carries the child's wall time and enough argv to attribute it — the
-subcommand words plus the slug or api path, never the `--json` field list. A
-summary closes each span and names its slowest three. The span is one MCP TOOL
+subcommand words plus the slug, api path or graphql operands, never the `--json`
+field list. It prints AS THE CALL LANDS, so a run that is killed still leaves
+every call it made on the record and loses only the summary.
+
+A summary closes each span and names its slowest three. The span is one MCP TOOL
 CALL, because that is the unit a client waits on and times out; for a CLI run it
 is the subcommand.
 

@@ -322,9 +322,17 @@ const GH_TIMING_PREFIX: &str = "gh-timing:";
 /// How many of a span's slowest calls the summary names.
 const GH_TIMING_SLOWEST: usize = 3;
 
-/// Leading argv words a label keeps, and the longest token it will quote as a subject.
+/// Leading argv words a label keeps, how many subject tokens follow them, and the longest token it
+/// will quote as one.
 const GH_LABEL_WORDS: usize = 4;
+const GH_LABEL_SUBJECTS: usize = 3;
 const GH_LABEL_TOKEN_MAX: usize = 60;
+
+/// Flags a subcommand word can sit BEHIND. [`gh_api_result`] puts `--include` in front of the api
+/// path, so stopping the leading run at the first `-` labels every `gh api` call `api` and nothing
+/// more. Only value-LESS flags belong here: skipping one that takes a value admits the value as a
+/// subcommand word.
+const GH_LABEL_SKIP_FLAGS: [&str; 1] = ["--include"];
 
 /// Is the instrumentation on? Read per call rather than cached, so the answer is the environment
 /// the process actually has.
@@ -346,13 +354,14 @@ struct GhTiming {
 /// the MCP server — one process serving many tool calls, each of which reports and clears.
 static GH_TIMINGS: std::sync::Mutex<Vec<GhTiming>> = std::sync::Mutex::new(Vec::new());
 
-/// PURE: is this argv token the subject of the call — a slug or an api path?
+/// PURE: does this argv token name the SUBJECT of a call — a slug or api path (`repos/o/r/…`), or
+/// a graphql operand (`owner=o`, `repo=r`, `num=1`)?
 ///
-/// One word containing `/` and short. The whitespace test excludes
-/// `-H 'Accept: application/vnd.github.raw'`; the length test excludes a query or a body that
-/// happens to carry a slash.
+/// One short word carrying the separator. The whitespace test excludes
+/// `-H 'Accept: application/vnd.github.raw'`; the length test excludes a `query=` body and any
+/// other operand too long to be an identifier.
 fn gh_subject_token(arg: &str) -> bool {
-    arg.contains('/')
+    (arg.contains('/') || arg.contains('='))
         && !arg.starts_with('-')
         && arg.len() <= GH_LABEL_TOKEN_MAX
         && !arg.chars().any(char::is_whitespace)
@@ -361,20 +370,28 @@ fn gh_subject_token(arg: &str) -> bool {
 /// PURE: the part of a `gh` argv that says WHICH call this was.
 ///
 /// Never the whole array — a `--json` field list or a `-f body=…` is most of the argv and none of
-/// it distinguishes one call from another. The leading run of non-flag words carries
-/// `pr view <slug> <n>`; a subject reached through a flag (`-R <slug>`, `api --include repos/…`)
-/// comes from the second pass.
+/// it distinguishes one call from another. The leading run of words carries `pr view <slug> <n>`
+/// and `api graphql`; a subject reached through a flag (`-R <slug>`, `-f owner=<o>`) comes from the
+/// second pass, which runs only where the words named no path — a positional slug is the whole
+/// subject and a `-f body=…` beside it is not part of it.
 fn gh_call_label(args: &[&str]) -> String {
-    let mut words: Vec<&str> = args
-        .iter()
-        .copied()
-        .take_while(|a| !a.starts_with('-'))
-        .take(GH_LABEL_WORDS)
-        .collect();
-    if !words.iter().any(|w| w.contains('/')) {
-        if let Some(subject) = args.iter().copied().find(|a| gh_subject_token(a)) {
-            words.push(subject);
+    let mut words: Vec<&str> = Vec::new();
+    for arg in args.iter().copied() {
+        if GH_LABEL_SKIP_FLAGS.contains(&arg) {
+            continue;
         }
+        if arg.starts_with('-') || words.len() == GH_LABEL_WORDS {
+            break;
+        }
+        words.push(arg);
+    }
+    if !words.iter().any(|w| w.contains('/')) {
+        words.extend(
+            args.iter()
+                .copied()
+                .filter(|a| gh_subject_token(a))
+                .take(GH_LABEL_SUBJECTS),
+        );
     }
     if words.is_empty() {
         "gh".to_string()
@@ -524,6 +541,31 @@ mod gh_timing_tests {
                 "repos/rainlanguage/rainix/issues/9/comments"
             ]),
             "api repos/rainlanguage/rainix/issues/9/comments"
+        );
+    }
+
+    /// The shape EVERY [`gh_api_result`] call has. `--include` sits in front of the subcommand
+    /// word, and the subject is in the `-f` operands rather than in a path, so a label that stopped
+    /// at the first flag would read `api` for a graphql probe and `api` for a REST read alike.
+    #[test]
+    fn a_graphql_call_is_told_apart_from_the_rest_of_the_api() {
+        let query = "query=query($owner:String!,$repo:String!,$num:Int!)\
+                     {repository(owner:$owner,name:$repo){pullRequest(number:$num){number}}}";
+        assert_eq!(
+            gh_call_label(&[
+                "api",
+                "--include",
+                "graphql",
+                "-f",
+                query,
+                "-f",
+                "owner=rainlanguage",
+                "-f",
+                "repo=rain.orderbook",
+                "-F",
+                "num=123",
+            ]),
+            "api graphql owner=rainlanguage repo=rain.orderbook num=123"
         );
     }
 
