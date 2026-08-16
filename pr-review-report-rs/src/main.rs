@@ -8336,6 +8336,109 @@ const CAP_SOL_SHELL: &str = "sol-shell";
 /// work itself invokes it: a SHA here would prove a shell no clone ever enters.
 const SOL_SHELL_FLAKE: &str = "github:rainlanguage/rainix#sol-shell";
 
+// ---------------------------------------------------------------------------------------------
+// The `sol-shell` probe's GC ROOT (#323).
+//
+// [`SOL_SHELL_FLAKE`] is a REMOTE flake carrying the Solidity toolchain — nothing this repo
+// builds, so nothing this repo's own roots reach. Realising it and walking away leaves a 1.7 GiB
+// closure with no root, and this box collects on two independent triggers: a weekly
+// `nix-collect-garbage --delete-older-than 14d`, and `min-free`/`max-free` in `nix.conf`, which
+// collects MID-BUILD whenever free space dips. `keep-outputs`/`keep-derivations` preserve what is
+// reachable FROM a root and so do nothing here. Measured cost of a collected toolchain: 11m 26s
+// between the producer's usage gate and `campaign run START`, entirely inside the preflight.
+//
+// The root is taken BY THE PROBE, in the same `nix develop` that realises the closure, because
+// that is the only construction in which the rooted ref and the probed ref cannot drift: they are
+// one argv. A separate rooting step — a timer, a `nix build` elsewhere — names the flake a second
+// time, and a second spelling of `github:rainlanguage/rainix#sol-shell` is a second source of
+// truth for which shell this pipeline pays for.
+//
+// `--profile` rather than `--out-link`: `sol-shell` is a devShell, which `nix build` refuses to
+// build, and `nix develop --profile` is the documented way to keep one alive. The profile is a
+// real GC root (an indirect root under `/nix/var/nix/gcroots/auto`), so it survives both triggers.
+//
+// It is the PRODUCER's root and only the producer's. `review-run.sh` calls `preflight` with no
+// capability flags at all — the vetter is read-only on the filesystem, builds nothing, and pays
+// none of this — so this rooting is reached only through `--sol-shell`, which only the producer
+// passes.
+// ---------------------------------------------------------------------------------------------
+
+/// Where the `sol-shell` profile lives under the state dir. Not `~/.cache`: a cache is a thing
+/// something else is entitled to delete, and this is a root whose whole job is to be undeletable
+/// by the collector.
+const SOL_SHELL_GCROOT_REL: &str = "issue-pr-cron/gcroots/sol-shell";
+
+/// PURE: the profile path the `sol-shell` probe roots itself at, from the state-dir environment.
+/// `None` means take no root and probe exactly as before — a missed optimisation, never an abort.
+///
+/// Both inputs must be ABSOLUTE to be used. A relative one would resolve against the runner's cwd,
+/// which for the producer is `$WORK_DIR` — so a "root" could land inside a work clone, where
+/// `clone_release` and the nightly sweep delete it and the closure it was holding goes with it.
+/// An unrooted probe is a known 11 minutes; a root the sweep eats is the same 11 minutes plus the
+/// belief that it was fixed.
+fn sol_shell_gcroot(
+    xdg_state: Option<&std::ffi::OsStr>,
+    home: Option<&std::ffi::OsStr>,
+) -> Option<std::path::PathBuf> {
+    let abs = |v: Option<&std::ffi::OsStr>| -> Option<std::path::PathBuf> {
+        let p = std::path::PathBuf::from(v?);
+        (p.is_absolute() && p.as_os_str() != "/").then_some(p)
+    };
+    let state = match abs(xdg_state) {
+        Some(s) => s,
+        None => abs(home)?.join(".local").join("state"),
+    };
+    Some(state.join(SOL_SHELL_GCROOT_REL))
+}
+
+/// PURE: the `nix` argv the `sol-shell` probe runs, with or without a root to take.
+///
+/// One argv for both, so the ROOTED path is the probed path by construction. `--profile` is a
+/// `nix develop` flag and must sit before the installable; `-c forge --version` is what proves the
+/// capability, and it is unchanged — the exit status is still the whole signal.
+fn sol_shell_probe_args(gcroot: Option<&std::path::Path>) -> Vec<std::ffi::OsString> {
+    let mut args: Vec<std::ffi::OsString> = vec!["develop".into()];
+    if let Some(p) = gcroot {
+        args.push("--profile".into());
+        args.push(p.into());
+    }
+    args.push(SOL_SHELL_FLAKE.into());
+    args.push("-c".into());
+    args.push("forge".into());
+    args.push("--version".into());
+    args
+}
+
+/// PURE: an argv rendered back as the command line a human can paste.
+///
+/// The failure message must name the command that ACTUALLY ran. A message quoting the unrooted
+/// spelling while the rooted one failed sends whoever reads it to a command that works, which is
+/// the worst possible answer to "why did the gate abort".
+fn probe_command_line(bin: &str, args: &[std::ffi::OsString]) -> String {
+    let mut s = bin.to_string();
+    for a in args {
+        s.push(' ');
+        s.push_str(&a.to_string_lossy());
+    }
+    s
+}
+
+/// PURE: the preflight line reporting what happened to the GC root.
+///
+/// It is a NOTE, not a verdict: an unrooted probe still satisfies the capability, so this never
+/// reaches `missing=` and never aborts a run. It is on stdout because stdout is what
+/// `campaign-run.sh` tees into `campaign.log`, which is the log the 11-minute measurement was read
+/// out of — so the next reader can see whether the root was there without reconstructing anything.
+fn sol_shell_gcroot_line(outcome: Result<&std::path::Path, &str>) -> String {
+    match outcome {
+        Ok(p) => format!("root    {CAP_SOL_SHELL:<10} {}", p.display()),
+        Err(why) => format!(
+            "root    {CAP_SOL_SHELL:<10} NOT TAKEN ({why}); the rainix closure stays collectable \
+             and the next cold run pays ~11m in preflight"
+        ),
+    }
+}
+
 /// PURE: what `gh auth status` says about the token this run would write through. `None` = the
 /// capability holds; `Some(reason)` is what the abort reports.
 ///
@@ -8398,7 +8501,10 @@ fn gh_token_scopes(out: &str) -> Option<Vec<String>> {
 /// signal — a shell that cannot be realised, and a `forge` that cannot run inside one, both fail
 /// non-zero, and asserting on the version banner's wording would fail a working forge that
 /// reworded it.
-fn sol_shell_unsatisfied(code: Option<i32>, out: &str) -> Option<String> {
+///
+/// `cmd` is the command that ACTUALLY ran, rendered by [`probe_command_line`], because the probe's
+/// argv now varies with whether a GC root could be placed.
+fn sol_shell_unsatisfied(cmd: &str, code: Option<i32>, out: &str) -> Option<String> {
     if code == Some(0) {
         return None;
     }
@@ -8408,9 +8514,33 @@ fn sol_shell_unsatisfied(code: Option<i32>, out: &str) -> Option<String> {
         .rfind(|l| !l.is_empty())
         .unwrap_or("no output");
     Some(match code {
-        Some(c) => format!("`nix develop {SOL_SHELL_FLAKE} -c forge --version` exited {c}: {last}"),
-        None => format!("`nix develop {SOL_SHELL_FLAKE} -c forge --version` did not run: {last}"),
+        Some(c) => format!("`{cmd}` exited {c}: {last}"),
+        None => format!("`{cmd}` did not run: {last}"),
     })
+}
+
+/// PURE: the note a failed generation prune leaves, or `None` when it worked.
+///
+/// A prune failure is NEVER a gate failure — the root is placed, the run is fast, and the only
+/// cost is store space that the next successful prune reclaims. Reporting it is what stops that
+/// from being a silent accumulation.
+fn sol_shell_prune_note(cmd: &str, code: Option<i32>, out: &str) -> Option<String> {
+    if code == Some(0) {
+        return None;
+    }
+    let last = out
+        .lines()
+        .map(str::trim)
+        .rfind(|l| !l.is_empty())
+        .unwrap_or("no output");
+    Some(format!(
+        "root    {CAP_SOL_SHELL:<10} superseded generations NOT pruned (`{cmd}` {}): they stay \
+         rooted and hold a closure this pipeline no longer enters",
+        match code {
+            Some(c) => format!("exited {c}: {last}"),
+            None => format!("did not run: {last}"),
+        }
+    ))
 }
 
 /// `preflight`: resolve every [`HARNESS_TOOLS`] entry against the process's own `$PATH`, probe each
@@ -8426,23 +8556,63 @@ fn sol_shell_unsatisfied(code: Option<i32>, out: &str) -> Option<String> {
 /// report is a pure function of what they said.
 fn preflight_mode(gh_auth: bool, sol_shell: bool) -> i32 {
     let mut caps: Vec<(&str, Option<String>)> = Vec::new();
+    let mut notes: Vec<String> = Vec::new();
     if gh_auth {
         let (code, out) = run_probe("gh", &["auth", "status"]);
         caps.push((CAP_GH_AUTH, gh_auth_unsatisfied(code, &out)));
     }
     if sol_shell {
-        let (code, out) = run_probe(
-            "nix",
-            &["develop", SOL_SHELL_FLAKE, "-c", "forge", "--version"],
-        );
-        caps.push((CAP_SOL_SHELL, sol_shell_unsatisfied(code, &out)));
+        // The root is an OPTIMISATION, so every way of failing to place one degrades to the
+        // unrooted probe this used to be. A capability the box can satisfy must never be failed by
+        // a directory this code could not create.
+        let gcroot: Result<std::path::PathBuf, String> = match sol_shell_gcroot(
+            std::env::var_os("XDG_STATE_HOME").as_deref(),
+            std::env::var_os("HOME").as_deref(),
+        ) {
+            None => Err("neither XDG_STATE_HOME nor HOME is an absolute path".to_string()),
+            Some(p) => match p.parent() {
+                None => Err(format!("{} has no parent directory", p.display())),
+                Some(dir) => std::fs::create_dir_all(dir)
+                    .map(|()| p.clone())
+                    .map_err(|e| format!("{}: {e}", dir.display())),
+            },
+        };
+        let args = sol_shell_probe_args(gcroot.as_deref().ok());
+        let (code, out) = run_probe("nix", &args);
+        caps.push((
+            CAP_SOL_SHELL,
+            sol_shell_unsatisfied(&probe_command_line("nix", &args), code, &out),
+        ));
+        notes.push(sol_shell_gcroot_line(
+            gcroot.as_deref().map_err(String::as_str),
+        ));
+        // Only after a probe that actually realised something: a prune over a profile the failed
+        // probe never wrote is noise about a root that is not there.
+        if let (Some(0), Ok(p)) = (code, &gcroot) {
+            let prune: Vec<std::ffi::OsString> = vec![
+                "--profile".into(),
+                p.into(),
+                "--delete-generations".into(),
+                "old".into(),
+            ];
+            let (pcode, pout) = run_probe("nix-env", &prune);
+            notes.extend(sol_shell_prune_note(
+                &probe_command_line("nix-env", &prune),
+                pcode,
+                &pout,
+            ));
+        }
     }
-    preflight_report(&std::env::var_os("PATH").unwrap_or_default(), &caps)
+    preflight_report(&std::env::var_os("PATH").unwrap_or_default(), &caps, &notes)
 }
 
 /// Run a capability probe, returning its exit code (`None` if it could not be spawned at all) and
 /// its combined output. Combined because `gh` and `nix` both report the interesting part on stderr.
-fn run_probe(bin: &str, args: &[&str]) -> (Option<i32>, String) {
+///
+/// Generic over the argument type so a fixed `&["auth", "status"]` and a computed
+/// `Vec<OsString>` — the `sol-shell` probe's argv varies with whether it can take a GC root —
+/// reach the same spawn.
+fn run_probe<S: AsRef<std::ffi::OsStr>>(bin: &str, args: &[S]) -> (Option<i32>, String) {
     match Command::new(bin).args(args).output() {
         Ok(o) => {
             let mut s = String::from_utf8_lossy(&o.stdout).into_owned();
@@ -8453,8 +8623,12 @@ fn run_probe(bin: &str, args: &[&str]) -> (Option<i32>, String) {
     }
 }
 
-fn preflight_report(path: &std::ffi::OsStr, caps: &[(&str, Option<String>)]) -> i32 {
-    let (code, lines, missing) = preflight_lines(path, caps);
+fn preflight_report(
+    path: &std::ffi::OsStr,
+    caps: &[(&str, Option<String>)],
+    notes: &[String],
+) -> i32 {
+    let (code, lines, missing) = preflight_lines(path, caps, notes);
     for l in &lines {
         println!("{l}");
     }
@@ -8472,9 +8646,15 @@ fn preflight_report(path: &std::ffi::OsStr, caps: &[(&str, Option<String>)]) -> 
 ///
 /// Everything the gate DECIDES lives here, over a PATH and a set of already-taken probe verdicts,
 /// so the decision is testable without a process and without a network.
+///
+/// `notes` are lines the gate REPORTS and does not decide on — the `sol-shell` GC root's fate is
+/// the only one so far. They are carried here rather than printed beside this function so that one
+/// function owns preflight's stdout, and they are deliberately kept out of `missing`: a note that
+/// could abort a run would be a verdict wearing a note's name.
 fn preflight_lines(
     path: &std::ffi::OsStr,
     caps: &[(&str, Option<String>)],
+    notes: &[String],
 ) -> (i32, Vec<String>, Vec<String>) {
     let mut missing: Vec<String> = Vec::new();
     let mut lines: Vec<String> = Vec::new();
@@ -8496,6 +8676,7 @@ fn preflight_lines(
             }
         }
     }
+    lines.extend(notes.iter().cloned());
     if missing.is_empty() {
         return (0, lines, missing);
     }
@@ -77205,16 +77386,16 @@ mod closure_gate_tests {
         }
         let path = std::ffi::OsString::from(bin.to_string_lossy().to_string());
         assert_eq!(
-            preflight_report(&path, &[]),
+            preflight_report(&path, &[], &[]),
             0,
             "a PATH carrying every declared tool satisfies preflight"
         );
         // Drop one and the same code says so — this is the exact question `closure-preflight`
         // asks of each runner's baked PATH, so the two cannot answer differently.
         std::fs::remove_file(bin.join(HARNESS_TOOLS[0].bin)).unwrap();
-        assert_eq!(preflight_report(&path, &[]), CLOSURE_UNSATISFIED);
+        assert_eq!(preflight_report(&path, &[], &[]), CLOSURE_UNSATISFIED);
         assert_eq!(
-            preflight_report(&std::ffi::OsString::new(), &[]),
+            preflight_report(&std::ffi::OsString::new(), &[], &[]),
             CLOSURE_UNSATISFIED,
             "an empty environment resolves nothing"
         );
@@ -77229,7 +77410,7 @@ mod closure_gate_tests {
         }
         let path = std::ffi::OsString::from(bin.to_string_lossy().to_string());
         assert_eq!(
-            preflight_report(&path, &[(CAP_GH_AUTH, None), (CAP_SOL_SHELL, None)]),
+            preflight_report(&path, &[(CAP_GH_AUTH, None), (CAP_SOL_SHELL, None)], &[]),
             0,
             "every tool present and every capability holding is the passing case"
         );
@@ -77241,12 +77422,13 @@ mod closure_gate_tests {
                 &[
                     (CAP_GH_AUTH, Some("expired".to_string())),
                     (CAP_SOL_SHELL, None)
-                ]
+                ],
+                &[]
             ),
             CLOSURE_UNSATISFIED
         );
         assert_eq!(
-            preflight_report(&path, &[(CAP_SOL_SHELL, Some("no forge".to_string()))]),
+            preflight_report(&path, &[(CAP_SOL_SHELL, Some("no forge".to_string()))], &[]),
             CLOSURE_UNSATISFIED
         );
     }
@@ -77264,7 +77446,7 @@ mod closure_gate_tests {
         }
         let path = std::ffi::OsString::from(bin.to_string_lossy().to_string());
         let (code, lines, missing) =
-            preflight_lines(&path, &[(CAP_GH_AUTH, Some("expired".to_string()))]);
+            preflight_lines(&path, &[(CAP_GH_AUTH, Some("expired".to_string()))], &[]);
         assert_eq!(code, CLOSURE_UNSATISFIED);
         assert_eq!(missing, vec![CAP_GH_AUTH.to_string()]);
         assert!(
@@ -77342,19 +77524,213 @@ mod closure_gate_tests {
 
     #[test]
     fn the_sol_shell_probe_is_its_exit_status() {
-        assert_eq!(sol_shell_unsatisfied(Some(0), "forge Version: 1.3.0"), None);
+        let cmd = probe_command_line("nix", &sol_shell_probe_args(None));
         assert_eq!(
-            sol_shell_unsatisfied(Some(0), "some other banner"),
+            sol_shell_unsatisfied(&cmd, Some(0), "forge Version: 1.3.0"),
+            None
+        );
+        assert_eq!(
+            sol_shell_unsatisfied(&cmd, Some(0), "some other banner"),
             None,
             "a working forge that reworded its banner still works"
         );
-        let why = sol_shell_unsatisfied(Some(1), "error: unable to download 'rainix'\n")
+        let why = sol_shell_unsatisfied(&cmd, Some(1), "error: unable to download 'rainix'\n")
             .expect("a shell that cannot be realised is unsatisfied");
         assert!(why.contains("exited 1"), "{why}");
         assert!(why.contains("unable to download"), "{why}");
         assert!(
-            sol_shell_unsatisfied(None, "nix not found").is_some(),
+            sol_shell_unsatisfied(&cmd, None, "nix not found").is_some(),
             "a nix that could not be spawned is unsatisfied"
+        );
+    }
+
+    // ---- the sol-shell GC root (#323) ----
+
+    #[test]
+    fn the_probe_roots_the_very_shell_it_probes() {
+        // The whole defect: the closure the preflight realises has no GC root, so the collector
+        // takes it and the next cold producer run pays 11m 26s before `campaign run START`. The
+        // root is only a fix if it holds THE SAME flake reference the probe realises — rooting a
+        // pinned `rainix/<sha>#sol-shell` while probing the unpinned HEAD roots a closure no run
+        // enters and leaves the measured one collectable. One argv is what makes that
+        // unexpressible, so the test reads the argv.
+        let root = std::path::Path::new("/state/issue-pr-cron/gcroots/sol-shell");
+        let rooted = sol_shell_probe_args(Some(root));
+        let bare = sol_shell_probe_args(None);
+
+        let pos = |args: &[std::ffi::OsString], want: &str| {
+            args.iter().position(|a| a == std::ffi::OsStr::new(want))
+        };
+        assert_eq!(
+            pos(&rooted, SOL_SHELL_FLAKE),
+            pos(&bare, SOL_SHELL_FLAKE).map(|i| i + 2),
+            "rooted or not, the installable is the same one — only `--profile <path>` is inserted"
+        );
+        assert_eq!(
+            pos(&rooted, "--profile").map(|i| i + 1),
+            Some(
+                rooted
+                    .iter()
+                    .position(|a| a == root.as_os_str())
+                    .expect("the profile path is in the argv")
+            ),
+            "`--profile` takes the root path as its own argument"
+        );
+        assert!(
+            pos(&rooted, "--profile") < pos(&rooted, SOL_SHELL_FLAKE),
+            "`--profile` is a `nix develop` flag and must precede the installable: {rooted:?}"
+        );
+        assert!(
+            pos(&rooted, "-c") > pos(&rooted, SOL_SHELL_FLAKE),
+            "`-c forge --version` still runs INSIDE the shell, so the exit status still proves the \
+             capability: {rooted:?}"
+        );
+        assert_eq!(
+            bare,
+            ["develop", SOL_SHELL_FLAKE, "-c", "forge", "--version"]
+                .map(std::ffi::OsString::from)
+                .to_vec(),
+            "with nowhere to put a root the probe is byte-for-byte the one that shipped before"
+        );
+    }
+
+    #[test]
+    fn a_gc_root_is_only_ever_placed_at_an_absolute_path() {
+        use std::ffi::OsStr;
+        assert_eq!(
+            sol_shell_gcroot(Some(OsStr::new("/var/state")), Some(OsStr::new("/home/u"))),
+            Some(std::path::PathBuf::from("/var/state").join(SOL_SHELL_GCROOT_REL)),
+            "an absolute XDG_STATE_HOME is the state dir"
+        );
+        assert_eq!(
+            sol_shell_gcroot(None, Some(OsStr::new("/home/u"))),
+            Some(
+                std::path::PathBuf::from("/home/u")
+                    .join(".local/state")
+                    .join(SOL_SHELL_GCROOT_REL)
+            ),
+            "without one, the XDG default under HOME"
+        );
+        // The reason this is not merely tidiness: the producer's cwd is $WORK_DIR, so a relative
+        // root resolves INSIDE a work clone — where `clone_release` and the nightly sweep delete
+        // it, taking the closure with it. That is the 11 minutes back, plus a log line claiming a
+        // root was placed.
+        for bad in ["", "state", "./state", "../state", "~/state"] {
+            assert_eq!(
+                sol_shell_gcroot(Some(OsStr::new(bad)), None),
+                None,
+                "a non-absolute XDG_STATE_HOME ({bad:?}) is no place for a root"
+            );
+        }
+        for bad in ["", "home", "./home"] {
+            assert_eq!(
+                sol_shell_gcroot(None, Some(OsStr::new(bad))),
+                None,
+                "a non-absolute HOME ({bad:?}) is no place for a root"
+            );
+        }
+        assert_eq!(
+            sol_shell_gcroot(Some(OsStr::new("relative")), Some(OsStr::new("/home/u"))),
+            Some(
+                std::path::PathBuf::from("/home/u")
+                    .join(".local/state")
+                    .join(SOL_SHELL_GCROOT_REL)
+            ),
+            "an unusable XDG_STATE_HOME falls through to HOME rather than giving up on a root"
+        );
+        assert_eq!(
+            sol_shell_gcroot(None, None),
+            None,
+            "with no state dir at all there is no root to place — and no abort either"
+        );
+    }
+
+    #[test]
+    fn the_root_is_reported_but_never_gates_the_run() {
+        // A capability the box satisfies must not be failed by a directory this code could not
+        // create. `notes` therefore land on stdout — the same stream `campaign-run.sh` tees into
+        // campaign.log, where the 11-minute measurement was read — and never in `missing`, which
+        // is the list that aborts the run and records a ToolingFailure.
+        let s = Scratch::new("preflight-gcroot-note");
+        let bin = s.bindir("bin");
+        for t in HARNESS_TOOLS {
+            s.stub(&bin, t.bin, "#!/bin/sh\nexit 0\n");
+        }
+        let path = std::ffi::OsString::from(bin.to_string_lossy().to_string());
+        let taken = sol_shell_gcroot_line(Ok(std::path::Path::new("/state/gcroots/sol-shell")));
+        let (code, lines, missing) = preflight_lines(
+            &path,
+            &[(CAP_SOL_SHELL, None)],
+            std::slice::from_ref(&taken),
+        );
+        assert_eq!(code, 0);
+        assert!(missing.is_empty(), "a note is not a missing dependency");
+        assert!(lines.contains(&taken), "and it is reported: {lines:?}");
+
+        let not_taken = sol_shell_gcroot_line(Err("read-only file system"));
+        let (code, lines, missing) = preflight_lines(
+            &path,
+            &[(CAP_SOL_SHELL, None)],
+            std::slice::from_ref(&not_taken),
+        );
+        assert_eq!(
+            code, 0,
+            "and a root that could NOT be placed still passes the gate: the probe worked, the run \
+             is merely slow next time"
+        );
+        assert!(missing.is_empty());
+        assert!(lines.contains(&not_taken));
+        assert!(
+            !lines.iter().any(|l| l.starts_with("missing=")),
+            "no missing= line at all when nothing is missing: {lines:?}"
+        );
+        assert!(
+            not_taken.contains("NOT TAKEN") && not_taken.contains("read-only file system"),
+            "an unplaced root says so, and says why: {not_taken}"
+        );
+    }
+
+    #[test]
+    fn a_failed_probe_reports_the_command_that_actually_ran() {
+        // The rooted argv is not the argv this used to run. A message quoting the old unrooted
+        // spelling while the rooted one failed sends whoever reads campaign.log to a command that
+        // succeeds — the worst available answer to "why did the gate abort".
+        let root = std::path::Path::new("/state/issue-pr-cron/gcroots/sol-shell");
+        let cmd = probe_command_line("nix", &sol_shell_probe_args(Some(root)));
+        let why = sol_shell_unsatisfied(&cmd, Some(1), "error: opening lock file: EROFS\n")
+            .expect("a probe that exited 1 is unsatisfied");
+        assert!(
+            why.contains(&root.display().to_string()),
+            "the reported command carries the profile it was given: {why}"
+        );
+        assert!(why.contains("--profile"), "{why}");
+        assert!(why.contains(SOL_SHELL_FLAKE), "{why}");
+        assert!(why.contains("EROFS"), "{why}");
+    }
+
+    #[test]
+    fn superseded_generations_are_reported_when_they_cannot_be_pruned() {
+        // `nix develop --profile` reuses its generation while the realised shell is unchanged, but
+        // creates a new one the moment rainix HEAD moves — and the superseded generation stays a
+        // GC ROOT holding ~1.7 GiB the pipeline will never enter again. Trading an 11-minute stall
+        // for unbounded growth on the volume `min-free` watches is the same bug with the sign
+        // flipped, so a prune that did not happen is stated rather than assumed.
+        assert_eq!(
+            sol_shell_prune_note("nix-env --profile /p --delete-generations old", Some(0), ""),
+            None,
+            "a prune that worked is not news"
+        );
+        let note = sol_shell_prune_note(
+            "nix-env --profile /p --delete-generations old",
+            Some(1),
+            "error: cannot lock profile\n",
+        )
+        .expect("a prune that failed is reported");
+        assert!(note.contains("NOT pruned"), "{note}");
+        assert!(note.contains("cannot lock profile"), "{note}");
+        assert!(
+            sol_shell_prune_note("nix-env …", None, "no such file").is_some(),
+            "a nix-env that could not be spawned is reported too"
         );
     }
 

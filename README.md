@@ -3637,6 +3637,51 @@ substrings, so `public_repo` does not satisfy `repo`. Where `gh` reports no
 scopes line at all (token kinds that carry none), the gate passes: absence of
 evidence is not evidence, and a false abort here costs a whole tick.
 
+#### The `sol-shell` probe takes the GC root, because it is what realises it
+
+`SOL_SHELL_FLAKE` is `github:rainlanguage/rainix#sol-shell` — a **remote** flake
+carrying the Solidity toolchain, nothing this repo builds and nothing this
+repo's own roots reach. The probe realised its ~1.7 GiB closure and walked away,
+so the collector took it, and the next producer run rebuilt it **in preflight,
+before `campaign run START`**. Measured on 2026-08-16: 11m 26s between the
+`usage-gate` line and `START`, against 1s on the warm run at 17:01 (#323).
+
+Two collectors, so a timer-only answer would not have held: the weekly
+`nix-collect-garbage --delete-older-than 14d`, and `min-free`/`max-free` in
+`nix.conf`, which collect **mid-build** whenever free space dips.
+`keep-outputs`/`keep-derivations` preserve what is reachable FROM a root and did
+nothing here, because there was no root to be reachable from.
+
+The probe now runs `nix develop --profile <root> …` — the same command, one flag
+wider — and that profile is a real GC root. Two properties are the point:
+
+- **The rooted ref cannot drift from the probed ref**, because they are one
+  argv. A separate rooting step (a timer, a `nix build` elsewhere) would spell
+  `github:rainlanguage/rainix#sol-shell` a second time, and a second spelling is
+  a second source of truth for which shell the pipeline pays for. It matters
+  here more than most: the org's Solidity CHECKS run at
+  `github:rainlanguage/rainix/<RAINIX_SHA>#sol-shell`, resolved per checkout —
+  so rooting a pinned ref would root a shell the preflight never enters and
+  leave the measured one collectable.
+- **A root that cannot be placed is not a failure.** No absolute
+  `XDG_STATE_HOME` or `HOME`, an uncreatable directory — each degrades to the
+  unrooted probe that shipped before, and says so on a `root` line in
+  `campaign.log` beside the `ok sol-shell` one. A note is never in `missing=`:
+  the capability holds either way, and the only cost of an unplaced root is that
+  the next cold run is slow again.
+
+The root lives at `$XDG_STATE_HOME/issue-pr-cron/gcroots/sol-shell` (default
+`~/.local/state/…`), and superseded generations are pruned after each successful
+probe. `nix develop --profile` reuses its generation while the realised shell is
+unchanged, but makes a new one when rainix HEAD moves — and the old generation
+stays a root holding a closure nothing enters again. Trading an 11-minute stall
+for unbounded growth on the volume `min-free` watches would be the same bug with
+its sign flipped.
+
+**Producer only.** `review-run.sh` passes no capability flags at all, so the
+vetter never realises this shell and pays none of this — the same asymmetry the
+section above states, one consequence further on.
+
 ### The producer's state-load is one pre-grouped result
 
 `pr-review-report state-load` composes `worklist` and `uncovered-issues` and
