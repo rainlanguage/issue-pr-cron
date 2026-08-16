@@ -38109,6 +38109,1131 @@ fn token_profile_mode(path: &str, json: bool) -> i32 {
     0
 }
 
+// ---------------------------------------------------------------------------------------------
+// `/nr` PHASE INSTRUMENTATION (#315).
+//
+// #315 decomposed ONE `/nr` run by hand off a session transcript, and that decomposition is the
+// evidence under everything else in the issue — the audit skill at 41% of the wall, the
+// independent read the gate exists for at 22% of the output. The same issue's finding 3 is that 2
+// of the 4 runs that day did not follow the protocol at all, so the decomposition is n=1 and the
+// issue orders instrumentation FIRST for that reason. This is that instrument.
+//
+// It reads a transcript after the fact rather than being something `/nr` emits mid-run, and both
+// halves of that are forced. The command's grant is typed tool calls with "no shell at all", so it
+// can invoke nothing; and a turn's `output_tokens` is not knowable to the turn producing it.
+//
+// TWO CUTS, NOT ONE. #315's table uses both without saying so, and they disagree by exactly one
+// call in two places. Wall clock is CONTINUOUS: the run is in the checkout phase from the instant
+// `pr_checkout` fires. Output tokens are QUANTIZED TO A TURN: one turn carries one `usage` record,
+// so the turn that spent 2,871 tokens on the independent read and then fired `pr_checkout` in its
+// last block cannot be split, and those tokens are the read's. The cuts therefore fall one call
+// apart wherever a phase's opening call is a TRAILING call on the previous phase's turn — which is
+// what `pr_checkout` (step 5's first bullet) and `clone_release` (step 6) are, and what
+// `next_ready` / `pr_context` / the `Skill` invoke are not.
+//
+// OUTPUT TOKENS ARE READ HERE, and the `UsageProbe` section comment says they are not recoverable.
+// Both hold, of different files. In a `runs/*.jsonl` stream-json trace `output_tokens` is a
+// message-START snapshot — 2-5 on a message that went on to emit ~1,100 — so the deduped sum is
+// 0.2%-20.6% of the terminal `result.usage`. A session transcript is written per COMPLETED content
+// block and its `output_tokens` tracks the message: over the 979 main-thread messages of
+// `0fd06efc`, reported output against rendered content bytes is a median 3.0 bytes per token (p10
+// 1.98, p90 3.91), which a start snapshot cannot produce. A session transcript carries no `result`
+// event, so there is no terminal total to check against and no figure from this reader may be
+// compared with one from a run trace.
+// ---------------------------------------------------------------------------------------------
+
+/// What a `/nr` invocation looks like in a session transcript. Both spellings, because the plugin
+/// name is only required where the command name collides across plugins.
+const NR_COMMAND_MARKERS: &[&str] = &[
+    "<command-name>/human-fsm:nr</command-name>",
+    "<command-name>/nr</command-name>",
+];
+
+/// The tools `/nr` grants (its own frontmatter, plus `ToolSearch`, which is the harness's
+/// deferred-tool loader and is what the issue's `setup` phase is made of). Anything else in a run
+/// is off-protocol — `Bash` above all, which the command forbids in as many words and which the
+/// 07:57 run used anyway.
+const NR_GRANTED_TOOLS: &[&str] = &[
+    "ToolSearch",
+    "Read",
+    "Skill",
+    "next_ready",
+    "pr_context",
+    "pr_checkout",
+    "clone_release",
+    "human_rule",
+];
+
+/// The calls steps 1-6 make. A run missing any of them is not a sample of the protocol, which is
+/// the distinction finding 3 needed and nothing was drawing.
+const NR_REQUIRED_CALLS: &[&str] = &[
+    "next_ready",
+    "pr_context",
+    "pr_checkout",
+    "Skill",
+    "clone_release",
+];
+
+/// The skill `/nr` step 5 names. A `Skill` call for anything else is a lens that was not this one.
+const NR_AUDIT_SKILL: &str = "audit";
+
+/// The phases of one `/nr` run, in the order the command's own numbered steps run them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NrPhase {
+    Setup,
+    Queue,
+    Context,
+    Lens,
+    Audit,
+    Report,
+}
+
+impl NrPhase {
+    const ALL: [NrPhase; 6] = [
+        NrPhase::Setup,
+        NrPhase::Queue,
+        NrPhase::Context,
+        NrPhase::Lens,
+        NrPhase::Audit,
+        NrPhase::Report,
+    ];
+
+    fn key(self) -> &'static str {
+        match self {
+            NrPhase::Setup => "setup",
+            NrPhase::Queue => "queue",
+            NrPhase::Context => "context",
+            NrPhase::Lens => "lens",
+            NrPhase::Audit => "audit",
+            NrPhase::Report => "report",
+        }
+    }
+
+    /// The issue's own row labels, so a reader can hold the two tables side by side.
+    fn label(self) -> &'static str {
+        match self {
+            NrPhase::Setup => "setup / ToolSearch",
+            NrPhase::Queue => "next_ready",
+            NrPhase::Context => "pr_context + independent read",
+            NrPhase::Lens => "pr_checkout + skill invoke",
+            NrPhase::Audit => "audit skill",
+            NrPhase::Report => "final report",
+        }
+    }
+
+    /// The call whose firing moves the WALL clock into this phase. `None` for `Setup`, which the
+    /// `/nr` invocation itself opens.
+    fn wall_call(self) -> Option<&'static str> {
+        match self {
+            NrPhase::Setup => None,
+            NrPhase::Queue => Some("next_ready"),
+            NrPhase::Context => Some("pr_context"),
+            NrPhase::Lens => Some("pr_checkout"),
+            NrPhase::Audit => Some("Skill"),
+            NrPhase::Report => Some("clone_release"),
+        }
+    }
+}
+
+/// Why a run stopped — the difference between a run that finished and one the human cut off, which
+/// decides whether its numbers belong in a series at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NrEnd {
+    /// The human spoke again.
+    Human,
+    /// Another slash command started.
+    Command,
+    /// The transcript ended. A live session's newest run always reads this way.
+    Eof,
+}
+
+impl NrEnd {
+    fn key(self) -> &'static str {
+        match self {
+            NrEnd::Human => "human",
+            NrEnd::Command => "command",
+            NrEnd::Eof => "eof",
+        }
+    }
+}
+
+/// One main-thread turn: a `message.id`, however many events the transcript wrote it across.
+#[derive(Debug, Clone, PartialEq)]
+struct NrTurn {
+    id: String,
+    /// First and last event of the turn. Events are written as each content block COMPLETES, so
+    /// `first_ms` is when the turn's first block landed — the instant #315's wall column cuts on.
+    first_ms: i64,
+    last_ms: i64,
+    /// When the turn BEGAN: the timestamp of the event before it, a tool result or the `/nr`
+    /// invocation. The fallback boundary for a phase whose opening call never fired.
+    began_ms: i64,
+    output_tokens: u64,
+    cache_read: u64,
+    /// Every `tool_use` block, in order, un-deduped — the same rule [`token_profile`] counts calls
+    /// by, because a streamed message carries a different content block per event.
+    tools: Vec<String>,
+}
+
+/// One `/nr` invocation and everything the main loop did under it.
+#[derive(Debug, Clone, PartialEq)]
+struct NrRun {
+    started_at: String,
+    started_ms: i64,
+    turns: Vec<NrTurn>,
+    /// The `skill` argument of every `Skill` call, so "invoked a skill" and "invoked THE skill" stay
+    /// distinguishable.
+    skills: Vec<String>,
+    ended_by: NrEnd,
+}
+
+impl NrRun {
+    /// The run's last instant. A run with no turns at all is zero-width at its invocation.
+    fn ended_ms(&self) -> i64 {
+        self.turns.last().map_or(self.started_ms, |t| t.last_ms)
+    }
+
+    fn output_tokens(&self) -> u64 {
+        self.turns.iter().map(|t| t.output_tokens).sum()
+    }
+
+    fn tool_calls(&self) -> usize {
+        self.turns.iter().map(|t| t.tools.len()).sum()
+    }
+
+    /// The peak `cache_read_input_tokens` — #315's finding 2 in one number: what the run re-read on
+    /// its widest turn, none of which is about the PR.
+    fn peak_context(&self) -> u64 {
+        self.turns.iter().map(|t| t.cache_read).max().unwrap_or(0)
+    }
+
+    /// The first turn that made this call.
+    fn first_call(&self, tool: &str) -> Option<usize> {
+        self.turns.iter().position(|t| t.tools.iter().any(|x| x == tool))
+    }
+
+    /// Required calls that never fired.
+    fn missing_calls(&self) -> Vec<&'static str> {
+        NR_REQUIRED_CALLS
+            .iter()
+            .copied()
+            .filter(|c| self.first_call(c).is_none())
+            .collect()
+    }
+
+    /// Tools used outside the command's grant, with how often.
+    fn off_protocol(&self) -> Vec<(String, usize)> {
+        let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+        for t in self.turns.iter().flat_map(|t| t.tools.iter()) {
+            if !NR_GRANTED_TOOLS.contains(&t.as_str()) {
+                *counts.entry(t.clone()).or_default() += 1;
+            }
+        }
+        counts.into_iter().collect()
+    }
+
+    fn audit_invoked(&self) -> bool {
+        self.skills.iter().any(|s| s == NR_AUDIT_SKILL)
+    }
+
+    /// A run whose numbers are a sample of the protocol rather than of something else.
+    fn conforming(&self) -> bool {
+        self.missing_calls().is_empty() && self.off_protocol().is_empty() && self.audit_invoked()
+    }
+}
+
+/// One phase of one run, under both cuts.
+#[derive(Debug, Clone, PartialEq)]
+struct NrPhaseStat {
+    phase: NrPhase,
+    wall_ms: i64,
+    output_tokens: u64,
+    turns: usize,
+    /// The phase's opening call fired, so its wall boundary is that call's own instant rather than
+    /// the fallback. False marks a boundary a reader should not lean on.
+    called: bool,
+}
+
+/// PURE: normalise a tool name to the thing the protocol talks about.
+///
+/// An MCP tool arrives as `mcp__plugin_human-fsm_fsm__next_ready`; the server prefix is deployment
+/// detail and a match on the whole string breaks the moment the plugin is mounted differently.
+fn nr_tool_name(raw: &str) -> String {
+    raw.rsplit("__").next().unwrap_or(raw).to_string()
+}
+
+/// PURE: every `/nr` run in a session transcript, in order.
+///
+/// A run ends where the human speaks again — `/nr` produces its report and stops, so everything
+/// after that is different work. `isMeta` events (the command's own argument expansion, a skill's
+/// base-directory note) are nobody speaking, and tool results are the run itself.
+fn nr_runs(content: &str) -> Vec<NrRun> {
+    let mut runs: Vec<NrRun> = Vec::new();
+    let mut cur: Option<NrRun> = None;
+    // The instant the current turn began — moved by every event that is not the assistant's own.
+    let mut boundary_ms: i64 = 0;
+    let close = |cur: &mut Option<NrRun>, runs: &mut Vec<NrRun>, why: NrEnd| {
+        if let Some(mut r) = cur.take() {
+            r.ended_by = why;
+            runs.push(r);
+        }
+    };
+    for line in content.lines() {
+        let Ok(ev) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        // A subagent's turn is real spend but not the main loop's, and `/nr` dispatches none —
+        // a sidechain under one is somebody else's work sharing the file.
+        if ev.get("isSidechain").and_then(Value::as_bool) == Some(true) {
+            continue;
+        }
+        if ["parentToolUseId", "parent_tool_use_id"]
+            .iter()
+            .any(|k| ev.get(k).is_some_and(|v| !v.is_null()))
+        {
+            continue;
+        }
+        let Some(ts) = ev.get("timestamp").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(ms) = iso_to_epoch_ms(ts) else {
+            continue;
+        };
+        let body = ev.get("message").and_then(|m| m.get("content"));
+        match ev.get("type").and_then(Value::as_str).unwrap_or("") {
+            "user" => {
+                let text = body.and_then(Value::as_str).unwrap_or("");
+                if NR_COMMAND_MARKERS.iter().any(|m| text.contains(m)) {
+                    close(&mut cur, &mut runs, NrEnd::Command);
+                    cur = Some(NrRun {
+                        started_at: ts.to_string(),
+                        started_ms: ms,
+                        turns: Vec::new(),
+                        skills: Vec::new(),
+                        ended_by: NrEnd::Eof,
+                    });
+                    boundary_ms = ms;
+                    continue;
+                }
+                let Some(run) = cur.as_ref() else {
+                    continue;
+                };
+                let meta = ev.get("isMeta").and_then(Value::as_bool) == Some(true);
+                let tool_result = body.and_then(Value::as_array).is_some_and(|b| {
+                    b.iter()
+                        .any(|x| x.get("type").and_then(Value::as_str) == Some("tool_result"))
+                });
+                if !meta && !tool_result && !run.turns.is_empty() {
+                    close(&mut cur, &mut runs, NrEnd::Human);
+                    continue;
+                }
+                boundary_ms = ms;
+            }
+            "assistant" => {
+                let Some(run) = cur.as_mut() else {
+                    continue;
+                };
+                let Some(msg) = ev.get("message") else {
+                    continue;
+                };
+                let id = msg.get("id").and_then(Value::as_str).unwrap_or("");
+                // An absent or empty id identifies no message, so each such event stands alone —
+                // the reading [`token_profile`] gives, for the same reason: letting `""` into the
+                // set would make the first empty-id turn swallow every later one.
+                let existing = (!id.is_empty())
+                    .then(|| run.turns.iter().position(|t| t.id == id))
+                    .flatten();
+                let idx = match existing {
+                    Some(i) => {
+                        run.turns[i].last_ms = ms;
+                        i
+                    }
+                    None => {
+                        let g = |k: &str| {
+                            msg.get("usage")
+                                .and_then(|u| u.get(k))
+                                .and_then(Value::as_u64)
+                                .unwrap_or(0)
+                        };
+                        run.turns.push(NrTurn {
+                            id: id.to_string(),
+                            first_ms: ms,
+                            last_ms: ms,
+                            began_ms: boundary_ms,
+                            output_tokens: g("output_tokens"),
+                            cache_read: g("cache_read_input_tokens"),
+                            tools: Vec::new(),
+                        });
+                        run.turns.len() - 1
+                    }
+                };
+                let Some(blocks) = msg.get("content").and_then(Value::as_array) else {
+                    continue;
+                };
+                for b in blocks {
+                    if b.get("type").and_then(Value::as_str) != Some("tool_use") {
+                        continue;
+                    }
+                    let Some(name) = b.get("name").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    let name = nr_tool_name(name);
+                    if name == "Skill" {
+                        if let Some(s) = b
+                            .get("input")
+                            .and_then(|i| i.get("skill"))
+                            .and_then(Value::as_str)
+                        {
+                            run.skills.push(s.to_string());
+                        }
+                    }
+                    run.turns[idx].tools.push(name);
+                }
+            }
+            _ => {}
+        }
+    }
+    close(&mut cur, &mut runs, NrEnd::Eof);
+    runs
+}
+
+/// PURE: the six phases of one run, under both cuts.
+///
+/// TOKENS. A phase opens at the turn that first does its work: `queue`/`context` at the turn
+/// issuing their own call (the call IS that turn's whole output), `lens` at the turn that invokes
+/// the skill, `audit` at the turn after it — the first turn with the skill loaded — and `report` at
+/// the first turn of the run's trailing block of turns that call nothing, which is what step 7 is.
+/// `pr_checkout` opens no token phase: it fires as a trailing call on the read turn, and that
+/// turn's tokens are the read's. Where no skill was invoked at all, `pr_checkout` is the only thing
+/// left that separates the checkout from the reading done in place of the skill, so it opens `lens`
+/// there.
+///
+/// WALL. A phase opens at the first event of the turn issuing its own opening call, which is the
+/// instant the run entered it. A phase whose call never fired has no such instant, so it falls back
+/// to when its first attributed turn began; a phase with neither is zero-width and collapses onto
+/// the next boundary rather than borrowing time from a neighbour.
+fn nr_phase_stats(run: &NrRun) -> Vec<NrPhaseStat> {
+    let n = run.turns.len();
+    // The trailing block of turns that call nothing.
+    let report_start = {
+        let mut i = n;
+        while i > 0 && run.turns[i - 1].tools.is_empty() {
+            i -= 1;
+        }
+        (i < n).then_some(i)
+    };
+    let lens_start = run.first_call("Skill").or_else(|| run.first_call("pr_checkout"));
+    let mut starts: [Option<usize>; 6] = [
+        (n > 0).then_some(0),
+        run.first_call("next_ready"),
+        run.first_call("pr_context"),
+        lens_start,
+        lens_start.map(|i| i + 1),
+        report_start,
+    ];
+    // Phases run in order, so a later phase can never open before an earlier one. Clamping rather
+    // than trusting the scan keeps an out-of-order run (a second `pr_context` after the audit, an
+    // interrupted run whose trailing silence starts mid-audit) from producing negative spans.
+    let mut floor = 0usize;
+    for s in starts.iter_mut() {
+        let Some(i) = *s else { continue };
+        let v = i.max(floor);
+        if v >= n {
+            *s = None;
+        } else {
+            *s = Some(v);
+            floor = v;
+        }
+    }
+    // Wall boundaries, then the same fill: a collapsed phase takes the next real boundary, so it
+    // reports zero rather than absorbing the gap.
+    let mut edges: [i64; 7] = [run.ended_ms(); 7];
+    let raw: Vec<Option<i64>> = NrPhase::ALL
+        .iter()
+        .enumerate()
+        .map(|(p, phase)| match phase.wall_call() {
+            None => Some(run.started_ms),
+            Some(call) => run
+                .first_call(call)
+                .map(|i| run.turns[i].first_ms)
+                .or_else(|| starts[p].map(|i| run.turns[i].began_ms)),
+        })
+        .collect();
+    for p in (0..6).rev() {
+        edges[p] = raw[p].unwrap_or(edges[p + 1]);
+    }
+    for p in 1..7 {
+        edges[p] = edges[p].max(edges[p - 1]);
+    }
+    NrPhase::ALL
+        .iter()
+        .enumerate()
+        .map(|(p, phase)| {
+            let end = starts[p + 1..].iter().flatten().next().copied().unwrap_or(n);
+            let range = starts[p].map(|i| i..end.max(i)).unwrap_or(0..0);
+            NrPhaseStat {
+                phase: *phase,
+                wall_ms: edges[p + 1] - edges[p],
+                output_tokens: run.turns[range.clone()]
+                    .iter()
+                    .map(|t| t.output_tokens)
+                    .sum(),
+                turns: range.len(),
+                called: phase.wall_call().is_none_or(|c| run.first_call(c).is_some()),
+            }
+        })
+        .collect()
+}
+
+/// `nr-profile <transcript> [--run N] [--json]`: what each `/nr` run in a session spent, by phase.
+fn nr_profile_mode(path: &str, run: Option<usize>, json: bool) -> i32 {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: cannot read transcript {path}: {e}");
+            return 2;
+        }
+    };
+    let all = nr_runs(&content);
+    let picked: Vec<(usize, &NrRun)> = match run {
+        Some(k) => {
+            let Some(r) = k.checked_sub(1).and_then(|i| all.get(i)) else {
+                eprintln!(
+                    "error: --run {k} but this transcript has {} `/nr` run(s) — runs are numbered \
+                     from 1 in transcript order",
+                    all.len()
+                );
+                return 2;
+            };
+            vec![(k, r)]
+        }
+        None => all.iter().enumerate().map(|(i, r)| (i + 1, r)).collect(),
+    };
+    if json {
+        let rows: Vec<Value> = picked
+            .iter()
+            .map(|(n, r)| {
+                let phases: Vec<Value> = nr_phase_stats(r)
+                    .iter()
+                    .map(|s| {
+                        serde_json::json!({
+                            "phase": s.phase.key(),
+                            "label": s.phase.label(),
+                            "wallMs": s.wall_ms,
+                            "outputTokens": s.output_tokens,
+                            "turns": s.turns,
+                            "openingCallFired": s.called,
+                        })
+                    })
+                    .collect();
+                serde_json::json!({
+                    "run": n,
+                    "startedAt": r.started_at,
+                    "wallMs": r.ended_ms() - r.started_ms,
+                    "endedBy": r.ended_by.key(),
+                    "turns": r.turns.len(),
+                    "toolCalls": r.tool_calls(),
+                    "outputTokens": r.output_tokens(),
+                    "peakContext": r.peak_context(),
+                    "conforming": r.conforming(),
+                    "missingCalls": r.missing_calls(),
+                    "offProtocolTools": r.off_protocol().into_iter()
+                        .map(|(t, c)| serde_json::json!({"tool": t, "calls": c}))
+                        .collect::<Vec<_>>(),
+                    "auditSkillInvoked": r.audit_invoked(),
+                    "phases": phases,
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({"transcript": path, "runs": rows})).unwrap()
+        );
+        return 0;
+    }
+    println!("transcript  {path}");
+    println!("/nr runs    {}", all.len());
+    if all.is_empty() {
+        println!("\n! no `/nr` invocation in this transcript — a run is found by its own \
+                  `<command-name>` line, so a session that never typed the command has none");
+        return 0;
+    }
+    for (n, r) in &picked {
+        let stats = nr_phase_stats(r);
+        let total_out = r.output_tokens();
+        println!(
+            "\nrun {n}  {}  {:.1}s  ({} turns, {} calls, ended: {})",
+            r.started_at,
+            (r.ended_ms() - r.started_ms) as f64 / 1000.0,
+            r.turns.len(),
+            r.tool_calls(),
+            r.ended_by.key()
+        );
+        println!("  {:<31}{:>9}{:>9}{:>8}", "phase", "wall", "output", "share");
+        for s in &stats {
+            let share = if total_out == 0 {
+                "—".to_string()
+            } else {
+                format!("{:.1}%", s.output_tokens as f64 * 100.0 / total_out as f64)
+            };
+            println!(
+                "  {:<31}{:>8.1}s{:>9}{:>8}{}",
+                s.phase.label(),
+                s.wall_ms as f64 / 1000.0,
+                s.output_tokens,
+                share,
+                if s.called { "" } else { "  *" }
+            );
+        }
+        println!(
+            "  {:<31}{:>8.1}s{:>9}",
+            "total",
+            (r.ended_ms() - r.started_ms) as f64 / 1000.0,
+            total_out
+        );
+        println!("  peak context                 {}", r.peak_context());
+        if r.conforming() {
+            println!("  protocol                     CONFORMING");
+        } else {
+            let mut why: Vec<String> = Vec::new();
+            let missing = r.missing_calls();
+            if !missing.is_empty() {
+                why.push(format!("never called: {}", missing.join(", ")));
+            }
+            if !r.audit_invoked() && r.first_call("Skill").is_some() {
+                why.push(format!("Skill invoked, but not `{NR_AUDIT_SKILL}`"));
+            }
+            let off = r.off_protocol();
+            if !off.is_empty() {
+                why.push(format!(
+                    "outside the grant: {}",
+                    off.iter()
+                        .map(|(t, c)| format!("{t} x{c}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+            println!("  protocol                     OFF-PROTOCOL — {}", why.join("; "));
+        }
+        if stats.iter().any(|s| !s.called) {
+            println!(
+                "  * the phase's own call never fired, so its boundary is when its first turn \
+                 began, not when the run entered it"
+            );
+        }
+    }
+    if picked.iter().any(|(_, r)| !r.conforming()) {
+        println!(
+            "\n! an OFF-PROTOCOL run is not a sample of the protocol. #315's decomposition rests \
+             on one run because 2 of 4 were this."
+        );
+    }
+    0
+}
+
+#[cfg(test)]
+mod nr_profile_tests {
+    use super::{nr_phase_stats, nr_runs, nr_tool_name, NrEnd, NrPhase};
+    use serde_json::{json, Value};
+
+    /// One assistant event: a turn is however many of these share a `message.id`.
+    fn ev(ts: &str, id: &str, out: u64, ctx: u64, tools: &[&str]) -> String {
+        let blocks: Vec<Value> = tools
+            .iter()
+            .map(|t| match t.strip_prefix("Skill:") {
+                Some(skill) => json!({"type":"tool_use","name":"Skill","input":{"skill":skill}}),
+                None => json!({"type":"tool_use","name":t,"input":{}}),
+            })
+            .collect();
+        format!(
+            "{}\n",
+            json!({"type":"assistant","timestamp":ts,"isSidechain":false,"message":{
+                "id": id, "content": blocks,
+                "usage": {"output_tokens": out, "cache_read_input_tokens": ctx}}})
+        )
+    }
+
+    /// A tool result coming back — part of the run, and what a turn's `began_ms` is taken from.
+    fn result(ts: &str) -> String {
+        format!(
+            "{}\n",
+            json!({"type":"user","timestamp":ts,"message":{"content":[
+                {"type":"tool_result","tool_use_id":"t","content":"ok"}]}})
+        )
+    }
+
+    /// The `/nr` invocation itself.
+    fn invoke(ts: &str) -> String {
+        format!(
+            "{}\n",
+            json!({"type":"user","timestamp":ts,"message":{"content":
+                "<command-message>human-fsm:nr</command-message>\n<command-name>/human-fsm:nr</command-name>"}})
+        )
+    }
+
+    /// The command's own argument expansion, and the skill's base-directory note. Text, from
+    /// nobody.
+    fn meta(ts: &str) -> String {
+        format!(
+            "{}\n",
+            json!({"type":"user","timestamp":ts,"isMeta":true,"message":{"content":[
+                {"type":"text","text":"Arguments: ``"}]}})
+        )
+    }
+
+    /// The human speaking.
+    fn human(ts: &str, text: &str) -> String {
+        format!(
+            "{}\n",
+            json!({"type":"user","timestamp":ts,"message":{"content":text}})
+        )
+    }
+
+    fn q(name: &str) -> String {
+        format!("mcp__plugin_human-fsm_fsm__{name}")
+    }
+
+    /// The 2026-08-16 06:56:22 run against `S01-Issuer/st0x.deploy#312`, event for event: every
+    /// timestamp, `output_tokens` and `cache_read_input_tokens` is the one in the transcript
+    /// #315 decomposed by hand.
+    fn full_protocol_run() -> String {
+        let nr = q("next_ready");
+        let ctx = q("pr_context");
+        let co = q("pr_checkout");
+        let rel = q("clone_release");
+        [
+            invoke("2026-08-16T06:56:22.145Z"),
+            meta("2026-08-16T06:56:22.145Z"),
+            ev("2026-08-16T06:56:28.724Z", "m1", 374, 336_538, &[]),
+            ev("2026-08-16T06:56:29.816Z", "m1", 374, 336_538, &["ToolSearch"]),
+            result("2026-08-16T06:56:29.823Z"),
+            ev("2026-08-16T06:56:34.219Z", "m2", 45, 343_131, &[&nr]),
+            result("2026-08-16T06:57:30.491Z"),
+            ev("2026-08-16T06:57:35.474Z", "m3", 83, 344_218, &[&ctx]),
+            result("2026-08-16T06:57:44.565Z"),
+            // The straddling turn: 2,871 tokens of independent read, then `pr_checkout` in its
+            // last block.
+            ev("2026-08-16T06:58:18.559Z", "m4", 2_871, 345_233, &[]),
+            ev("2026-08-16T06:58:21.988Z", "m4", 2_871, 345_233, &[]),
+            ev("2026-08-16T06:58:21.989Z", "m4", 2_871, 345_233, &[&co]),
+            result("2026-08-16T06:58:28.303Z"),
+            ev("2026-08-16T06:58:35.236Z", "m5", 496, 356_129, &[]),
+            ev("2026-08-16T06:58:36.684Z", "m5", 496, 356_129, &["Skill:audit"]),
+            result("2026-08-16T06:58:36.712Z"),
+            meta("2026-08-16T06:58:36.711Z"),
+            ev("2026-08-16T06:58:55.167Z", "m6", 1_098, 359_179, &[]),
+            ev("2026-08-16T06:58:55.852Z", "m6", 1_098, 359_179, &["Read"]),
+            result("2026-08-16T06:58:55.863Z"),
+            ev("2026-08-16T06:59:24.969Z", "m7", 2_192, 412_571, &[]),
+            ev("2026-08-16T06:59:25.176Z", "m7", 2_192, 412_571, &["Read"]),
+            result("2026-08-16T06:59:25.196Z"),
+            ev("2026-08-16T06:59:41.840Z", "m8", 1_162, 415_952, &[]),
+            ev("2026-08-16T06:59:42.758Z", "m8", 1_162, 415_952, &["Read"]),
+            result("2026-08-16T06:59:42.776Z"),
+            ev("2026-08-16T06:59:55.493Z", "m9", 575, 419_426, &[]),
+            ev("2026-08-16T06:59:55.522Z", "m9", 575, 419_426, &["Read"]),
+            result("2026-08-16T06:59:55.533Z"),
+            ev("2026-08-16T07:00:05.045Z", "m10", 534, 421_380, &[]),
+            ev("2026-08-16T07:00:05.204Z", "m10", 534, 421_380, &["Read"]),
+            result("2026-08-16T07:00:05.216Z"),
+            // The other straddling turn: the audit's sixth turn, ending in `clone_release`.
+            ev("2026-08-16T07:00:29.107Z", "m11", 1_511, 422_503, &[]),
+            ev("2026-08-16T07:00:29.131Z", "m11", 1_511, 422_503, &[&rel]),
+            result("2026-08-16T07:00:29.161Z"),
+            ev("2026-08-16T07:01:00.977Z", "m12", 2_340, 423_969, &[]),
+            human("2026-08-16T07:01:39.885Z", "fix the pr body and merge"),
+        ]
+        .concat()
+    }
+
+    /// ACCEPTANCE (#315): pointed at the run the issue decomposed by hand, the reader reproduces
+    /// that decomposition — every phase boundary and every per-phase output-token count.
+    ///
+    /// The issue's wall column is hand-rounded and internally inconsistent (its six cells round to
+    /// 279s or truncate to 276s, against its own stated 278s total), so the seconds are asserted
+    /// here in milliseconds and the issue's own cell is named beside each.
+    #[test]
+    fn the_decomposition_of_the_full_protocol_run_reproduces() {
+        let runs = nr_runs(&full_protocol_run());
+        assert_eq!(runs.len(), 1);
+        let r = &runs[0];
+        assert_eq!(r.turns.len(), 12);
+        assert_eq!(r.tool_calls(), 11);
+        assert_eq!(r.ended_by, NrEnd::Human);
+        // Finding 2's number for this run, straight off the widest turn.
+        assert_eq!(r.peak_context(), 423_969);
+        assert_eq!(r.output_tokens(), 13_281);
+        assert_eq!(r.ended_ms() - r.started_ms, 278_832);
+
+        let stats = nr_phase_stats(r);
+        let expect = [
+            // phase, wall ms, the issue's wall cell, output tokens
+            (NrPhase::Setup, 12_074i64, 12i64, 374u64),
+            (NrPhase::Queue, 61_255, 61, 45),
+            (NrPhase::Context, 43_085, 43, 2_954),
+            (NrPhase::Lens, 16_677, 17, 496),
+            (NrPhase::Audit, 113_871, 114, 7_072),
+            (NrPhase::Report, 31_870, 31, 2_340),
+        ];
+        for (s, (phase, wall, issue_secs, out)) in stats.iter().zip(expect) {
+            assert_eq!(s.phase, phase);
+            assert_eq!(s.wall_ms, wall, "{} wall", phase.label());
+            assert_eq!(s.output_tokens, out, "{} output", phase.label());
+            assert!(s.called, "{} lost its own opening call", phase.label());
+            assert!(
+                (s.wall_ms - issue_secs * 1000).abs() <= 1_000,
+                "{} is {}ms against the issue's {issue_secs}s",
+                phase.label(),
+                s.wall_ms
+            );
+        }
+        // The headline the issue draws from this table: the audit skill is 41% of the wall. Its
+        // 57% of output does NOT follow from the same table — 7,072 of 13,281 is 53.2%.
+        let audit = &stats[4];
+        assert_eq!((audit.wall_ms * 100 / 278_832) as u64, 40);
+        assert_eq!(audit.output_tokens * 1000 / 13_281, 532);
+        assert!(r.conforming());
+    }
+
+    /// The two cuts are the design, so the turn they disagree about is pinned. `m4` spent 2,871
+    /// tokens on the independent read and then fired `pr_checkout`: its tokens are the context
+    /// phase's, and the same event is the instant the wall clock entered the lens phase.
+    #[test]
+    fn a_trailing_call_moves_the_wall_without_moving_the_tokens() {
+        let runs = nr_runs(&full_protocol_run());
+        let stats = nr_phase_stats(&runs[0]);
+        // Tokens: the straddling turn is the context phase's second turn.
+        assert_eq!(stats[2].turns, 2);
+        assert_eq!(stats[2].output_tokens, 83 + 2_871);
+        assert_eq!(stats[3].turns, 1);
+        assert_eq!(stats[3].output_tokens, 496);
+        // Wall: the lens phase opens at that same turn's first event, 43.085s into the run, not at
+        // the turn its tokens went to.
+        assert_eq!(stats[0].wall_ms + stats[1].wall_ms + stats[2].wall_ms, 116_414);
+        // And the same shape again at the other end: `clone_release` rides the audit's last turn.
+        assert_eq!(stats[4].turns, 6);
+        assert_eq!(stats[4].output_tokens, 7_072);
+        assert_eq!(stats[5].turns, 1);
+    }
+
+    /// #315 finding 3: the 07:57 run skipped `pr_context` and the skill entirely and used `Bash`,
+    /// which `/nr` forbids in as many words. Its numbers are not a sample of the protocol, and the
+    /// reader has to be able to SAY so — that is the whole reason the decomposition is n=1.
+    #[test]
+    fn a_run_that_skipped_the_protocol_is_named_as_one() {
+        let nr = q("next_ready");
+        let co = q("pr_checkout");
+        let rel = q("clone_release");
+        let trace = [
+            invoke("2026-08-16T07:57:47.067Z"),
+            meta("2026-08-16T07:57:47.067Z"),
+            ev("2026-08-16T07:57:57.793Z", "n1", 343, 100, &[&nr]),
+            result("2026-08-16T07:58:45.233Z"),
+            ev("2026-08-16T07:58:49.317Z", "n2", 85, 110, &[&co]),
+            result("2026-08-16T07:58:55.568Z"),
+            ev("2026-08-16T07:59:02.476Z", "n3", 347, 120, &["Read"]),
+            result("2026-08-16T07:59:03.533Z"),
+            ev("2026-08-16T07:59:08.133Z", "n4", 76, 130, &["Read"]),
+            result("2026-08-16T07:59:08.146Z"),
+            ev("2026-08-16T07:59:21.728Z", "n5", 737, 140, &["Read"]),
+            result("2026-08-16T07:59:23.074Z"),
+            ev("2026-08-16T07:59:30.238Z", "n6", 174, 150, &["Bash"]),
+            result("2026-08-16T07:59:31.975Z"),
+            ev("2026-08-16T07:59:37.400Z", "n7", 138, 160, &["Bash"]),
+            result("2026-08-16T07:59:39.149Z"),
+            ev("2026-08-16T07:59:44.178Z", "n8", 78, 170, &[&rel]),
+            result("2026-08-16T07:59:44.217Z"),
+            ev("2026-08-16T08:00:03.635Z", "n9", 1_246, 180, &[]),
+            human("2026-08-16T08:02:59.807Z", "merge 308"),
+        ]
+        .concat();
+        let runs = nr_runs(&trace);
+        assert_eq!(runs.len(), 1);
+        let r = &runs[0];
+        assert!(!r.conforming());
+        assert_eq!(r.missing_calls(), vec!["pr_context", "Skill"]);
+        assert!(!r.audit_invoked());
+        assert_eq!(r.off_protocol(), vec![("Bash".to_string(), 2)]);
+        let stats = nr_phase_stats(r);
+        // The skipped phase is EMPTY, not merged into a neighbour — a context phase silently
+        // holding the queue's turns would read as a protocol run that was expensive.
+        assert_eq!(stats[2].turns, 0);
+        assert_eq!(stats[2].output_tokens, 0);
+        assert_eq!(stats[2].wall_ms, 0);
+        assert!(!stats[2].called);
+        // With no skill invoked, `pr_checkout` is what separates the checkout from the reading
+        // done in its place, so the reads still land in the audit phase.
+        assert_eq!(stats[3].output_tokens, 85);
+        assert_eq!(stats[4].output_tokens, 347 + 76 + 737 + 174 + 138 + 78);
+        assert_eq!(stats[5].output_tokens, 1_246);
+        assert!(!stats[4].called);
+    }
+
+    /// The 08:03 run: `next_ready` and nothing else. Its report has no `clone_release` to open it,
+    /// and the phase still has to find it — otherwise 30s of writing and 363 tokens are billed to
+    /// the queue, which is exactly the call #314 is optimising.
+    #[test]
+    fn a_queue_only_run_still_separates_its_report() {
+        let trace = [
+            invoke("2026-08-16T08:03:27.011Z"),
+            meta("2026-08-16T08:03:27.011Z"),
+            ev("2026-08-16T08:03:32.725Z", "p1", 45, 42_545, &[&q("next_ready")]),
+            result("2026-08-16T08:04:13.935Z"),
+            ev("2026-08-16T08:04:23.189Z", "p2", 363, 42_545, &[]),
+            human("2026-08-16T08:04:50.878Z", "next"),
+        ]
+        .concat();
+        let runs = nr_runs(&trace);
+        let r = &runs[0];
+        let stats = nr_phase_stats(r);
+        assert_eq!(stats[1].output_tokens, 45);
+        assert_eq!(stats[5].output_tokens, 363);
+        // 41.2s, which is what #314 measured `next_ready` at on this run — not the 50.5s the
+        // report's own generation would add if the fallback boundary were the phase's first EVENT
+        // instead of when it began.
+        assert_eq!(stats[1].wall_ms, 41_210);
+        assert_eq!(stats[5].wall_ms, 9_254);
+        assert!(!stats[5].called);
+        assert_eq!(r.peak_context(), 42_545);
+    }
+
+    /// A streamed turn is written one completed block at a time, all carrying the same `usage`.
+    /// Summing the events instead of the turns triples this run's output.
+    #[test]
+    fn a_turn_is_counted_once_however_many_events_wrote_it() {
+        let runs = nr_runs(&full_protocol_run());
+        let r = &runs[0];
+        assert_eq!(r.output_tokens(), 13_281);
+        assert_eq!(r.turns.iter().filter(|t| t.id == "m4").count(), 1);
+        // The turn still spans every event it was written across.
+        let m4 = r.turns.iter().find(|t| t.id == "m4").unwrap();
+        assert_eq!(m4.last_ms - m4.first_ms, 3_430);
+        assert_eq!(m4.tools.len(), 1);
+    }
+
+    /// A `Task` subagent's turns are real spend the main loop's `result` does not carry, and
+    /// `/nr` dispatches none — a sidechain sharing the transcript is somebody else's work.
+    #[test]
+    fn subagent_and_sidechain_turns_are_not_the_main_loop() {
+        let sub = format!(
+            "{}\n{}\n",
+            json!({"type":"assistant","timestamp":"2026-08-16T06:56:30.000Z",
+                   "parentToolUseId":"toolu_1","message":{"id":"s1","content":[],
+                   "usage":{"output_tokens":9_999,"cache_read_input_tokens":9_999_999}}}),
+            json!({"type":"assistant","timestamp":"2026-08-16T06:56:31.000Z","isSidechain":true,
+                   "message":{"id":"s2","content":[],
+                   "usage":{"output_tokens":8_888,"cache_read_input_tokens":8_888_888}}})
+        );
+        let trace = full_protocol_run().replace(
+            &result("2026-08-16T06:56:29.823Z"),
+            &format!("{}{sub}", result("2026-08-16T06:56:29.823Z")),
+        );
+        let r = &nr_runs(&trace)[0];
+        assert_eq!(r.turns.len(), 12);
+        assert_eq!(r.output_tokens(), 13_281);
+        assert_eq!(r.peak_context(), 423_969);
+    }
+
+    /// Run delimiting. The command's argument expansion and the skill's base-directory note are
+    /// `isMeta` text from nobody; a tool result is the run itself; a plain message is the human,
+    /// and `/nr` has stopped by the time they speak.
+    #[test]
+    fn the_human_speaking_ends_the_run_and_meta_events_do_not() {
+        let r = &nr_runs(&full_protocol_run())[0];
+        assert_eq!(r.turns.len(), 12);
+        assert_eq!(r.ended_by, NrEnd::Human);
+        // Nothing after the human's turn belongs to it.
+        let after = [
+            full_protocol_run(),
+            ev("2026-08-16T07:01:54.483Z", "z1", 1_036, 427_928, &["Bash"]),
+        ]
+        .concat();
+        let r = &nr_runs(&after)[0];
+        assert_eq!(r.turns.len(), 12);
+        assert!(r.conforming(), "a later turn's Bash was billed to this run");
+    }
+
+    /// Two invocations in one session are two runs, and the second closes the first even with no
+    /// human turn between them.
+    #[test]
+    fn each_invocation_is_its_own_run() {
+        let trace = [full_protocol_run(), full_protocol_run()].concat();
+        let runs = nr_runs(&trace);
+        assert_eq!(runs.len(), 2);
+        assert!(runs.iter().all(|r| r.turns.len() == 12));
+        let back_to_back = [
+            invoke("2026-08-16T06:56:22.145Z"),
+            ev("2026-08-16T06:56:28.724Z", "a1", 10, 1, &[&q("next_ready")]),
+            invoke("2026-08-16T06:57:00.000Z"),
+            ev("2026-08-16T06:57:05.000Z", "b1", 20, 1, &[&q("next_ready")]),
+        ]
+        .concat();
+        let runs = nr_runs(&back_to_back);
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].ended_by, NrEnd::Command);
+        assert_eq!(runs[0].output_tokens(), 10);
+        assert_eq!(runs[1].output_tokens(), 20);
+        assert_eq!(runs[1].ended_by, NrEnd::Eof);
+    }
+
+    /// A run cut off mid-protocol — the 11:29 one — is reported as reaching where it reached, and
+    /// never as a protocol sample.
+    #[test]
+    fn an_interrupted_run_is_not_a_sample_either() {
+        let trace = [
+            invoke("2026-08-16T11:29:21.683Z"),
+            ev("2026-08-16T11:29:30.000Z", "i1", 40, 500, &[&q("next_ready")]),
+            result("2026-08-16T11:30:24.000Z"),
+            ev("2026-08-16T11:30:30.000Z", "i2", 90, 600, &[&q("pr_context")]),
+            result("2026-08-16T11:30:40.000Z"),
+            ev("2026-08-16T11:30:50.000Z", "i3", 700, 700, &[&q("pr_checkout")]),
+        ]
+        .concat();
+        let r = &nr_runs(&trace)[0];
+        assert_eq!(r.ended_by, NrEnd::Eof);
+        assert!(!r.conforming());
+        assert_eq!(r.missing_calls(), vec!["Skill", "clone_release"]);
+        let stats = nr_phase_stats(r);
+        // No trailing silence, so there is no report phase to find.
+        assert_eq!(stats[5].turns, 0);
+        assert_eq!(stats[5].wall_ms, 0);
+        // Every phase that did happen still accounts for its turns.
+        assert_eq!(
+            stats.iter().map(|s| s.turns).sum::<usize>(),
+            r.turns.len()
+        );
+    }
+
+    /// Every turn lands in exactly one phase, on every shape above — a decomposition that drops or
+    /// double-counts a turn is not one.
+    #[test]
+    fn the_phases_partition_the_run() {
+        for trace in [full_protocol_run(), [full_protocol_run(), full_protocol_run()].concat()] {
+            for r in nr_runs(&trace) {
+                let stats = nr_phase_stats(&r);
+                assert_eq!(stats.iter().map(|s| s.turns).sum::<usize>(), r.turns.len());
+                assert_eq!(
+                    stats.iter().map(|s| s.output_tokens).sum::<u64>(),
+                    r.output_tokens()
+                );
+                assert_eq!(
+                    stats.iter().map(|s| s.wall_ms).sum::<i64>(),
+                    r.ended_ms() - r.started_ms
+                );
+                assert!(stats.iter().all(|s| s.wall_ms >= 0));
+            }
+        }
+    }
+
+    /// A phase can only open after the one before it. An out-of-order run — a second `pr_context`
+    /// arriving after the audit — must never produce a negative span or steal the audit's turns.
+    #[test]
+    fn a_phase_never_opens_before_the_one_before_it() {
+        let trace = [
+            invoke("2026-08-16T09:00:00.000Z"),
+            ev("2026-08-16T09:00:05.000Z", "x1", 10, 1, &["Skill:audit"]),
+            result("2026-08-16T09:00:06.000Z"),
+            ev("2026-08-16T09:00:10.000Z", "x2", 20, 1, &[&q("next_ready")]),
+            result("2026-08-16T09:00:20.000Z"),
+            ev("2026-08-16T09:00:30.000Z", "x3", 30, 1, &[&q("pr_context")]),
+            result("2026-08-16T09:00:31.000Z"),
+            ev("2026-08-16T09:00:40.000Z", "x4", 40, 1, &[]),
+        ]
+        .concat();
+        let r = &nr_runs(&trace)[0];
+        let stats = nr_phase_stats(r);
+        assert!(stats.iter().all(|s| s.wall_ms >= 0));
+        assert_eq!(stats.iter().map(|s| s.turns).sum::<usize>(), 4);
+        assert_eq!(stats.iter().map(|s| s.output_tokens).sum::<u64>(), 100);
+    }
+
+    /// Two phases opened by one turn — the 11:29 run called `pr_context` and `pr_checkout` in the
+    /// same turn — resolve to the LATER phase, and the one it stepped over reports zero rather
+    /// than a span it did not have. A turn is atomic; the alternative is billing it twice.
+    #[test]
+    fn one_turn_opening_two_phases_lands_in_the_later_one() {
+        let trace = [
+            invoke("2026-08-16T11:29:21.683Z"),
+            ev("2026-08-16T11:29:26.000Z", "c1", 186, 42_545, &["ToolSearch"]),
+            result("2026-08-16T11:29:27.000Z"),
+            ev("2026-08-16T11:29:30.000Z", "c2", 45, 42_545, &[&q("next_ready")]),
+            result("2026-08-16T11:30:20.000Z"),
+            ev(
+                "2026-08-16T11:30:26.000Z",
+                "c3",
+                262,
+                42_545,
+                &[&q("pr_context"), &q("pr_checkout")],
+            ),
+            human("2026-08-16T11:31:00.000Z", "stop"),
+        ]
+        .concat();
+        let stats = nr_phase_stats(&nr_runs(&trace)[0]);
+        assert_eq!(stats[2].turns, 0);
+        assert_eq!(stats[2].wall_ms, 0);
+        assert!(stats[2].called, "`pr_context` DID fire — the phase is empty, not absent");
+        assert_eq!(stats[3].turns, 1);
+        assert_eq!(stats[3].output_tokens, 262);
+    }
+
+    /// A `Skill` call is not the lens unless it is the skill step 5 names.
+    #[test]
+    fn a_skill_that_is_not_the_audit_skill_is_not_the_lens() {
+        let trace = full_protocol_run().replace("\"skill\":\"audit\"", "\"skill\":\"dataviz\"");
+        let r = &nr_runs(&trace)[0];
+        assert!(!r.audit_invoked());
+        assert!(!r.conforming());
+        // The call still fired, so `Skill` is not reported as missing — the defect is which skill.
+        assert!(r.missing_calls().is_empty());
+    }
+
+    /// The server prefix on an MCP tool is deployment detail; the protocol is about the name.
+    #[test]
+    fn mcp_tool_names_normalise_past_the_server_prefix() {
+        assert_eq!(nr_tool_name("mcp__plugin_human-fsm_fsm__next_ready"), "next_ready");
+        assert_eq!(nr_tool_name("mcp__other_server__pr_context"), "pr_context");
+        assert_eq!(nr_tool_name("Read"), "Read");
+        assert_eq!(nr_tool_name(""), "");
+    }
+
+    /// Off-protocol counts CALLS, not turns — three `Bash` calls in one turn is three.
+    #[test]
+    fn off_protocol_counts_every_call() {
+        let trace = [
+            invoke("2026-08-16T09:00:00.000Z"),
+            ev("2026-08-16T09:00:05.000Z", "y1", 10, 1, &["Bash", "Bash", "Write"]),
+        ]
+        .concat();
+        let r = &nr_runs(&trace)[0];
+        assert_eq!(
+            r.off_protocol(),
+            vec![("Bash".to_string(), 2), ("Write".to_string(), 1)]
+        );
+    }
+
+    /// Peak context is the widest turn, not the last one — the run whose context falls back after
+    /// its peak is exactly the one a last-value read misreports.
+    #[test]
+    fn peak_context_is_the_widest_turn() {
+        let trace = [
+            invoke("2026-08-16T09:00:00.000Z"),
+            ev("2026-08-16T09:00:05.000Z", "z1", 10, 588_209, &[&q("next_ready")]),
+            result("2026-08-16T09:00:06.000Z"),
+            ev("2026-08-16T09:00:10.000Z", "z2", 10, 1_000, &[]),
+        ]
+        .concat();
+        assert_eq!(nr_runs(&trace)[0].peak_context(), 588_209);
+    }
+
+    /// A transcript with no invocation is not an error and not an empty run.
+    #[test]
+    fn a_session_that_never_ran_the_command_has_no_runs() {
+        assert!(nr_runs("").is_empty());
+        assert!(nr_runs(&human("2026-08-16T09:00:00.000Z", "hello")).is_empty());
+        assert!(nr_runs("not json\n{}\n").is_empty());
+    }
+}
+
 /// Command-position tokens that mean the run reached for an interpreter rather than for a tool.
 /// Matched on the token's BASENAME, so `/usr/bin/python3` and `python3` are one thing.
 const CORPUS_INTERPRETERS: &[&str] = &[
@@ -44104,6 +45229,23 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// The per-phase decomposition of every `/nr` run in a SESSION transcript (#315): phase
+    /// boundaries, per-phase wall and output tokens, peak context, and whether the run followed the
+    /// command's own protocol at all. Wall cuts on the call that opened a phase; output tokens cut
+    /// on whole turns, because a turn carries one `usage` record and cannot be split.
+    ///
+    /// Not a sibling of `token-profile`: that one reads a `runs/*.jsonl` stream-json trace, where
+    /// `output_tokens` is a message-start snapshot and unusable. This reads an interactive session
+    /// transcript, where it is not. Neither file's totals are comparable with the other's.
+    NrProfile {
+        /// The session transcript to read (`~/.claude/projects/<slug>/<session>.jsonl`).
+        transcript: String,
+        /// Only the run at this position, numbered from 1 in transcript order.
+        #[arg(long)]
+        run: Option<usize>,
+        #[arg(long)]
+        json: bool,
+    },
     /// What every RETAINED trace still hand-rolls: per-run counts of probe-shaped `gh pr
     /// view`/`checks`, raw `gh api`, tarball fetch/extract, interpreter invocations, helper scripts
     /// written, and render-harness scaffold rebuilds — with each metric's shape across the series.
@@ -48724,6 +49866,11 @@ fn main() {
         } => force_run_mode(&role, install_dir.as_deref(), no_run),
         Cmd::WatchRun { log, timeout_secs } => watch_run_mode(&log, timeout_secs),
         Cmd::TokenProfile { trace, json } => token_profile_mode(&trace, json),
+        Cmd::NrProfile {
+            transcript,
+            run,
+            json,
+        } => nr_profile_mode(&transcript, run, json),
         Cmd::CorpusReport { dir, json } => corpus_report_mode(&dir, json),
         Cmd::JournalReport {
             journal,
