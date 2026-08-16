@@ -8376,6 +8376,12 @@ const SOL_SHELL_GCROOT_REL: &str = "issue-pr-cron/gcroots/sol-shell";
 /// `clone_release` and the nightly sweep delete it and the closure it was holding goes with it.
 /// An unrooted probe is a known 11 minutes; a root the sweep eats is the same 11 minutes plus the
 /// belief that it was fixed.
+///
+/// `/` is absolute and still refused, for both inputs. It is what an empty variable expands to in
+/// a half-written `${FOO}/bar`, and taking it would put the profile at `/issue-pr-cron/gcroots/`
+/// — outside any state dir, unwritable to this user, and a root nothing would think to look for.
+/// Refused, `XDG_STATE_HOME=/` falls back to HOME the way an unset one does; with both `/` there
+/// is no state dir to name and the probe goes unrooted.
 fn sol_shell_gcroot(
     xdg_state: Option<&std::ffi::OsStr>,
     home: Option<&std::ffi::OsStr>,
@@ -77629,6 +77635,23 @@ mod closure_gate_tests {
                 "a non-absolute HOME ({bad:?}) is no place for a root"
             );
         }
+        // `/` is the one absolute path also refused. It is what an empty variable expands to in a
+        // half-written `${FOO}/bar`, and it would put the profile at `/issue-pr-cron/gcroots/` —
+        // outside any state dir and unwritable to this user. Refused, it behaves as unset.
+        assert_eq!(
+            sol_shell_gcroot(Some(OsStr::new("/")), Some(OsStr::new("/home/u"))),
+            Some(
+                std::path::PathBuf::from("/home/u")
+                    .join(".local/state")
+                    .join(SOL_SHELL_GCROOT_REL)
+            ),
+            "XDG_STATE_HOME=/ falls back to HOME, exactly as an unset one does"
+        );
+        assert_eq!(
+            sol_shell_gcroot(Some(OsStr::new("/")), Some(OsStr::new("/"))),
+            None,
+            "with both /, there is no state dir to name and the probe goes unrooted"
+        );
         assert_eq!(
             sol_shell_gcroot(Some(OsStr::new("relative")), Some(OsStr::new("/home/u"))),
             Some(
