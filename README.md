@@ -579,6 +579,50 @@ verdict is not "next" at all — the queue's vetted-at-head gate withholds it, a
 `counts.unvetted` says so, because returning a verdict that no longer describes
 the code is worse than returning nothing.
 
+**The whole enumeration is ONE `gh api graphql` (#314).** It used to be a
+fan-out — one `gh search prs`, then a `gh pr view` plus a review-threads query
+per candidate over an 8-worker pool, plus the org-wide archived-repos walk — and
+it measured **41–56s** of dead time before anything reached the human. The
+concurrency was making it worse, not better: 8 concurrent full-field
+`gh pr view` took **19.1s** wall against 3.0s for one, because a burst from one
+token draws the secondary limit and `comments` is a heavy field. A single
+`search(type:ISSUE)` selection set returns every field the gates read, for 4 of
+5000 rate-limit points and 40,200 of the 500,000 node ceiling. Measured on the
+live queue: **20 subprocesses / 54.1s → 1 / 5.0s**, byte-identical `queue`
+output.
+
+What that buys has to be paid for in two places, because a batch answers with
+**windows** where a per-PR call answered with everything:
+
+- **`comments(last:100)` is the tail, not the set.** A PR with more comments
+  after its last `ai:vetter` comment than the window holds would lose its
+  verdict and read as un-vetted — a presentable PR silently dropped out of the
+  human's queue. So the truncation case is named: more comments than returned
+  AND no trusted vetter comment inside the window falls back to the per-PR
+  `gh pr view`. A truncated window that still holds a vetter comment holds the
+  LAST one, so it needs no fetch.
+- **`reviewThreads(first:100)` is the same shape, but only half of it is a
+  hazard.** A non-zero count inside the window is decisive — the PR is the
+  producer's thread work whatever the later pages hold. Only "all resolved so
+  far, with more pages" is unknown, and only a verified zero reaches a human, so
+  that one case falls back to the paginated walk.
+
+And **`mergeable` is computed lazily by GitHub**: the ask is what schedules the
+computation, so a COLD batch ask answers `UNKNOWN` where a per-PR view GitHub
+had already warmed answers `MERGEABLE`. `UNKNOWN` is bucketed as
+not-presentable, so taking a cold answer at face value shortens the human's
+queue. Rows whose bucket actually turns on `mergeable` (green, not already
+approved) are re-asked — twice at most, and never a row a re-ask could not move
+— and a row that still will not settle is left `UNKNOWN`: fail-closed is the
+existing contract for an unconfirmed merge and this does not relax it.
+
+`repository{isArchived}` rides on the same query, so the #206 withholding no
+longer costs the org-wide `archived_repos()` walk on this path (the flag, leak
+and design enumerations still take theirs from it — their hits are not all PRs
+of this shape). The guard is unchanged, including its refusal: an unreadable
+archived flag is `Malformed` and aborts, rather than collapsing to "not
+archived" and putting a frozen row back at the head of the queue.
+
 Three fields are worth their own note:
 
 - **CodeRabbit coverage is a typed verdict, not a check state.** Only a commit
