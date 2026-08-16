@@ -6,11 +6,11 @@
 !/.gitignore
 !/README.md
 !/CLAUDE.md
-# The two files CLAUDE.md routes to (#261). CLAUDE.md keeps what governs judgement and
-# auto-loads; these two hold the reference material a role reaches for, and each has a
-# one-line pointer in the router. Untracked they would exist on this box and NOWHERE else,
-# so every pointer would dangle on a fresh checkout — which is what the router promises not
-# to do. `every_router_pointer_resolves_to_a_file_that_exists` is the gate.
+# The reference material CLAUDE.md does NOT carry: CLAUDE.md auto-loads into every vetter
+# turn and is capped, so it keeps only the rulings, and these two hold what a role reaches
+# for on demand. Untracked they would exist on this box and NOWHERE else, so a fresh
+# checkout would have the reference deleted rather than relocated.
+# `every_documented_section_is_in_exactly_one_home` is the gate.
 !/TRANSITIONS.md
 !/WORK-CLONES.md
 !/campaign-run.sh
@@ -61,6 +61,11 @@
 !/.claude/
 /.claude/*
 !/.claude/settings.json
+# Agent rules scoped with `paths:` frontmatter — they load only when a matching file is
+# read, so they are not charged against the launch-context cap. Untracked they would exist
+# on this box and nowhere else, and the rule would be gone on a fresh checkout while the
+# CLAUDE.md that no longer carries it stays.
+!/.claude/rules/
 
 # NEVER track the real deployment env (it holds the account handle / box-specific values):
 /cron.env

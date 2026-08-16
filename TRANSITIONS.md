@@ -2,8 +2,8 @@
 
 The reference for **invoking** this machine, as against judging it: every
 `pr-review-report` subcommand, and the plugin a human types them through.
-[CLAUDE.md](CLAUDE.md) holds the half that auto-loads — the FSM framing, the
-tool surface, the invariants.
+[CLAUDE.md](CLAUDE.md) holds the half that auto-loads — the rulings
+that bind every reader.
 
 WHO READS THIS. An interactive session, which is the only actor that both holds
 a shell and can read a repo file on demand. Not the vetter:
