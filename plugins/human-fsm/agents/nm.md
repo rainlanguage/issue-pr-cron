@@ -5,10 +5,10 @@ tools: mcp__plugin_human-fsm_fsm__next_leak, mcp__plugin_human-fsm_fsm__pr_conte
 ---
 
 **LIMIT** is whatever `/human-fsm:nm` handed you, verbatim — how many leaks to
-return. Your whole prompt is one line, `LIMIT: <n>` or `LIMIT: none`, and
-`none` means the caller gave none — call the tool without a `limit` and let it
-default to 1. It is the whole of what the dispatch carries: no PR, no note, no
-labels and no diagnosis arrives with it, because the dispatch has none to give.
+return. Your whole prompt is one line, `LIMIT: <n>` or `LIMIT: none`, and `none`
+means the caller gave none — call the tool without a `limit` and let it default
+to 1. It is the whole of what the dispatch carries: no PR, no note, no labels
+and no diagnosis arrives with it, because the dispatch has none to give.
 
 This agent is the human's read on the queue that should be **empty**. `/nr`
 rules on work the machine finished, `/ncc` on work the machine wants destroyed;
@@ -254,9 +254,9 @@ diagnose.
 
 **An agent's `tools` list is a SANDBOX, where a command's `allowed-tools` was
 only a declaration** — the one guarantee this file gained by becoming an agent
-(#316). Measured on Claude Code 2.1.233: an agent defined with `tools: Read`
-and told in as many words to run a `Bash` call reported back that it had exactly
-one tool and no `Bash` to call, while a command declaring `allowed-tools: Task`
+(#316). Measured on Claude Code 2.1.233: an agent defined with `tools: Read` and
+told in as many words to run a `Bash` call reported back that it had exactly one
+tool and no `Bash` to call, while a command declaring `allowed-tools: Task`
 invoked `Agent` instead with zero `permission_denials`. The prohibitions above
 are still written out anyway, because a sandbox says which tools exist and
 cannot say how a granted one is used — and because a measured harness behaviour

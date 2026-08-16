@@ -11,17 +11,18 @@ is the entirety of this command.
 
 Its prompt is exactly one line and carries exactly one value:
 
-- an argument was given — `LIMIT: $ARGUMENTS`, the argument verbatim,
-  unparsed and unrounded, because the range is the binary's to enforce and not
-  this command's to pre-judge;
+- an argument was given — `LIMIT: $ARGUMENTS`, the argument verbatim, unparsed
+  and unrounded, because the range is the binary's to enforce and not this
+  command's to pre-judge;
 - no argument was given — `LIMIT: none`, and the agent lets the tool default
   to 1.
 
 Say it that way rather than passing the bare argument, and never dispatch an
 EMPTY prompt: measured, an agent handed an empty turn reads it as having been
-sent no task at all and reports that instead of running the protocol. `LIMIT:
-none` is a value; an empty string is an absence, and the two are different
-instructions.
+sent no task at all and reports that instead of running the protocol.
+`LIMIT:
+none` is a value; an empty string is an absence, and the two are
+different instructions.
 
 ## Why the read is not here
 
@@ -37,12 +38,12 @@ same report, which is what made it dangerous rather than merely expensive.
 The human ruled that read into a fresh context (#316). A sub-agent starts with
 its own system prompt and the prompt it was handed and nothing else — no
 conversation history, no earlier turns, no view about this PR formed before it
-began — so the agent is the mechanism, and the protocol lives in
-`agents/nr.md` where the reader that executes it can be given a context of its
-own. Measured, the cost of the old shape was ~14x: four runs of the same
-command on the same protocol read a peak 423,969 / 579,590 / 588,209 cached
-tokens in long-running sessions against 42,545 in a fresh one, determined by
-nothing but which conversation the command landed in.
+began — so the agent is the mechanism, and the protocol lives in `agents/nr.md`
+where the reader that executes it can be given a context of its own. Measured,
+the cost of the old shape was ~14x: four runs of the same command on the same
+protocol read a peak 423,969 / 579,590 / 588,209 cached tokens in long-running
+sessions against 42,545 in a fresh one, determined by nothing but which
+conversation the command landed in.
 
 **The LIMIT is the whole argument** — how many PRs to return, the binary's range
 to enforce — and it is the whole of what the dispatch carries. Pass it verbatim
@@ -56,9 +57,9 @@ time, and it does it invisibly.
 **It does not read, and it does not rule.** Every typed call — the queue row,
 the PR context, the checkout, its release, the send-back — belongs to the agent,
 which is why none of them is granted here. Do not reach for `gh`, do not look
-the PR up to "check" the report, and do not answer any part of it from memory:
-a merge decision reassembled by hand is a decision whose inputs nobody can
-audit, and a second reader working from this conversation's context is the exact
+the PR up to "check" the report, and do not answer any part of it from memory: a
+merge decision reassembled by hand is a decision whose inputs nobody can audit,
+and a second reader working from this conversation's context is the exact
 contamination the dispatch removed.
 
 **It relays; it does not summarise.** The agent's report is written for the

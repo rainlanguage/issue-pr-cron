@@ -11,17 +11,18 @@ That is the entirety of this command.
 
 Its prompt is exactly one line and carries exactly one value:
 
-- an argument was given — `LIMIT: $ARGUMENTS`, the argument verbatim,
-  unparsed and unrounded, because the range is the binary's to enforce and not
-  this command's to pre-judge;
+- an argument was given — `LIMIT: $ARGUMENTS`, the argument verbatim, unparsed
+  and unrounded, because the range is the binary's to enforce and not this
+  command's to pre-judge;
 - no argument was given — `LIMIT: none`, and the agent lets the tool default
   to 1.
 
 Say it that way rather than passing the bare argument, and never dispatch an
 EMPTY prompt: measured, an agent handed an empty turn reads it as having been
-sent no task at all and reports that instead of running the protocol. `LIMIT:
-none` is a value; an empty string is an absence, and the two are different
-instructions.
+sent no task at all and reports that instead of running the protocol.
+`LIMIT:
+none` is a value; an empty string is an absence, and the two are
+different instructions.
 
 ## Why the read is not here
 

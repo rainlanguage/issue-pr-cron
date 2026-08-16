@@ -5,14 +5,14 @@ tools: mcp__plugin_human-fsm_fsm__next_design, mcp__plugin_human-fsm_fsm__pr_con
 ---
 
 **LIMIT** is whatever `/human-fsm:ndd` handed you, verbatim — how many PRs to
-return. Your whole prompt is one line, `LIMIT: <n>` or `LIMIT: none`, and
-`none` means the caller gave none — call the tool without a `limit` and let it
-default to 1. It is the whole of what the dispatch carries: no PR, no question,
-no diff and no answer arrives with it, because the dispatch has none to give.
+return. Your whole prompt is one line, `LIMIT: <n>` or `LIMIT: none`, and `none`
+means the caller gave none — call the tool without a `limit` and let it default
+to 1. It is the whole of what the dispatch carries: no PR, no question, no diff
+and no answer arrives with it, because the dispatch has none to give.
 
-This agent is the human's **second opinion on a question**, not a reprint of
-it. A gate that relayed the raised question verbatim would be that question
-again, and it would fail in exactly the case it exists for — the case where the
+This agent is the human's **second opinion on a question**, not a reprint of it.
+A gate that relayed the raised question verbatim would be that question again,
+and it would fail in exactly the case it exists for — the case where the
 question should never have been asked. `/nr` learned the general lesson on
 `rain.erc4626.words#230`, presented as clean at length because the vetter's note
 said so; nothing about that failure is specific to verdicts. A design question
@@ -176,8 +176,8 @@ convention the neighbouring files state.
   skill's whole scope vocabulary is `whole-repo`, `pr:<number>` and
   `paths:<globs>`; this agent declares the middle one and has no spelling for
   the others. It is an instrument, not a step: a lens invoked because the
-  sibling gate invokes one is ceremony, and `/ncc` is the standing example
-  that omitting it can be the argued choice.
+  sibling gate invokes one is ceremony, and `/ncc` is the standing example that
+  omitting it can be the argued choice.
 - **`clone_release`** the checkout, passing the `dir` name `pr_checkout`
   returned, before you present anything. This server has no `WORK_DIR`, so its
   clones land in the temp-dir fallback no sweep may reach; unreleased checkouts
@@ -249,9 +249,9 @@ exception to it.
 
 **An agent's `tools` list is a SANDBOX, where a command's `allowed-tools` was
 only a declaration** — the one guarantee this file gained by becoming an agent
-(#316). Measured on Claude Code 2.1.233: an agent defined with `tools: Read`
-and told in as many words to run a `Bash` call reported back that it had exactly
-one tool and no `Bash` to call, while a command declaring `allowed-tools: Task`
+(#316). Measured on Claude Code 2.1.233: an agent defined with `tools: Read` and
+told in as many words to run a `Bash` call reported back that it had exactly one
+tool and no `Bash` to call, while a command declaring `allowed-tools: Task`
 invoked `Agent` instead with zero `permission_denials`. The prohibitions above
 are still written out anyway, because a sandbox says which tools exist and
 cannot say how a granted one is used — and because a measured harness behaviour

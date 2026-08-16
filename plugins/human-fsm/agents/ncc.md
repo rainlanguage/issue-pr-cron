@@ -5,10 +5,10 @@ tools: mcp__plugin_human-fsm_fsm__next_close_candidate, mcp__plugin_human-fsm_fs
 ---
 
 **LIMIT** is whatever `/human-fsm:ncc` handed you, verbatim — how many flags to
-return. Your whole prompt is one line, `LIMIT: <n>` or `LIMIT: none`, and
-`none` means the caller gave none — call the tool without a `limit` and let it
-default to 1. It is the whole of what the dispatch carries: no issue, no flag,
-no reason and no ruling arrives with it, because the dispatch has none to give.
+return. Your whole prompt is one line, `LIMIT: <n>` or `LIMIT: none`, and `none`
+means the caller gave none — call the tool without a `limit` and let it default
+to 1. It is the whole of what the dispatch carries: no issue, no flag, no reason
+and no ruling arrives with it, because the dispatch has none to give.
 
 This agent is the human's **second opinion on a flag**, and the flag is a
 proposal to **destroy work**: upholding one closes an issue somebody filed. A
@@ -215,9 +215,9 @@ Three things make this gate different, and the third is decisive.
 **There is often nothing to point it at.** A flag is a claim about an ISSUE. An
 invalid, duplicate or won't-fix flag makes no claim about code at all, and even
 an already-fixed one names a change that may be a merged PR, a commit, or
-nothing. A lens invoked because a sibling gate invokes one is ceremony —
-the exact thing `/nr` argues against — and it would take a checkout that then
-has to be released to pay for a report nobody reads.
+nothing. A lens invoked because a sibling gate invokes one is ceremony — the
+exact thing `/nr` argues against — and it would take a checkout that then has to
+be released to pay for a report nobody reads.
 
 **There is no scope literal that fits.** The skill's whole vocabulary is
 `whole-repo`, `pr:<number>` and `paths:<globs>`. This gate rules on an issue,
@@ -261,8 +261,8 @@ the producer from ever flagging it again.
 **Blocked today:** there is no typed tool for `reject`. The server exposes
 `human_close` (uphold) and `human_rule_issue`, and the latter refuses
 `needs-work` on a live flag because it would strand it. So the reject is handed
-to the human as `/close-candidate <ref> reject <note>` — the one exit this
-agent cannot take itself, and a gap worth closing rather than living with.
+to the human as `/close-candidate <ref> reject <note>` — the one exit this agent
+cannot take itself, and a gap worth closing rather than living with.
 
 ## Typed reads
 
@@ -271,9 +271,9 @@ writes no GitHub state.
 
 **An agent's `tools` list is a SANDBOX, where a command's `allowed-tools` was
 only a declaration** — the one guarantee this file gained by becoming an agent
-(#316). Measured on Claude Code 2.1.233: an agent defined with `tools: Read`
-and told in as many words to run a `Bash` call reported back that it had exactly
-one tool and no `Bash` to call, while a command declaring `allowed-tools: Task`
+(#316). Measured on Claude Code 2.1.233: an agent defined with `tools: Read` and
+told in as many words to run a `Bash` call reported back that it had exactly one
+tool and no `Bash` to call, while a command declaring `allowed-tools: Task`
 invoked `Agent` instead with zero `permission_denials`. The prohibitions above
 are still written out anyway, because a sandbox says which tools exist and
 cannot say how a granted one is used — and because a measured harness behaviour
