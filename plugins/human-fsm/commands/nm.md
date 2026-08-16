@@ -155,12 +155,12 @@ it — the state, or the missing state and its consuming transition, or the
 classifier defect stated precisely enough to file. Then TAKE the send-back per
 **If you can articulate it** below, and report that you took it. A located leak
 you handed onward is a leak that is still leaking. Then say what you checked to
-conclude it: the note,
-the labels, the rule, and the code where you read any. A leak whose location you
-cannot determine is a complete and correct outcome STATED AS SUCH — say what you
-read and what would decide it, rather than defaulting to the nearest plausible
-label, because a guessed re-filing is indistinguishable from a located one and
-wrong in the way nothing downstream can detect.
+conclude it: the note, the labels, the rule, and the code where you read any. A
+leak whose location you cannot determine is a complete and correct outcome
+STATED AS SUCH — say what you read and what would decide it, rather than
+defaulting to the nearest plausible label, because a guessed re-filing is
+indistinguishable from a located one and wrong in the way nothing downstream can
+detect.
 
 ## Why this is a second opinion and not a dispatcher
 
@@ -197,8 +197,8 @@ send-back.** Rule it with `human_rule`; the words you were about to write for
 the human ARE the work order, and they go in `rework`.
 
 Diagnose first anyway — a leak located in the wrong place is a defect left
-armed. Then act. The structural finding and the send-back are both true at
-once, never alternatives.
+armed. Then act. The structural finding and the send-back are both true at once,
+never alternatives.
 
 Not yours to move: `keep-open` on an issue, `close-candidate reject` on a
 flagged subject.
@@ -220,9 +220,9 @@ The fifth, `human_rule`, is the send-back and the only call that writes GitHub
 state. Typed for the same reason as every other input: its guards — mandatory
 work order, head-sha anchor, clearing every other `ai:*` — live in the binary,
 and a state reached by hand edits is the unauditable record this queue exists to
-diagnose. That list is a **declaration, not a sandbox**: measured on
-Claude Code 2.1.220, a command granting only `Read` still ran a `Bash` call with
-no permission denial. So the prohibition above is the thing that actually binds,
+diagnose. That list is a **declaration, not a sandbox**: measured on Claude Code
+2.1.220, a command granting only `Read` still ran a `Bash` call with no
+permission denial. So the prohibition above is the thing that actually binds,
 which is why it is written here rather than assumed of the frontmatter — and why
 nothing in this file is fenced as a shell line, because what a reader copies out
 of a command is what the command showed them.

@@ -259,13 +259,13 @@ reason. Both rulings land there; the verb only records which one ruled, so
 choosing between them is not a decision about where the PR goes.
 
 The words you were about to write for the human ARE the work order: they go in
-`--rework`, which is what makes the send-back executable. A send-back whose
-work order says nothing has sent nothing back.
+`--rework`, which is what makes the send-back executable. A send-back whose work
+order says nothing has sent nothing back.
 
-**What goes forward is what you have nothing to say against.** That is the
-whole of it — a PR you read against its issue, ran the lens over, and found
-nothing articulable to raise. Then the only remaining question is the human's
-to answer: merge it or not.
+**What goes forward is what you have nothing to say against.** That is the whole
+of it — a PR you read against its issue, ran the lens over, and found nothing
+articulable to raise. Then the only remaining question is the human's to answer:
+merge it or not.
 
 That list is a **declaration, not a sandbox**: measured on Claude Code 2.1.220,
 a command granting only `Read` still ran a `Bash` call with no permission
@@ -331,10 +331,10 @@ Print every field of the row. Then give the independent read — what the issue
 asked for, what the diff does, whether those two agree — then the audit lens's
 findings, each marked as the diff's own code or as surrounding context, and then
 say where the whole of that and the vetter's note diverge. Then say what it adds
-up to — and if the legacy deploy signal is
-`repo-not-migrated`, say that too, as repo health rather than as a gate: the
-merge does not wait on any deploy (#162), and what the signal asks for is the
-repo's migration to the split release lifecycle.
+up to — and if the legacy deploy signal is `repo-not-migrated`, say that too, as
+repo health rather than as a gate: the merge does not wait on any deploy (#162),
+and what the signal asks for is the repo's migration to the split release
+lifecycle.
 
 **The lens's findings arrive under the scope they were formed at, stated.** Name
 the literal you declared — `pr:<number>`, with the number in it — or, where the
@@ -350,7 +350,7 @@ pointed at the source, and say which those were.
 
 **This command does not merge** — the merge is the human's word on a PR they
 named. It DOES rule: everything it can articulate goes back, and what reaches
-the human is the read that precedes their word on a PR with nothing said
-against it.
+the human is the read that precedes their word on a PR with nothing said against
+it.
 
 Names collide across plugins; `/human-fsm:nr` disambiguates.
