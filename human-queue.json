@@ -971,7 +971,7 @@
         ]
       },
       "un-vetted": {
-        "count": 89,
+        "count": 88,
         "prs": [
           {
             "repo": "rainlanguage/issue-pr-cron",
@@ -1350,12 +1350,6 @@
             "number": 302,
             "url": "https://github.com/rainlanguage/rainix/pull/302",
             "title": "rainix owns the deploy-repo release freeze: rainix-static cut-release"
-          },
-          {
-            "repo": "rainlanguage/rainix",
-            "number": 299,
-            "url": "https://github.com/rainlanguage/rainix/pull/299",
-            "title": "rainix-static: cap launch-loaded agent context at 4096 bytes (floor-only ratchet)"
           },
           {
             "repo": "rainlanguage/rain.flare",
@@ -6301,7 +6295,7 @@
     }
   ],
   "counts": {
-    "unvetted": 89,
+    "unvetted": 88,
     "blockedOn": 20,
     "ready": 3,
     "needsWork": 99,
@@ -6312,7 +6306,7 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 2,
-    "totalProducerPrs": 216,
+    "totalProducerPrs": 215,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 654,
     "designPresentable": 3,
@@ -6323,7 +6317,7 @@
     "openIssues": {
       "meanDays": 283.7,
       "medianDays": 102.9,
-      "oldestDays": 1665.3
+      "oldestDays": 1665.4
     }
   }
 }
