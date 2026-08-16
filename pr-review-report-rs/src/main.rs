@@ -35647,8 +35647,8 @@ fn body_repair_comment(repair: BodyRepair, detail: &str) -> String {
     format!("🤖 ai:producer\n{} {detail}", repair.marker())
 }
 
-/// PURE: is this trusted body a body-repair receipt? The exact `🤖 ai:producer` head is required, so
-/// the only comments skipped are ones this tooling wrote.
+/// PURE: is this trusted body a body-repair receipt? The marker counts under the producer head, on
+/// the note's own second line, nowhere else — so no other note is skipped for quoting one.
 fn is_body_repair_note(body: &str) -> bool {
     body.strip_prefix("🤖 ai:producer\n").is_some_and(|rest| {
         BodyRepair::ALL
