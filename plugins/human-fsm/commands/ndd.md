@@ -96,8 +96,8 @@ changed files, the full diff, every issue the PR Closes or Refs with that
 issue's title, body and labels, and the trusted comments unclipped — step 1's
 `question.note` is clipped, `noteTruncated` says when, and this call is where
 the whole raising comment is read. `question.note`'s share is the PAGE's, so a
-`noteTruncated` on a multi-row page has a cheaper escape first: re-ask step 1
-at `limit: 1`, which carries several times what the widest page can.
+`noteTruncated` on a multi-row page has a cheaper escape first: re-ask step 1 at
+`limit: 1`, which carries several times what the widest page can.
 
 **3. Derive the intent from the ISSUE, and do it before weighing the question.**
 Say in your own words what the issue asked for, from `issues[].body` alone — not
