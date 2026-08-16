@@ -3217,6 +3217,88 @@ the three exact fields account for a **median 72%** of a run's spend, range
 55–91% across the 36 model-runs where the rate is solvable. Cache-read alone is
 the term that runs away — the $37.02 run in #97 read 26.4M cached tokens.
 
+### What one `/nr` run spends, by phase — `nr-profile`
+
+`pr-review-report nr-profile <session-transcript.jsonl> [--run N] [--json]`.
+
+[#315](https://github.com/rainlanguage/issue-pr-cron/issues/315) decomposed ONE
+`/nr` run by hand, off a session transcript, and that decomposition is the
+evidence under everything else in the issue — the audit skill at 41% of the
+wall, the independent read the gate exists for at 22% of the output. The same
+issue's finding 3 is that 2 of the 4 runs that day did not follow the protocol
+at all. A hand-read of one transcript is not a series, so the issue orders
+instrumentation FIRST and defers the orientation digest until it has real
+numbers. This is that instrument.
+
+It reads a transcript after the fact rather than being something `/nr` emits
+mid-run, and both halves of that are forced: the command's grant is typed tool
+calls with **no shell at all**, so it can invoke nothing; and a turn's
+`output_tokens` is not knowable to the turn producing it.
+
+**Two cuts, not one.** #315's table uses both without saying so, and they
+disagree by exactly one call in two places.
+
+- **Wall clock is continuous.** The run is in the checkout phase from the
+  instant `pr_checkout` fires, so a phase opens at the first event of the turn
+  issuing its own call.
+- **Output tokens are quantised to a turn.** One turn carries one `usage`
+  record, so the turn that spent 2,871 tokens on the independent read and then
+  fired `pr_checkout` in its last block cannot be split — those tokens are the
+  read's.
+
+The cuts therefore fall one call apart wherever a phase's opening call is a
+TRAILING call on the previous phase's turn, which is what `pr_checkout` (step
+5's first bullet) and `clone_release` (step 6) are, and what `next_ready`,
+`pr_context` and the `Skill` invoke are not. A phase whose opening call never
+fired has no instant to open at, so its boundary falls back to when its first
+turn began and the row is marked `*`; a phase with neither collapses to zero
+rather than borrowing a neighbour's time.
+
+On the run #315 decomposed, every cell reproduces:
+
+| phase                           |   wall | #315 | output | #315   |
+| ------------------------------- | -----: | ---: | -----: | ------ |
+| `setup / ToolSearch`            |  12.1s |   12 |    374 | 374    |
+| `next_ready`                    |  61.3s |   61 |     45 | 45     |
+| `pr_context + independent read` |  43.1s |   43 |  2,954 | 2,954  |
+| `pr_checkout + skill invoke`    |  16.7s |   17 |    496 | 496    |
+| `audit skill`                   | 113.9s |  114 |  7,072 | 7,072  |
+| `final report`                  |  31.9s |   31 |  2,340 | 2,340  |
+| total                           | 278.8s |  278 | 13,281 | 13,281 |
+
+The issue's wall column is hand-rounded and internally inconsistent — its six
+cells round to 279s or truncate to 276s, against its own stated 278s total — so
+the seconds here are the milliseconds the transcript carries. Its **57% of
+output** for the audit skill does not follow from its own table either: 7,072 of
+13,281 is **53.2%**. The 41% of wall does (40.8%).
+
+**Reading `output_tokens` here does not contradict
+[the section above](#live-token-spend--and-the-one-number-that-is-not-knowable).**
+Both hold, of different files. In a `runs/*.jsonl` stream-json trace
+`output_tokens` is a message-START snapshot — 2–5 on a message that went on to
+emit ~1,100 — so the deduped sum is 0.2%–20.6% of the terminal `result.usage`. A
+session transcript is written per COMPLETED content block and its
+`output_tokens` tracks the message: over the 979 main-thread messages of
+`0fd06efc`, reported output against rendered content bytes is a median 3.0 bytes
+per token (p10 1.98, p90 3.91), which a start snapshot cannot produce. A session
+transcript carries no `result` event, so there is no terminal total to check
+against — and no figure from this reader may be compared with one from a run
+trace.
+
+**A run that did not follow the protocol is named as one**, which is what makes
+the series honest rather than larger. Conformance is the five calls steps 1–6
+make (`next_ready`, `pr_context`, `pr_checkout`, `Skill`, `clone_release`), the
+`Skill` being the `audit` one, and no tool outside the command's own grant. On
+the four runs of 2026-08-16 only 06:56 passes; 07:57 skipped `pr_context` and
+the skill and used `Bash` twice, which `/nr` forbids in as many words. The
+reader's peak-context column reproduces #315 finding 2 exactly across all four —
+423,969 / 579,590 / 588,209 / 42,545 — which is the number that says every turn
+re-read a 400–600k ambient context that had nothing to do with the PR.
+
+Finding 2's fix conflicts with `/nr`'s own INLINE ruling and is a human call,
+not a build; finding 1's orientation digest waits on numbers from this reader.
+Both are stated that way in #315 and neither is implemented.
+
 ### Tokens to land work — `work-tokens`
 
 `pr-review-report work-tokens metrics/runs.jsonl [--json]`.
