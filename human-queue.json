@@ -987,8 +987,26 @@
         ]
       },
       "un-vetted": {
-        "count": 83,
+        "count": 86,
         "prs": [
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 319,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/319",
+            "title": "feat(nr-profile): per-run phase and output-token instrumentation for /nr"
+          },
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 318,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/318",
+            "title": "Answer the human's queue with ONE GraphQL query, not ~29 gh calls"
+          },
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 317,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/317",
+            "title": "The vetter's state-load reads the population in chunks, not one subprocess per PR"
+          },
           {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 295,
@@ -2316,15 +2334,9 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/issue-pr-cron",
-      "number": 312,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/312",
-      "title": "unvetted --limit 3 makes 354 gh calls and spends 287s in them: --limit bounds rows, not work"
-    },
-    {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 311,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/311",
-      "title": "ND_NOTE_BYTES clips design notes 22-29 bytes short, costing a pr_context round trip for the sentence that decides the ruling"
+      "number": 316,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/316",
+      "title": "/nr inherits the invoking conversation — a contaminated read is indistinguishable from an independent one"
     },
     {
       "repo": "rainlanguage/rainlang.interface",
@@ -6315,7 +6327,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 83,
+    "unvetted": 86,
     "blockedOn": 21,
     "ready": 2,
     "needsWork": 106,
@@ -6326,17 +6338,17 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 212,
+    "totalProducerPrs": 215,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 662,
+    "uncoveredIssues": 661,
     "designPresentable": 0,
     "designNoQuestion": 0,
-    "openIssues": 878
+    "openIssues": 880
   },
   "ages": {
     "openIssues": {
-      "meanDays": 282.6,
-      "medianDays": 103.1,
+      "meanDays": 282.0,
+      "medianDays": 103.2,
       "oldestDays": 1665.6
     }
   }
