@@ -6,15 +6,28 @@ allowed-tools: Agent
 
 Arguments: `$ARGUMENTS`
 
-Dispatch the `human-fsm:ncc` agent, with `$ARGUMENTS` verbatim as the whole of
-its prompt, and relay the report it returns verbatim. That is the entirety of
-this command.
+Dispatch the `human-fsm:ncc` agent and relay the report it returns verbatim.
+That is the entirety of this command.
+
+Its prompt is exactly one line and carries exactly one value:
+
+- an argument was given — `LIMIT: $ARGUMENTS`, the argument verbatim,
+  unparsed and unrounded, because the range is the binary's to enforce and not
+  this command's to pre-judge;
+- no argument was given — `LIMIT: none`, and the agent lets the tool default
+  to 1.
+
+Say it that way rather than passing the bare argument, and never dispatch an
+EMPTY prompt: measured, an agent handed an empty turn reads it as having been
+sent no task at all and reports that instead of running the protocol. `LIMIT:
+none` is a value; an empty string is an absence, and the two are different
+instructions.
 
 ## Why the read is not here
 
 A flag is a proposal to **destroy work**: upholding one closes an issue somebody
-filed. `/ncc` exists to falsify the producer's one-line reason, and falsifying it
-means reading the issue as filed and the evidence the reason cites yourself.
+filed. `/ncc` exists to falsify the producer's one-line reason, and falsifying
+it means reading the issue as filed and the evidence the reason cites yourself.
 While this file carried the protocol it executed inline in whatever conversation
 you happened to be in and inherited it entirely, so a read fired in a session
 that had already discussed the issue was that session's account of the flag,

@@ -5,8 +5,9 @@ tools: mcp__plugin_human-fsm_fsm__next_ready, mcp__plugin_human-fsm_fsm__pr_cont
 ---
 
 **LIMIT** is whatever `/human-fsm:nr` handed you, verbatim — how many PRs to
-return. It hands you nothing when the caller gave nothing, and then the tool
-defaults to 1. It is the whole of what the dispatch carries: no PR, no verdict,
+return. Your whole prompt is one line, `LIMIT: <n>` or `LIMIT: none`, and
+`none` means the caller gave none — call the tool without a `limit` and let it
+default to 1. It is the whole of what the dispatch carries: no PR, no verdict,
 no diff and no opinion arrives with it, because the dispatch has none to give.
 
 This agent is the human's **second opinion**, not a second copy of the
@@ -23,14 +24,14 @@ source rather than recalling them.
 ## Why this is an agent, and what your empty context is for
 
 This protocol used to execute inline in whatever conversation the human happened
-to be in, and it inherited that conversation entirely. That is a second, unguarded
-route to the `#230` failure, and a worse one: a run fired in a session that had
-already discussed the PR — its diff, the vetter's reasoning, a ruling the human
-was leaning toward — is not a second opinion, it is a re-reading of that
-session's own summary of the first one. **A cold read and a contaminated one are
-indistinguishable in the report**, which is precisely what made it dangerous.
-The human ruled it out (#316): this read runs in a fresh context, and being an
-agent is how.
+to be in, and it inherited that conversation entirely. That is a second,
+unguarded route to the `#230` failure, and a worse one: a run fired in a session
+that had already discussed the PR — its diff, the vetter's reasoning, a ruling
+the human was leaning toward — is not a second opinion, it is a re-reading of
+that session's own summary of the first one. **A cold read and a contaminated
+one are indistinguishable in the report**, which is precisely what made it
+dangerous. The human ruled it out (#316): this read runs in a fresh context,
+and being an agent is how.
 
 So your context starts empty and everything in it is yours to account for:
 

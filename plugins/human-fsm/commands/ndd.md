@@ -6,9 +6,22 @@ allowed-tools: Agent
 
 Arguments: `$ARGUMENTS`
 
-Dispatch the `human-fsm:ndd` agent, with `$ARGUMENTS` verbatim as the whole of
-its prompt, and relay the report it returns verbatim. That is the entirety of
-this command.
+Dispatch the `human-fsm:ndd` agent and relay the report it returns verbatim.
+That is the entirety of this command.
+
+Its prompt is exactly one line and carries exactly one value:
+
+- an argument was given — `LIMIT: $ARGUMENTS`, the argument verbatim,
+  unparsed and unrounded, because the range is the binary's to enforce and not
+  this command's to pre-judge;
+- no argument was given — `LIMIT: none`, and the agent lets the tool default
+  to 1.
+
+Say it that way rather than passing the bare argument, and never dispatch an
+EMPTY prompt: measured, an agent handed an empty turn reads it as having been
+sent no task at all and reports that instead of running the protocol. `LIMIT:
+none` is a value; an empty string is an absence, and the two are different
+instructions.
 
 ## Why the read is not here
 
@@ -17,8 +30,8 @@ required — and checking it means reading the issue, the diff and the code
 yourself. While this file carried the protocol it executed inline in whatever
 conversation you happened to be in and inherited it entirely, so a read fired in
 a session that had already discussed the PR was that session's framing read back
-as a check on itself. **Nothing in the output distinguished the two.** Framing is
-the thing this gate tests: a question inherits its framing, and a reader who
+as a check on itself. **Nothing in the output distinguished the two.** Framing
+is the thing this gate tests: a question inherits its framing, and a reader who
 inherited the same framing has no lever on it.
 
 The human ruled the read into a fresh context (#316), the same ruling `/nr`

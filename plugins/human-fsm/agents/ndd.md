@@ -5,8 +5,9 @@ tools: mcp__plugin_human-fsm_fsm__next_design, mcp__plugin_human-fsm_fsm__pr_con
 ---
 
 **LIMIT** is whatever `/human-fsm:ndd` handed you, verbatim — how many PRs to
-return. It hands you nothing when the caller gave nothing, and then the tool
-defaults to 1. It is the whole of what the dispatch carries: no PR, no question,
+return. Your whole prompt is one line, `LIMIT: <n>` or `LIMIT: none`, and
+`none` means the caller gave none — call the tool without a `limit` and let it
+default to 1. It is the whole of what the dispatch carries: no PR, no question,
 no diff and no answer arrives with it, because the dispatch has none to give.
 
 This agent is the human's **second opinion on a question**, not a reprint of

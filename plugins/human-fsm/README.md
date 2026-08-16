@@ -45,18 +45,20 @@ So since #316 each protocol lives in `agents/<name>.md` and the command in
 `commands/<name>.md` does one thing — dispatch that agent with the LIMIT
 verbatim and relay its report verbatim. A sub-agent starts with its own system
 prompt and the prompt it was handed and nothing else, so the reader's context
-holds what the reader fetched. `/observe-run` and the four rulings are unchanged:
+holds what the reader fetched. `/observe-run` and the four rulings are
+unchanged:
 none of them claims an independent read, and each acts on a subject the human
 named.
 
-**The manifest names no `agents` key on purpose, and this is a trap.** Agents are
-auto-discovered from `agents/` beside `commands/`; adding `"agents": "./agents/"`
-to `plugin.json` — the obvious symmetry with the `"commands"` key already there —
-SUPPRESSES the discovery instead of declaring it. Measured on 2.1.233: with the
-key present the session's agent roster listed no `human-fsm:*` agent at all and
-raised no error, and removing the key made all four appear as
-`human-fsm:nr` / `ncc` / `ndd` / `nm`. A dispatcher whose agent does not exist
-fails as a command that does nothing, so do not "tidy" that key back in.
+**The manifest names no `agents` key on purpose, and this is a trap.** Agents
+are auto-discovered from `agents/` beside `commands/`; adding
+`"agents": "./agents/"` to `plugin.json` — the obvious symmetry with the
+`"commands"` key already there — SUPPRESSES the discovery instead of declaring
+it. Measured on 2.1.233: with the key present the session's agent roster listed
+no `human-fsm:*` agent at all and raised no error, and removing the key made all
+four appear as `human-fsm:nr` / `ncc` / `ndd` / `nm`. A dispatcher whose agent
+does not exist fails as a command that does nothing, so do not "tidy" that key
+back in.
 
 Two properties the split had to preserve, and does:
 
@@ -100,9 +102,9 @@ manifest — and **no shell at all**. The `nr` agent is granted `next_ready`,
 `pr_context`, `pr_checkout`, `clone_release` and `human_rule`, plus `Skill` and
 `Read`, which it needs because it puts the PR's source on disk and audits it.
 `ndd` is granted the same shape with `next_design` at its head, because a design
-question is a claim about code on a PR and weighing its options means reading the
-tree. `nm` is granted the same shape with `next_leak` at its head: locating a
-leak sometimes turns on what the code actually did, so the tree has to be
+question is a claim about code on a PR and weighing its options means reading
+the tree. `nm` is granted the same shape with `next_leak` at its head: locating
+a leak sometimes turns on what the code actually did, so the tree has to be
 reachable — though most leaks are located from the trusted comments and the
 labels, and the lens is the exception rather than a step. `ncc` is granted
 `next_close_candidate`, `close_candidate_context` and `pr_context`, and those
@@ -114,20 +116,21 @@ in. None falls back to `gh`, none assembles a field itself, and none quietly
 answers from memory: either the tools answered or the agent says so and stops.
 That is the guarantee a merge decision needs, because the way this goes wrong is
 not a refusal, it is a plausible answer nobody can trace — and a close decision
-needs it no less, since upholding a flag closes an issue somebody filed. A design
-ruling needs it for a third reason: since #219 an answer IS producer work, so a
-question answered against something nobody read dispatches that work on it.
+needs it no less, since upholding a flag closes an issue somebody filed. A
+design ruling needs it for a third reason: since #219 an answer IS producer
+work, so a question answered against something nobody read dispatches that work
+on it.
 
 A command's `allowed-tools` line is a **declaration**, not a sandbox — measured
-on Claude Code 2.1.220 and again on 2.1.233, a command granting only `Read` still
-ran a `Bash` call with no permission denial — so what binds a command is its own
-prose. An **agent's `tools` list is the sandbox** the command's line never was:
-measured on 2.1.233, an agent defined with `tools: Read` and told in as many
-words to run a `Bash` call reported that it held exactly one tool and had no
-`Bash` to call. The prose still carries the rules that a tool list cannot state —
-that `Read` is for the `pr_checkout` tree and nothing else, that the lens scope
-is a literal, that no field is assembled by hand — and `cargo test` holds the two
-to each other over both files.
+on Claude Code 2.1.220 and again on 2.1.233, a command granting only `Read`
+still ran a `Bash` call with no permission denial — so what binds a command is
+its own prose. An **agent's `tools` list is the sandbox** the command's line
+never was: measured on 2.1.233, an agent defined with `tools: Read` and told in
+as many words to run a `Bash` call reported that it held exactly one tool and
+had no `Bash` to call. The prose still carries the rules that a tool list cannot
+state — that `Read` is for the `pr_checkout` tree and nothing else, that the
+lens scope is a literal, that no field is assembled by hand — and `cargo test`
+holds the two to each other over both files.
 
 > **Landing note (#316).** `command_contract` in `pr-review-report-rs` does not
 > yet know this shape: it refuses `Task`/`Agent` as a grant by name, pins each

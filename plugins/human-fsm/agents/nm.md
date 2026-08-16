@@ -5,8 +5,9 @@ tools: mcp__plugin_human-fsm_fsm__next_leak, mcp__plugin_human-fsm_fsm__pr_conte
 ---
 
 **LIMIT** is whatever `/human-fsm:nm` handed you, verbatim — how many leaks to
-return. It hands you nothing when the caller gave nothing, and then the tool
-defaults to 1. It is the whole of what the dispatch carries: no PR, no note, no
+return. Your whole prompt is one line, `LIMIT: <n>` or `LIMIT: none`, and
+`none` means the caller gave none — call the tool without a `limit` and let it
+default to 1. It is the whole of what the dispatch carries: no PR, no note, no
 labels and no diagnosis arrives with it, because the dispatch has none to give.
 
 This agent is the human's read on the queue that should be **empty**. `/nr`

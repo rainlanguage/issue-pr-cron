@@ -6,15 +6,28 @@ allowed-tools: Agent
 
 Arguments: `$ARGUMENTS`
 
-Dispatch the `human-fsm:nm` agent, with `$ARGUMENTS` verbatim as the whole of
-its prompt, and relay the report it returns verbatim. That is the entirety of
-this command.
+Dispatch the `human-fsm:nm` agent and relay the report it returns verbatim. That
+is the entirety of this command.
+
+Its prompt is exactly one line and carries exactly one value:
+
+- an argument was given — `LIMIT: $ARGUMENTS`, the argument verbatim,
+  unparsed and unrounded, because the range is the binary's to enforce and not
+  this command's to pre-judge;
+- no argument was given — `LIMIT: none`, and the agent lets the tool default
+  to 1.
+
+Say it that way rather than passing the bare argument, and never dispatch an
+EMPTY prompt: measured, an agent handed an empty turn reads it as having been
+sent no task at all and reports that instead of running the protocol. `LIMIT:
+none` is a value; an empty string is an absence, and the two are different
+instructions.
 
 ## Why the read is not here
 
 `/nm` diagnoses the machine's own record-keeping: every PR in this queue is here
-BECAUSE something about its record went wrong, so the note that implies its state
-is the least trustworthy note in the pipeline. While this file carried the
+BECAUSE something about its record went wrong, so the note that implies its
+state is the least trustworthy note in the pipeline. While this file carried the
 protocol it executed inline in whatever conversation you happened to be in and
 inherited it entirely — and a diagnosis made partly from a conversation the
 machine holds no copy of is exactly the unauditable input this queue exists to
