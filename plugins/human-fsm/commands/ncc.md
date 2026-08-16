@@ -220,6 +220,23 @@ issue, reassembled by hand, is a decision whose inputs nobody can audit. If a
 tool is unavailable, say so and stop — the answer is to connect the plugin's MCP
 server, not to work around it.
 
+## If you can articulate it, send it BACK — not forward
+
+**Anything you can put into words against the flag is a reject.** Do not write
+it up for the human to reach the same answer; the words are the reject's note.
+
+Two exits stay theirs, and both for the same reason — they destroy or freeze
+work: `uphold`, which closes somebody's issue, and `keep-open`, which forbids
+the producer from ever flagging it again.
+
+**Blocked today:** there is no typed tool for `reject`. The server exposes
+`human_close` (uphold) and `human_rule_issue`, and the latter refuses
+`needs-work` on a live flag because it would strand it. So the reject is handed
+to the human as `/close-candidate <ref> reject <note>` — the one exit this
+command cannot take itself, and a gap worth closing rather than living with.
+
+## Typed reads
+
 The grant is three typed reads and nothing else. All three are reads; this
 command writes no GitHub state. That list is a **declaration, not a sandbox** —
 measured on Claude Code 2.1.220, a command granting only `Read` still ran a
@@ -293,7 +310,7 @@ The rulings are the existing ones and this command invents none:
 - `/design <owner/repo#n> <note>` — the flag raises a question a human has to
   settle rather than a claim anyone can check.
 
-**This command does not rule and does not close.** It is the read that precedes
-the human's word.
+**This command does not close** — destroying work is the human's word. It DOES
+reject what it can articulate against, once a typed reject exists.
 
 Names collide across plugins; `/human-fsm:ncc` disambiguates.
