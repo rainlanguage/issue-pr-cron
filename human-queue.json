@@ -1033,7 +1033,7 @@
         ]
       },
       "un-vetted": {
-        "count": 46,
+        "count": 43,
         "prs": [
           {
             "repo": "rainlanguage/rain.solmem",
@@ -1067,12 +1067,6 @@
           },
           {
             "repo": "rainlanguage/rain.solmem",
-            "number": 116,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/116",
-            "title": "Delete .gas-snapshot: a baseline nobody regenerates, 48% wrong"
-          },
-          {
-            "repo": "rainlanguage/rain.solmem",
             "number": 115,
             "url": "https://github.com/rainlanguage/rain.solmem/pull/115",
             "title": "Scope unsafeExtend's extend-is-never-mutated promise to non-overlapping arrays"
@@ -1082,12 +1076,6 @@
             "number": 114,
             "url": "https://github.com/rainlanguage/rain.solmem/pull/114",
             "title": "Run rainix CI on pull_request so fork PRs get checks"
-          },
-          {
-            "repo": "rainlanguage/rain.sol.codegen",
-            "number": 137,
-            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/137",
-            "title": "Reach the per-tag frozen-snapshot layout through LibFs"
           },
           {
             "repo": "rainlanguage/rainix",
@@ -1106,12 +1094,6 @@
             "number": 316,
             "url": "https://github.com/rainlanguage/rainix/pull/316",
             "title": "ci(sol): build the tree .soldeerignore publishes, not the repo tree"
-          },
-          {
-            "repo": "rainlanguage/rain.sol.codegen",
-            "number": 128,
-            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/128",
-            "title": "Refuse to generate beside another artifact for the same contract"
           },
           {
             "repo": "rainlanguage/rainix",
@@ -2240,6 +2222,24 @@
     }
   ],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 329,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/329",
+      "title": "One label per state: the FSM's most common state has no label, and two PRs are in two states at once"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 141,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/141",
+      "title": "buildFileForContract's unlink loop deletes a live symlink's target, silently destroying any file the fs_permissions grant reaches"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 328,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/328",
+      "title": "A producer that verifies the rework already landed has no transition to say so, so ai:needs-work lies until the vetter catches up"
+    },
     {
       "repo": "rainlanguage/adversarial-mutation-test",
       "number": 25,
@@ -6250,7 +6250,7 @@
     }
   ],
   "counts": {
-    "unvetted": 46,
+    "unvetted": 43,
     "blockedOn": 23,
     "ready": 2,
     "needsWork": 107,
@@ -6261,17 +6261,17 @@
     "closeCandidateUnvetted": 6,
     "closeCandidateUpheld": 2,
     "leaks": 1,
-    "totalProducerPrs": 186,
+    "totalProducerPrs": 183,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 662,
+    "uncoveredIssues": 665,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 846
+    "openIssues": 847
   },
   "ages": {
     "openIssues": {
-      "meanDays": 293.9,
-      "medianDays": 108.2,
+      "meanDays": 293.6,
+      "medianDays": 107.0,
       "oldestDays": 1666.4
     }
   }
