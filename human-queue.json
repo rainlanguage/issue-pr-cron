@@ -1030,6 +1030,12 @@
         "count": 42,
         "prs": [
           {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 333,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/333",
+            "title": "feat(metrics): per-agent toolCalls in agents[], from the run's own walk"
+          },
+          {
             "repo": "rainlanguage/rain.solmem",
             "number": 121,
             "url": "https://github.com/rainlanguage/rain.solmem/pull/121",
@@ -1226,12 +1232,6 @@
             "number": 279,
             "url": "https://github.com/rainlanguage/issue-pr-cron/pull/279",
             "title": "feat(metrics): FSM touch ledger — every transition records which item it acted on, landings first-class"
-          },
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 277,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/277",
-            "title": "feat(metrics): landed-history.jsonl — the landed-work denominator feed"
           },
           {
             "repo": "rainlanguage/issue-pr-cron",
@@ -2199,6 +2199,24 @@
     }
   ],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain-org-health",
+      "number": 175,
+      "url": "https://github.com/rainlanguage/rain-org-health/issues/175",
+      "title": "Pipeline page: tokens-per-landed-item band, joining runs.jsonl to the landed-history.jsonl feed #277 shipped for it"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 332,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/332",
+      "title": "work-tokens derives landings from swept traces, so per-LANDED-item divides two different populations — read landed-history.jsonl instead"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 331,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/331",
+      "title": "Worker item kind exists only as prose in agents[].label, so comparable work cannot be grouped without matching text"
+    },
     {
       "repo": "rainlanguage/adversarial-mutation-test",
       "number": 28,
@@ -6393,14 +6411,14 @@
     "leaks": 0,
     "totalProducerPrs": 180,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 692,
+    "uncoveredIssues": 695,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 871
+    "openIssues": 875
   },
   "ages": {
     "openIssues": {
-      "meanDays": 285.7,
+      "meanDays": 284.4,
       "medianDays": 104.2,
       "oldestDays": 1666.7
     }
