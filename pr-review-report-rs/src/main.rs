@@ -4750,6 +4750,12 @@ fn commit_closes_mode(slug: &str, pr: &str) -> i32 {
 #[derive(Default, PartialEq, Debug)]
 struct RunMetrics {
     tool_calls: usize,
+    // The SAME calls as `tool_calls`, split by the actor that made them (#330). Keyed by
+    // [`owner_key`] — `__main__` for the main loop, the dispatching `Agent` tool_use's id for a
+    // subagent — which is exactly how [`token_attribution`] keys spend, so a row's per-agent call
+    // count lands on the same agent as its per-agent dollars. Summing this map returns
+    // `tool_calls` by construction: [`StartupProbe::record_call`] is the only writer of either.
+    tool_calls_by_owner: std::collections::HashMap<String, usize>,
     startup_tool_calls: usize,
     // ScheduleWakeup / CronCreate calls. A one-shot cron must NEVER park itself to resume "later";
     // any non-zero value is a regression of the no-park rule (both tools are denied in settings).
@@ -4943,6 +4949,8 @@ struct StartupProbe {
     /// killed in the gap before the result would otherwise lose the whole measurement.
     productive_ts: Option<i64>,
     tool_calls: usize,
+    /// The same calls as `tool_calls`, split by [`owner_key`] — see [`RunMetrics`].
+    tool_calls_by_owner: std::collections::HashMap<String, usize>,
     startup_tool_calls: usize,
     wakeup_calls: usize,
     first_mutation_index: Option<usize>,
@@ -4971,6 +4979,9 @@ impl StartupProbe {
                 else {
                     return phases;
                 };
+                // Whose calls these are. Read once per EVENT, not per block: every tool_use in one
+                // assistant message was issued by one thread.
+                let owner = owner_key(ev);
                 for block in content {
                     if block.get("type").and_then(|t| t.as_str()) != Some("tool_use") {
                         continue;
@@ -5000,7 +5011,7 @@ impl StartupProbe {
                             self.startup_tool_calls += 1;
                         }
                     }
-                    self.tool_calls += 1;
+                    self.record_call(&owner);
                 }
             }
             Some("user") => {
@@ -5021,6 +5032,20 @@ impl StartupProbe {
         phases
     }
 
+    /// Count ONE tool call, to the run and to the actor that made it, in one statement.
+    ///
+    /// The only writer of either counter. Two `+= 1`s side by side is exactly how a run total and
+    /// its own partition drift apart — one guarded, one not — and the drift is silent: both halves
+    /// stay plausible numbers. #330 asks for a row whose per-agent counts ACCOUNT for the run's,
+    /// so the accounting is made structural here rather than asserted downstream.
+    fn record_call(&mut self, owner: &str) {
+        self.tool_calls += 1;
+        *self
+            .tool_calls_by_owner
+            .entry(owner.to_string())
+            .or_insert(0) += 1;
+    }
+
     fn boot_ms(&self) -> Option<i64> {
         Some(self.first_tool_ts? - self.run_ts?)
     }
@@ -5036,6 +5061,7 @@ impl StartupProbe {
     /// Copy the counted + timed fields onto a metrics record.
     fn fill(&self, m: &mut RunMetrics) {
         m.tool_calls = self.tool_calls;
+        m.tool_calls_by_owner = self.tool_calls_by_owner.clone();
         m.startup_tool_calls = self.startup_tool_calls;
         m.wakeup_calls = self.wakeup_calls;
         m.first_mutation_index = self.first_mutation_index;
@@ -5505,6 +5531,27 @@ fn unattributable_output(content: &str) -> (u64, f64) {
     (tokens, usd)
 }
 
+/// The [`owner_key`] of the main loop — the thread with no dispatching `Agent` call above it.
+const MAIN_LOOP_OWNER: &str = "__main__";
+
+/// PURE: which actor does this trace event belong to?
+///
+/// `__main__` for the main loop — an absent, null or non-string `parent_tool_use_id` — and the
+/// dispatching `Agent` tool_use's id for a subagent's own turns. An EMPTY string is left as it is
+/// rather than folded into `__main__`: no trace on disk spells it that way, and a fold would
+/// silently move a stranger's spend and calls onto the main loop.
+///
+/// The ONE place this key is derived, so [`token_attribution`] (dollars) and
+/// [`StartupProbe`] (tool calls) cannot drift into attributing one event to two different agents —
+/// which is what would make a row's per-agent `usd` and per-agent `toolCalls` describe different
+/// populations.
+fn owner_key(ev: &Value) -> String {
+    ev.get("parent_tool_use_id")
+        .and_then(|p| p.as_str())
+        .unwrap_or(MAIN_LOOP_OWNER)
+        .to_string()
+}
+
 /// PURE: has this message already been charged? Records it if not.
 ///
 /// A message is re-emitted as it streams and its usage repeats verbatim, so counting RECORDS
@@ -5643,11 +5690,7 @@ fn token_attribution(content: &str) -> Vec<AgentSpend> {
             continue;
         }
 
-        let owner = ev
-            .get("parent_tool_use_id")
-            .and_then(|p| p.as_str())
-            .unwrap_or("__main__")
-            .to_string();
+        let owner = owner_key(&ev);
         let model = msg.get("model").and_then(|m| m.as_str()).unwrap_or("");
         let e = agents.entry(owner.clone()).or_insert_with(|| AgentSpend {
             id: owner.clone(),
@@ -5658,7 +5701,7 @@ fn token_attribution(content: &str) -> Vec<AgentSpend> {
 
     let mut rows: Vec<AgentSpend> = agents.into_values().collect();
     for r in &mut rows {
-        r.label = if r.id == "__main__" {
+        r.label = if r.id == MAIN_LOOP_OWNER {
             "main loop".to_string()
         } else {
             // An unlabelled id is a dispatch this trace never showed — a resumed run, or a stream
@@ -5751,7 +5794,16 @@ impl AgentSpend {
 /// differently. `touches` is the trace-derived per-actor touch map ([`trace_touches`]), keyed by
 /// the same `parent_tool_use_id` this row's spend is grouped by — `touched` is always present so
 /// "this task touched nothing" and "this row predates the field" stay distinguishable.
-fn agent_row(a: &AgentSpend, touches: &std::collections::HashMap<String, Vec<Value>>) -> Value {
+///
+/// `tool_calls` is passed in rather than read off [`AgentSpend`] because it comes from the other
+/// walk over the trace — [`StartupProbe`], which counts every `tool_use` block whether or not its
+/// event carried usage. A backfill that omitted it would STRIP the `toolCalls` a live run wrote
+/// (#330), since this rebuilds the `agents` array wholesale.
+fn agent_row(
+    a: &AgentSpend,
+    tool_calls: usize,
+    touches: &std::collections::HashMap<String, Vec<Value>>,
+) -> Value {
     serde_json::json!({
         "label": a.label,
         // WHICH KIND of item, so "every rework worker" is a `group by` and never a substring
@@ -5760,6 +5812,7 @@ fn agent_row(a: &AgentSpend, touches: &std::collections::HashMap<String, Vec<Val
         "tokens": a.tokens(),
         "usd": round3(a.usd),
         "messages": a.messages,
+        "toolCalls": tool_calls,
         "cacheRead": a.cache_read,
         "cacheWrite": a.cache_write_5m + a.cache_write_1h,
         "touched": touches.get(&a.id).cloned().unwrap_or_default(),
@@ -6461,11 +6514,14 @@ fn backfill_row(mut row: Value, trace_body: Option<&str>) -> (Value, bool) {
         "billedUsd".into(),
         serde_json::json!(round3(spend.billed_usd)),
     );
+    // Recounted from the trace, never carried over from the row being rewritten: the row's old
+    // `agents` array is what the backfill exists to replace.
+    let calls = run_metrics(body).tool_calls_by_owner;
     obj.insert(
         "agents".into(),
         serde_json::json!(agents
             .iter()
-            .map(|a| agent_row(a, &touches))
+            .map(|a| agent_row(a, calls.get(&a.id).copied().unwrap_or(0), &touches))
             .collect::<Vec<Value>>()),
     );
     // Historical rows never had a live ledger, so their `touched` is what the trace demonstrates
@@ -8839,7 +8895,23 @@ fn final_record(
         // and the backfilled one already differed by a `tokens` key, and #331's `kind` would have
         // been the second field the live writer silently lacked. The two now describe a task the
         // same way by construction.
-        "agents": spend.agents.iter().map(|a| agent_row(a, touch.per_actor)).collect::<Vec<Value>>(),
+        //
+        // `toolCalls` is #330: the row already said what each worker COST and never how much it
+        // DID, so "did workers make fewer calls after change X" could only be answered by grouping
+        // a 20 MB trace by `parent_tool_use_id` — and traces rotate while this row is kept
+        // forever. The counts come from [`RunMetrics::tool_calls_by_owner`], the same walk that
+        // produced the run-level `toolCalls` above, so the parts account for the whole.
+        //
+        // No per-agent `startupToolCalls` beside it, deliberately. At run level that field counts
+        // calls before `firstMutationIndex`, and `is_mutation_tool` recognises the RUN's org
+        // mutations — `gh pr create`, `git push`, the vetter's `record_verdict`. A worker that
+        // reworks a diff and hands it back never issues one, so its per-worker analogue would read
+        // "every call was startup" for a worker that did nothing but work, while a worker that
+        // happened to push would read as orientation overhead. One field, two meanings, decided by
+        // which row you are looking at — the issue asks for one honest number instead.
+        "agents": spend.agents.iter()
+            .map(|a| agent_row(a, m.tool_calls_by_owner.get(&a.id).copied().unwrap_or(0), touch.per_actor))
+            .collect::<Vec<Value>>(),
         // WHICH FSM ITEMS THIS RUN TOUCHED, from the touch ledger (the transitions' own typed
         // records), folded to one entry per (repo, number, kind, action, verb). Always present:
         // [] is a run that touched nothing. `touchedSource` says which contract built the array —
@@ -58110,6 +58182,7 @@ mod usage_probe_tests {
                 kind: "rework-needs-work".into(),
                 ..Default::default()
             },
+            0,
             &Default::default(),
         );
         assert_eq!(row["kind"], "rework-needs-work");
@@ -58133,6 +58206,180 @@ mod usage_probe_tests {
         assert_eq!(rows[0].cache_read, 4_000_000);
         assert_eq!(rows[1].label, "main loop");
         assert_eq!(rows[1].cache_read, 1_000_000);
+    }
+
+    /// One assistant turn that both COSTS money and ISSUES tool calls — the shape a real trace
+    /// event has. [`spend_ev`] carries usage and no content, [`dispatch_ev`] content and no usage;
+    /// neither on its own exercises the two walks meeting on one event.
+    fn work_ev(id: &str, parent: Option<&str>, calls: &[&str]) -> String {
+        let mut ev: Value = serde_json::from_str(&spend_ev(id, parent, 1_000, 0, 0)).unwrap();
+        ev["message"]["content"] = Value::Array(
+            calls
+                .iter()
+                .enumerate()
+                .map(|(i, name)| {
+                    serde_json::json!({"type":"tool_use","name":name,
+                                       "id":format!("toolu_{id}_{i}"),"input":{}})
+                })
+                .collect(),
+        );
+        serde_json::to_string(&ev).unwrap()
+    }
+
+    /// #330: a run's `toolCalls` split by the worker that made the calls, on the key that already
+    /// carries the worker's dollars.
+    ///
+    /// Two things are pinned, and BOTH are needed. The per-label counts pin the PARTITION — a
+    /// build that dumped every call on the main loop keeps the total intact and fails here. The
+    /// sum pins the ACCOUNTING — the parts and the whole come from one walk, so the row cannot
+    /// carry per-agent counts that quietly stop adding up to the number beside them.
+    #[test]
+    fn per_agent_tool_calls_partition_the_runs_own_total() {
+        let streamed = work_ev("m3", Some("toolu_A"), &["Bash"]);
+        let trace = [
+            // The dispatching calls are the MAIN LOOP's own tool calls — the main loop is what
+            // issued them — and the work they dispatch is not.
+            dispatch_ev("toolu_A", "rework pointers"),
+            dispatch_ev("toolu_B", "triage the queue"),
+            work_ev("m1", None, &["Bash"]),
+            work_ev("m2", Some("toolu_A"), &["Read", "Edit", "Bash"]),
+            streamed.clone(),
+            // The same message re-emitted as it streams. Counted again, because that is the rule
+            // the run-level `toolCalls` has always applied and these two numbers are ONE walk —
+            // deduping here and not there is exactly the silent drift the identity below forbids.
+            streamed,
+            work_ev("m4", Some("toolu_B"), &["Read", "Read"]),
+            serde_json::to_string(&serde_json::json!({
+                "type":"result","total_cost_usd":9.0,
+                "modelUsage":{"claude-opus-5":{"outputTokens":1_000}}}))
+            .unwrap(),
+        ]
+        .join("\n");
+
+        let m = run_metrics(&trace);
+        assert_eq!(m.tool_calls, 10, "2 dispatches + 1 main + 5 A + 2 B");
+        assert_eq!(
+            m.tool_calls_by_owner.values().sum::<usize>(),
+            m.tool_calls,
+            "the partition is the total, by construction"
+        );
+
+        let agents = token_attribution(&trace);
+        let doc = final_record(
+            "/t.jsonl",
+            &m,
+            &RunIdentity {
+                run_id: None,
+                role: None,
+                model: None,
+            },
+            None,
+            &ToolingReport::default(),
+            &[],
+            &InfraRecord::default(),
+            None,
+            None,
+            &SpendRecord {
+                agents: &agents,
+                output_tokens: 1_000,
+                output_usd: 0.025,
+                billed_usd: 9.0,
+            },
+            &crate::TouchBlock {
+                run: vec![],
+                per_actor: &Default::default(),
+            },
+        );
+
+        let rows = doc["agents"].as_array().unwrap();
+        assert_eq!(rows.len(), 3, "main loop + two workers");
+        let calls = |label: &str| {
+            rows.iter()
+                .find(|r| r["label"] == label)
+                .unwrap_or_else(|| panic!("no agents[] row labelled {label}"))["toolCalls"]
+                .as_u64()
+                .unwrap_or_else(|| panic!("{label} carries no toolCalls"))
+        };
+        assert_eq!(calls("main loop"), 3, "two dispatches and its own Bash");
+        assert_eq!(calls("rework pointers"), 5, "3 + 1 + the re-emitted 1");
+        assert_eq!(calls("triage the queue"), 2);
+
+        // THE IDENTITY. Without it the two numbers can drift and nothing says so — which is the
+        // whole reason #330 asks for a test rather than a field.
+        let summed: u64 = rows.iter().map(|r| r["toolCalls"].as_u64().unwrap()).sum();
+        assert_eq!(
+            summed,
+            doc["toolCalls"].as_u64().unwrap(),
+            "per-agent toolCalls must account for the run's toolCalls"
+        );
+    }
+
+    /// The two walks must key ONE event to ONE actor. If [`token_attribution`] and
+    /// [`StartupProbe`] ever disagreed about whose event this is, a row's per-agent `usd` and
+    /// per-agent `toolCalls` would describe different populations while both looked fine — so the
+    /// spellings a real trace uses are checked against each other rather than each alone.
+    #[test]
+    fn spend_and_calls_are_keyed_to_the_same_actor() {
+        for spelling in [
+            Value::Null,
+            serde_json::json!("toolu_A"),
+            serde_json::json!(""),
+        ] {
+            let mut ev: Value = serde_json::from_str(&work_ev("m1", None, &["Bash"])).unwrap();
+            ev["parent_tool_use_id"] = spelling.clone();
+            let line = serde_json::to_string(&ev).unwrap();
+            let spend_ids: Vec<String> = token_attribution(&line)
+                .iter()
+                .map(|r| r.id.clone())
+                .collect();
+            let mut call_ids: Vec<String> =
+                run_metrics(&line).tool_calls_by_owner.into_keys().collect();
+            call_ids.sort();
+            assert_eq!(
+                spend_ids, call_ids,
+                "the two readers disagree on the owner of a {spelling:?} event"
+            );
+        }
+        // An ABSENT key, which is how the main thread is most often spelled on disk.
+        let mut ev: Value = serde_json::from_str(&work_ev("m1", None, &["Bash"])).unwrap();
+        ev.as_object_mut().unwrap().remove("parent_tool_use_id");
+        let line = serde_json::to_string(&ev).unwrap();
+        assert_eq!(token_attribution(&line)[0].id, MAIN_LOOP_OWNER);
+        assert_eq!(
+            run_metrics(&line).tool_calls_by_owner.get(MAIN_LOOP_OWNER),
+            Some(&1)
+        );
+    }
+
+    /// The backfill rebuilds `agents` WHOLESALE, so a backfill that did not recount would strip
+    /// the `toolCalls` the live run wrote — turning the durable artifact back into the one that
+    /// cannot answer the question.
+    #[test]
+    fn the_backfill_recounts_per_agent_tool_calls() {
+        let trace = [
+            dispatch_ev("toolu_A", "rework pointers"),
+            work_ev("m1", None, &["Bash"]),
+            work_ev("m2", Some("toolu_A"), &["Read", "Edit"]),
+            serde_json::to_string(&serde_json::json!({
+                "type":"result","total_cost_usd":9.0,
+                "modelUsage":{"claude-opus-5":{"outputTokens":200}}}))
+            .unwrap(),
+        ]
+        .join("\n");
+        let row = serde_json::json!({"runId":"x","role":"producer","toolCalls":4,
+            "agents":[{"label":"stale","usd":1.0}]});
+        let (out, recomputed) = backfill_row(row, Some(&trace));
+        assert!(recomputed);
+        let rows = out["agents"].as_array().unwrap();
+        let calls = |label: &str| {
+            rows.iter().find(|r| r["label"] == label).unwrap()["toolCalls"]
+                .as_u64()
+                .unwrap()
+        };
+        assert_eq!(calls("rework pointers"), 2);
+        assert_eq!(calls("main loop"), 2, "its Bash and the dispatch it issued");
+        let summed: u64 = rows.iter().map(|r| r["toolCalls"].as_u64().unwrap()).sum();
+        assert_eq!(summed, out["toolCalls"].as_u64().unwrap());
     }
 
     /// Cache writes are priced by the TTL the trace records, not one blended guess. 1M tokens at
