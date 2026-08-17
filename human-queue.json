@@ -230,24 +230,6 @@
         "title": "deps: bump rain-math-binary 0.1.1 -> 0.1.3"
       },
       {
-        "repo": "rainlanguage/rain.solmem",
-        "number": 103,
-        "url": "https://github.com/rainlanguage/rain.solmem/pull/103",
-        "title": "Assert the underflow safety property, and close the hole that made it false"
-      },
-      {
-        "repo": "rainlanguage/rain.solmem",
-        "number": 101,
-        "url": "https://github.com/rainlanguage/rain.solmem/pull/101",
-        "title": "fix: guard the matrix itemCount unchecked sum and flatten allocation scaling (#62)"
-      },
-      {
-        "repo": "rainlanguage/rain.solmem",
-        "number": 100,
-        "url": "https://github.com/rainlanguage/rain.solmem/pull/100",
-        "title": "fix: guard the unchecked mul(_, 0x20) word scaling at both sites (#54)"
-      },
-      {
         "repo": "cyclofinance/cyclo.site",
         "number": 436,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/436",
@@ -1051,8 +1033,56 @@
         ]
       },
       "un-vetted": {
-        "count": 43,
+        "count": 46,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 121,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/121",
+            "title": "Read the tail length before writing the output length word"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 120,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/120",
+            "title": "Delete the dead `using ... for` directives, and defuse the import one strands"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 119,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/119",
+            "title": "Matrix endPointer is the end of the pointer array, not an allocation boundary"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 118,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/118",
+            "title": "Ship the cancun/mcopy floor in the package, and bind the README to the code"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 117,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/117",
+            "title": "docs: a changelog that ships in the package"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 116,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/116",
+            "title": "Delete .gas-snapshot: a baseline nobody regenerates, 48% wrong"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 115,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/115",
+            "title": "Scope unsafeExtend's extend-is-never-mutated promise to non-overlapping arrays"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 114,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/114",
+            "title": "Run rainix CI on pull_request so fork PRs get checks"
+          },
           {
             "repo": "rainlanguage/rain.sol.codegen",
             "number": 137,
@@ -1064,12 +1094,6 @@
             "number": 319,
             "url": "https://github.com/rainlanguage/rainix/pull/319",
             "title": "ci: run codegen to a fixed point, with a bound, instead of once"
-          },
-          {
-            "repo": "rainlanguage/rain.sol.codegen",
-            "number": 135,
-            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/135",
-            "title": "Parameterise the generated file's licence and copyright"
           },
           {
             "repo": "rainlanguage/rainix",
@@ -1088,18 +1112,6 @@
             "number": 128,
             "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/128",
             "title": "Refuse to generate beside another artifact for the same contract"
-          },
-          {
-            "repo": "rainlanguage/rain.sol.codegen",
-            "number": 127,
-            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/127",
-            "title": "Unlink the generated path until it holds nothing, so a live symlink is replaced too"
-          },
-          {
-            "repo": "rainlanguage/rain.sol.codegen",
-            "number": 123,
-            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/123",
-            "title": "Validate the emitted constant name in all four emitters"
           },
           {
             "repo": "rainlanguage/rainix",
@@ -1156,12 +1168,6 @@
             "title": "Remove the dead submodule-era entries from .soldeerignore"
           },
           {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 113,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/113",
-            "title": "Remove submodule-era residue: dead foundry.lock and .gitmodules/lib references"
-          },
-          {
             "repo": "rainlanguage/rain.verify",
             "number": 31,
             "url": "https://github.com/rainlanguage/rain.verify/pull/31",
@@ -1208,12 +1214,6 @@
             "number": 21,
             "url": "https://github.com/rainlanguage/rain.intorastring/pull/21",
             "title": "Remove the submodule-era residue — dead foundry.lock, .gitmodules and lib/ references"
-          },
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 112,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/112",
-            "title": "Delete LibStackPointer, dead across the whole org"
           },
           {
             "repo": "rainlanguage/issue-pr-cron",
@@ -1363,7 +1363,7 @@
         }
       },
       "ai:needs-work": {
-        "count": 110,
+        "count": 107,
         "prs": [
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -1406,24 +1406,6 @@
             "number": 32,
             "url": "https://github.com/rainlanguage/rain.pyth/pull/32",
             "title": "deps: bump rain-math-binary 0.1.1 -> 0.1.3"
-          },
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 103,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/103",
-            "title": "Assert the underflow safety property, and close the hole that made it false"
-          },
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 101,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/101",
-            "title": "fix: guard the matrix itemCount unchecked sum and flatten allocation scaling (#62)"
-          },
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 100,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/100",
-            "title": "fix: guard the unchecked mul(_, 0x20) word scaling at both sites (#54)"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -3022,27 +3004,9 @@
     },
     {
       "repo": "rainlanguage/rain.solmem",
-      "number": 93,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/93",
-      "title": "[A31] [LOW] .gas-snapshot is a committed generated artifact, stale by three test contracts, with nothing regenerating or diffing it"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 92,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/92",
-      "title": "[A30] [LOW] Twelve dead `using ... for` directives, one of them stranding an import a test depends on"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
       "number": 91,
       "url": "https://github.com/rainlanguage/rain.solmem/issues/91",
       "title": "[A29] [LOW] forge build emits two warnings, and foundry.lock is a dead file contradicting the real forge-std pin"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 90,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/90",
-      "title": "[A28] [LOW] CI triggers on push only, so pull requests from forks get no checks at all"
     },
     {
       "repo": "rainlanguage/rain.solmem",
@@ -3055,18 +3019,6 @@
       "number": 88,
       "url": "https://github.com/rainlanguage/rain.solmem/issues/88",
       "title": "[A26] [MEDIUM] Nothing records that the Protofire-audited commit has drifted 74 commits behind main"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 87,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/87",
-      "title": "[A25] [MEDIUM] Auto-publish can only emit patch bumps and ships no notes, so a memory-corruption fix is indistinguishable from a comment tweak"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 86,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/86",
-      "title": "[A24] [MEDIUM] The cancun/mcopy floor is stripped out of the published package and asserted nowhere"
     },
     {
       "repo": "rainlanguage/rain.solmem",
@@ -3118,12 +3070,6 @@
     },
     {
       "repo": "rainlanguage/rain.solmem",
-      "number": 77,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/77",
-      "title": "[A15] [MEDIUM] Matrix endPointer NatSpec claims it returns the end of the allocated memory; it does not, and writing there corrupts the inner arrays"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
       "number": 76,
       "url": "https://github.com/rainlanguage/rain.solmem/issues/76",
       "title": "[A14] [LOW] unsafeExtend's empty-array and copy-branch self-aliasing combinations are reachable only by chance"
@@ -3154,12 +3100,6 @@
     },
     {
       "repo": "rainlanguage/rain.solmem",
-      "number": 66,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/66",
-      "title": "[A04] [LOW] arrayFrom(a, tail) and arrayFrom(a, b, tail) double-read tail.length, the same defect class already fixed in unsafeExtend by #57"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
       "number": 65,
       "url": "https://github.com/rainlanguage/rain.solmem/issues/65",
       "title": "[A03] [LOW] unsafeExtend inline branch can write Solidity's reserved zero slot at 0x60"
@@ -3175,12 +3115,6 @@
       "number": 287,
       "url": "https://github.com/rainlanguage/rainix/issues/287",
       "title": "Static check: enforce the Protofire audit-record convention (audit/protofire/ + an anchor that resolves)"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 61,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/61",
-      "title": "unsafeExtend NatSpec promises extend is never mutated; self-aliasing (base == extend) mutates its length word"
     },
     {
       "repo": "rainlanguage/issue-pr-cron",
@@ -6316,10 +6250,10 @@
     }
   ],
   "counts": {
-    "unvetted": 43,
+    "unvetted": 46,
     "blockedOn": 23,
     "ready": 2,
-    "needsWork": 110,
+    "needsWork": 107,
     "relink": 0,
     "design": 5,
     "blockedInfra": 0,
@@ -6329,16 +6263,16 @@
     "leaks": 1,
     "totalProducerPrs": 186,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 670,
+    "uncoveredIssues": 662,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 852
+    "openIssues": 846
   },
   "ages": {
     "openIssues": {
-      "meanDays": 291.9,
-      "medianDays": 104.9,
-      "oldestDays": 1666.3
+      "meanDays": 293.9,
+      "medianDays": 108.2,
+      "oldestDays": 1666.4
     }
   }
 }
