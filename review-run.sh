@@ -179,8 +179,9 @@ fi
 # --- weekly-budget pace gate: skip this tick when usage is over the ceiling or inside the BAU
 # headroom band under the linear burn toward the reset — the crons hold ~USAGE_HEADROOM_PCT points
 # BEHIND pace so interactive work keeps standing budget (#158). `usage-gate` reads
-# /api/oauth/usage itself; exit 10 means PAUSE (record one skip row, exit 0). It is INERT when it
-# cannot read usage and no fallback is set — it prints OK and we run. Any OTHER non-zero exit is a
+# /api/oauth/usage itself; exit 10 means PAUSE (record one skip row, exit 0). It FAILS CLOSED when
+# it cannot read usage and no fallback is set (#273) — that is a PAUSE too, its reason naming the
+# read failure so the skip row is diagnosable as an endpoint problem. Any OTHER non-zero exit is a
 # config REFUSAL (the retired USAGE_SLACK_PCT still set: exit 2, reason on stderr, captured into
 # the log): the tick must not run on config the gate refused to read, so propagate the failure — a
 # refusal is neither a run nor a pause, and it writes NO row. ---
@@ -253,6 +254,14 @@ find "$RUNDIR" -maxdepth 1 -name "*.jsonl" -printf "%T@ %p\n" 2>/dev/null | sort
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 RUNLOG="$RUNDIR/$TS.jsonl"
 ERRLOG="$RUNDIR/$TS.err"
+
+# --- the FSM touch ledger's actor identity -----------------------------------------------------
+# Same stamp campaign-run.sh applies, for the vetter: every mutating transition this run invokes
+# (all MCP here — the vetter has no Bash) appends its touched item to fsm-touches.jsonl carrying
+# this run's identity, and `run-metrics` folds the set onto the run's row. Env rather than argv
+# for the reason RUN_LENS_LEDGER is env: the MCP server's argv is fixed by review-mcp.json.
+export FSM_TOUCH_ACTOR=vetter-run
+export FSM_TOUCH_RUN_ID="$TS"
 # The run's LENS LEDGER (#151): every `audit` skill invocation the harness announces, written from
 # inside the live pipe by `run-timings` and read back by `record_verdict`, which REFUSES a verdict on a
 # PR the ledger holds no invocation for. Named in TWO places for the same reason `$RUNLOG` is — the
@@ -321,12 +330,55 @@ mkdir -p "$WORK_DIR"
 export WORK_DIR
 export INSTALL_DIR="$DIR"
 
+# --- the RUN BUDGET the prompt states (#288) ---------------------------------------------------
+# ONE definition — `RUN_ITEM_CAP` in pr-review-report — and it is the same constant the state-loads'
+# `limit` range is computed from, so the budget the vetter is TOLD to spend and the page its own
+# tool surface will hand it cannot disagree. They disagree silently when they can: `unvetted` and
+# `unvetted_close_candidates` REFUSE an out-of-range `limit` rather than clamping it, so a vetter
+# told to spend more items than the page can carry does not error, it just quietly does less.
+#
+# A value that is not a positive integer ABORTS: `{{ITEM_CAP}}` rendering empty leaves the vetter a
+# RUN BUDGET sentence with no number in it, which nothing rejects and every run resolves its own
+# way — the same silent-degradation class as the empty auditor brief below.
+#
+# "Positive" is decided by finding a NONZERO DIGIT, not by excluding the string `0`: `00` is all
+# digits and is not `0`, so an exclusion list lets it through and renders "at most 00 WORK ITEMS",
+# which is the zero budget this guard exists to refuse wearing two characters instead of one.
+ITEM_CAP="$(pr-review-report item-cap 2>/dev/null)"
+case "$ITEM_CAP" in
+  '' | *[!0-9]*)
+    echo "$(date -u +%FT%TZ) review run ABORT: \`pr-review-report item-cap\` gave no usable run budget (got '$ITEM_CAP') — the prompt's {{ITEM_CAP}} would render empty" | _log
+    exit 1
+    ;;
+  *[1-9]*) ;;
+  *)
+    echo "$(date -u +%FT%TZ) review run ABORT: \`pr-review-report item-cap\` gave a ZERO run budget (got '$ITEM_CAP') — a run told to spend no items must not start" | _log
+    exit 1
+    ;;
+esac
+
 # substitute deployment values into the prompt template
 PROMPT="$(sed -e "s#{{ASSIGNEE}}#$PR_ASSIGNEE#g" \
               -e "s#{{OWNER_FLAGS}}#$OWNER_FLAGS#g" \
               -e "s#{{ORGS}}#$ORGS_HUMAN#g" \
               -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
+              -e "s#{{ITEM_CAP}}#$ITEM_CAP#g" \
               "$PROMPT_FILE")"
+
+# --- the NON-INTERACTIVE pragma (claude-config hooks/noninteractive.py) ------------------------
+# Same reason as the producer's: this is `claude --print`, nothing re-wakes it when a backgrounded
+# command finishes (#249), and the two `background-*` PreToolUse hooks would rewrite every long
+# build and every wait into exactly that. Stamped into the CONTEXT, because the hook is handed a
+# `transcript_path` and reads it, and into BOTH the main prompt and the auditor brief so it is
+# present whichever trace a dispatched agent's `transcript_path` names.
+#
+# The vetter builds nothing itself (it is read-only on the filesystem), so the build half of this
+# is the producer's problem -- but a WAIT is not a build, and the poll-loop hook rewrites `sleep`,
+# `until ... do` and `tail -f` for any caller.
+NONINTERACTIVE_PRAGMA="CLAUDE-PRAGMA-NONINTERACTIVE-6b1f9d4e"
+PROMPT="$PROMPT
+
+$NONINTERACTIVE_PRAGMA"
 
 # --- the STANDING BRIEF every dispatched AUDITOR starts with (#257) ----------------------------
 # The vetter's audit lens is deep source reading, and until now every byte of it landed in the ONE
@@ -361,7 +413,8 @@ if ! grep -q '[^[:space:]]' "$DIR/review-auditor-prompt.txt" 2>/dev/null; then
   exit 1
 fi
 AUDITOR_JSON="$(jq -nc --rawfile brief "$DIR/review-auditor-prompt.txt" \
-  '{"pr-auditor":{"description":"Vetter auditor: runs the audit lens over ONE PR and reports findings, recording nothing.","prompt":$brief,"tools":["Read","Glob","Grep","Skill","ToolSearch","mcp__fsm__pr_checkout"]}}')"
+  --arg pragma "$NONINTERACTIVE_PRAGMA" \
+  '{"pr-auditor":{"description":"Vetter auditor: runs the audit lens over ONE PR and reports findings, recording nothing.","prompt":($brief + "\n\n" + $pragma),"tools":["Read","Glob","Grep","Skill","ToolSearch","mcp__fsm__pr_checkout"]}}')"
 if [ -z "$AUDITOR_JSON" ]; then
   echo "$(date -u +%FT%TZ) review run ABORT: could not build the auditor brief from review-auditor-prompt.txt" | _log
   exit 1

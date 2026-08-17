@@ -193,8 +193,9 @@ fi
 # --- weekly-budget pace gate: skip this tick when usage is over the ceiling or inside the BAU
 # headroom band under the linear burn toward the reset — the crons hold ~USAGE_HEADROOM_PCT points
 # BEHIND pace so interactive work keeps standing budget (#158). `usage-gate` reads
-# /api/oauth/usage itself; exit 10 means PAUSE (record one skip row, exit 0). It is INERT when it
-# cannot read usage and no fallback is set — it prints OK and we run. Any OTHER non-zero exit is a
+# /api/oauth/usage itself; exit 10 means PAUSE (record one skip row, exit 0). It FAILS CLOSED when
+# it cannot read usage and no fallback is set (#273) — that is a PAUSE too, its reason naming the
+# read failure so the skip row is diagnosable as an endpoint problem. Any OTHER non-zero exit is a
 # config REFUSAL (the retired USAGE_SLACK_PCT still set: exit 2, reason on stderr, captured into
 # the log): the tick must not run on config the gate refused to read, so propagate the failure — a
 # refusal is neither a run nor a pause, and it writes NO row. ---
@@ -280,6 +281,15 @@ find "$DIR/metrics" -maxdepth 1 -name ".infra-*.jsonl" -mtime +7 -delete 2>/dev/
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 RUNLOG="$RUNDIR/$TS.jsonl"
 ERRLOG="$RUNDIR/$TS.err"
+
+# --- the FSM touch ledger's actor identity -----------------------------------------------------
+# Every mutating pr-review-report transition this run invokes — MCP or Bash — appends which item
+# it acted on to the touch ledger (fsm-touches.jsonl in the install dir). These two exports are
+# what stamp those records as THIS run's, so `run-metrics` can fold the run's touched set onto its
+# metrics/runs.jsonl row and per-item token attribution has an exact join. Env rather than argv
+# for the reason RUN_LENS_LEDGER is env: the MCP server's argv is fixed by its config file.
+export FSM_TOUCH_ACTOR=producer-run
+export FSM_TOUCH_RUN_ID="$TS"
 
 # --- the run's infra record (#108) -------------------------------------------------------------
 # Where `infra-down` writes and where `run-metrics` / `run-infra` read it back. Named for THIS run's
@@ -382,6 +392,34 @@ export SCRATCH_DIR
 # preflight, and the mkdir failure itself) have no scratch dir to reclaim and must not acquire one.
 trap '[ -n "${SCRATCH_DIR:-}" ] && rm -rf "$SCRATCH_DIR"' EXIT
 
+# --- the RUN BUDGET the prompt states (#288) ---------------------------------------------------
+# The per-run WORK ITEM cap has ONE definition — `RUN_ITEM_CAP` in pr-review-report — and the prompt
+# DERIVES every statement of it from `{{ITEM_CAP}}` rather than spelling the number in prose. Some
+# of those statements read as English words rather than digits, so a sweep for the digit does not
+# find them and a raise leaves them behind at the old value; a prompt is natural language, so what
+# is left behind is not a parse error but a CONTRADICTORY instruction the run resolves its own way.
+#
+# The guard is the point, not the assignment. An empty substitution does not fail: it renders "at
+# most  WORK ITEMS per run" and hands the model a budget with no number in it — the same silent
+# degradation the worker-brief guard below exists for, one stale binary on PATH away. So a value
+# that is not a positive integer ABORTS the run instead of reaching the model.
+#
+# "Positive" is decided by finding a NONZERO DIGIT, not by excluding the string `0`: `00` is all
+# digits and is not `0`, so an exclusion list lets it through and renders "at most 00 WORK ITEMS",
+# which is the zero budget this guard exists to refuse wearing two characters instead of one.
+ITEM_CAP="$(pr-review-report item-cap 2>/dev/null)"
+case "$ITEM_CAP" in
+  '' | *[!0-9]*)
+    echo "$(date -u +%FT%TZ) campaign run ABORT: \`pr-review-report item-cap\` gave no usable run budget (got '$ITEM_CAP') — the prompt's {{ITEM_CAP}} would render empty" | _log
+    exit 1
+    ;;
+  *[1-9]*) ;;
+  *)
+    echo "$(date -u +%FT%TZ) campaign run ABORT: \`pr-review-report item-cap\` gave a ZERO run budget (got '$ITEM_CAP') — a run told to spend no items must not start" | _log
+    exit 1
+    ;;
+esac
+
 # substitute deployment values into the (path-free) prompt template at runtime
 PROMPT="$(sed -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
               -e "s#{{ASSIGNEE}}#$PR_ASSIGNEE#g" \
@@ -389,7 +427,33 @@ PROMPT="$(sed -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
               -e "s#{{ORGS}}#$ORGS_HUMAN#g" \
               -e "s#{{INSTALL_DIR}}#$DIR#g" \
               -e "s#{{SCRATCH_DIR}}#$SCRATCH_DIR#g" \
+              -e "s#{{ITEM_CAP}}#$ITEM_CAP#g" \
               "$DIR/campaign-prompt.txt")"
+
+# --- the NON-INTERACTIVE pragma (claude-config hooks/noninteractive.py) ------------------------
+# This run is `claude --print`, so nothing re-wakes it when a backgrounded command finishes
+# (#249: Monitor returns immediately and abandons the wait it was armed for). The two
+# `background-*` PreToolUse hooks rewrite long builds and waits to `run_in_background`, which is
+# right for an interactive session and strands this one -- the only way left to learn a result is
+# to poll, and every probe re-reads the whole context.
+#
+# MEASURED, 20260816T170156Z, worker on S01-Issuer/st0x.deploy#300: `nix develop -c
+# rainix-sol-static` was backgrounded by one hook, the `sleep` waiting on it by the other, and the
+# worker fell back to ~25 `wc -l` probes against a 121k context -- ~$1.60 of that worker's $5.19,
+# on a check that never went green.
+#
+# Stamped into the CONTEXT rather than exported, because the hook is handed a `transcript_path`
+# and reads it; an environment variable would depend on what the subprocess inherited. It goes in
+# BOTH the main prompt and the worker brief: whether a dispatched agent's `transcript_path` names
+# its own trace or its parent's, the pragma is in the one the hook opens either way.
+#
+# APPENDED, not substituted into the prompt file: it is a property of THIS invocation, not of the
+# prompt's text, and the prompt files are collectively capped (`prompt cap` CI, 153919 bytes,
+# currently ~96% used) so a runtime stamp costs none of that headroom.
+NONINTERACTIVE_PRAGMA="CLAUDE-PRAGMA-NONINTERACTIVE-6b1f9d4e"
+PROMPT="$PROMPT
+
+$NONINTERACTIVE_PRAGMA"
 
 # --- the STANDING BRIEF every dispatched worker starts with (#200) -----------------------------
 # A dispatched sub-agent starts with no prompt, so the run's standing rules reach it only if
@@ -419,8 +483,23 @@ if ! grep -q '[^[:space:]]' "$DIR/campaign-worker-prompt.txt" 2>/dev/null; then
   echo "$(date -u +%FT%TZ) campaign run ABORT: no campaign-worker-prompt.txt in '$DIR'" | _log
   exit 1
 fi
-AGENTS_JSON="$(jq -nc --rawfile brief "$DIR/campaign-worker-prompt.txt" \
-  '{"pr-worker":{"description":"Producer worker: does ONE dispatched item end to end and reports its outcome.","prompt":$brief}}')"
+# ONE type per ROUTE, and the list is the transition function's, not a literal here (#331). A
+# dispatched worker's `subagent_type` is the only typed field the harness records at dispatch, so
+# spelling the item's route into it is what puts the KIND of work on the run's `agents[]` rows —
+# previously readable only as prose in the dispatch `description` ("Rework cyclo.site#434"), which
+# nothing constrains and no vocabulary declares, so grouping comparable work meant matching text.
+# `pr-review-report worker-types` derives the set from the `nextAction` enum the producer already
+# routes on, which means a new route registers its own worker type here and the metrics field
+# learns it in the same commit — the drift a list maintained beside the enum always develops.
+# Every type carries the SAME brief; the name is the classification, not a different job.
+WORKER_TYPES="$(pr-review-report worker-types)"
+if [ -z "$WORKER_TYPES" ]; then
+  echo "$(date -u +%FT%TZ) campaign run ABORT: \`pr-review-report worker-types\` named no worker type — dispatch would name types the harness never registered" | _log
+  exit 1
+fi
+AGENTS_JSON="$(printf '%s\n' "$WORKER_TYPES" | jq -Rnc --rawfile brief "$DIR/campaign-worker-prompt.txt" \
+  --arg pragma "$NONINTERACTIVE_PRAGMA" \
+  '[inputs | split("\t")] | map({key:.[0], value:{description:.[1], prompt:($brief + "\n\n" + $pragma)}}) | from_entries')"
 if [ -z "$AGENTS_JSON" ]; then
   echo "$(date -u +%FT%TZ) campaign run ABORT: could not build the worker brief from campaign-worker-prompt.txt" | _log
   exit 1

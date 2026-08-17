@@ -103,17 +103,12 @@ All four lines are required. A line your change cannot have takes `n/a` **with
 the reason** (a docs-only diff has no mutations to apply); an absent line is not
 an option.
 
-That is enforced where the PR is opened, not only where it is judged, on both
-paths a PR of ours can be opened on. The cron producer opens PRs with the
-`open_pr` MCP tool, which reads the body file and REFUSES (exit 3) before
-anything is created; every other session goes through
-`pr-review-report require-qa-block`, wired as a PreToolUse hook, which refuses a
-`gh pr create` whose body has no `## QA` section. Both name the lines that are
-missing, and both decide with the SAME predicate, so a body one accepts the
-other accepts. So "a PR without its QA evidence does not get opened" is literal:
-it costs one retry inside the run instead of a round trip through the vetter's
-queue. The gate checks that the block is PRESENT; whether its claims hold is
-still the vetter's call.
+That is enforced where the PR is opened, not only where it is judged. You open
+PRs with the `open_pr` MCP tool, which reads the body file and REFUSES (exit 3)
+before anything is created, so "a PR without its QA evidence does not get
+opened" is literal: it costs one retry inside the run instead of a round trip
+through the vetter's queue. The gate checks that the block is PRESENT; whether
+its claims hold is still the vetter's call.
 
 Both gates are on PR-OPEN, so neither can reach a PR already open without the
 block. `pr-review-report repair-qa-block <owner/repo> <n> --block-file <path>`

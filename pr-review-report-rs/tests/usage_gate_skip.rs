@@ -10,9 +10,9 @@
 //!
 //! What is stubbed, and why each one is not the thing under test:
 //!
-//!   * `usage-gate` — its verdict is the fixture's INPUT. The gate is inert when it cannot read
-//!     usage (it prints OK and the tick runs), so a test that let the real gate decide would
-//!     exercise the inert path and never the pause the force exists for.
+//!   * `usage-gate` — its verdict is the fixture's INPUT. The real gate's answer depends on the
+//!     box the test runs on (credentials, network, the live usage number), so a test that let it
+//!     decide would assert on whatever the box happens to say, not on the verdict the case needs.
 //!   * `preflight` — a probe of the BOX (gh's token scopes, whether nix can realise a Solidity
 //!     shell). Its answer is about the machine the test happens to run on, not about forcing.
 //!   * `claude` and `jq` — only in the two whole-run fixtures. `claude` stands in for the model
@@ -435,8 +435,9 @@ fn a_refused_vetter_tick_aborts_loudly_and_writes_no_row() {
 // config nobody validated). Neither yields to anything.
 //
 // So the tests come in pairs: a policy stop is driven forced AND scheduled, and a correctness stop
-// is driven forced and must still stop. Every one drives a gate that positively decided to PAUSE —
-// the inert path (gate cannot read usage, prints OK, tick runs) never exercises the force at all.
+// is driven forced and must still stop. Every one drives a gate that decided to PAUSE — exit 10,
+// whether from the pace check or from failing closed on an unreadable endpoint, is the one exit
+// the force overrides.
 // ---------------------------------------------------------------------------------------------
 
 /// The feature itself: a forced tick runs past the PAUSE, and the row it leaves says so.

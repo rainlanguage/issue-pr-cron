@@ -1,8 +1,8 @@
 {
   "name": "human-fsm",
   "displayName": "Human FSM transitions",
-  "version": "0.19.0",
-  "description": "Slash commands for the human's side of the rainlanguage issue→PR pipeline finite state machine: the reads that precede a ruling, the transitions that make it, and /observe-run — force a run, watch it, measure its context, and read the retained trace corpus for what a run still hand-rolls. Every input arrives from pr-review-report — each ruling as one subcommand, /nr, /ncc, /ndd and /nm as typed MCP reads — and the guards (vocabulary, mandatory note, provenance anchor, stranded-flag refusal, subject type, terminal-is-moot, idempotence) live in that binary, not here.",
+  "version": "0.29.0",
+  "description": "Slash commands for the human's side of the rainlanguage issue→PR pipeline finite state machine: the reads that precede a ruling, the transitions that make it, and /observe-run — force a run, watch it, measure its context, and read the retained trace corpus for what a run still hand-rolls. Every input arrives from pr-review-report — each ruling as one subcommand, /nr, /ncc, /ndd and /nm as typed MCP reads — and the guards (vocabulary, mandatory note, provenance anchor, stranded-flag refusal, subject type, terminal-is-moot, idempotence) live in that binary, not here. The four reads each claim an INDEPENDENT read of the subject, so each one's protocol ships as an agent and its command dispatches it: a gate that inherited the conversation it was typed in could be a re-reading of that conversation's own summary, and nothing in its report would say so.",
   "author": {
     "name": "Rain Open Source Software Ltd",
     "url": "https://github.com/rainlanguage"
