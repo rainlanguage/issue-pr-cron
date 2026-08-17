@@ -309,9 +309,9 @@ Each field of the row is one read a human otherwise does by hand:
   that the flag is live rather than moot.
 
 `queue.more` and `counts` frame the row. A flag you expected and did not get is
-usually in `counts.unvetted` — the vetter has not judged it, and under the
-per-run item cap it may wait; a flag the vetter would REJECT never arrives here at
-all. `strandedFlags` is a label parking an issue with nothing consuming it: no
+usually in `counts.unvetted` — the vetter has not judged it, and under the run
+item cap it may wait; a flag the vetter would REJECT never arrives here at all.
+`strandedFlags` is a label parking an issue with nothing consuming it: no
 producer comment behind it, or a reject whose label is live anyway. The vetter's
 state-load clears both, so one listed here is a clearance that has not run yet
 or could not write — the label is still parking the issue either way. It is not

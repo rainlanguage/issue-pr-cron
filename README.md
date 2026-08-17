@@ -2960,6 +2960,7 @@ a RISK bound the design intends to move, the prompts state it two dozen times,
 and several of those statements are spelled as English words that a sweep for
 the digit does not find. A run whose budget cannot be resolved to a positive
 integer ABORTS rather than rendering a RUN BUDGET sentence with no number in it.
+
 ### Timing the `gh` calls — `PRR_GH_TIMING`
 
 Set `PRR_GH_TIMING` to anything but empty or `0` and every `gh` the binary runs
