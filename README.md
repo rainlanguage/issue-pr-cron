@@ -2463,7 +2463,7 @@ and evidence that answers a narrower question than the issue asked.
 | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `campaign-run.sh`                | Durable runner (built as the `campaign-run` flake package): `flock` single-run lock, `DISABLED` kill-switch, `timeout`, invokes `claude --print` with the prompt + settings, logs to `campaign.log` (+ per-run JSONL traces in `runs/`). Nix builds its PATH; it sets none itself.                                                                                |
 | `campaign-prompt.txt`            | The campaign instructions fed to the model.                                                                                                                                                                                                                                                                                                                       |
-| `campaign-worker-prompt.txt`     | The standing brief every DISPATCHED worker starts with. `campaign-run.sh` wraps it into the `pr-worker` subagent type with `jq` and passes it as `--agents`, so the harness loads it straight into each dispatched agent and the main loop pays none of those bytes. See [Briefing a dispatched worker](#briefing-a-dispatched-worker--rules-not-state).          |
+| `campaign-worker-prompt.txt`     | The standing brief every DISPATCHED worker starts with. `campaign-run.sh` wraps it into every `pr-worker*` subagent type with `jq` (the type list comes from `pr-review-report worker-types`, so the type NAMES the item's route) and passes it as `--agents`, so the harness loads it straight into each dispatched agent and the main loop pays none of those bytes. See [Briefing a dispatched worker](#briefing-a-dispatched-worker--rules-not-state).          |
 | `campaign-settings.json`         | Tool allow/deny list passed via `--settings` (the permission guardrails).                                                                                                                                                                                                                                                                                         |
 | `review-run.sh`                  | Vetting runner (same hardened pattern as `campaign-run.sh`): vets open PRs on the MCP surface, logs to `review.log`. Its one GitHub write is `record_verdict`. Kill-switch `review-DISABLED`.                                                                                                                                                                     |
 | `review-prompt.txt`              | The AI-vetting instructions fed to the model: the judgement gates only — every `gh` recipe is a tool schema instead.                                                                                                                                                                                                                                              |
@@ -2510,7 +2510,7 @@ Two conclusions, both counter-intuitive, and both the reason this is a
   reached one.
 
 So `campaign-worker-prompt.txt` carries **rules**, and `campaign-run.sh` wraps
-it into the `pr-worker` subagent type via `--agents`. The harness loads that
+it into the `pr-worker*` subagent types via `--agents`. The harness loads that
 prompt into each dispatched agent directly, which is what makes it cheaper than
 the dispatch prompt it replaces: the main loop never holds those bytes, and it
 cannot paraphrase them away. Retyped boilerplate was 36% of dispatch-prompt
@@ -2532,6 +2532,30 @@ idiom needs a local file, and there is none for "have the checks reported" — s
 a rule stating only "waiting is `Monitor`" is a rule a worker meets a dead end
 at and improvises around, which is the $12.60 line. $0.87 to make $12.60 of
 instruction executable is the whole trade.
+
+### The type is also the item's KIND
+
+One brief, but **several types**: `pr-review-report worker-types` names one per
+`nextAction` that names work (`pr-worker-needs-3b`,
+`pr-worker-rework-needs-work`, …) plus the bare `pr-worker` for an item that
+came from no fleet row, and `campaign-run.sh` builds its `--agents` object from
+that list. Every one carries the same brief and does the same job — the name
+exists so the classification the producer ALREADY made survives the dispatch.
+
+`subagent_type` is the only typed field the harness records at dispatch. Before
+this, what kind of item a worker handled lived exclusively in the dispatch
+`description` — `"Rework cyclo.site#434"`, `"Fix red PR st0x.deploy#300"` —
+free prose written for a human, so grouping comparable work meant matching text
+against a vocabulary nobody declared, and a run that phrased it differently
+dropped out of the grouping with no signal that it had (#331). Now each
+`agents[]` row in `metrics/runs.jsonl` carries `kind`: a `nextAction`,
+`main-loop` for the run's own thread, or an explicit `other`. "Tool calls per
+rework worker, before vs after" is a `group by` with no prose in it.
+
+The vocabulary is the routing enum's, not a list beside it, so a new route
+registers its own worker type and the field learns its name in the same commit —
+and `the_producer_prompt_names_every_worker_type_the_runner_registers` fails
+until the prompt teaches the run how to dispatch it.
 
 ## Fanning the audit out — and keeping the verdict
 
