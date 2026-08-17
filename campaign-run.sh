@@ -483,9 +483,23 @@ if ! grep -q '[^[:space:]]' "$DIR/campaign-worker-prompt.txt" 2>/dev/null; then
   echo "$(date -u +%FT%TZ) campaign run ABORT: no campaign-worker-prompt.txt in '$DIR'" | _log
   exit 1
 fi
-AGENTS_JSON="$(jq -nc --rawfile brief "$DIR/campaign-worker-prompt.txt" \
+# ONE type per ROUTE, and the list is the transition function's, not a literal here (#331). A
+# dispatched worker's `subagent_type` is the only typed field the harness records at dispatch, so
+# spelling the item's route into it is what puts the KIND of work on the run's `agents[]` rows —
+# previously readable only as prose in the dispatch `description` ("Rework cyclo.site#434"), which
+# nothing constrains and no vocabulary declares, so grouping comparable work meant matching text.
+# `pr-review-report worker-types` derives the set from the `nextAction` enum the producer already
+# routes on, which means a new route registers its own worker type here and the metrics field
+# learns it in the same commit — the drift a list maintained beside the enum always develops.
+# Every type carries the SAME brief; the name is the classification, not a different job.
+WORKER_TYPES="$(pr-review-report worker-types)"
+if [ -z "$WORKER_TYPES" ]; then
+  echo "$(date -u +%FT%TZ) campaign run ABORT: \`pr-review-report worker-types\` named no worker type — dispatch would name types the harness never registered" | _log
+  exit 1
+fi
+AGENTS_JSON="$(printf '%s\n' "$WORKER_TYPES" | jq -Rnc --rawfile brief "$DIR/campaign-worker-prompt.txt" \
   --arg pragma "$NONINTERACTIVE_PRAGMA" \
-  '{"pr-worker":{"description":"Producer worker: does ONE dispatched item end to end and reports its outcome.","prompt":($brief + "\n\n" + $pragma)}}')"
+  '[inputs | split("\t")] | map({key:.[0], value:{description:.[1], prompt:($brief + "\n\n" + $pragma)}}) | from_entries')"
 if [ -z "$AGENTS_JSON" ]; then
   echo "$(date -u +%FT%TZ) campaign run ABORT: could not build the worker brief from campaign-worker-prompt.txt" | _log
   exit 1

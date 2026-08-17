@@ -5477,6 +5477,19 @@ struct AgentSpend {
     /// description is what the operator wrote to name the work, so it is the label that means
     /// something in a cost table.
     label: String,
+    /// WHICH KIND of work item this was, from the dispatching call's `subagent_type` — the route
+    /// the producer had already classified the item into before it dispatched anything (#331).
+    ///
+    /// The kind and the label answer different questions and neither substitutes for the other:
+    /// the label names THIS item for a human ("Rework cyclo.site#434"), the kind says which other
+    /// items it is comparable to. Grouping used to mean matching the label's prose, whose shape
+    /// nothing constrains and whose vocabulary nothing declares — so a run that phrased it
+    /// differently dropped out of the grouping silently, and "tool calls per rework worker" was
+    /// computed over however many items happened to match.
+    ///
+    /// Always set: [`ITEM_KIND_MAIN_LOOP`] for the run's own thread, [`ITEM_KIND_OTHER`] for a
+    /// dispatch that names no route.
+    kind: String,
     messages: usize,
     tokens_in: u64,
     cache_read: u64,
@@ -5615,6 +5628,7 @@ fn token_attribution(content: &str) -> Vec<AgentSpend> {
     use std::collections::{HashMap, HashSet};
     let mut agents: HashMap<String, AgentSpend> = HashMap::new();
     let mut labels: HashMap<String, String> = HashMap::new();
+    let mut kinds: HashMap<String, &'static str> = HashMap::new();
     let mut counted: HashSet<String> = HashSet::new();
 
     for line in content.lines() {
@@ -5653,6 +5667,19 @@ fn token_attribution(content: &str) -> Vec<AgentSpend> {
                 if let Some(d) = input.get("description").and_then(|d| d.as_str()) {
                     labels.insert(id.to_string(), d.to_string());
                 }
+                // …and its `subagent_type` names the ROUTE the producer had already classified
+                // the item into (#331). Recorded unconditionally, so a dispatch that carried no
+                // type at all is `other` rather than absent — the same rule the label does not
+                // get to have, because a missing kind is indistinguishable from an unmeasured run.
+                kinds.insert(
+                    id.to_string(),
+                    item_kind_for_dispatch(
+                        input
+                            .get("subagent_type")
+                            .and_then(|t| t.as_str())
+                            .unwrap_or(""),
+                    ),
+                );
             }
         }
 
@@ -5681,6 +5708,14 @@ fn token_attribution(content: &str) -> Vec<AgentSpend> {
             // that lost the dispatching turn. Naming the id beats printing an empty cell.
             labels.get(&r.id).cloned().unwrap_or_else(|| r.id.clone())
         };
+        r.kind = if r.id == "__main__" {
+            ITEM_KIND_MAIN_LOOP
+        } else {
+            // The same dispatch the label came from. An id this trace never showed dispatched
+            // has no route to report and takes `other` — stated, not omitted.
+            kinds.get(&r.id).copied().unwrap_or(ITEM_KIND_OTHER)
+        }
+        .to_string();
     }
     rows.sort_by(|a, b| {
         b.usd
@@ -5771,6 +5806,9 @@ fn agent_row(
 ) -> Value {
     serde_json::json!({
         "label": a.label,
+        // WHICH KIND of item, so "every rework worker" is a `group by` and never a substring
+        // match over `label` (#331). Always present: `main-loop`, `other`, or a `nextAction`.
+        "kind": a.kind,
         "tokens": a.tokens(),
         "usd": round3(a.usd),
         "messages": a.messages,
@@ -8852,6 +8890,12 @@ fn final_record(
         // On a 16-agent run that is $37.84 beside a run that actually cost $136.08. Re-deriving
         // those keys would put a step in the series no run experienced, so they stay as they are
         // and the whole-run truth arrives in new keys beside them.
+        // Through [`agent_row`], which is what its "one constructor" contract always claimed and
+        // this call site did not honour: it hand-built the row instead, so the end-of-run record
+        // and the backfilled one already differed by a `tokens` key, and #331's `kind` would have
+        // been the second field the live writer silently lacked. The two now describe a task the
+        // same way by construction.
+        //
         // `toolCalls` is #330: the row already said what each worker COST and never how much it
         // DID, so "did workers make fewer calls after change X" could only be answered by grouping
         // a 20 MB trace by `parent_tool_use_id` — and traces rotate while this row is kept
@@ -49416,6 +49460,10 @@ enum Cmd {
     /// `{{ITEM_CAP}}`, which is what makes the prose a run reads and the page this binary's MCP
     /// boundary will hand it the SAME number rather than two that have to be kept in step (#288).
     ItemCap,
+    /// Print the subagent types the producer's runner registers, one `<type>\t<description>` per
+    /// line. `campaign-run.sh` builds its `--agents` object from this, so the dispatch vocabulary
+    /// is [`NextAction`]'s own and a dispatched worker's item kind is a typed field (#331).
+    WorkerTypes,
     /// CI gate: every plugin `.claude-plugin/marketplace.json` lists resolves to a real manifest
     /// carrying the SAME version. Exit 2 if a listing is wrong, 3 if the gate cannot be evaluated.
     PluginVersionLockstep {
@@ -49627,6 +49675,90 @@ impl NextAction {
             NextAction::ParkedSkip => false,
         }
     }
+}
+
+/// The `subagent_type` prefix every producer worker is dispatched under.
+///
+/// The ROUTE is the rest of the name (`pr-worker-needs-3b`), which is what makes a dispatched
+/// worker's item kind a typed field rather than prose in its `description` (#331). The bare prefix
+/// is itself a registered type: the item that came from no fleet row — a backlog issue getting its
+/// first PR (step 4) — has no route to name, and a dispatch that cannot be spelled is a dispatch
+/// the producer improvises around.
+const WORKER_TYPE_PREFIX: &str = "pr-worker";
+
+/// The kind recorded for a dispatch that names no route: the bare `pr-worker` type, a worker
+/// dispatched by a worker (`Explore`), or a trace whose dispatching turn was never seen.
+///
+/// EXPLICIT rather than absent. A missing field is read as "this run predates the field" and as
+/// "this item had no kind" by turns, and a grouping computed over the rows that happen to carry
+/// one is quietly computed over fewer items than the caller thinks (#331).
+const ITEM_KIND_OTHER: &str = "other";
+
+/// The kind recorded for the run's own main thread, which is not a dispatched item at all.
+///
+/// Its own value rather than [`ITEM_KIND_OTHER`], because the whole point of the field is that
+/// "every rework worker" is a `group by kind` with no prose in it — and folding the main loop into
+/// `other` puts the run's largest single row inside the bucket meant for unroutable ITEMS, which
+/// the caller could then only separate again by matching its `label`.
+const ITEM_KIND_MAIN_LOOP: &str = "main-loop";
+
+/// The `subagent_type` a worker for `action` is dispatched under. DERIVED from the action's own
+/// name, never a second spelling beside it.
+fn worker_dispatch_type(action: NextAction) -> String {
+    format!("{WORKER_TYPE_PREFIX}-{}", action.as_str())
+}
+
+/// PURE: the item kind a dispatch's `subagent_type` names.
+///
+/// The vocabulary is [`NextAction`]'s, taken from the enum rather than restated — the producer
+/// routes an item by its `nextAction` and then dispatches it under the type that names that same
+/// route, so the field and the routing cannot drift into two taxonomies. Anything else is
+/// [`ITEM_KIND_OTHER`]: the bare `pr-worker` type, a type naming an action that names no work
+/// (never registered, so never dispatchable), and any other subagent a run spawns.
+fn item_kind_for_dispatch(subagent_type: &str) -> &'static str {
+    subagent_type
+        .strip_prefix(WORKER_TYPE_PREFIX)
+        .and_then(|rest| rest.strip_prefix('-'))
+        .and_then(NextAction::from_str)
+        .filter(|a| a.names_work())
+        .map_or(ITEM_KIND_OTHER, NextAction::as_str)
+}
+
+/// Every subagent type the producer's runner registers, as `(type, description)`.
+///
+/// DERIVED from [`NextAction`], so a new route registers its own worker type and the kind field
+/// learns it in the same commit that adds the variant. The bare prefix leads because it is the
+/// fallback the prompt tells a run to use when its item came from no fleet row: an `Agent` call
+/// naming an unregistered type is a FAILED dispatch, so the unroutable item must have a type.
+fn worker_dispatch_types() -> Vec<(String, String)> {
+    let mut out = vec![(
+        WORKER_TYPE_PREFIX.to_string(),
+        "Producer worker: does ONE dispatched item end to end and reports its outcome. Use this \
+         type ONLY for an item that came from no fleet row — a backlog issue getting its first PR."
+            .to_string(),
+    )];
+    for a in NextAction::ALL.into_iter().filter(|a| a.names_work()) {
+        out.push((
+            worker_dispatch_type(a),
+            format!(
+                "Producer worker: does ONE dispatched `{}` item end to end and reports its \
+                 outcome.",
+                a.as_str()
+            ),
+        ));
+    }
+    out
+}
+
+/// `worker-types`: the subagent types the producer's runner registers, one `<type>\t<description>`
+/// per line, so `campaign-run.sh` builds its `--agents` object from the routing enum instead of a
+/// list beside it. Same contract as `item-cap`: the runner reads its vocabulary from the
+/// transition function rather than restating it in shell.
+fn worker_types_mode() -> i32 {
+    for (name, description) in worker_dispatch_types() {
+        println!("{name}\t{description}");
+    }
+    0
 }
 
 /// Where an `ai:needs-work` PR stands relative to the instruction that sent it back — the discriminant
@@ -53843,6 +53975,7 @@ fn main() {
             println!("{RUN_ITEM_CAP}");
             0
         }
+        Cmd::WorkerTypes => worker_types_mode(),
         Cmd::PluginVersionLockstep { root } => plugin_version_lockstep_mode(&root),
         Cmd::RequireQaBlock => require_qa_block_mode(),
         Cmd::LedgerGh => ledger_gh_mode(),
@@ -57978,6 +58111,84 @@ mod usage_probe_tests {
         .unwrap()
     }
 
+    /// The same dispatch turn, naming the TYPE it was dispatched under — the field the item kind
+    /// is read from (#331).
+    fn typed_dispatch_ev(tool_id: &str, description: &str, subagent_type: &str) -> String {
+        serde_json::to_string(&serde_json::json!({"type":"assistant","message":{
+            "id": format!("msg_dispatch_{tool_id}"),
+            "content":[{"type":"tool_use","name":"Agent","id":tool_id,
+                        "input":{"description":description,"subagent_type":subagent_type,
+                                 "prompt":"…"}}]}}))
+        .unwrap()
+    }
+
+    /// #331: the item kind comes from the dispatch's `subagent_type` and from NOWHERE else.
+    ///
+    /// The label is the control. Every row here carries prose a text matcher would have keyed on
+    /// — "Rework cyclo.site#434", "Fix red PR st0x.deploy#300" — and the prose is IDENTICAL across
+    /// rows whose types differ, so a kind derived from the label could not tell them apart and a
+    /// kind derived from the type must. That is the whole difference between this field and the
+    /// heuristic join it replaces.
+    #[test]
+    fn the_item_kind_is_the_dispatch_type_and_never_the_label() {
+        let trace = [
+            typed_dispatch_ev(
+                "toolu_A",
+                "Rework cyclo.site#434",
+                "pr-worker-rework-needs-work",
+            ),
+            typed_dispatch_ev("toolu_B", "Rework cyclo.site#434", "pr-worker-needs-3b"),
+            // A backlog issue getting its first PR: no fleet row, so the bare type.
+            typed_dispatch_ev("toolu_C", "Rework cyclo.site#434", "pr-worker"),
+            // A worker's own research dispatch — not an item at all.
+            typed_dispatch_ev("toolu_D", "Rework cyclo.site#434", "Explore"),
+            // A dispatch turn that carried no type field (an older trace, a resumed stream).
+            dispatch_ev("toolu_E", "Rework cyclo.site#434"),
+            spend_ev("m0", None, 60, 0, 0),
+            spend_ev("m1", Some("toolu_A"), 50, 0, 0),
+            spend_ev("m2", Some("toolu_B"), 40, 0, 0),
+            spend_ev("m3", Some("toolu_C"), 30, 0, 0),
+            spend_ev("m4", Some("toolu_D"), 20, 0, 0),
+            spend_ev("m5", Some("toolu_E"), 10, 0, 0),
+            // …and an agent whose dispatching turn this trace never showed.
+            spend_ev("m6", Some("toolu_F"), 5, 0, 0),
+        ]
+        .join("\n");
+        let by_id: std::collections::HashMap<String, String> = token_attribution(&trace)
+            .into_iter()
+            .map(|r| (r.id.clone(), r.kind))
+            .collect();
+        assert_eq!(by_id["toolu_A"], "rework-needs-work");
+        assert_eq!(by_id["toolu_B"], "needs-3b");
+        assert_eq!(by_id["toolu_C"], ITEM_KIND_OTHER);
+        assert_eq!(by_id["toolu_D"], ITEM_KIND_OTHER);
+        assert_eq!(by_id["toolu_E"], ITEM_KIND_OTHER);
+        assert_eq!(by_id["toolu_F"], ITEM_KIND_OTHER);
+        assert_eq!(by_id["__main__"], ITEM_KIND_MAIN_LOOP);
+        // EVERY row has one. An absent kind is the defect this field exists to end — a grouping
+        // computed over the rows that happen to carry one, reporting no shortfall.
+        assert_eq!(by_id.len(), 7);
+        assert!(by_id.values().all(|k| !k.is_empty()));
+    }
+
+    /// The record a reader actually groups by. A field on the struct that never reaches
+    /// `metrics/runs.jsonl` leaves the query exactly where it was.
+    #[test]
+    fn the_agents_row_states_the_item_kind() {
+        let row = agent_row(
+            &AgentSpend {
+                id: "toolu_A".into(),
+                label: "Rework cyclo.site#434".into(),
+                kind: "rework-needs-work".into(),
+                ..Default::default()
+            },
+            0,
+            &Default::default(),
+        );
+        assert_eq!(row["kind"], "rework-needs-work");
+        assert_eq!(row["label"], "Rework cyclo.site#434");
+    }
+
     /// The whole point: a subagent's spend lands on the subagent, not the main loop, and carries
     /// the label the dispatching call gave it.
     #[test]
@@ -59319,7 +59530,7 @@ ONE-SHOT, NOT A LOOP
 mod settings_tests {
     use super::{
         digest_lines, journal_citations, journal_entries, producer_preamble, producer_step,
-        repo_root_text, vetter_bullet, JOURNAL_FILE,
+        repo_root_text, vetter_bullet, worker_dispatch_types, JOURNAL_FILE,
     };
     use serde_json::Value;
 
@@ -60692,11 +60903,6 @@ mod settings_tests {
         .then(|| name.to_string())
     }
 
-    /// The type the RUNNER registers: the sole key of the `--agents` object it builds.
-    fn worker_type_defined(sh: &str) -> Option<String> {
-        type_between(sh, "'{\"", "\":{\"description\"")
-    }
-
     /// The type the PRODUCER PROMPT dispatches: the value of the `Agent` call's `subagent_type`.
     fn worker_type_dispatched(prompt: &str) -> Option<String> {
         type_between(prompt, "subagent_type: \"", "\"")
@@ -60730,18 +60936,52 @@ mod settings_tests {
             "the built brief must reach `claude` — without the flag the JSON is computed and \
              thrown away, and every worker is briefed by whatever the main loop improvises"
         );
-        let (Some(in_runner), Some(in_prompt)) =
-            (worker_type_defined(&sh), worker_type_dispatched(&prompt))
-        else {
-            panic!(
-                "both the runner's `--agents` JSON and the producer prompt must name the worker \
-                 type; a type defined but never dispatched briefs nobody"
-            );
+        // The types the runner registers are the TRANSITION FUNCTION's, read at run time (#331):
+        // the same move `item-cap` makes, and the reason the set can never be one type short of
+        // what the prompt dispatches. A literal list in the shell would be a second vocabulary.
+        assert!(
+            sh.contains("WORKER_TYPES=\"$(pr-review-report worker-types)\""),
+            "the runner must take its subagent types from the transition function, not from a \
+             list in shell that a new route would silently leave behind"
+        );
+        assert!(
+            sh.contains("worker-types\\` named no worker type"),
+            "an empty type list must ABORT: dispatch would still 'work' by naming types the \
+             harness never registered, which is a failed dispatch per item"
+        );
+        let Some(in_prompt) = worker_type_dispatched(&prompt) else {
+            panic!("the producer prompt must name a worker type in the form the `Agent` call takes")
         };
-        assert_eq!(
-            in_runner, in_prompt,
-            "the type the runner DEFINES and the type the prompt DISPATCHES must be the same \
-             string: an `Agent` call naming an unregistered type is a failed dispatch"
+        assert!(
+            worker_dispatch_types().iter().any(|(t, _)| *t == in_prompt),
+            "the prompt dispatches `{in_prompt}`, which the runner never registers: an `Agent` \
+             call naming an unregistered type is a failed dispatch, not an unbriefed one"
+        );
+    }
+
+    /// #331: the producer prompt teaches EVERY type the runner registers, by name.
+    ///
+    /// The registered set comes from the routing enum, so this is the link that makes a new route
+    /// reach the run that has to dispatch it: add a work-naming `NextAction` variant and this test
+    /// fails until the prompt names its worker type. Without it the type would be registered,
+    /// dispatchable and never dispatched — the item would go to the bare fallback and be recorded
+    /// as `other`, which is the silent drop-out the typed field exists to end.
+    #[test]
+    fn the_producer_prompt_names_every_worker_type_the_runner_registers() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        for (ty, _) in worker_dispatch_types() {
+            assert!(
+                prompt.contains(&format!("`{ty}`")),
+                "the prompt must name the `{ty}` worker type: a registered type the prompt never \
+                 teaches is a route whose items all record `other`"
+            );
+        }
+        assert!(
+            prompt.contains("NEVER invent a type name"),
+            "the prompt must close the set: an `Agent` call naming an unregistered type is a \
+             FAILED dispatch, not an unbriefed one"
         );
     }
 
@@ -66180,6 +66420,14 @@ mod cli_tests {
         assert!(Cli::try_parse_from(["prr", "item-cap", "5"]).is_err());
     }
 
+    /// The runner reads its `--agents` vocabulary from here, so the call it makes must parse and
+    /// take no argument that could narrow the set it gets back.
+    #[test]
+    fn worker_types_cli() {
+        assert_eq!(parse(&["prr", "worker-types"]), Cmd::WorkerTypes);
+        assert!(Cli::try_parse_from(["prr", "worker-types", "pr-worker"]).is_err());
+    }
+
     // A CI gate must run locally against any checkout, so its root is an argument with a working
     // default rather than a path baked into a workflow.
     #[test]
@@ -67585,6 +67833,92 @@ mod worklist_tests {
         assert!(ALL_ACTIONS.contains(&"flag-migration"));
         assert!(ACTIONABLE_ACTIONS.contains(&"flag-migration"));
         assert!(!ALL_ACTIONS.contains(&"deploy"));
+    }
+
+    /// #331: the dispatched item kind's vocabulary IS the routing enum's, so a new route cannot
+    /// appear without the field learning it.
+    ///
+    /// Same lesson as [`the_action_vocabulary_is_the_enum`] one level along: the kinds are not a
+    /// list beside the routes, they are the routes. Adding a `NextAction` variant that names work
+    /// registers its worker type and teaches `item_kind_for_dispatch` its name in the same commit;
+    /// the assertion that every registered type round-trips is what makes that automatic rather
+    /// than remembered.
+    #[test]
+    fn the_dispatched_item_kind_vocabulary_is_the_routing_enum() {
+        for a in NextAction::ALL {
+            let ty = worker_dispatch_type(a);
+            if a.names_work() {
+                assert_eq!(
+                    item_kind_for_dispatch(&ty),
+                    a.as_str(),
+                    "{ty} must record its own route as the item kind"
+                );
+                assert!(
+                    worker_dispatch_types().iter().any(|(t, _)| *t == ty),
+                    "{ty} names work the producer dispatches, so the runner must register it — \
+                     an unregistered type is a FAILED dispatch"
+                );
+            } else {
+                // `green-ready`, `wait` and `parked-skip` name no work, so nothing is ever
+                // dispatched for one. Registering a type for them would offer the producer a
+                // dispatch for a row it must not act on.
+                assert!(
+                    !worker_dispatch_types().iter().any(|(t, _)| *t == ty),
+                    "{ty} names no work and must not be dispatchable"
+                );
+                assert_eq!(item_kind_for_dispatch(&ty), ITEM_KIND_OTHER);
+            }
+        }
+        // The registered set is exactly the work-naming routes plus the ONE fallback.
+        let registered = worker_dispatch_types();
+        assert_eq!(registered.len(), ACTIONABLE_ACTIONS.len() + 1);
+        assert_eq!(registered[0].0, WORKER_TYPE_PREFIX);
+        assert!(
+            registered.iter().all(|(_, d)| !d.is_empty()),
+            "every registered type needs a description: it is what the dispatching run reads to \
+             pick between them"
+        );
+        // Exactly ONE registered type records `other` — the fallback. If a second did, two
+        // different kinds of item would be indistinguishable in the record again.
+        assert_eq!(
+            registered
+                .iter()
+                .filter(|(t, _)| item_kind_for_dispatch(t) == ITEM_KIND_OTHER)
+                .count(),
+            1
+        );
+        // Everything that is not a registered worker type is `other`, stated. Including the
+        // label prose a text matcher would have keyed on, and a RETIRED route spelling — the
+        // exact drift `deploy` caused in the histogram.
+        for not_a_kind in [
+            "",
+            "pr-worker",
+            "pr-worker-",
+            "pr-worker-deploy",
+            "pr-workerneeds-3b",
+            "pr-worker-needs-3b-extra",
+            "Explore",
+            "general-purpose",
+            "Rework cyclo.site#434",
+            "Fix red PR st0x.deploy#300",
+        ] {
+            assert_eq!(
+                item_kind_for_dispatch(not_a_kind),
+                ITEM_KIND_OTHER,
+                "{not_a_kind:?} names no route and must record `other`, never a guess"
+            );
+        }
+        // The two non-route values are distinct: the main loop is not an unroutable ITEM, and
+        // folding it into `other` would put the run's largest row inside the bucket a caller
+        // reads as "items we could not classify".
+        assert_ne!(ITEM_KIND_MAIN_LOOP, ITEM_KIND_OTHER);
+        // …and neither collides with a real route, which would make the group-by ambiguous.
+        for k in [ITEM_KIND_MAIN_LOOP, ITEM_KIND_OTHER] {
+            assert!(
+                NextAction::from_str(k).is_none(),
+                "{k} shadows a route name"
+            );
+        }
     }
 
     #[test]
@@ -85365,6 +85699,8 @@ mod touch_ledger_tests {
         let agent = AgentSpend {
             id: "task1".to_string(),
             label: "vet o/r#7".to_string(),
+            // The fixture's dispatch names no route, which is what ITEM_KIND_OTHER is for (#331).
+            kind: ITEM_KIND_OTHER.to_string(),
             messages: 3,
             tokens_in: 10,
             cache_read: 0,
