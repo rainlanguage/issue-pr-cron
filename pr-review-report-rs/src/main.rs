@@ -5756,13 +5756,19 @@ impl AgentSpend {
 /// One task's row in a metrics record: what the work was, and what it moved.
 ///
 /// One constructor, so the end-of-run record and the backfill cannot drift into describing a task
-/// differently.
+/// differently. `touches` is the trace-derived per-actor touch map ([`trace_touches`]), keyed by
+/// the same `parent_tool_use_id` this row's spend is grouped by — `touched` is always present so
+/// "this task touched nothing" and "this row predates the field" stay distinguishable.
 ///
 /// `tool_calls` is passed in rather than read off [`AgentSpend`] because it comes from the other
 /// walk over the trace — [`StartupProbe`], which counts every `tool_use` block whether or not its
 /// event carried usage. A backfill that omitted it would STRIP the `toolCalls` a live run wrote
 /// (#330), since this rebuilds the `agents` array wholesale.
-fn agent_row(a: &AgentSpend, tool_calls: usize) -> Value {
+fn agent_row(
+    a: &AgentSpend,
+    tool_calls: usize,
+    touches: &std::collections::HashMap<String, Vec<Value>>,
+) -> Value {
     serde_json::json!({
         "label": a.label,
         "tokens": a.tokens(),
@@ -5771,6 +5777,7 @@ fn agent_row(a: &AgentSpend, tool_calls: usize) -> Value {
         "toolCalls": tool_calls,
         "cacheRead": a.cache_read,
         "cacheWrite": a.cache_write_5m + a.cache_write_1h,
+        "touched": touches.get(&a.id).cloned().unwrap_or_default(),
     })
 }
 
@@ -5788,6 +5795,607 @@ fn billed_cost(content: &str) -> f64 {
         .filter(|ev| ev.get("type").and_then(|t| t.as_str()) == Some("result"))
         .filter_map(|ev| ev.get("total_cost_usd").and_then(|c| c.as_f64()))
         .fold(0.0, f64::max)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The FSM TOUCH LEDGER — which item a transition acted on, recorded AT the transition.
+//
+// Tokens can only be attributed to work items if every actor's transitions say which item they
+// acted on, at the moment they act. The trace-derived work items above cover two producer output
+// edges and die with the trace; this ledger is the durable, whole-surface record: every mutating
+// transition appends one typed line to ONE append-only file, whoever invoked it — a producer run,
+// a vetter run, or an interactive session. The refresh tick publishes the file as-is (it lives in
+// the install dir, like the worklist cache), so the stream the dashboard reads is the stream the
+// transitions wrote.
+//
+// The record is written AT SUCCESS, after the write it records — a refused or dry-run transition
+// touched nothing, exactly as a refused `open_pr` contributes no work item. Appending is
+// best-effort by design: the metric must never fail the transition it measures, so an unwritable
+// ledger is one stderr line and a completed transition, not an error.
+//
+// ACTOR IDENTITY comes from the environment, the same channel `RUN_LENS_LEDGER` uses and for the
+// same reason: the MCP server's argv is fixed by its config file and cannot carry per-run
+// identity. Runner scripts export the actor kind and run id; a session that exports nothing is an
+// interactive actor, which is the honest default rather than a guess. Cron records join to
+// `metrics/runs.jsonl` spend by `runId`; interactive records carry no runId and their spend side
+// is ABSENT, never estimated — the touch still exists, which is the half the join cannot invent.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Path override for the touch ledger. Tests point it at a tempdir; production leaves it unset.
+const TOUCH_LEDGER_ENV: &str = "FSM_TOUCH_LEDGER";
+/// The invoking actor's kind: `producer-run` / `vetter-run`, exported by the runner scripts.
+/// Absent or unrecognized reads as `interactive` — see [`touch_actor_kind`].
+const TOUCH_ACTOR_ENV: &str = "FSM_TOUCH_ACTOR";
+/// The invoking run's id (the runner's `$TS`, the same value `run-metrics --run-id` gets), so a
+/// cron record joins to its `metrics/runs.jsonl` row exactly.
+const TOUCH_RUN_ID_ENV: &str = "FSM_TOUCH_RUN_ID";
+
+/// The ONE ledger every actor on this box appends to. In the install dir — the same
+/// absolute-default-with-env-override shape as [`worklist_cache_path`] — because the refresh tick
+/// publishes the install dir's files, and a ledger published from where it is written cannot
+/// diverge from itself.
+fn touch_ledger_path() -> String {
+    std::env::var(TOUCH_LEDGER_ENV)
+        .unwrap_or_else(|_| "/home/gildlab/issue-pr-cron/fsm-touches.jsonl".to_string())
+}
+
+/// What kind of FSM subject a touch names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TouchSubject {
+    Pr,
+    Issue,
+}
+
+impl TouchSubject {
+    fn as_str(self) -> &'static str {
+        match self {
+            TouchSubject::Pr => "pr",
+            TouchSubject::Issue => "issue",
+        }
+    }
+}
+
+/// PURE: the typed actor kind an environment value names.
+///
+/// Only the two runner-exported spellings are run kinds; everything else — unset, empty, or a
+/// value this binary does not know — is `interactive`, because an unknown actor claiming to be a
+/// run would attach touches to a runId join that cannot exist. The bool reports "the value was
+/// present but unrecognized", so the caller can say so on stderr instead of coercing silently.
+fn touch_actor_kind(raw: Option<&str>) -> (&'static str, bool) {
+    match raw.map(str::trim) {
+        Some("producer-run") => ("producer-run", false),
+        Some("vetter-run") => ("vetter-run", false),
+        Some("") | None => ("interactive", false),
+        Some(_) => ("interactive", true),
+    }
+}
+
+/// A typed causal parent for a touch: the previously LANDED item whose shipped defect the touched
+/// item is rework of. Delivery cost accounting includes bugs and rework, so a fix's touches must
+/// be rootable at the item that shipped the defect — this is the root. Carried ONLY when the
+/// actor knows the causal item at filing time; never inferred post-hoc by blame or bisect.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReworkRef {
+    slug: String,
+    number: u64,
+    kind: TouchSubject,
+}
+
+/// One touch to record: the subject a mutating transition just acted on.
+struct FsmTouch<'a> {
+    subject: TouchSubject,
+    slug: &'a str,
+    number: u64,
+    /// The transition's own name — the typed discriminant, never payload text.
+    action: &'static str,
+    /// The verb where one subcommand fans into several transitions (a verdict, a ruling).
+    verb: Option<&'a str>,
+    /// The issues a PR-opening body closes, so a landed issue joins the PR that closed it.
+    closes: &'a [u64],
+    /// See [`ReworkRef`]. Absent is a fact (the actor named no causal item), not a default value.
+    rework_of: Option<&'a ReworkRef>,
+}
+
+/// PURE: the ledger line for one touch.
+fn touch_record(t: &FsmTouch, ts: &str, actor: &str, run_id: Option<&str>) -> Value {
+    let mut o = serde_json::Map::new();
+    o.insert("ts".into(), Value::from(ts));
+    o.insert("actor".into(), Value::from(actor));
+    if let Some(id) = run_id {
+        o.insert("runId".into(), Value::from(id));
+    }
+    o.insert("repo".into(), Value::from(t.slug));
+    o.insert("number".into(), Value::from(t.number));
+    o.insert("kind".into(), Value::from(t.subject.as_str()));
+    o.insert("action".into(), Value::from(t.action));
+    if let Some(v) = t.verb {
+        o.insert("verb".into(), Value::from(v));
+    }
+    if !t.closes.is_empty() {
+        o.insert(
+            "closes".into(),
+            Value::Array(t.closes.iter().map(|n| Value::from(*n)).collect()),
+        );
+    }
+    if let Some(r) = t.rework_of {
+        o.insert(
+            "reworkOf".into(),
+            serde_json::json!({
+                "repo": r.slug,
+                "number": r.number,
+                "kind": r.kind.as_str(),
+            }),
+        );
+    }
+    Value::Object(o)
+}
+
+/// Append one touch to the ledger. Never fails the transition it records.
+fn ledger_touch(t: &FsmTouch) {
+    let actor_env = std::env::var(TOUCH_ACTOR_ENV).ok();
+    let (actor, unknown) = touch_actor_kind(actor_env.as_deref());
+    if unknown {
+        eprintln!(
+            "warning: {TOUCH_ACTOR_ENV}={} is not a known actor kind; recording as interactive",
+            actor_env.as_deref().unwrap_or_default()
+        );
+    }
+    let run_id = std::env::var(TOUCH_RUN_ID_ENV).ok();
+    let line = touch_record(
+        t,
+        &epoch_to_iso(now_unix()),
+        actor,
+        run_id.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+    );
+    let path = touch_ledger_path();
+    let write = || -> std::io::Result<()> {
+        if let Some(dir) = std::path::Path::new(&path).parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        use std::io::Write as _;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)?;
+        // ONE buffer, ONE write: `O_APPEND` makes a single `write()` atomic, and `Display` on a
+        // `Value` would otherwise emit many small fragments — which is how two concurrent actors
+        // interleave half-lines into a shared ledger.
+        let mut buf = line.to_string();
+        buf.push('\n');
+        f.write_all(buf.as_bytes())
+    };
+    if let Err(e) = write() {
+        eprintln!("warning: could not append to touch ledger {path}: {e}");
+    }
+}
+
+/// PURE: the `touched` array for one run's row — the ledger's records for `run_id`, folded to one
+/// entry per distinct (repo, number, kind, action, verb) with a count, in a deterministic order.
+///
+/// Lines that do not parse, or that name another run (or no run), contribute nothing here: an
+/// interactive touch belongs to the published stream, not to this run's row. `closes` folds as a
+/// union for the same identity, so a retried `open-pr` cannot double-list an issue.
+fn fold_touches(ledger: &str, run_id: &str) -> Vec<Value> {
+    #[allow(clippy::type_complexity)]
+    let mut folded: Vec<(
+        String,
+        u64,
+        String,
+        String,
+        Option<String>,
+        Vec<u64>,
+        Option<Value>,
+        u64,
+    )> = Vec::new();
+    for line in ledger.lines() {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if v.get("runId").and_then(|r| r.as_str()) != Some(run_id) {
+            continue;
+        }
+        let Some(repo) = v.get("repo").and_then(|r| r.as_str()) else {
+            continue;
+        };
+        let Some(number) = v.get("number").and_then(|n| n.as_u64()).filter(|n| *n > 0) else {
+            continue;
+        };
+        let Some(kind) = v.get("kind").and_then(|k| k.as_str()) else {
+            continue;
+        };
+        let Some(action) = v.get("action").and_then(|a| a.as_str()) else {
+            continue;
+        };
+        let verb = v.get("verb").and_then(|w| w.as_str()).map(str::to_string);
+        let closes: Vec<u64> = v
+            .get("closes")
+            .and_then(|c| c.as_array())
+            .map(|a| a.iter().filter_map(|n| n.as_u64()).collect())
+            .unwrap_or_default();
+        // The lineage rides the fold: first record naming a causal item wins for its identity —
+        // records of one identity in one run either agree or the later ones are retries.
+        let rework_of = v.get("reworkOf").filter(|r| r.is_object()).cloned();
+        let key = (
+            repo.to_string(),
+            number,
+            kind.to_string(),
+            action.to_string(),
+            verb,
+        );
+        match folded.iter_mut().find(|(r, n, k, a, w, _, _, _)| {
+            (r, n, k, a, w) == (&key.0, &key.1, &key.2, &key.3, &key.4)
+        }) {
+            Some((_, _, _, _, _, cl, ro, count)) => {
+                *count += 1;
+                for c in closes {
+                    if !cl.contains(&c) {
+                        cl.push(c);
+                    }
+                }
+                if ro.is_none() {
+                    *ro = rework_of;
+                }
+            }
+            None => folded.push((key.0, key.1, key.2, key.3, key.4, closes, rework_of, 1)),
+        }
+    }
+    folded.sort_by(|a, b| (&a.0, a.1, &a.2, &a.3, &a.4).cmp(&(&b.0, b.1, &b.2, &b.3, &b.4)));
+    folded
+        .into_iter()
+        .map(
+            |(repo, number, kind, action, verb, closes, rework_of, count)| {
+                let mut o = serde_json::Map::new();
+                o.insert("repo".into(), Value::from(repo));
+                o.insert("number".into(), Value::from(number));
+                o.insert("kind".into(), Value::from(kind));
+                o.insert("action".into(), Value::from(action));
+                if let Some(w) = verb {
+                    o.insert("verb".into(), Value::from(w));
+                }
+                if !closes.is_empty() {
+                    o.insert(
+                        "closes".into(),
+                        Value::Array(closes.into_iter().map(Value::from).collect()),
+                    );
+                }
+                if let Some(r) = rework_of {
+                    o.insert("reworkOf".into(), r);
+                }
+                o.insert("count".into(), Value::from(count));
+                Value::Object(o)
+            },
+        )
+        .collect()
+}
+
+/// The run's `touched` array read from the live ledger — [] when the ledger is absent or holds
+/// nothing for this run, which is a run that touched nothing, on the same always-present contract
+/// `agents` holds.
+fn run_touches(run_id: Option<&str>) -> Vec<Value> {
+    let Some(id) = run_id else {
+        return Vec::new();
+    };
+    match std::fs::read_to_string(touch_ledger_path()) {
+        Ok(content) => fold_touches(&content, id),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// The MCP transitions whose CALL INPUT names the subject: (tool leaf, the input field carrying
+/// the `owner/repo#n` ref, the input field carrying the verb, subject kind, ledger action).
+///
+/// Matched on the tool name's last `__`-segment for the reason [`WORK_ITEM_TOOL_LEAVES`] is.
+/// `human_close` AND `record_close_candidate_verdict` are deliberately ABSENT: each takes a ref
+/// whose population the TOOL resolves (`human_close`'s field is literally `subject`; a
+/// close-candidate flag rides issues and PRs both), so the subject KIND is not readable from the
+/// call — the ledger record the apply writes carries the resolved kind (`subject_is_pr` at the
+/// write), and that record is the authoritative one.
+/// CLI invocations riding a Bash `command` string are also absent BY MEASUREMENT (#175): parsing
+/// shell strings invents work items, so a Bash-invoked transition is run-level ledger data only,
+/// never agent-attributed.
+const TOUCH_INPUT_LEAVES: &[(&str, &str, Option<&str>, TouchSubject, &str)] = &[
+    (
+        "record_verdict",
+        "pr",
+        Some("verdict"),
+        TouchSubject::Pr,
+        "record-verdict",
+    ),
+    (
+        "human_rule",
+        "pr",
+        Some("ruling"),
+        TouchSubject::Pr,
+        "human-rule",
+    ),
+    (
+        "human_rule_issue",
+        "issue",
+        Some("ruling"),
+        TouchSubject::Issue,
+        "human-rule-issue",
+    ),
+    (
+        "repair_qa_block",
+        "pr",
+        None,
+        TouchSubject::Pr,
+        "repair-qa-block",
+    ),
+    (
+        "weaken_closes",
+        "pr",
+        None,
+        TouchSubject::Pr,
+        "weaken-closes",
+    ),
+];
+
+/// PURE: every touch each ACTOR's typed tool calls demonstrate, keyed by the actor's
+/// `parent_tool_use_id` (`__main__` for the main loop) — the same key [`token_attribution`]
+/// groups spend by, which is what makes agent-level attribution a join instead of a guess.
+///
+/// Two sources, both structured and both requiring a non-error result, exactly as
+/// [`task_work_items`]: the RESULT of a work-item transition (`open_pr`, `push` — the result is
+/// the record, carrying the PR the transition created or moved), and the INPUT of a
+/// [`TOUCH_INPUT_LEAVES`] transition (the caller names the subject; the non-error result proves
+/// the transition ran). Entries are deduped per actor by identity with a count, the same fold the
+/// run-level `touched` gets.
+fn trace_touches(trace: &str) -> std::collections::HashMap<String, Vec<Value>> {
+    use std::collections::HashMap;
+    type PendingEntry = (
+        String,
+        u64,
+        TouchSubject,
+        &'static str,
+        Option<String>,
+        Vec<u64>,
+    );
+    struct Pending {
+        task: String,
+        entry: Option<PendingEntry>,
+        result_kind: Option<WorkItemKind>,
+    }
+    let mut pending: HashMap<String, Pending> = HashMap::new();
+
+    let events: Vec<Value> = trace
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .collect();
+
+    for ev in &events {
+        if ev.get("type").and_then(|t| t.as_str()) != Some("assistant") {
+            continue;
+        }
+        let task = ev
+            .get("parent_tool_use_id")
+            .and_then(|p| p.as_str())
+            .unwrap_or("__main__")
+            .to_string();
+        let Some(blocks) = ev.pointer("/message/content").and_then(|c| c.as_array()) else {
+            continue;
+        };
+        for b in blocks {
+            if b.get("type").and_then(|t| t.as_str()) != Some("tool_use") {
+                continue;
+            }
+            let Some(id) = b.get("id").and_then(|i| i.as_str()) else {
+                continue;
+            };
+            let name = b.get("name").and_then(|n| n.as_str()).unwrap_or("");
+            let leaf = name.rsplit("__").next().unwrap_or("");
+            if let Some((_, kind)) = WORK_ITEM_TOOL_LEAVES.iter().find(|(l, _)| *l == leaf) {
+                pending.insert(
+                    id.to_string(),
+                    Pending {
+                        task: task.clone(),
+                        entry: None,
+                        result_kind: Some(*kind),
+                    },
+                );
+                continue;
+            }
+            let Some((_, ref_field, verb_field, subject, action)) =
+                TOUCH_INPUT_LEAVES.iter().find(|(l, ..)| *l == leaf)
+            else {
+                continue;
+            };
+            let input = b.get("input");
+            let Some(r) = input
+                .and_then(|i| i.get(*ref_field))
+                .and_then(|v| v.as_str())
+            else {
+                continue;
+            };
+            let Ok((slug, num)) = parse_pr_ref(r) else {
+                continue;
+            };
+            let verb = verb_field
+                .and_then(|f| input.and_then(|i| i.get(f)).and_then(|v| v.as_str()))
+                .map(str::to_string);
+            pending.insert(
+                id.to_string(),
+                Pending {
+                    task: task.clone(),
+                    entry: Some((slug, num, *subject, action, verb, Vec::new())),
+                    result_kind: None,
+                },
+            );
+        }
+    }
+
+    let mut out: HashMap<String, Vec<Value>> = HashMap::new();
+    let mut push_entry = |task: &str,
+                          entry: (String, u64, &str, &str, Option<String>, Vec<u64>),
+                          rework_of: Option<Value>| {
+        let (slug, num, kind, action, verb, closes) = entry;
+        let list = out.entry(task.to_string()).or_default();
+        let matches = |v: &Value| {
+            v.get("repo").and_then(|x| x.as_str()) == Some(slug.as_str())
+                && v.get("number").and_then(|x| x.as_u64()) == Some(num)
+                && v.get("kind").and_then(|x| x.as_str()) == Some(kind)
+                && v.get("action").and_then(|x| x.as_str()) == Some(action)
+                && v.get("verb").and_then(|x| x.as_str()) == verb.as_deref()
+        };
+        match list.iter_mut().find(|v| matches(v)) {
+            Some(seen) => {
+                let n = seen.get("count").and_then(|c| c.as_u64()).unwrap_or(1);
+                seen["count"] = Value::from(n + 1);
+                if let (None, Some(r)) = (seen.get("reworkOf"), rework_of) {
+                    seen["reworkOf"] = r;
+                }
+            }
+            None => {
+                let mut o = serde_json::Map::new();
+                o.insert("repo".into(), Value::from(slug));
+                o.insert("number".into(), Value::from(num));
+                o.insert("kind".into(), Value::from(kind));
+                o.insert("action".into(), Value::from(action));
+                if let Some(w) = verb {
+                    o.insert("verb".into(), Value::from(w));
+                }
+                if !closes.is_empty() {
+                    o.insert(
+                        "closes".into(),
+                        Value::Array(closes.into_iter().map(Value::from).collect()),
+                    );
+                }
+                if let Some(r) = rework_of {
+                    o.insert("reworkOf".into(), r);
+                }
+                o.insert("count".into(), Value::from(1u64));
+                list.push(Value::Object(o));
+            }
+        }
+    };
+
+    for ev in &events {
+        let Some(blocks) = ev.pointer("/message/content").and_then(|c| c.as_array()) else {
+            continue;
+        };
+        for b in blocks {
+            if b.get("type").and_then(|t| t.as_str()) != Some("tool_result") {
+                continue;
+            }
+            let Some(p) = b
+                .get("tool_use_id")
+                .and_then(|i| i.as_str())
+                .and_then(|id| pending.get(id))
+            else {
+                continue;
+            };
+            if b.get("is_error").and_then(|e| e.as_bool()) == Some(true) {
+                continue;
+            }
+            if let Some(kind) = p.result_kind {
+                // open_pr / push: the RESULT is the record, exactly as for work items — and it is
+                // also where the lineage rides, so a trace-derived touch carries the same root
+                // the ledger's record does.
+                let parsed = serde_json::from_str::<Value>(tool_result_text(b).trim()).ok();
+                let Some(item) = parsed.as_ref().and_then(|v| work_item_from_result(v, kind))
+                else {
+                    continue;
+                };
+                let rework_of = parsed
+                    .as_ref()
+                    .and_then(|v| v.get("reworkOf"))
+                    .filter(|r| r.is_object())
+                    .cloned();
+                let action = match kind {
+                    WorkItemKind::Opened => "open-pr",
+                    WorkItemKind::Reworked => "push",
+                };
+                push_entry(
+                    &p.task.clone(),
+                    (item.slug, item.pr, "pr", action, None, item.closes),
+                    rework_of,
+                );
+            } else if let Some((slug, num, subject, action, verb, closes)) = p.entry.clone() {
+                push_entry(
+                    &p.task.clone(),
+                    (slug, num, subject.as_str(), action, verb, closes),
+                    None,
+                );
+            }
+        }
+    }
+    out
+}
+
+/// PURE: a `reworkOf` object's identity as a borrowed, orderable key — what the fold's
+/// deterministic tie rule compares, without allocating.
+fn rework_ref_key(v: &Value) -> (&str, u64, &str) {
+    (
+        v.get("repo").and_then(Value::as_str).unwrap_or(""),
+        v.get("number").and_then(Value::as_u64).unwrap_or(0),
+        v.get("kind").and_then(Value::as_str).unwrap_or(""),
+    )
+}
+
+/// PURE: the run-level `touched` a TRACE demonstrates — every actor's entries folded into one
+/// list, for historical rows whose live ledger never existed. Labelled `touchedSource: "trace"`
+/// by the caller, against the live rows' `"ledger"`.
+fn trace_touches_folded(trace: &str) -> Vec<Value> {
+    let per_actor = trace_touches(trace);
+    // Actors in sorted order, and every mergeable field MERGED (count summed, closes unioned,
+    // lineage kept by a deterministic rule), because `HashMap` iteration order is randomized per
+    // process: a fold that keeps whichever entry it met first writes a different backfill on
+    // every run, and a diffable artifact must not depend on hash seeding.
+    let mut actors: Vec<&String> = per_actor.keys().collect();
+    actors.sort();
+    let mut folded: Vec<Value> = Vec::new();
+    for actor in actors {
+        for e in &per_actor[actor] {
+            let matches = |v: &Value| {
+                ["repo", "number", "kind", "action", "verb"]
+                    .iter()
+                    .all(|k| v.get(k) == e.get(k))
+            };
+            match folded.iter_mut().find(|v| matches(v)) {
+                Some(seen) => {
+                    let a = seen.get("count").and_then(|c| c.as_u64()).unwrap_or(1);
+                    let b = e.get("count").and_then(|c| c.as_u64()).unwrap_or(1);
+                    seen["count"] = Value::from(a + b);
+                    let mut closes: Vec<u64> = seen
+                        .get("closes")
+                        .and_then(|c| c.as_array())
+                        .map(|a| a.iter().filter_map(|n| n.as_u64()).collect())
+                        .unwrap_or_default();
+                    for n in e
+                        .get("closes")
+                        .and_then(|c| c.as_array())
+                        .map(|a| a.iter().filter_map(|n| n.as_u64()).collect::<Vec<_>>())
+                        .unwrap_or_default()
+                    {
+                        if !closes.contains(&n) {
+                            closes.push(n);
+                        }
+                    }
+                    if !closes.is_empty() {
+                        closes.sort_unstable();
+                        seen["closes"] =
+                            Value::Array(closes.into_iter().map(Value::from).collect());
+                    }
+                    // Lineage: take the incoming one when none is held; when both exist and
+                    // disagree, the smaller (repo, number, kind) key wins — arbitrary, but the
+                    // SAME arbitrary on every run, compared on the typed identity rather than an
+                    // owned serialization.
+                    if let Some(incoming) = e.get("reworkOf").filter(|r| r.is_object()) {
+                        let keep = match seen.get("reworkOf") {
+                            None => true,
+                            Some(held) => rework_ref_key(incoming) < rework_ref_key(held),
+                        };
+                        if keep {
+                            seen["reworkOf"] = incoming.clone();
+                        }
+                    }
+                }
+                None => folded.push(e.clone()),
+            }
+        }
+    }
+    folded.sort_by_key(|v| v.to_string());
+    folded
 }
 
 /// PURE: rewrite one metrics row against its trace, or label it if the trace is gone.
@@ -5830,6 +6438,7 @@ fn backfill_row(mut row: Value, trace_body: Option<&str>) -> (Value, bool) {
         return (row, false);
     }
     let (out_tokens, out_usd) = unattributable_output(body);
+    let touches = trace_touches(body);
     let spend = SpendRecord {
         agents: &agents,
         output_tokens: out_tokens,
@@ -5874,9 +6483,17 @@ fn backfill_row(mut row: Value, trace_body: Option<&str>) -> (Value, bool) {
         "agents".into(),
         serde_json::json!(agents
             .iter()
-            .map(|a| agent_row(a, calls.get(&a.id).copied().unwrap_or(0)))
+            .map(|a| agent_row(a, calls.get(&a.id).copied().unwrap_or(0), &touches))
             .collect::<Vec<Value>>()),
     );
+    // Historical rows never had a live ledger, so their `touched` is what the trace demonstrates
+    // — exact for the typed MCP transitions, silent on Bash-invoked ones (#175) — and the source
+    // label is what tells a consumer which contract the array was built under.
+    obj.insert(
+        "touched".into(),
+        serde_json::json!(trace_touches_folded(body)),
+    );
+    obj.insert("touchedSource".into(), serde_json::json!("trace"));
     obj.insert("accuracy".into(), serde_json::json!("whole-run"));
     (row, true)
 }
@@ -8125,6 +8742,7 @@ fn run_metrics_mode(
             classify_outcome(&content, rc, skip.is_some(), preflight_missing, &infra),
         )
     });
+    let per_actor = trace_touches(&content);
     println!(
         "{}",
         serde_json::to_string(&final_record(
@@ -8142,11 +8760,23 @@ fn run_metrics_mode(
                 output_tokens: out_tokens,
                 output_usd: out_usd,
                 billed_usd: billed_cost(&content),
+            },
+            &TouchBlock {
+                run: run_touches(id.run_id),
+                per_actor: &per_actor,
             }
         ))
         .unwrap()
     );
     0
+}
+
+/// The run's touch data, both resolutions: `run` is the ledger's fold for this run id (the
+/// authoritative, whole-surface record), `per_actor` is what the trace demonstrates per task
+/// ([`trace_touches`]), which is how a touch gets a token attribution.
+struct TouchBlock<'a> {
+    run: Vec<Value>,
+    per_actor: &'a std::collections::HashMap<String, Vec<Value>>,
 }
 
 /// The COMPLETE end-of-run record: every field in `partial_record` plus the counts, usage, cost and
@@ -8165,6 +8795,7 @@ fn final_record(
     skip: Option<(&str, &str)>,
     forced: Option<ForceStamp>,
     spend: &SpendRecord,
+    touch: &TouchBlock,
 ) -> Value {
     let mut doc = serde_json::json!({
         "trace": path,
@@ -8234,14 +8865,15 @@ fn final_record(
         // "every call was startup" for a worker that did nothing but work, while a worker that
         // happened to push would read as orientation overhead. One field, two meanings, decided by
         // which row you are looking at — the issue asks for one honest number instead.
-        "agents": spend.agents.iter().map(|a| serde_json::json!({
-            "label": a.label,
-            "usd": round3(a.usd),
-            "messages": a.messages,
-            "toolCalls": m.tool_calls_by_owner.get(&a.id).copied().unwrap_or(0),
-            "cacheRead": a.cache_read,
-            "cacheWrite": a.cache_write_5m + a.cache_write_1h,
-        })).collect::<Vec<Value>>(),
+        "agents": spend.agents.iter()
+            .map(|a| agent_row(a, m.tool_calls_by_owner.get(&a.id).copied().unwrap_or(0), touch.per_actor))
+            .collect::<Vec<Value>>(),
+        // WHICH FSM ITEMS THIS RUN TOUCHED, from the touch ledger (the transitions' own typed
+        // records), folded to one entry per (repo, number, kind, action, verb). Always present:
+        // [] is a run that touched nothing. `touchedSource` says which contract built the array —
+        // `ledger` here; `trace` on backfilled historical rows, whose live ledger never existed.
+        "touched": touch.run,
+        "touchedSource": "ledger",
         // What the agent rows sum to. NOT the run: output tokens are real spend that no agent key
         // can carry (`usage.output_tokens` is a message-start snapshot understating ~18x), so they
         // arrive whole-run from `result.modelUsage`.
@@ -11815,6 +12447,627 @@ fn queue_history_line_mode(path: Option<&str>, ts: &str) -> i32 {
     0
 }
 
+// ---- landed-history: the LANDED units of pipeline work, as an append-only feed ----------------
+//
+// rain-org-health's pipeline page divides run spend (metrics/runs.jsonl) by items LANDED to chart
+// tokens-per-landed-item, and runs.jsonl carries only the numerator: a run row records what a run
+// COST, never what later merged. The denominator is observed here instead — an FSM-tracked item
+// that vanishes between two human-queue.json snapshots is checked against GitHub for how it left,
+// and only an actual landing emits a row. `landed-history.jsonl` is that feed: one line per landed
+// unit, `{"ts","observedAt","kind","repo","number"}`, appended by refresh-human-queue.sh and
+// seeded/healed by backfill-landed-history.sh through this same subcommand.
+//
+// KNOWN LIMIT, shared with every snapshot diff: an item that enters AND leaves the queue entirely
+// between two snapshots is never observed. That is absence, not a zero — and a backfill rerun
+// heals API misses (`--existing` makes it idempotent), never this.
+
+/// Which GitHub subject a tracked ref points at, read from the ref's own `url` — the one field
+/// whose spelling GitHub owns (`/pull/` vs `/issues/`), so classification cannot drift with the
+/// snapshot key a ref happens to sit under.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum LandedKind {
+    Pr,
+    Issue,
+}
+
+impl LandedKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Pr => "pr",
+            Self::Issue => "issue",
+        }
+    }
+
+    fn from_url(url: &str) -> Option<Self> {
+        if url.contains("/pull/") {
+            Some(Self::Pr)
+        } else if url.contains("/issues/") {
+            Some(Self::Issue)
+        } else {
+            None
+        }
+    }
+}
+
+/// One FSM-tracked subject: (kind, "org/repo", number). `Ord` gives every diff a deterministic
+/// emission order.
+type TrackedRef = (LandedKind, String, u64);
+
+/// Every FSM-TRACKED subject ref in a human-queue.json snapshot, whatever key it sits under.
+///
+/// The walk is SHAPE-driven — any object carrying `repo` + `number` + a classifiable `url` is a
+/// ref — because the snapshot's key set has moved five times in the file's git history (`lanes`,
+/// `uncoveredIssues`, `archivedRepoPrs`, `stateDescriptors`, close-candidate splits) and the
+/// backfill replays all of it; an extractor enumerating today's keys would silently read an old
+/// snapshot as empty and emit every item as vanished.
+///
+/// The one exclusion is by PROPERTY, not shape: `uncoveredIssues` is the backlog the pipeline has
+/// not worked yet, so an entry leaving it landed no pipeline work. Everything else a snapshot
+/// lists — states, lanes, leaks, close-candidate inventories, archived-repo PRs — is or was
+/// in-flight work, and inclusion is safe because the terminal-state check is the gate: a tracked
+/// item that leaves without landing emits nothing regardless of which list it left.
+fn tracked_refs(doc: &Value) -> std::collections::BTreeSet<TrackedRef> {
+    fn walk(v: &Value, out: &mut std::collections::BTreeSet<TrackedRef>) {
+        match v {
+            Value::Object(map) => {
+                if let (Some(repo), Some(number), Some(url)) = (
+                    map.get("repo").and_then(Value::as_str),
+                    map.get("number").and_then(Value::as_u64),
+                    map.get("url").and_then(Value::as_str),
+                ) {
+                    // `org/name` is asserted here so every downstream API path split is total.
+                    if repo.contains('/') {
+                        if let Some(kind) = LandedKind::from_url(url) {
+                            out.insert((kind, repo.to_string(), number));
+                        }
+                    }
+                }
+                // Recurse regardless: a row that IS a ref could still nest more (none does today;
+                // the walk not knowing that is what keeps it shape-driven).
+                for v in map.values() {
+                    walk(v, out);
+                }
+            }
+            Value::Array(items) => {
+                for it in items {
+                    walk(it, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = std::collections::BTreeSet::new();
+    if let Some(map) = doc.as_object() {
+        for (k, v) in map {
+            if k == "uncoveredIssues" {
+                continue;
+            }
+            walk(v, &mut out);
+        }
+    }
+    out
+}
+
+/// What ONE vanished item contributes to landed-history: a PR row, an issue row, or nothing.
+///
+/// `None` covers BOTH ways of contributing nothing — leaving without landing (closed unmerged,
+/// delisted while still open) AND an issue a merged PR closed: that unit of landed work is the
+/// PR's own row, and a second row would double-count it.
+#[derive(Debug, PartialEq, Eq)]
+enum LandedRow {
+    Pr { merged_at: String },
+    Issue { closed_at: String },
+    None,
+}
+
+/// PURE: a vanished PR's contribution, from its REST document (`repos/{repo}/pulls/{n}`).
+///
+/// `merged_at` alone decides. An open PR (delisted from the FSM view while alive) and a
+/// closed-unmerged PR both carry `merged_at: null`, and both landed nothing.
+fn pr_landed_row(pull: &Value) -> LandedRow {
+    match pull.get("merged_at").and_then(Value::as_str) {
+        Some(ts) => LandedRow::Pr {
+            merged_at: ts.to_string(),
+        },
+        None => LandedRow::None,
+    }
+}
+
+/// PURE: a vanished issue's contribution, from the [`ISSUE_TERMINAL_QUERY`] response.
+///
+/// A row needs all three: the issue is CLOSED, it has a `closedAt`, and NO merged PR closed it
+/// (`closedByPullRequestsReferences` with `includeClosedPrs` — a merged closer means the unit is
+/// that PR's row). A null issue (transferred or deleted at HTTP 200) contributes nothing: what
+/// cannot be read as landed is not landed.
+fn issue_landed_row(resp: &Value) -> LandedRow {
+    let Some(issue) = resp
+        .pointer("/data/repository/issue")
+        .filter(|i| !i.is_null())
+    else {
+        return LandedRow::None;
+    };
+    if issue.get("state").and_then(Value::as_str) != Some("CLOSED") {
+        return LandedRow::None;
+    }
+    let closed_by_merged_pr = issue
+        .pointer("/closedByPullRequestsReferences/nodes")
+        .and_then(Value::as_array)
+        .is_some_and(|nodes| {
+            nodes
+                .iter()
+                .any(|pr| pr.get("merged").and_then(Value::as_bool) == Some(true))
+        });
+    if closed_by_merged_pr {
+        return LandedRow::None;
+    }
+    match issue.get("closedAt").and_then(Value::as_str) {
+        Some(ts) => LandedRow::Issue {
+            closed_at: ts.to_string(),
+        },
+        None => LandedRow::None,
+    }
+}
+
+/// The issue terminal-state read behind [`issue_landed_row`]. `includeClosedPrs` is what makes the
+/// merged-closer check reach a PR that is itself closed — which a merged PR always is.
+const ISSUE_TERMINAL_QUERY: &str = "query($owner:String!,$name:String!,$number:Int!){\
+  repository(owner:$owner,name:$name){\
+    issue(number:$number){\
+      state closedAt \
+      closedByPullRequestsReferences(first:20, includeClosedPrs:true){nodes{merged}}\
+    }\
+  }\
+}";
+
+/// Fetch + classify one vanished item's contribution. The network half of [`landed_history_rows`],
+/// injected there so the diff/dedup/report logic tests without `gh`.
+fn fetch_landed_row(kind: LandedKind, repo: &str, number: u64) -> Result<LandedRow, GhFailure> {
+    match kind {
+        LandedKind::Pr => {
+            let path = format!("repos/{repo}/pulls/{number}");
+            let doc = gh_retrying(|| gh_api_result(&[&path]))?;
+            Ok(pr_landed_row(&doc))
+        }
+        LandedKind::Issue => {
+            let (owner, name) = repo
+                .split_once('/')
+                .expect("tracked_refs only admits org/name repos");
+            let owner_arg = format!("owner={owner}");
+            let name_arg = format!("name={name}");
+            let number_arg = format!("number={number}");
+            let query_arg = format!("query={ISSUE_TERMINAL_QUERY}");
+            let doc = gh_retrying(|| {
+                gh_api_result(&[
+                    "graphql",
+                    "-f",
+                    &query_arg,
+                    "-f",
+                    &owner_arg,
+                    "-f",
+                    &name_arg,
+                    "-F",
+                    &number_arg,
+                ])
+            })?;
+            Ok(issue_landed_row(&doc))
+        }
+    }
+}
+
+/// PURE over `resolve`: the landed rows one snapshot pair yields, plus the items that could not be
+/// resolved this pass.
+///
+/// Vanished = in `prev`, gone from `current` — iterated in `TrackedRef` order, so output is
+/// deterministic. A key already in `existing` is skipped before `resolve` is ever called: that is
+/// what makes a backfill rerun and a tick replayed after a failed commit idempotent instead of
+/// double-counting. An unresolved item (typed API failure) is reported, not silently dropped and
+/// not a row — the caller decides loudness, and a backfill rerun picks it up because nothing was
+/// recorded for it.
+fn landed_history_rows(
+    prev: &Value,
+    current: &Value,
+    existing: &std::collections::BTreeSet<TrackedRef>,
+    observed_at: &str,
+    mut resolve: impl FnMut(LandedKind, &str, u64) -> Result<LandedRow, GhFailure>,
+) -> (Vec<String>, Vec<String>) {
+    let prev_refs = tracked_refs(prev);
+    let current_refs = tracked_refs(current);
+    let mut rows = Vec::new();
+    let mut unresolved = Vec::new();
+    for vanished in prev_refs.difference(&current_refs) {
+        if existing.contains(vanished) {
+            continue;
+        }
+        let (kind, repo, number) = vanished;
+        let ts = match resolve(*kind, repo, *number) {
+            Ok(LandedRow::Pr { merged_at }) => merged_at,
+            Ok(LandedRow::Issue { closed_at }) => closed_at,
+            Ok(LandedRow::None) => continue,
+            Err(f) => {
+                unresolved.push(format!("{} {repo}#{number}: {f:?}", kind.as_str()));
+                continue;
+            }
+        };
+        let line = serde_json::json!({
+            "ts": ts,
+            "observedAt": observed_at,
+            "kind": kind.as_str(),
+            "repo": repo,
+            "number": number,
+        });
+        rows.push(serde_json::to_string(&line).expect("a landed row is a flat object"));
+    }
+    (rows, unresolved)
+}
+
+/// The (kind, repo, number) keys already recorded in a landed-history.jsonl. An absent file is an
+/// empty history (the first tick ever has one); a malformed line is skipped rather than fatal —
+/// this file is append-only and ours, and refusing to append because one old line is odd would
+/// stop the feed to protect it.
+fn landed_history_existing_keys(path: &str) -> std::collections::BTreeSet<TrackedRef> {
+    let mut keys = std::collections::BTreeSet::new();
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return keys;
+    };
+    for line in content.lines() {
+        let Ok(doc) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let kind = match doc.get("kind").and_then(Value::as_str) {
+            Some("pr") => LandedKind::Pr,
+            Some("issue") => LandedKind::Issue,
+            _ => continue,
+        };
+        if let (Some(repo), Some(number)) = (
+            doc.get("repo").and_then(Value::as_str),
+            doc.get("number").and_then(Value::as_u64),
+        ) {
+            keys.insert((kind, repo.to_string(), number));
+        }
+    }
+    keys
+}
+
+/// `landed-history-lines <prev> <current> --observed-at <iso8601> [--existing <jsonl>]`.
+///
+/// stdout = the landed rows, zero or more JSON lines. Unresolved items go to stderr and turn the
+/// exit into 3 — the rows already resolved are still emitted, because withholding verified
+/// landings over one API failure would trade a healable gap for a permanent under-count. Exit 2 =
+/// an input that could not be read at all.
+fn landed_history_lines_mode(
+    prev_path: &str,
+    current_path: &str,
+    observed_at: &str,
+    existing: Option<&str>,
+) -> i32 {
+    let read_snapshot = |path: &str| -> Result<Value, String> {
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| format!("cannot read snapshot {path}: {e}"))?;
+        serde_json::from_str(&content).map_err(|e| format!("snapshot {path} is not JSON: {e}"))
+    };
+    let (prev, current) = match (read_snapshot(prev_path), read_snapshot(current_path)) {
+        (Ok(p), Ok(c)) => (p, c),
+        (Err(e), _) | (_, Err(e)) => {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    };
+    let existing_keys = existing
+        .map(landed_history_existing_keys)
+        .unwrap_or_default();
+    let (rows, unresolved) = landed_history_rows(
+        &prev,
+        &current,
+        &existing_keys,
+        observed_at,
+        fetch_landed_row,
+    );
+    for row in rows {
+        println!("{row}");
+    }
+    if unresolved.is_empty() {
+        return 0;
+    }
+    for item in &unresolved {
+        eprintln!("unresolved (left the queue, terminal state unreadable this pass): {item}");
+    }
+    3
+}
+
+#[cfg(test)]
+mod landed_history_tests {
+    use super::*;
+
+    fn refs_of(doc: serde_json::Value) -> Vec<(LandedKind, String, u64)> {
+        tracked_refs(&doc).into_iter().collect()
+    }
+
+    #[test]
+    fn tracked_refs_reads_every_shape_the_snapshot_has_ever_had() {
+        // One doc wearing every historical key at once: states (2026-07-12), lanes (07-15),
+        // close-candidate splits (07-29), archivedRepoPrs/ages (08-05), stateDescriptors (08-09).
+        let doc = serde_json::json!({
+            "states": {"ai:ready": [
+                {"repo": "o/a", "number": 1, "url": "https://github.com/o/a/pull/1", "title": "t"}
+            ]},
+            "lanes": {"vet-lifecycle": {"ai:blocked-on": {"count": 1, "prs": [
+                {"repo": "o/b", "number": 2, "url": "https://github.com/o/b/pull/2", "title": "t"}
+            ]}}},
+            "leaks": [
+                {"repo": "o/c", "number": 3, "url": "https://github.com/o/c/pull/3", "reason": "r"}
+            ],
+            "closeCandidateIssues": [
+                {"repo": "o/d", "number": 4, "url": "https://github.com/o/d/issues/4", "title": "t"}
+            ],
+            "archivedRepoPrs": [
+                {"repo": "o/e", "number": 5, "url": "https://github.com/o/e/pull/5", "title": "t"}
+            ],
+            "stateDescriptors": [{"key": "ai:ready", "owner": "human"}],
+            "counts": {"ready": 1},
+            "ages": {"openIssues": {"meanDays": 1.0}}
+        });
+        assert_eq!(
+            refs_of(doc),
+            vec![
+                (LandedKind::Pr, "o/a".to_string(), 1),
+                (LandedKind::Pr, "o/b".to_string(), 2),
+                (LandedKind::Pr, "o/c".to_string(), 3),
+                (LandedKind::Pr, "o/e".to_string(), 5),
+                (LandedKind::Issue, "o/d".to_string(), 4),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_unworked_backlog_is_not_tracked() {
+        // uncoveredIssues is the one population whose departure landed no pipeline work; a same-
+        // shaped ref under any other key IS tracked.
+        let doc = serde_json::json!({
+            "uncoveredIssues": [
+                {"repo": "o/r", "number": 9, "url": "https://github.com/o/r/issues/9", "title": "t"}
+            ],
+            "closeCandidateIssues": [
+                {"repo": "o/r", "number": 10, "url": "https://github.com/o/r/issues/10", "title": "t"}
+            ]
+        });
+        assert_eq!(
+            refs_of(doc),
+            vec![(LandedKind::Issue, "o/r".to_string(), 10)]
+        );
+    }
+
+    #[test]
+    fn a_ref_is_one_tracked_item_however_many_lists_carry_it() {
+        let pr = serde_json::json!(
+            {"repo": "o/r", "number": 7, "url": "https://github.com/o/r/pull/7", "title": "t"});
+        let doc = serde_json::json!({"states": {"ai:ready": [pr]}, "leaks": [pr]});
+        assert_eq!(refs_of(doc), vec![(LandedKind::Pr, "o/r".to_string(), 7)]);
+    }
+
+    #[test]
+    fn an_unclassifiable_ref_is_not_a_subject() {
+        // A url that is neither /pull/ nor /issues/, and a repo without an owner half: neither can
+        // be resolved against the API, so neither may enter the diff.
+        let doc = serde_json::json!({"states": {"x": [
+            {"repo": "o/r", "number": 1, "url": "https://github.com/o/r/commit/abc", "title": "t"},
+            {"repo": "bare", "number": 2, "url": "https://github.com/bare/pull/2", "title": "t"}
+        ]}});
+        assert_eq!(refs_of(doc), vec![]);
+    }
+
+    #[test]
+    fn a_merged_pr_lands_and_carries_githubs_own_timestamp() {
+        let doc = serde_json::json!({"state": "closed", "merged_at": "2026-08-01T00:00:00Z"});
+        assert_eq!(
+            pr_landed_row(&doc),
+            LandedRow::Pr {
+                merged_at: "2026-08-01T00:00:00Z".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn a_pr_that_left_unmerged_lands_nothing_open_or_closed() {
+        // Closed-unmerged and delisted-while-open both read merged_at: null.
+        for state in ["closed", "open"] {
+            let doc = serde_json::json!({"state": state, "merged_at": null});
+            assert_eq!(pr_landed_row(&doc), LandedRow::None);
+        }
+    }
+
+    fn issue_resp(state: &str, closed_at: Option<&str>, merged_flags: &[bool]) -> Value {
+        let nodes: Vec<Value> = merged_flags
+            .iter()
+            .map(|m| serde_json::json!({"merged": m}))
+            .collect();
+        serde_json::json!({"data": {"repository": {"issue": {
+            "state": state,
+            "closedAt": closed_at,
+            "closedByPullRequestsReferences": {"nodes": nodes}
+        }}}})
+    }
+
+    #[test]
+    fn an_issue_closed_by_no_merged_pr_is_the_upheld_close_candidate_landing() {
+        // No closers at all, and an unmerged closing reference (a closed-unmerged PR named it):
+        // both are standalone closes.
+        for flags in [&[][..], &[false][..]] {
+            let resp = issue_resp("CLOSED", Some("2026-08-02T00:00:00Z"), flags);
+            assert_eq!(
+                issue_landed_row(&resp),
+                LandedRow::Issue {
+                    closed_at: "2026-08-02T00:00:00Z".to_string()
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn an_issue_a_merged_pr_closed_is_that_prs_unit_not_a_second_row() {
+        let resp = issue_resp("CLOSED", Some("2026-08-02T00:00:00Z"), &[false, true]);
+        assert_eq!(issue_landed_row(&resp), LandedRow::None);
+    }
+
+    #[test]
+    fn an_issue_that_is_not_readably_closed_lands_nothing() {
+        // Open, closed-without-closedAt, and a null issue (transferred/deleted at HTTP 200).
+        assert_eq!(
+            issue_landed_row(&issue_resp("OPEN", None, &[])),
+            LandedRow::None
+        );
+        // An OPEN issue that still CARRIES a closedAt — a remote API is not obligated to null
+        // the stamp on reopen, and a row here would count a landing that un-happened. This case
+        // is what makes the state check load-bearing rather than redundant with the closedAt
+        // read: a mutation pass showed the suite could not previously tell them apart.
+        assert_eq!(
+            issue_landed_row(&issue_resp("OPEN", Some("2026-08-01T00:00:00Z"), &[])),
+            LandedRow::None
+        );
+        assert_eq!(
+            issue_landed_row(&issue_resp("CLOSED", None, &[])),
+            LandedRow::None
+        );
+        let gone = serde_json::json!({"data": {"repository": {"issue": null}}});
+        assert_eq!(issue_landed_row(&gone), LandedRow::None);
+    }
+
+    /// A prev/current pair with one PR (o/r#1) and one issue (o/r#2) vanished, one PR retained.
+    fn vanished_pair() -> (Value, Value) {
+        let prev = serde_json::json!({"states": {"ai:ready": [
+            {"repo": "o/r", "number": 1, "url": "https://github.com/o/r/pull/1", "title": "t"},
+            {"repo": "o/r", "number": 3, "url": "https://github.com/o/r/pull/3", "title": "t"}
+        ]}, "closeCandidateIssues": [
+            {"repo": "o/r", "number": 2, "url": "https://github.com/o/r/issues/2", "title": "t"}
+        ]});
+        let current = serde_json::json!({"states": {"ai:ready": [
+            {"repo": "o/r", "number": 3, "url": "https://github.com/o/r/pull/3", "title": "t"}
+        ]}});
+        (prev, current)
+    }
+
+    #[test]
+    fn only_vanished_items_resolve_and_only_landed_ones_emit() {
+        let (prev, current) = vanished_pair();
+        let mut asked = Vec::new();
+        let (rows, unresolved) = landed_history_rows(
+            &prev,
+            &current,
+            &Default::default(),
+            "2026-08-12T00:00:00Z",
+            |kind, repo, number| {
+                asked.push((kind, repo.to_string(), number));
+                Ok(match kind {
+                    LandedKind::Pr => LandedRow::Pr {
+                        merged_at: "2026-08-11T10:00:00Z".to_string(),
+                    },
+                    LandedKind::Issue => LandedRow::None,
+                })
+            },
+        );
+        // The retained PR (#3) was never resolved; the vanished-but-unlanded issue emitted nothing.
+        assert_eq!(
+            asked,
+            vec![
+                (LandedKind::Pr, "o/r".to_string(), 1),
+                (LandedKind::Issue, "o/r".to_string(), 2)
+            ]
+        );
+        assert!(unresolved.is_empty());
+        assert_eq!(rows.len(), 1);
+        let row: Value = serde_json::from_str(&rows[0]).unwrap();
+        assert_eq!(
+            row,
+            serde_json::json!({
+                "ts": "2026-08-11T10:00:00Z",
+                "observedAt": "2026-08-12T00:00:00Z",
+                "kind": "pr",
+                "repo": "o/r",
+                "number": 1
+            })
+        );
+    }
+
+    #[test]
+    fn an_already_recorded_item_is_never_re_resolved_or_re_emitted() {
+        // The idempotence that makes backfill reruns and replayed ticks safe: the existing key
+        // short-circuits BEFORE the resolver, so a rerun costs no API call either.
+        let (prev, current) = vanished_pair();
+        let existing = [(LandedKind::Pr, "o/r".to_string(), 1)]
+            .into_iter()
+            .collect();
+        let (rows, unresolved) = landed_history_rows(
+            &prev,
+            &current,
+            &existing,
+            "2026-08-12T00:00:00Z",
+            |kind, _, _| {
+                assert_eq!(
+                    kind,
+                    LandedKind::Issue,
+                    "the recorded PR must not be re-asked"
+                );
+                Ok(LandedRow::None)
+            },
+        );
+        assert!(rows.is_empty());
+        assert!(unresolved.is_empty());
+    }
+
+    #[test]
+    fn an_api_failure_is_reported_and_the_resolved_rows_still_emit() {
+        let (prev, current) = vanished_pair();
+        let (rows, unresolved) = landed_history_rows(
+            &prev,
+            &current,
+            &Default::default(),
+            "2026-08-12T00:00:00Z",
+            |kind, _, _| match kind {
+                LandedKind::Pr => Err(GhFailure::RateLimited { retry_after: None }),
+                LandedKind::Issue => Ok(LandedRow::Issue {
+                    closed_at: "2026-08-10T00:00:00Z".to_string(),
+                }),
+            },
+        );
+        assert_eq!(
+            rows.len(),
+            1,
+            "the issue's verified landing is not held hostage"
+        );
+        assert_eq!(unresolved.len(), 1);
+        assert!(
+            unresolved[0].starts_with("pr o/r#1: "),
+            "the report names the item and its typed failure: {}",
+            unresolved[0]
+        );
+    }
+
+    #[test]
+    fn existing_keys_read_recorded_rows_and_tolerate_the_odd_line() {
+        let dir = std::env::temp_dir().join(format!("landed-history-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("landed-history.jsonl");
+        std::fs::write(
+            &path,
+            "{\"ts\":\"t\",\"observedAt\":\"o\",\"kind\":\"pr\",\"repo\":\"o/r\",\"number\":1}\n\
+             not json\n\
+             {\"ts\":\"t\",\"observedAt\":\"o\",\"kind\":\"issue\",\"repo\":\"o/r\",\"number\":2}\n",
+        )
+        .unwrap();
+        let keys = landed_history_existing_keys(path.to_str().unwrap());
+        assert_eq!(
+            keys.into_iter().collect::<Vec<_>>(),
+            vec![
+                (LandedKind::Pr, "o/r".to_string(), 1),
+                (LandedKind::Issue, "o/r".to_string(), 2)
+            ]
+        );
+        // An absent file is an empty history, never an error — the first tick ever has one.
+        assert!(
+            landed_history_existing_keys(dir.join("absent.jsonl").to_str().unwrap()).is_empty()
+        );
+    }
+}
+
 /// Renders trace events as the human-readable log lines the runners tee into `$LOG`, each line
 /// attributed to the agent that produced it.
 ///
@@ -14304,7 +15557,10 @@ fn verdict_plan(pr_json: &Value, target: &str, verdict: &str) -> VerdictPlan {
 /// only thing in the document that says so (see [`changed_files_from_view`]). Omitting it does not
 /// weaken the gate quietly — the set reads as `Partial` and the write is REFUSED — but it makes
 /// every wide PR unvettable, which is why it belongs in the same named constant.
-const RECORD_VERDICT_FIELDS: &str = "headRefOid,labels,comments,reviewDecision,files,changedFiles";
+// `number` rides along for the touch ledger: the `pr` argument may be a URL, and a touch record
+// joins on the numeric identity every other consumer of the ledger uses.
+const RECORD_VERDICT_FIELDS: &str =
+    "number,headRefOid,labels,comments,reviewDecision,files,changedFiles";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The AUDIT LENS is a PRECONDITION of a verdict, and the binary checks it (#151).
@@ -15191,6 +16447,17 @@ fn record_verdict_apply(
             ),
         ));
     }
+    if let Some(n) = pr_json.get("number").and_then(|n| n.as_u64()) {
+        ledger_touch(&FsmTouch {
+            subject: TouchSubject::Pr,
+            slug,
+            number: n,
+            action: "record-verdict",
+            verb: Some(verdict),
+            closes: &[],
+            rework_of: None,
+        });
+    }
     Ok(format!(
         "recorded {target} on {slug}#{pr}{}{}{}",
         if to_remove.is_empty() {
@@ -15523,7 +16790,8 @@ enum CcVerdictPlan {
 /// The `gh issue view --json` field list the flag verdict fetches. Named for the same reason
 /// [`ISSUE_RULE_FIELDS`] is: a field the plan READS but the fetch OMITS is a guard that silently
 /// stops firing.
-const CC_VERDICT_FIELDS: &str = "state,labels,comments,url";
+// `number` rides along for the touch ledger, exactly as on [`RECORD_VERDICT_FIELDS`].
+const CC_VERDICT_FIELDS: &str = "number,state,labels,comments,url";
 
 /// PURE: may the vetter record `verdict` on this flagged subject, and what does it change?
 fn cc_verdict_plan(issue_json: &Value, verdict: &str) -> CcVerdictPlan {
@@ -16192,7 +17460,8 @@ fn flag_close_candidate_mode(slug: &str, issue: &str, reason: &str, dry_run: boo
         "-R",
         slug,
         "--json",
-        "state,labels,comments,createdAt",
+        // `number` rides along for the touch ledger, exactly as on [`RECORD_VERDICT_FIELDS`].
+        "number,state,labels,comments,createdAt",
     ]) else {
         eprintln!("error: `gh issue view {slug}#{issue}` failed — not writing on incomplete data");
         return 1;
@@ -16326,6 +17595,17 @@ fn flag_close_candidate_mode(slug: &str, issue: &str, reason: &str, dry_run: boo
         eprintln!("error: labelled {slug}#{issue} but FAILED to post the reason comment");
         return 1;
     }
+    if let Some(n) = j.get("number").and_then(|v| v.as_u64()) {
+        ledger_touch(&FsmTouch {
+            subject: TouchSubject::Issue,
+            slug,
+            number: n,
+            action: "flag-close-candidate",
+            verb: None,
+            closes: &[],
+            rework_of: None,
+        });
+    }
     println!(
         "flagged {slug}#{issue} ai:close-candidate{}",
         if post_comment {
@@ -16450,7 +17730,8 @@ fn flag_state_mode(
         "--json",
         // `headRefOid` is READ BY THE PLAN (a 👤 human ruling is sacred only at the head it pinned
         // to), and a field the plan reads but the fetch omits is a guard that silently stops firing.
-        "headRefOid,labels,comments,reviewDecision",
+        // `number` rides along for the touch ledger, exactly as on [`RECORD_VERDICT_FIELDS`].
+        "number,headRefOid,labels,comments,reviewDecision",
     ]) else {
         eprintln!("error: `gh pr view {slug}#{pr}` failed — not writing on incomplete data");
         return 1;
@@ -16521,6 +17802,17 @@ fn flag_state_mode(
     if !skip_comment && !gh_run(&["pr", "comment", pr, "-R", slug, "--body", &comment]) {
         eprintln!("error: labelled {slug}#{pr} {target} but FAILED to post the reason comment");
         return 1;
+    }
+    if let Some(n) = pr_json.get("number").and_then(|v| v.as_u64()) {
+        ledger_touch(&FsmTouch {
+            subject: TouchSubject::Pr,
+            slug,
+            number: n,
+            action: "flag-state",
+            verb: Some(target),
+            closes: &[],
+            rework_of: None,
+        });
     }
     println!(
         "flagged {slug}#{pr} {target}{}{}",
@@ -17475,8 +18767,9 @@ fn human_pr_rule_plan(pr_json: &Value, ruling: &str, target: &str) -> HumanRuleP
 /// plan READS but the fetch OMITS is a guard that silently stops firing: the JSON simply lacks the
 /// key, every `unwrap_or("")` returns empty, and the refusal never happens. Pinned by a test that
 /// walks the plan's own inputs.
-const PR_RULE_FIELDS: &str = "state,headRefOid,labels,comments";
-const ISSUE_RULE_FIELDS: &str = "state,labels,comments,createdAt,url";
+// `number` rides along for the touch ledger, exactly as on [`RECORD_VERDICT_FIELDS`].
+const PR_RULE_FIELDS: &str = "number,state,headRefOid,labels,comments";
+const ISSUE_RULE_FIELDS: &str = "number,state,labels,comments,createdAt,url";
 
 /// PURE: may the human write `ruling` on this ISSUE, and what does it change? `target` is the
 /// label the ruling writes — `None` for the comment-only `design` (#219), whose plan moves no
@@ -17997,6 +19290,17 @@ fn human_rule_pr_apply(
             rework_body.filter(|_| !note_deduped),
         ),
     )?;
+    if let Some(n) = prj.get("number").and_then(|n| n.as_u64()) {
+        ledger_touch(&FsmTouch {
+            subject: TouchSubject::Pr,
+            slug,
+            number: n,
+            action: "human-rule",
+            verb: Some(ruling),
+            closes: &[],
+            rework_of: None,
+        });
+    }
     Ok(human_rule_report(
         slug,
         pr,
@@ -18132,6 +19436,17 @@ fn human_rule_issue_apply(
             rework_body.filter(|_| !note_deduped),
         ),
     )?;
+    if let Some(n) = j.get("number").and_then(|n| n.as_u64()) {
+        ledger_touch(&FsmTouch {
+            subject: TouchSubject::Issue,
+            slug,
+            number: n,
+            action: "human-rule-issue",
+            verb: Some(ruling),
+            closes: &[],
+            rework_of: None,
+        });
+    }
     Ok(human_rule_report(
         slug,
         issue,
@@ -18338,6 +19653,9 @@ fn human_close_apply(
         .get("url")
         .and_then(|u| u.as_str())
         .is_some_and(|u| u.contains("/pull/"));
+    // Captured before `seen` moves into `subject`: the touch ledger's join identity, read from the
+    // same fetch every guard below reads.
+    let seen_number = seen.get("number").and_then(|v| v.as_u64());
     let (noun, subject) = if is_pr {
         let Some(prj) = gh_json(&["pr", "view", n, "-R", slug, "--json", PR_RULE_FIELDS]) else {
             return Err((
@@ -18370,6 +19688,21 @@ fn human_close_apply(
                 "",
                 &[RuleStep::RemoveLabel(PENDING_CLOSE_FLAG.to_string())],
             )?;
+            if let Some(num) = seen_number {
+                ledger_touch(&FsmTouch {
+                    subject: if is_pr {
+                        TouchSubject::Pr
+                    } else {
+                        TouchSubject::Issue
+                    },
+                    slug,
+                    number: num,
+                    action: "human-close",
+                    verb: Some("clear-stale-flag"),
+                    closes: &[],
+                    rework_of: None,
+                });
+            }
             return Ok(format!(
                 "{slug}#{n} was already closed — cleared {PENDING_CLOSE_FLAG} [no ruling written: \
                  the close is already on the record and a reason dated today would not be one]"
@@ -18434,6 +19767,21 @@ fn human_close_apply(
         &comment,
         &human_close_steps(&supersedes, &clears, skip),
     )?;
+    if let Some(num) = seen_number {
+        ledger_touch(&FsmTouch {
+            subject: if is_pr {
+                TouchSubject::Pr
+            } else {
+                TouchSubject::Issue
+            },
+            slug,
+            number: num,
+            action: "human-close",
+            verb: Some("close"),
+            closes: &[],
+            rework_of: None,
+        });
+    }
     Ok(human_close_report(
         slug,
         n,
@@ -23340,7 +24688,8 @@ fn deploy_mode(slug: &str, pr: &str, network: Option<&str>, dry_run: bool) -> i3
         "-R",
         slug,
         "--json",
-        "headRefName,headRefOid",
+        // `number` rides along for the touch ledger, exactly as on [`RECORD_VERDICT_FIELDS`].
+        "number,headRefName,headRefOid",
     ]) else {
         eprintln!(
             "error: `gh pr view {slug}#{pr}` failed — cannot resolve the branch to deploy from"
@@ -23399,6 +24748,20 @@ fn deploy_mode(slug: &str, pr: &str, network: Option<&str>, dry_run: bool) -> i3
     if !gh_run(&cmd_ref) {
         eprintln!("error: `gh workflow run` dispatch failed for {slug}#{pr}");
         return 1;
+    }
+
+    // The dispatch is the mutation this transition performs, so the touch records here — whether
+    // the dispatched run then succeeds or fails, the tokens were spent on this PR.
+    if let Some(n) = prj.get("number").and_then(|v| v.as_u64()) {
+        ledger_touch(&FsmTouch {
+            subject: TouchSubject::Pr,
+            slug,
+            number: n,
+            action: "deploy",
+            verb: None,
+            closes: &[],
+            rework_of: None,
+        });
     }
 
     // 4. Identify the resulting run and poll it to completion.
@@ -23792,7 +25155,19 @@ fn record_draft_send_back(slug: &str, num: u64, head: &str, labels: &[String]) -
         );
         return false;
     };
-    record_send_back(slug, &plan)
+    let done = record_send_back(slug, &plan);
+    if done {
+        ledger_touch(&FsmTouch {
+            subject: TouchSubject::Pr,
+            slug,
+            number: num,
+            action: "send-back",
+            verb: Some("draft"),
+            closes: &[],
+            rework_of: None,
+        });
+    }
+    done
 }
 
 /// The conflict send-back write: [`send_back_plan`] with the conflict ground's note and lens,
@@ -23812,7 +25187,19 @@ fn record_conflict_send_back(
         );
         return false;
     };
-    record_send_back(slug, &plan)
+    let done = record_send_back(slug, &plan);
+    if done {
+        ledger_touch(&FsmTouch {
+            subject: TouchSubject::Pr,
+            slug,
+            number: num,
+            action: "send-back",
+            verb: Some("conflict"),
+            closes: &[],
+            rework_of: None,
+        });
+    }
+    done
 }
 
 /// The shared impure tail of both send-backs: ensure the label exists in the repo, then run the
@@ -25146,6 +26533,21 @@ fn record_cc_verdict_apply(
             ),
         ));
     }
+    if let Some(n) = j.get("number").and_then(|n| n.as_u64()) {
+        ledger_touch(&FsmTouch {
+            subject: if subject_is_pr(&j) {
+                TouchSubject::Pr
+            } else {
+                TouchSubject::Issue
+            },
+            slug,
+            number: n,
+            action: "record-close-candidate-verdict",
+            verb: Some(verdict),
+            closes: &[],
+            rework_of: None,
+        });
+    }
     Ok(format!(
         "recorded close-candidate {verdict} on {slug}#{issue} @ {flag_at}{}{}",
         match (remove_label, subject_is_pr(&j)) {
@@ -25250,6 +26652,15 @@ fn blocked_on_state_load_row(
                         .to_string(),
                 ]));
             }
+            ledger_touch(&FsmTouch {
+                subject: TouchSubject::Pr,
+                slug,
+                number: num,
+                action: "clear-blocked-on",
+                verb: None,
+                closes: &[],
+                rework_of: None,
+            });
             // Re-fetch: the row must describe the LIVE PR (label gone, the clearance comment now
             // the newest vetter comment ⇒ un-vetted), not the pre-clearance JSON in hand.
             let Some(fresh) = gh_json(&[
@@ -32550,7 +33961,19 @@ fn design_doctor_route(slug: &str, num: u64, dry_run: bool) -> Result<String, (i
         ));
     };
     design_doctor_route_from(slug, num, &prj, now_unix(), dry_run, |plan| {
-        run_draft_send_back(plan, gh_run)
+        let done = run_draft_send_back(plan, gh_run);
+        if done {
+            ledger_touch(&FsmTouch {
+                subject: TouchSubject::Pr,
+                slug,
+                number: num,
+                action: "design-doctor-route",
+                verb: None,
+                closes: &[],
+                rework_of: None,
+            });
+        }
+        done
     })
 }
 
@@ -34819,7 +36242,9 @@ fn mcp_all_tools() -> Value {
                     "title": {"type": "string", "description": "PR title."},
                     "body_file": {"type": "string", "description": "ABSOLUTE path to the file holding the PR body, and NAMED FOR the issue `closes` names — .../pr-body-63.md, the FIRST number in the file name being that issue. Absolute is not yet UNIQUE: every worker a run dispatches is handed the same scratch dir, so a generic name — or one another issue could equally claim — is a file another agent is also writing. A FILE, so the exact bytes stay on disk for the run trace."},
                     "closes": {"type": "integer", "description": "The issue this PR closes. Omit for a partial fix — then say `Refs #N` in the body yourself."},
-                    "base": {"type": "string", "description": "Base branch; defaults to the repo's default branch."}
+                    "base": {"type": "string", "description": "Base branch; defaults to the repo's default branch."},
+                    "rework_of": {"type": "string", "description": "owner/repo#n of the previously LANDED item whose shipped defect this PR reworks — a fix for a regression traced to a merged PR, a follow-up correcting shipped work. Pass it ONLY when the causal item is known to you now, at filing time; it roots this PR's cost in that item's delivery ledger. Omit when this PR is not rework of landed work."},
+                    "rework_of_kind": {"type": "string", "enum": ["pr", "issue"], "description": "What rework_of names. Defaults to pr — a shipped defect usually traces to a merged PR."}
                 },
                 "required": ["repo", "head", "title", "body_file"]
             }
@@ -34991,6 +36416,7 @@ enum McpCall {
         body_file: String,
         closes: Option<u64>,
         base: Option<String>,
+        rework_of: Option<ReworkRef>,
     },
     /// The producer's REWORK edge. `root`/`name` are the path guard's OUTPUT, like the clone
     /// lifecycle's; `branch` is absent when the clone's own checked-out branch is the one to move.
@@ -35489,6 +36915,28 @@ fn validate_call(
                 None | Some(Value::Null) => None,
                 Some(_) => Some(parse_branch(req_str(args, "base")?)?),
             };
+            // Optional lineage: the causal LANDED item this PR is rework of. Validated like every
+            // other ref — a lineage that cannot be looked up roots nothing.
+            let rework_of = match args.get("rework_of") {
+                None | Some(Value::Null) => None,
+                Some(_) => {
+                    let (r_slug, r_num) = parse_pr_ref(req_str(args, "rework_of")?)?;
+                    let kind = match args.get("rework_of_kind").and_then(|v| v.as_str()) {
+                        None | Some("pr") => TouchSubject::Pr,
+                        Some("issue") => TouchSubject::Issue,
+                        Some(other) => {
+                            return Err(format!(
+                                "rework_of_kind must be \"pr\" or \"issue\", not {other:?}"
+                            ))
+                        }
+                    };
+                    Some(ReworkRef {
+                        slug: r_slug,
+                        number: r_num,
+                        kind,
+                    })
+                }
+            };
             Ok(McpCall::OpenPr {
                 slug,
                 head,
@@ -35496,6 +36944,7 @@ fn validate_call(
                 body_file,
                 closes,
                 base,
+                rework_of,
             })
         }
         // --- the producer's body repairs. Both guards are ARGUMENT guards only: what may be
@@ -35744,8 +37193,17 @@ fn mcp_exec(call: McpCall) -> Result<String, String> {
             body_file,
             closes,
             base,
-        } => open_pr_apply(&slug, &head, &title, &body_file, closes, base.as_deref())
-            .map_err(|(code, msg)| format!("{msg} [exit {code}]")),
+            rework_of,
+        } => open_pr_apply(
+            &slug,
+            &head,
+            &title,
+            &body_file,
+            closes,
+            base.as_deref(),
+            rework_of.as_ref(),
+        )
+        .map_err(|(code, msg)| format!("{msg} [exit {code}]")),
         McpCall::Push { root, name, branch } => push_apply(&root, &name, branch.as_deref())
             .map_err(|(code, msg)| format!("{msg} [exit {code}]")),
         McpCall::RepairQaBlock {
@@ -36279,17 +37737,7 @@ fn segment_hides_pr_create(seg: &[String]) -> bool {
 /// (`hooks/block-nix-wrap-gh.sh`). Three consecutive UNQUOTED words cannot be spoofed by a
 /// `--title "gh pr create"`, which the lexer already collapsed into one token.
 fn pr_create_spans(seg: &[String]) -> Vec<(usize, usize)> {
-    let words = non_flag_words(seg);
-    let starts: Vec<usize> = words
-        .windows(3)
-        .filter(|w| [w[0].1, w[1].1, w[2].1] == PR_CREATE_WORDS)
-        .map(|w| w[0].0)
-        .collect();
-    starts
-        .iter()
-        .enumerate()
-        .map(|(j, &s)| (s, starts.get(j + 1).copied().unwrap_or(seg.len())))
-        .collect()
+    gh_words_spans(seg, PR_CREATE_WORDS)
 }
 
 /// `os.path.join` semantics: an ABSOLUTE `path` replaces `base` entirely.
@@ -36785,6 +38233,224 @@ fn require_qa_block_mode() -> i32 {
             QA_BLOCK_EXIT
         }
     }
+}
+
+/// PURE: does `command` lex into at least one VISIBLE `gh pr create` invocation?
+///
+/// The recorder's detection half, deliberately narrower than the gate's: the gate refuses what it
+/// cannot resolve (a hidden or unlexable invocation must not get through), but a recorder that
+/// cannot resolve has nothing exact to record — the URL check below is what carries the evidence,
+/// and a command this cannot see whose stdout still names a PR was not a create this hook can
+/// attribute. Absence, never a guess (#175).
+fn command_runs_pr_create(command: &str) -> bool {
+    shell_split(command)
+        .map(|tokens| {
+            segments(&tokens)
+                .iter()
+                .any(|seg| !pr_create_spans(seg).is_empty())
+        })
+        .unwrap_or(false)
+}
+
+/// The loose-path LANDING verbs the recorder covers, each as (the three consecutive words that
+/// invoke it, the typed action its touch records, the subject kind, gh's own success token).
+///
+/// LANDINGS ARE FIRST-CLASS ACTIONS: the FSM should always move through the tooling, and where a
+/// landing still happens through bare gh — the interactive `gh pr merge` — its record must SAY it
+/// was a landing, because landed-history derives from these records (plus the doctor's sweep of
+/// terminal items still wearing FSM labels). A generic "mutation" bucket could never carry that.
+///
+/// The evidence token is gh's own "✓ Merged/Closed …" line. FAIL-CLOSED by construction: if gh
+/// rewords its success line the records STOP — absence a consumer can see — rather than ever
+/// recording a landing that did not happen.
+const GH_LANDING_VERBS: &[([&str; 3], &str, TouchSubject, &str)] = &[
+    (
+        ["gh", "pr", "merge"],
+        "merge-pr-gh",
+        TouchSubject::Pr,
+        "Merged",
+    ),
+    (
+        ["gh", "pr", "close"],
+        "close-pr-gh",
+        TouchSubject::Pr,
+        "Closed",
+    ),
+    (
+        ["gh", "issue", "close"],
+        "close-issue-gh",
+        TouchSubject::Issue,
+        "Closed",
+    ),
+];
+
+/// PURE: [`pr_create_spans`]' matcher for ANY three consecutive non-flag words — the create
+/// spans' own algorithm, parameterized. See that function for why consecutive-anywhere is right.
+fn gh_words_spans(seg: &[String], words: [&str; 3]) -> Vec<(usize, usize)> {
+    let nf = non_flag_words(seg);
+    let starts: Vec<usize> = nf
+        .windows(3)
+        .filter(|w| [w[0].1, w[1].1, w[2].1] == words)
+        .map(|w| w[0].0)
+        .collect();
+    starts
+        .iter()
+        .enumerate()
+        .map(|(j, &s)| (s, starts.get(j + 1).copied().unwrap_or(seg.len())))
+        .collect()
+}
+
+/// PURE: a github item url as (slug, number) — a PR's `/pull/` or an issue's `/issues/`.
+fn item_url_ref(url: &str) -> Option<(String, u64)> {
+    if url.contains("/pull/") {
+        return pr_url_ref(url);
+    }
+    let (before, after) = url.trim().rsplit_once("/issues/")?;
+    let num: u64 = after.split('/').next()?.parse().ok().filter(|n| *n > 0)?;
+    let (_, path) = before.split_once("github.com/")?;
+    let mut segs = path.split('/');
+    let (Some(owner), Some(repo), None) = (segs.next(), segs.next(), segs.next()) else {
+        return None;
+    };
+    if owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+    Some((format!("{owner}/{repo}"), num))
+}
+
+/// PURE: which item one landing invocation names, from its own LEXED argv — the `-R`/`--repo`
+/// value plus a bare number, or an item url. Reading flag VALUES from lexed tokens is the QA
+/// gate's own posture (`--body-file`), not the raw-string parsing #175 rejects. `None` when the
+/// invocation does not name its subject exactly (a bare `gh pr merge` against the cwd's repo):
+/// absence, never a guess.
+fn landing_subject(seg: &[String], span: (usize, usize)) -> Option<(String, u64)> {
+    let args = &seg[span.0..span.1];
+    let mut repo: Option<String> = None;
+    let mut number: Option<u64> = None;
+    let mut url: Option<(String, u64)> = None;
+    let mut i = 0;
+    while i < args.len() {
+        let t = &args[i];
+        if t == "-R" || t == "--repo" {
+            if let Some(v) = args.get(i + 1) {
+                repo = Some(v.clone());
+                i += 2;
+                continue;
+            }
+        } else if let Some(v) = t.strip_prefix("--repo=") {
+            repo = Some(v.to_string());
+        } else if !t.starts_with('-') {
+            if let Ok(n) = t.parse::<u64>() {
+                if n > 0 && number.is_none() {
+                    number = Some(n);
+                }
+            } else if url.is_none() {
+                url = item_url_ref(t);
+            }
+        }
+        i += 1;
+    }
+    if let Some(u) = url {
+        return Some(u);
+    }
+    let slug = repo.filter(|r| parse_repo_arg(r).is_ok())?;
+    Some((slug, number?))
+}
+
+/// One touch a PostToolUse payload demonstrates.
+#[derive(Debug, PartialEq, Eq)]
+struct GhTouch {
+    action: &'static str,
+    kind: TouchSubject,
+    slug: String,
+    number: u64,
+}
+
+/// PURE: every touch a PostToolUse `Bash` payload demonstrates.
+///
+/// Two evidence models, both gh's own words: a CREATE is evidenced by the url gh printed (read
+/// with the same [`created_pr_ref`] the `open_pr` transition trusts), and a LANDING by the
+/// invocation's lexed subject plus gh's success token in the output. A command this cannot see,
+/// or whose output carries no evidence, contributes nothing — absence, never a guess.
+fn gh_ledger_touches(payload: &str) -> Vec<GhTouch> {
+    let Ok(doc) = serde_json::from_str::<Value>(payload) else {
+        return Vec::new();
+    };
+    if doc.get("tool_name").and_then(Value::as_str) != Some("Bash") {
+        return Vec::new();
+    }
+    let command = doc
+        .pointer("/tool_input/command")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    // The response shape is the harness's: a string, or an object whose `stdout`/`stderr` hold
+    // the command's output. Both streams are read — gh writes its ✓ lines to stderr.
+    let text = match doc.get("tool_response") {
+        Some(Value::String(s)) => s.clone(),
+        Some(v) => ["stdout", "stderr"]
+            .iter()
+            .filter_map(|k| v.get(*k).and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join(" "),
+        None => String::new(),
+    };
+    let mut out = Vec::new();
+    if command_runs_pr_create(command) {
+        if let Some((slug, num)) = created_pr_ref(&text) {
+            out.push(GhTouch {
+                action: "open-pr-gh",
+                kind: TouchSubject::Pr,
+                slug,
+                number: num,
+            });
+        }
+    }
+    let Some(tokens) = shell_split(command) else {
+        return out;
+    };
+    for seg in segments(&tokens) {
+        for (words, action, kind, evidence) in GH_LANDING_VERBS {
+            for span in gh_words_spans(&seg, *words) {
+                let Some((slug, num)) = landing_subject(&seg, span) else {
+                    continue;
+                };
+                if !text.split_whitespace().any(|w| w == *evidence) {
+                    continue;
+                }
+                let touch = GhTouch {
+                    action,
+                    kind: *kind,
+                    slug,
+                    number: num,
+                };
+                if !out.contains(&touch) {
+                    out.push(touch);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// `ledger-gh`: the PostToolUse `Bash` hook. Payload on stdin; always exit 0.
+fn ledger_gh_mode() -> i32 {
+    use std::io::Read;
+    let mut payload = String::new();
+    if std::io::stdin().read_to_string(&mut payload).is_err() {
+        return 0;
+    }
+    for t in gh_ledger_touches(&payload) {
+        ledger_touch(&FsmTouch {
+            subject: t.kind,
+            slug: &t.slug,
+            number: t.number,
+            action: t.action,
+            verb: None,
+            closes: &[],
+            rework_of: None,
+        });
+    }
+    0
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -37543,6 +39209,7 @@ fn created_pr_ref(out: &str) -> Option<(String, u64)> {
 ///
 /// Exit: 0 opened, 1 `gh pr create` failed (nothing created), 2 unreadable body file, 3 no QA
 /// block, 6 created but the url could not be read.
+#[allow(clippy::too_many_arguments)]
 fn open_pr_apply(
     slug: &str,
     head: &str,
@@ -37550,6 +39217,7 @@ fn open_pr_apply(
     body_file: &str,
     closes: Option<u64>,
     base: Option<&str>,
+    rework_of: Option<&ReworkRef>,
 ) -> Result<String, (i32, String)> {
     let subject = format!("{slug} {head}");
     let refuse = |r: OpenPrRefusal| (r.exit(), r.render(&subject));
@@ -37590,19 +39258,38 @@ fn open_pr_apply(
     if !found.eq_ignore_ascii_case(slug) {
         return Err(refuse(OpenPrRefusal::UnreadableUrl(out)));
     }
-    Ok(serde_json::json!({
+    // Every issue the posted body closes, read back with the scanner GitHub's own
+    // `closingIssuesReferences` is compared against — so the typed record of what this PR
+    // covers is the whole set, not just the argument that was passed.
+    let closed_set = closing_keywords(&body);
+    ledger_touch(&FsmTouch {
+        subject: TouchSubject::Pr,
+        slug: &found,
+        number: num,
+        action: "open-pr",
+        verb: None,
+        closes: &closed_set,
+        rework_of,
+    });
+    let mut out = serde_json::json!({
         "repo": found,
         "pr": num,
         "url": format!("https://github.com/{found}/pull/{num}"),
         "head": head,
         "base": base,
-        // Every issue the posted body closes, read back with the scanner GitHub's own
-        // `closingIssuesReferences` is compared against — so the typed record of what this PR
-        // covers is the whole set, not just the argument that was passed.
-        "closes": closing_keywords(&body),
+        "closes": closed_set,
         "assignee": assignee,
-    })
-    .to_string())
+    });
+    // The lineage rides the RESULT too, so the trace holds {agent, repo, PR, causal item} as
+    // typed data and agent-level attribution can carry the same root the ledger records.
+    if let Some(r) = rework_of {
+        out["reworkOf"] = serde_json::json!({
+            "repo": r.slug,
+            "number": r.number,
+            "kind": r.kind.as_str(),
+        });
+    }
+    Ok(out.to_string())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -37906,6 +39593,17 @@ fn push_apply(root: &str, name: &str, branch: Option<&str>) -> Result<String, (i
     });
     match pr {
         PushedPr::Moved { pr, url } => {
+            // A push that moved a PR's head is a touch on that PR; one that moved only a branch
+            // has no FSM subject to record, which is the same refusal the work item makes.
+            ledger_touch(&FsmTouch {
+                subject: TouchSubject::Pr,
+                slug: &slug,
+                number: pr,
+                action: "push",
+                verb: None,
+                closes: &[],
+                rework_of: None,
+            });
             out["pr"] = serde_json::json!(pr);
             out["url"] = serde_json::json!(url);
         }
@@ -38165,7 +39863,8 @@ fn body_repair_preflight(slug: &str, pr: &str, tool: &str) -> Result<Value, (i32
         "-R",
         slug,
         "--json",
-        "body,state,author,headRefOid,comments",
+        // `number` rides along for the touch ledger, exactly as on [`RECORD_VERDICT_FIELDS`].
+        "number,body,state,author,headRefOid,comments",
     ]) else {
         return Err((
             1,
@@ -38465,6 +40164,17 @@ fn repair_qa_block_apply(
     }
 
     write_repaired_body(slug, pr, &prj, &new_body, BodyRepair::QaBlock, &detail)?;
+    if let Some(n) = prj.get("number").and_then(|n| n.as_u64()) {
+        ledger_touch(&FsmTouch {
+            subject: TouchSubject::Pr,
+            slug,
+            number: n,
+            action: "repair-qa-block",
+            verb: None,
+            closes: &[],
+            rework_of: None,
+        });
+    }
     let mut out = format!("{subject}: {verb} the QA block ({} bytes)", new_body.len());
     if let Some(note) = body_edit_vet_note(&prj) {
         out.push('\n');
@@ -38528,6 +40238,17 @@ fn weaken_closes_apply(
     }
 
     write_repaired_body(slug, pr, &prj, &new_body, BodyRepair::Linkage, &detail)?;
+    if let Some(n) = prj.get("number").and_then(|n| n.as_u64()) {
+        ledger_touch(&FsmTouch {
+            subject: TouchSubject::Pr,
+            slug,
+            number: n,
+            action: "weaken-closes",
+            verb: None,
+            closes: &[],
+            rework_of: None,
+        });
+    }
     let still = closing_keywords(&new_body);
     let mut out = format!(
         "{subject}: weakened {} `Closes #{issue}` reference(s) to `Refs` — closing set is now {:?}",
@@ -47266,6 +48987,25 @@ enum Cmd {
         #[arg(long)]
         ts: String,
     },
+    /// Emit landed-history.jsonl rows: FSM-tracked items present in <PREV> and gone from
+    /// <CURRENT>, each verified against GitHub as actually LANDED — a merged PR, or an issue no
+    /// merged PR closed (the upheld close-candidate path; an issue a merged PR closed is that
+    /// PR's unit, not a second row). Items that left without landing emit nothing. Unresolvable
+    /// items go to stderr with exit 3; resolved rows are still emitted.
+    LandedHistoryLines {
+        /// The earlier snapshot (the refresh feeds HEAD's human-queue.json).
+        prev: String,
+        /// The later snapshot.
+        current: String,
+        /// ISO-8601 time of the observing tick, recorded as `observedAt` (`ts` is always
+        /// GitHub's own mergedAt/closedAt).
+        #[arg(long)]
+        observed_at: String,
+        /// Existing landed-history.jsonl; a (kind, repo, number) already recorded is never
+        /// re-emitted, so reruns and replayed ticks cannot double-count. Absent file = empty.
+        #[arg(long)]
+        existing: Option<String>,
+    },
     /// Read a stream-json trace on stdin, write the human-readable run log on stdout.
     DistillTrace,
     /// Force a producer or vetter run and stream it. Fast-forwards the install dir FIRST — the
@@ -47687,6 +49427,15 @@ enum Cmd {
     /// no `## QA` evidence block, naming the lines that are missing. Hook payload on stdin; exit 0
     /// allows the call, 2 blocks it with the refusal on stderr. Wiring: the user `settings.json`.
     RequireQaBlock,
+    /// PostToolUse `Bash` hook: when a gh mutation ran OUTSIDE the transition function — the
+    /// loose `gh pr create` that `require-qa-block` gates but cannot record, and the LANDING
+    /// verbs (`gh pr merge`, `gh pr close`, `gh issue close`) the interactive population still
+    /// performs bare — read gh's own evidence and append the touch the bypassed tool would have
+    /// written: `open-pr-gh` / `merge-pr-gh` / `close-pr-gh` / `close-issue-gh`, so a consumer
+    /// can tell the loose path from the tool's AND a landing from a generic mutation. Hook
+    /// payload on stdin; always exit 0 — a recorder must never wedge the session it observes.
+    /// Wiring: the user `settings.json`, beside `require-qa-block`.
+    LedgerGh,
     /// Producer RETROFIT of QA-GUIDE section 8 on an ALREADY-OPEN PR: APPEND the evidence block to
     /// the PR body, leaving every byte outside the `## QA` section exactly as it was. Validated with
     /// `require-qa-block`'s own predicate, so what it writes is what the PR-open gate accepts.
@@ -51393,6 +53142,15 @@ fn retire_blocked_infra_mode(dry_run: bool) -> i32 {
             "--remove-label",
             RETIRED_STATE_LABEL,
         ]) {
+            ledger_touch(&FsmTouch {
+                subject: TouchSubject::Pr,
+                slug,
+                number: *num,
+                action: "retire-blocked-infra",
+                verb: None,
+                closes: &[],
+                rework_of: None,
+            });
             println!("  {slug}#{num} -> unparked");
         } else {
             eprintln!("  {slug}#{num} -> FAILED to remove {RETIRED_STATE_LABEL}");
@@ -51945,6 +53703,12 @@ fn main() {
         ),
         Cmd::TraceOutcome { trace, exit_code } => trace_outcome_mode(&trace, exit_code),
         Cmd::QueueHistoryLine { snapshot, ts } => queue_history_line_mode(snapshot.as_deref(), &ts),
+        Cmd::LandedHistoryLines {
+            prev,
+            current,
+            observed_at,
+            existing,
+        } => landed_history_lines_mode(&prev, &current, &observed_at, existing.as_deref()),
         Cmd::DistillTrace => distill_trace_mode(),
         Cmd::ForceRun {
             role,
@@ -52081,6 +53845,7 @@ fn main() {
         }
         Cmd::PluginVersionLockstep { root } => plugin_version_lockstep_mode(&root),
         Cmd::RequireQaBlock => require_qa_block_mode(),
+        Cmd::LedgerGh => ledger_gh_mode(),
         Cmd::RepairQaBlock {
             slug,
             pr,
@@ -55627,6 +57392,10 @@ mod startup_split_tests {
             None,
             None,
             &SpendRecord::default(),
+            &crate::TouchBlock {
+                run: vec![],
+                per_actor: &Default::default(),
+            },
         );
         assert_eq!(doc["stage"], STAGE_FINAL);
         assert_eq!(doc["bootMs"], 1125);
@@ -55666,6 +57435,10 @@ mod startup_split_tests {
             None,
             None,
             &SpendRecord::default(),
+            &crate::TouchBlock {
+                run: vec![],
+                per_actor: &Default::default(),
+            },
         );
         assert!(doc.get("runId").is_none());
         assert!(doc.get("role").is_none());
@@ -55716,6 +57489,10 @@ mod skip_row_tests {
             Some(("usage-gate", PAUSE_LINE)),
             None,
             &SpendRecord::default(),
+            &crate::TouchBlock {
+                run: vec![],
+                per_actor: &Default::default(),
+            },
         );
         assert_eq!(doc["skipped"], "usage-gate");
         assert_eq!(doc["skipReason"], PAUSE_LINE, "the reason must be verbatim");
@@ -55745,6 +57522,10 @@ mod skip_row_tests {
             None,
             None,
             &SpendRecord::default(),
+            &crate::TouchBlock {
+                run: vec![],
+                per_actor: &Default::default(),
+            },
         );
         assert!(
             doc.get("skipped").is_none(),
@@ -55790,6 +57571,10 @@ mod skip_row_tests {
                 reasons: &reasons,
             }),
             &SpendRecord::default(),
+            &crate::TouchBlock {
+                run: vec![],
+                per_actor: &Default::default(),
+            },
         );
         assert_eq!(doc["forced"], serde_json::json!(["disabled", "usage-gate"]));
         assert_eq!(
@@ -55885,6 +57670,10 @@ mod skip_row_tests {
                 reasons: &reasons,
             }),
             &SpendRecord::default(),
+            &crate::TouchBlock {
+                run: vec![],
+                per_actor: &Default::default(),
+            },
         );
         assert_eq!(doc["forced"], serde_json::json!(["usage-gate"]));
         assert_eq!(doc["outcome"], "tooling-failure");
@@ -56285,6 +58074,10 @@ mod usage_probe_tests {
                 output_usd: 0.025,
                 billed_usd: 9.0,
             },
+            &crate::TouchBlock {
+                run: vec![],
+                per_actor: &Default::default(),
+            },
         );
 
         let rows = doc["agents"].as_array().unwrap();
@@ -56476,6 +58269,10 @@ mod usage_probe_tests {
             None,
             None,
             &SpendRecord::default(),
+            &crate::TouchBlock {
+                run: vec![],
+                per_actor: &Default::default(),
+            },
         );
         assert_eq!(
             empty["agents"],
@@ -56513,6 +58310,10 @@ mod usage_probe_tests {
                 output_tokens: 1_000_000,
                 output_usd: 25.0,
                 billed_usd: 136.08,
+            },
+            &crate::TouchBlock {
+                run: vec![],
+                per_actor: &Default::default(),
             },
         );
         assert_eq!(full["agents"][0]["label"], "rework pointers");
@@ -56889,6 +58690,10 @@ mod usage_probe_tests {
             None,
             None,
             &SpendRecord::default(),
+            &crate::TouchBlock {
+                run: vec![],
+                per_actor: &Default::default(),
+            },
         );
         assert_eq!(doc["rateLimits"]["five_hour"]["status"], "allowed");
         // The terminal totals stay authoritative — including the output count the probe cannot
@@ -56908,6 +58713,10 @@ mod usage_probe_tests {
             None,
             None,
             &SpendRecord::default(),
+            &crate::TouchBlock {
+                run: vec![],
+                per_actor: &Default::default(),
+            },
         );
         assert!(
             bare["rateLimits"].is_object(),
@@ -64290,6 +66099,55 @@ mod cli_tests {
                 ts: "2026-07-27T10:00:00Z".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn landed_history_lines_cli() {
+        // The refresh's form: both snapshots as paths, the accumulating file for idempotence.
+        assert_eq!(
+            parse(&[
+                "prr",
+                "landed-history-lines",
+                "/prev.json",
+                "/cur.json",
+                "--observed-at",
+                "2026-08-12T00:00:00Z",
+                "--existing",
+                "/landed-history.jsonl"
+            ]),
+            Cmd::LandedHistoryLines {
+                prev: "/prev.json".to_string(),
+                current: "/cur.json".to_string(),
+                observed_at: "2026-08-12T00:00:00Z".to_string(),
+                existing: Some("/landed-history.jsonl".to_string()),
+            }
+        );
+        // The backfill's first pair has no history yet, so --existing is optional.
+        assert_eq!(
+            parse(&[
+                "prr",
+                "landed-history-lines",
+                "/prev.json",
+                "/cur.json",
+                "--observed-at",
+                "2026-08-12T00:00:00Z"
+            ]),
+            Cmd::LandedHistoryLines {
+                prev: "/prev.json".to_string(),
+                current: "/cur.json".to_string(),
+                observed_at: "2026-08-12T00:00:00Z".to_string(),
+                existing: None,
+            }
+        );
+        // Both snapshots are required: a one-path spelling has no diff to take.
+        assert!(Cli::try_parse_from([
+            "prr",
+            "landed-history-lines",
+            "/prev.json",
+            "--observed-at",
+            "2026-08-12T00:00:00Z"
+        ])
+        .is_err());
     }
 
     #[test]
@@ -76105,6 +77963,7 @@ mod mcp_tests {
                 body_file: "/scratch/pr-63.md".to_string(),
                 closes: Some(63),
                 base: None,
+                rework_of: None,
             }]
         );
     }
@@ -76130,6 +77989,7 @@ mod mcp_tests {
                 body_file: "/scratch/pr-body.md".to_string(),
                 closes: None,
                 base: None,
+                rework_of: None,
             }]
         );
 
@@ -78812,6 +80672,10 @@ mod infra_down_tests {
             None,
             None,
             &SpendRecord::default(),
+            &crate::TouchBlock {
+                run: vec![],
+                per_actor: &Default::default(),
+            },
         );
         assert_eq!(clean["infraDown"], false);
         assert_eq!(clean["infraReason"], "");
@@ -78834,6 +80698,10 @@ mod infra_down_tests {
             None,
             None,
             &SpendRecord::default(),
+            &crate::TouchBlock {
+                run: vec![],
+                per_actor: &Default::default(),
+            },
         );
         assert_eq!(doc["infraDown"], true);
         assert_eq!(doc["infraReason"], "fork RPCs erroring org-wide");
@@ -82960,5 +84828,629 @@ mod journal_tests {
             !step2.contains("168 seconds"),
             "the narration is what moved out; leaving it beside the citation pays for both: {step2}"
         );
+    }
+}
+
+/// The FSM touch ledger: the record contract, the fold, the trace derivation, and the loose-path
+/// recorder. Every test here drives a PURE function or an env-scoped temp ledger — nothing
+/// reaches gh or the live install dir.
+#[cfg(test)]
+mod touch_ledger_tests {
+    use super::*;
+
+    // ---- the actor discriminant ----------------------------------------------------------------
+
+    #[test]
+    fn actor_kind_is_typed_and_unknown_is_interactive_with_a_warning_flag() {
+        assert_eq!(
+            touch_actor_kind(Some("producer-run")),
+            ("producer-run", false)
+        );
+        assert_eq!(touch_actor_kind(Some("vetter-run")), ("vetter-run", false));
+        assert_eq!(
+            touch_actor_kind(Some(" vetter-run ")),
+            ("vetter-run", false)
+        );
+        assert_eq!(touch_actor_kind(None), ("interactive", false));
+        assert_eq!(touch_actor_kind(Some("")), ("interactive", false));
+        // Unknown is NOT a run: attaching touches to a runId join that cannot exist would be a
+        // guess. The bool is what lets the caller say so instead of coercing silently.
+        assert_eq!(touch_actor_kind(Some("cron")), ("interactive", true));
+    }
+
+    // ---- the record ----------------------------------------------------------------------------
+
+    fn touch<'a>(closes: &'a [u64], rework: Option<&'a ReworkRef>) -> FsmTouch<'a> {
+        FsmTouch {
+            subject: TouchSubject::Pr,
+            slug: "o/r",
+            number: 7,
+            action: "record-verdict",
+            verb: Some("ready"),
+            closes,
+            rework_of: rework,
+        }
+    }
+
+    #[test]
+    fn a_record_carries_identity_actor_and_run_and_omits_what_is_absent() {
+        let v = touch_record(
+            &touch(&[], None),
+            "2026-08-12T00:00:00Z",
+            "vetter-run",
+            Some("R1"),
+        );
+        assert_eq!(v["ts"], "2026-08-12T00:00:00Z");
+        assert_eq!(v["actor"], "vetter-run");
+        assert_eq!(v["runId"], "R1");
+        assert_eq!(v["repo"], "o/r");
+        assert_eq!(v["number"], 7);
+        assert_eq!(v["kind"], "pr");
+        assert_eq!(v["action"], "record-verdict");
+        assert_eq!(v["verb"], "ready");
+        // ABSENT, not null: an interactive record has no runId to join on, an ordinary touch has
+        // no closes and no lineage, and a consumer keys on the field existing at all.
+        let bare = touch_record(
+            &FsmTouch {
+                verb: None,
+                ..touch(&[], None)
+            },
+            "t",
+            "interactive",
+            None,
+        );
+        for key in ["runId", "verb", "closes", "reworkOf"] {
+            assert!(bare.get(key).is_none(), "{key} must be absent, not null");
+        }
+    }
+
+    #[test]
+    fn closes_and_lineage_ride_the_record_typed() {
+        let root = ReworkRef {
+            slug: "o/r".to_string(),
+            number: 41,
+            kind: TouchSubject::Pr,
+        };
+        let v = touch_record(
+            &touch(&[63, 64], Some(&root)),
+            "t",
+            "producer-run",
+            Some("R"),
+        );
+        assert_eq!(v["closes"], serde_json::json!([63, 64]));
+        assert_eq!(
+            v["reworkOf"],
+            serde_json::json!({"repo": "o/r", "number": 41, "kind": "pr"})
+        );
+    }
+
+    // ---- the ledger file (env-scoped; the ONE test that touches the filesystem) ----------------
+
+    /// Serializes every test that mutates the process-wide `FSM_TOUCH_*` environment. There is
+    /// exactly one today; any future test that sets these vars — or drives a NON-dry apply far
+    /// enough to reach `ledger_touch` — must hold this lock too, or parallel tests can write to
+    /// each other's ledgers (or, with the env unset, to the production default path).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn ledger_touch_appends_a_line_the_fold_reads_back() {
+        let _env = ENV_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(format!("fsm-touch-test-{}", std::process::id()));
+        let path = dir.join("ledger.jsonl");
+        std::env::set_var(TOUCH_LEDGER_ENV, &path);
+        std::env::set_var(TOUCH_ACTOR_ENV, "producer-run");
+        std::env::set_var(TOUCH_RUN_ID_ENV, "RUNX");
+        ledger_touch(&touch(&[], None));
+        ledger_touch(&touch(&[], None));
+        std::env::remove_var(TOUCH_LEDGER_ENV);
+        std::env::remove_var(TOUCH_ACTOR_ENV);
+        std::env::remove_var(TOUCH_RUN_ID_ENV);
+        let content = std::fs::read_to_string(&path).expect("ledger was written");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(content.lines().count(), 2, "one line per touch");
+        let folded = fold_touches(&content, "RUNX");
+        assert_eq!(folded.len(), 1, "same identity folds to one entry");
+        assert_eq!(folded[0]["count"], 2);
+        assert_eq!(folded[0]["repo"], "o/r");
+        assert_eq!(fold_touches(&content, "OTHER"), Vec::<Value>::new());
+    }
+
+    // ---- the fold ------------------------------------------------------------------------------
+
+    fn line(run: &str, number: u64, action: &str, verb: Option<&str>) -> String {
+        let mut v = serde_json::json!({
+            "ts": "t", "actor": "producer-run", "runId": run,
+            "repo": "o/r", "number": number, "kind": "pr", "action": action,
+        });
+        if let Some(w) = verb {
+            v["verb"] = Value::from(w);
+        }
+        v.to_string()
+    }
+
+    #[test]
+    fn the_fold_filters_by_run_dedupes_by_identity_and_ignores_what_does_not_parse() {
+        let ledger = [
+            line("R", 1, "open-pr", None),
+            line("R", 1, "push", None),
+            line("R", 1, "push", None),
+            line("OTHER", 2, "push", None),
+            // No runId at all: an interactive record belongs to the stream, not to this row.
+            serde_json::json!({"ts":"t","actor":"interactive","repo":"o/r","number":3,"kind":"pr","action":"push"}).to_string(),
+            "not json".to_string(),
+            // Parseable but incomplete: no identity to fold under.
+            serde_json::json!({"runId":"R","repo":"o/r"}).to_string(),
+        ]
+        .join("\n");
+        let folded = fold_touches(&ledger, "R");
+        assert_eq!(folded.len(), 2);
+        assert_eq!(folded[0]["action"], "open-pr");
+        assert_eq!(folded[0]["count"], 1);
+        assert_eq!(folded[1]["action"], "push");
+        assert_eq!(folded[1]["count"], 2);
+    }
+
+    #[test]
+    fn the_fold_unions_closes_and_keeps_the_first_lineage_for_one_identity() {
+        let with = |closes: Value, rework: Option<Value>| {
+            let mut v = serde_json::json!({
+                "ts":"t","actor":"producer-run","runId":"R",
+                "repo":"o/r","number":9,"kind":"pr","action":"open-pr","closes":closes,
+            });
+            if let Some(r) = rework {
+                v["reworkOf"] = r;
+            }
+            v.to_string()
+        };
+        let root = serde_json::json!({"repo":"o/r","number":41,"kind":"pr"});
+        let ledger = [
+            with(serde_json::json!([63]), None),
+            with(serde_json::json!([63, 64]), Some(root.clone())),
+        ]
+        .join("\n");
+        let folded = fold_touches(&ledger, "R");
+        assert_eq!(folded.len(), 1);
+        assert_eq!(folded[0]["closes"], serde_json::json!([63, 64]));
+        assert_eq!(
+            folded[0]["reworkOf"], root,
+            "a later record's lineage still lands"
+        );
+        // Distinct verbs are distinct transitions, never folded together.
+        let two_verbs = [
+            line("R", 5, "record-verdict", Some("ready")),
+            line("R", 5, "record-verdict", Some("needs-work")),
+        ]
+        .join("\n");
+        assert_eq!(fold_touches(&two_verbs, "R").len(), 2);
+    }
+
+    // ---- the trace derivation ------------------------------------------------------------------
+
+    fn assistant(parent: Option<&str>, blocks: Value) -> String {
+        let mut ev = serde_json::json!({
+            "type": "assistant",
+            "message": {"content": blocks},
+        });
+        if let Some(p) = parent {
+            ev["parent_tool_use_id"] = Value::from(p);
+        }
+        ev.to_string()
+    }
+
+    fn tool_use(id: &str, name: &str, input: Value) -> Value {
+        serde_json::json!({"type": "tool_use", "id": id, "name": name, "input": input})
+    }
+
+    fn tool_result(id: &str, text: &str, is_error: bool) -> String {
+        serde_json::json!({
+            "message": {"content": [{
+                "type": "tool_result", "tool_use_id": id, "is_error": is_error,
+                "content": [{"type": "text", "text": text}],
+            }]},
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn a_typed_input_call_with_a_clean_result_is_that_actors_touch() {
+        let trace = [
+            assistant(
+                Some("task1"),
+                serde_json::json!([tool_use(
+                    "t1",
+                    "mcp__fsm__record_verdict",
+                    serde_json::json!({"pr": "o/r#7", "verdict": "needs-work"}),
+                )]),
+            ),
+            tool_result("t1", "recorded", false),
+        ]
+        .join("\n");
+        let map = trace_touches(&trace);
+        let entries = map
+            .get("task1")
+            .expect("attributed to the dispatching task");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["repo"], "o/r");
+        assert_eq!(entries[0]["number"], 7);
+        assert_eq!(entries[0]["action"], "record-verdict");
+        assert_eq!(entries[0]["verb"], "needs-work");
+        assert_eq!(entries[0]["kind"], "pr");
+    }
+
+    #[test]
+    fn an_error_result_an_unknown_tool_and_a_resultless_call_contribute_nothing() {
+        let trace = [
+            assistant(
+                None,
+                serde_json::json!([
+                    tool_use(
+                        "e1",
+                        "mcp__fsm__record_verdict",
+                        serde_json::json!({"pr": "o/r#7", "verdict": "ready"})
+                    ),
+                    tool_use(
+                        "u1",
+                        "mcp__fsm__pr_context",
+                        serde_json::json!({"pr": "o/r#7"})
+                    ),
+                    tool_use(
+                        "n1",
+                        "mcp__fsm__weaken_closes",
+                        serde_json::json!({"pr": "o/r#8", "issue": 3})
+                    ),
+                ]),
+            ),
+            tool_result("e1", "refused", true),
+            tool_result("u1", "a context read is not a touch", false),
+            // n1: no result recorded at all.
+        ]
+        .join("\n");
+        assert!(trace_touches(&trace).is_empty(), "nothing demonstrably ran");
+    }
+
+    #[test]
+    fn an_open_pr_result_is_the_record_and_carries_its_lineage() {
+        let result = serde_json::json!({
+            "repo": "o/r", "pr": 12, "closes": [63],
+            "reworkOf": {"repo": "o/r", "number": 41, "kind": "pr"},
+        })
+        .to_string();
+        let trace = [
+            assistant(
+                None,
+                serde_json::json!([tool_use("t2", "mcp__fsm__open_pr", serde_json::json!({}))]),
+            ),
+            tool_result("t2", &result, false),
+        ]
+        .join("\n");
+        let map = trace_touches(&trace);
+        let entries = map.get("__main__").expect("inline work is the main loop's");
+        assert_eq!(entries[0]["action"], "open-pr");
+        assert_eq!(entries[0]["number"], 12);
+        assert_eq!(entries[0]["closes"], serde_json::json!([63]));
+        assert_eq!(
+            entries[0]["reworkOf"],
+            serde_json::json!({"repo": "o/r", "number": 41, "kind": "pr"})
+        );
+    }
+
+    #[test]
+    fn the_folded_view_merges_closes_and_lineage_across_actors_deterministically() {
+        // Two ACTORS report the same identity, each carrying a different mergeable half. HashMap
+        // order decides which entry the fold meets first, so only a real MERGE — not
+        // keep-first-met — makes the backfill byte-stable across runs.
+        let result_a = serde_json::json!({
+            "repo": "o/r", "pr": 12, "closes": [63],
+            "reworkOf": {"repo": "o/r", "number": 41, "kind": "pr"},
+        })
+        .to_string();
+        let result_b = serde_json::json!({"repo": "o/r", "pr": 12, "closes": [64]}).to_string();
+        let call = |id: &str, parent: &str| {
+            assistant(
+                Some(parent),
+                serde_json::json!([tool_use(id, "mcp__fsm__open_pr", serde_json::json!({}))]),
+            )
+        };
+        let trace = [
+            call("a", "task1"),
+            tool_result("a", &result_a, false),
+            call("b", "task2"),
+            tool_result("b", &result_b, false),
+        ]
+        .join("\n");
+        let folded = trace_touches_folded(&trace);
+        assert_eq!(folded.len(), 1);
+        assert_eq!(folded[0]["count"], 2);
+        assert_eq!(
+            folded[0]["closes"],
+            serde_json::json!([63, 64]),
+            "union, sorted"
+        );
+        assert_eq!(
+            folded[0]["reworkOf"]["number"], 41,
+            "the one lineage named survives whichever actor the fold meets first"
+        );
+    }
+
+    #[test]
+    fn a_retried_open_pr_keeps_the_first_lineage_it_named() {
+        let result = |root: u64| {
+            serde_json::json!({
+                "repo": "o/r", "pr": 12,
+                "reworkOf": {"repo": "o/r", "number": root, "kind": "pr"},
+            })
+            .to_string()
+        };
+        // Same identity twice: a retry. The FIRST record's causal item stands — a retry restates
+        // the touch, it does not re-diagnose it.
+        let trace = [
+            assistant(
+                None,
+                serde_json::json!([
+                    tool_use("t1", "mcp__fsm__open_pr", serde_json::json!({})),
+                    tool_use("t2", "mcp__fsm__open_pr", serde_json::json!({})),
+                ]),
+            ),
+            tool_result("t1", &result(41), false),
+            tool_result("t2", &result(99), false),
+        ]
+        .join("\n");
+        let map = trace_touches(&trace);
+        let entries = map.get("__main__").expect("main-loop work");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["count"], 2);
+        assert_eq!(entries[0]["reworkOf"]["number"], 41, "first lineage wins");
+    }
+
+    #[test]
+    fn the_folded_view_sums_counts_across_actors() {
+        let call = |id: &str, parent: Option<&str>| {
+            assistant(
+                parent,
+                serde_json::json!([tool_use(
+                    id,
+                    "mcp__fsm__record_verdict",
+                    serde_json::json!({"pr": "o/r#7", "verdict": "ready"}),
+                )]),
+            )
+        };
+        let trace = [
+            call("a", Some("task1")),
+            tool_result("a", "ok", false),
+            call("b", Some("task2")),
+            tool_result("b", "ok", false),
+        ]
+        .join("\n");
+        let folded = trace_touches_folded(&trace);
+        assert_eq!(folded.len(), 1, "one identity across both actors");
+        assert_eq!(folded[0]["count"], 2);
+    }
+
+    // ---- the loose-path recorder ---------------------------------------------------------------
+
+    #[test]
+    fn only_a_visible_pr_create_counts_as_one() {
+        assert!(command_runs_pr_create(
+            "gh pr create -R o/r --title t --body-file /tmp/b.md"
+        ));
+        assert!(command_runs_pr_create("git push && gh pr create --fill"));
+        assert!(!command_runs_pr_create("gh pr view 7 && gh pr list"));
+        // One quoted token is not three words — the phrase as an argument is body text.
+        assert!(!command_runs_pr_create("echo 'gh pr create'"));
+        // The gate REFUSES what it cannot resolve; a recorder just has nothing exact to record.
+        assert!(!command_runs_pr_create("C=create; gh pr $C"));
+        assert!(!command_runs_pr_create("echo 'unbalanced"));
+    }
+
+    fn hook_payload(tool: &str, command: &str, response: Value) -> String {
+        serde_json::json!({
+            "tool_name": tool,
+            "tool_input": {"command": command},
+            "tool_response": response,
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn the_recorder_trusts_ghs_own_url_and_nothing_else() {
+        let create = "gh pr create -R o/r --title t --body-file /tmp/b.md";
+        let url = "https://github.com/o/r/pull/12";
+        let opened = |slug: &str, n: u64| {
+            vec![GhTouch {
+                action: "open-pr-gh",
+                kind: TouchSubject::Pr,
+                slug: slug.to_string(),
+                number: n,
+            }]
+        };
+        assert_eq!(
+            gh_ledger_touches(&hook_payload("Bash", create, Value::from(url))),
+            opened("o/r", 12)
+        );
+        assert_eq!(
+            gh_ledger_touches(&hook_payload(
+                "Bash",
+                create,
+                serde_json::json!({"stdout": format!("Creating pull request\n{url}\n")}),
+            )),
+            opened("o/r", 12)
+        );
+        // A PR url in the output of a command that did not create one attributes nothing…
+        assert_eq!(
+            gh_ledger_touches(&hook_payload(
+                "Bash",
+                "gh pr view 12 -R o/r",
+                Value::from(url)
+            )),
+            vec![]
+        );
+        // …and a create whose output names no PR recorded nothing real.
+        assert_eq!(
+            gh_ledger_touches(&hook_payload("Bash", create, Value::from("boom: HTTP 422"))),
+            vec![]
+        );
+        assert_eq!(
+            gh_ledger_touches(&hook_payload("Write", create, Value::from(url))),
+            vec![],
+            "only Bash executes a command"
+        );
+        assert_eq!(gh_ledger_touches("not json"), Vec::<GhTouch>::new());
+    }
+
+    #[test]
+    fn a_landing_records_as_a_landing_evidenced_by_ghs_success_line() {
+        let landed = |action: &'static str, kind: TouchSubject, n: u64| {
+            vec![GhTouch {
+                action,
+                kind,
+                slug: "o/r".to_string(),
+                number: n,
+            }]
+        };
+        // The merge names its subject in its own argv, and gh's ✓ line is the evidence.
+        assert_eq!(
+            gh_ledger_touches(&hook_payload(
+                "Bash",
+                "gh pr merge 41 -R o/r --merge --admin",
+                serde_json::json!({"stderr": "✓ Merged pull request o/r#41"}),
+            )),
+            landed("merge-pr-gh", TouchSubject::Pr, 41)
+        );
+        // A url subject carries repo and number by itself.
+        assert_eq!(
+            gh_ledger_touches(&hook_payload(
+                "Bash",
+                "gh issue close https://github.com/o/r/issues/9 --reason completed",
+                Value::from("✓ Closed issue o/r#9"),
+            )),
+            landed("close-issue-gh", TouchSubject::Issue, 9)
+        );
+        assert_eq!(
+            gh_ledger_touches(&hook_payload(
+                "Bash",
+                "gh pr close 7 --repo=o/r",
+                Value::from("✓ Closed pull request o/r#7"),
+            )),
+            landed("close-pr-gh", TouchSubject::Pr, 7)
+        );
+        // FAIL-CLOSED: no success token in the output, no record — a refused merge is not a
+        // landing, and neither is one whose wording gh changed.
+        assert_eq!(
+            gh_ledger_touches(&hook_payload(
+                "Bash",
+                "gh pr merge 41 -R o/r --merge",
+                Value::from("GraphQL: Pull request is not mergeable"),
+            )),
+            vec![]
+        );
+        // A bare merge against the cwd's repo names no subject exactly: absence, never a guess.
+        assert_eq!(
+            gh_ledger_touches(&hook_payload(
+                "Bash",
+                "gh pr merge 41 --merge",
+                Value::from("✓ Merged pull request #41"),
+            )),
+            vec![]
+        );
+    }
+
+    // ---- the row -------------------------------------------------------------------------------
+
+    #[test]
+    fn the_final_row_carries_the_ledgers_fold_and_each_agents_trace_touches() {
+        let entry = serde_json::json!({
+            "repo": "o/r", "number": 7, "kind": "pr", "action": "record-verdict",
+            "verb": "ready", "count": 1,
+        });
+        let agent = AgentSpend {
+            id: "task1".to_string(),
+            label: "vet o/r#7".to_string(),
+            messages: 3,
+            tokens_in: 10,
+            cache_read: 0,
+            cache_write_5m: 0,
+            cache_write_1h: 0,
+            usd: 1.0,
+        };
+        let mut per_actor = std::collections::HashMap::new();
+        per_actor.insert("task1".to_string(), vec![entry.clone()]);
+        let agents = [agent];
+        let doc = final_record(
+            "/t.jsonl",
+            &RunMetrics::default(),
+            &RunIdentity {
+                run_id: Some("R"),
+                role: Some("vetter"),
+                model: None,
+            },
+            None,
+            &ToolingReport::default(),
+            &[],
+            &InfraRecord::default(),
+            None,
+            None,
+            &SpendRecord {
+                agents: &agents,
+                output_tokens: 0,
+                output_usd: 0.0,
+                billed_usd: 0.0,
+            },
+            &TouchBlock {
+                run: vec![entry.clone()],
+                per_actor: &per_actor,
+            },
+        );
+        assert_eq!(doc["touched"], serde_json::json!([entry.clone()]));
+        assert_eq!(doc["touchedSource"], "ledger");
+        assert_eq!(doc["agents"][0]["touched"], serde_json::json!([entry]));
+        // Always present: a run that touched nothing says [], never nothing.
+        let empty = final_record(
+            "/t.jsonl",
+            &RunMetrics::default(),
+            &RunIdentity {
+                run_id: None,
+                role: None,
+                model: None,
+            },
+            None,
+            &ToolingReport::default(),
+            &[],
+            &InfraRecord::default(),
+            None,
+            None,
+            &SpendRecord::default(),
+            &TouchBlock {
+                run: vec![],
+                per_actor: &Default::default(),
+            },
+        );
+        assert_eq!(empty["touched"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn a_backfilled_row_says_its_touches_came_from_the_trace() {
+        let trace = [
+            assistant(
+                Some("task1"),
+                serde_json::json!([tool_use(
+                    "t1",
+                    "mcp__fsm__record_verdict",
+                    serde_json::json!({"pr": "o/r#7", "verdict": "ready"}),
+                )]),
+            ),
+            tool_result("t1", "recorded", false),
+            serde_json::json!({"type": "result", "total_cost_usd": 1.0}).to_string(),
+        ]
+        .join("\n");
+        let row = serde_json::json!({"runId": "R", "stage": "final"});
+        let (row, recomputed) = backfill_row(row, Some(&trace));
+        assert!(recomputed, "a surviving trace recomputes the row");
+        assert_eq!(row["touchedSource"], "trace");
+        assert_eq!(row["touched"][0]["repo"], "o/r");
+        assert_eq!(row["touched"][0]["action"], "record-verdict");
+        // No trace ⇒ no touched at all: absence, never a zero.
+        let (kept, recomputed) = backfill_row(serde_json::json!({"runId": "R"}), None);
+        assert!(!recomputed);
+        assert!(kept.get("touched").is_none());
     }
 }

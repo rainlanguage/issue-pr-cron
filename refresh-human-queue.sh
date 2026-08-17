@@ -124,8 +124,18 @@ snapshot_changed=1
 git -C "$DIR" diff --quiet HEAD -- human-queue.json && snapshot_changed=0
 metrics_changed=1
 git -C "$DIR" diff --quiet HEAD -- metrics/runs.jsonl && metrics_changed=0
-if [ "$snapshot_changed" -eq 0 ] && [ "$metrics_changed" -eq 0 ]; then
-  log "snapshot and run metrics unchanged at $(git -C "$DIR" rev-parse --short HEAD); nothing to publish"
+# The FSM touch ledger rides this tick for the same reason metrics/runs.jsonl does: the actors
+# that append it (transitions inside runs and interactive sessions) never push. It is written in
+# place in the install dir, so publishing is just committing it. `--` with the untracked probe:
+# the file does not exist until the first transition after deploy, and a bare `git diff` on a
+# missing path is quietly clean — `ls-files --others` is what catches the first appearance.
+touches_changed=1
+if git -C "$DIR" diff --quiet HEAD -- fsm-touches.jsonl 2>/dev/null \
+  && [ -z "$(git -C "$DIR" ls-files --others --exclude-standard -- fsm-touches.jsonl)" ]; then
+  touches_changed=0
+fi
+if [ "$snapshot_changed" -eq 0 ] && [ "$metrics_changed" -eq 0 ] && [ "$touches_changed" -eq 0 ]; then
+  log "snapshot, run metrics and touch ledger unchanged at $(git -C "$DIR" rev-parse --short HEAD); nothing to publish"
   exit 0
 fi
 
@@ -151,18 +161,46 @@ if [ "$snapshot_changed" -eq 1 ]; then
     log "history line failed (rc=$hist_rc): $(tr '\n' ' ' <"$histerr")— publishing the snapshot without it"
   fi
   rm -f "$histerr"
+
+  # Landed-history append (rain-org-health tokens-per-landed-item): FSM items present at HEAD's
+  # snapshot and gone from the fresh one, verified against GitHub as actually landed. HEAD is
+  # still the pre-tick commit here — the diff must be taken before the commit below moves it.
+  # `--existing` is what makes a tick replayed after a failed commit append nothing twice.
+  # Failure arms mirror the history line: reported, never fatal — and unlike that line, a miss
+  # here is HEALABLE, because backfill-landed-history re-walks the same pairs through the same
+  # subcommand. Buffered for the same partial-write reason.
+  prevsnap="$(mktemp)"; landederr="$(mktemp)"
+  if git -C "$DIR" show HEAD:human-queue.json >"$prevsnap" 2>/dev/null && [ -s "$prevsnap" ]; then
+    landed="$(pr-review-report landed-history-lines "$prevsnap" "$DIR/human-queue.json" \
+      --observed-at "$ts" --existing "$DIR/landed-history.jsonl" 2>"$landederr")"; landed_rc=$?
+    [ -n "$landed" ] && printf '%s\n' "$landed" >>"$DIR/landed-history.jsonl"
+    # rc 3 = rows above are complete minus the items stderr names; a backfill rerun recovers them.
+    [ "$landed_rc" -ne 0 ] && log "landed-history incomplete (rc=$landed_rc): $(tr '\n' ' ' <"$landederr")— publishing what resolved"
+  else
+    log "no previous snapshot at HEAD — skipping the landed-history diff this tick"
+  fi
+  rm -f "$prevsnap" "$landederr"
 fi
 
 # The commit message names what actually moved: metrics-only ticks keep the `chore(metrics):`
-# prefix the file's hand-committed history already uses.
+# prefix the file's hand-committed history already uses. Touch-ledger movement folds into the
+# metrics arm — both are run-record artifacts — except when it is the ONLY mover, which gets its
+# own line so the history can say which ticks published touches alone.
 if [ "$snapshot_changed" -eq 1 ] && [ "$metrics_changed" -eq 1 ]; then
   msg="chore(dashboard): refresh human-queue.json snapshot + run metrics"
 elif [ "$snapshot_changed" -eq 1 ]; then
   msg="chore(dashboard): refresh human-queue.json snapshot"
-else
+elif [ "$metrics_changed" -eq 1 ]; then
   msg="chore(metrics): publish accrued run metrics"
+else
+  msg="chore(metrics): publish accrued fsm touch records"
 fi
-git_q add human-queue.json human-queue-history.jsonl metrics/runs.jsonl || exit 1
+# The touch ledger is staged only once it EXISTS: `git add` on a pathspec matching nothing is
+# fatal, and the file is born with the first post-deploy transition, not with this script.
+# `landed-history.jsonl` needs no such guard — #277 seeded it, so it is always present.
+touch_ledger_paths=()
+[ -e "$DIR/fsm-touches.jsonl" ] && touch_ledger_paths=(fsm-touches.jsonl)
+git_q add human-queue.json human-queue-history.jsonl landed-history.jsonl metrics/runs.jsonl ${touch_ledger_paths[@]+"${touch_ledger_paths[@]}"} || exit 1
 git_q -c commit.gpgsign=false commit --no-verify -m "$msg" --quiet || exit 1
 mine="$(git -C "$DIR" rev-parse HEAD)"
 
