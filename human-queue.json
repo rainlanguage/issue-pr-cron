@@ -194,6 +194,12 @@
         "title": "Scan ledger: a wrapper object that states its own ordering and authority rule"
       },
       {
+        "repo": "rainlanguage/rain.deploy",
+        "number": 131,
+        "url": "https://github.com/rainlanguage/rain.deploy/pull/131",
+        "title": "feat(migration-registry): record a migration at the moment it ran, via MigrationRegistryV2"
+      },
+      {
         "repo": "rainlanguage/rain.tofu.erc20-decimals",
         "number": 31,
         "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/31",
@@ -838,6 +844,12 @@
         "title": "Scan record: name the tree the after-campaign counts hold at"
       },
       {
+        "repo": "rainlanguage/rain.dia",
+        "number": 68,
+        "url": "https://github.com/rainlanguage/rain.dia/pull/68",
+        "title": "chore(reuse): drop four REUSE.toml paths that do not exist"
+      },
+      {
         "repo": "rainlanguage/rain.datacontract",
         "number": 27,
         "url": "https://github.com/rainlanguage/rain.datacontract/pull/27",
@@ -1033,7 +1045,7 @@
         ]
       },
       "un-vetted": {
-        "count": 44,
+        "count": 43,
         "prs": [
           {
             "repo": "rainlanguage/rain.sol.codegen",
@@ -1160,12 +1172,6 @@
             "number": 31,
             "url": "https://github.com/rainlanguage/rain.verify/pull/31",
             "title": "Remove the submodule-era residue from REUSE.toml and CLAUDE.md"
-          },
-          {
-            "repo": "rainlanguage/rain.dia",
-            "number": 68,
-            "url": "https://github.com/rainlanguage/rain.dia/pull/68",
-            "title": "chore(reuse): drop four REUSE.toml paths that do not exist"
           },
           {
             "repo": "rainlanguage/rain.extrospection",
@@ -1351,13 +1357,19 @@
         }
       },
       "ai:needs-work": {
-        "count": 107,
+        "count": 108,
         "prs": [
           {
             "repo": "rainlanguage/adversarial-mutation-test",
             "number": 26,
             "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/26",
             "title": "Scan ledger: a wrapper object that states its own ordering and authority rule"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 131,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/131",
+            "title": "feat(migration-registry): record a migration at the moment it ran, via MigrationRegistryV2"
           },
           {
             "repo": "rainlanguage/rain.tofu.erc20-decimals",
@@ -1998,13 +2010,19 @@
         ]
       },
       "ai:ready": {
-        "count": 2,
+        "count": 3,
         "prs": [
           {
             "repo": "rainlanguage/adversarial-mutation-test",
             "number": 24,
             "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/24",
             "title": "Scan record: name the tree the after-campaign counts hold at"
+          },
+          {
+            "repo": "rainlanguage/rain.dia",
+            "number": 68,
+            "url": "https://github.com/rainlanguage/rain.dia/pull/68",
+            "title": "chore(reuse): drop four REUSE.toml paths that do not exist"
           },
           {
             "repo": "rainlanguage/rain.datacontract",
@@ -6239,28 +6257,19 @@
       "title": "add generic errors for integrity operand overflow and underflow"
     }
   ],
-  "leaks": [
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 131,
-      "url": "https://github.com/rainlanguage/rain.deploy/pull/131",
-      "title": "feat(migration-registry): record a migration at the moment it ran, via MigrationRegistryV2",
-      "reason": "🤖 ai:producer  Producer note: this PR is now GREEN, and two claims in the body above are stale — correcting the record here since the body itself is not mine to edit.  - **\"Pre-existing red: `rainix / static / static` ... fails on `main` too\" is no longer true, and the diagnosis was wrong on its own terms.** It was accurate when written: at this branch's merge base (`ad1e00c`), `CLAUDE.md` was 24016 bytes, over the 4096-byte `agent-context-cap`. But `main` has since cut that file to 2344 bytes, under the cap. The red was this branch's alone — the branch was 91 commits behind, and the PR *added* 62 lines of V2 prose to the fat file. - **The \"307 tests\" figure is stale** — 342 after merging `main`.  Fixed by merging `origin/main`. `CLAUDE.md` resolved to main's cut-down version verbatim (the PR's additions were exactly the architecture prose main's new bar deletes; the V2 rationale already lives in `src/interface/IMigrationRegistryV2.sol` natspec). A second commit carries across main's correction to the `checkCodeHash` natspec, which `LibMigrationRegistryV2.sol` had inherited from V1 in its factually-wrong form (it claimed a call into an empty account \"decodes as zero\"; solc actually reverts when returndata is too short to decode). Comments only — creation code and every generated snapshot are unchanged, and `forge script script/Build.sol` regenerates byte-identical.  This is **not** the split-release-lifecycle migration case: the failing check was `agent-context-cap`, not a prod-pin / `testProdDeploy*` / deploy-pinned-constant check. Nothing was deployed.  Worth a reviewer's attention: because the static job fails fast at step 4, steps 5–11 had **never run** on this branch until now. Verified locally in the checkout's own toolchain: slither 0 findings over 54 contracts, `forge fmt --check` clean, `rainix-sol-single-contract` OK, `snapshots-append-only` clean, `agent-context-cap` 2209/4096. `forge test` 291 passed / 51 failed, every failure an `ARBITRUM_RPC_URL`/`BASE_RPC_URL` fork-env failure with no local RPC secrets — zero code failures. ",
-      "createdAt": "2026-08-16T13:32:32Z"
-    }
-  ],
+  "leaks": [],
   "counts": {
-    "unvetted": 44,
+    "unvetted": 43,
     "blockedOn": 23,
-    "ready": 2,
-    "needsWork": 107,
+    "ready": 3,
+    "needsWork": 108,
     "relink": 0,
     "design": 5,
     "blockedInfra": 0,
     "closeCandidateIssues": 6,
     "closeCandidateUnvetted": 6,
     "closeCandidateUpheld": 2,
-    "leaks": 1,
+    "leaks": 0,
     "totalProducerPrs": 184,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 664,
@@ -6271,7 +6280,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 293.7,
-      "medianDays": 107.1,
+      "medianDays": 107.2,
       "oldestDays": 1666.6
     }
   }
