@@ -2229,12 +2229,6 @@
       "title": "One label per state: the FSM's most common state has no label, and two PRs are in two states at once"
     },
     {
-      "repo": "rainlanguage/rain.sol.codegen",
-      "number": 141,
-      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/141",
-      "title": "buildFileForContract's unlink loop deletes a live symlink's target, silently destroying any file the fs_permissions grant reaches"
-    },
-    {
       "repo": "rainlanguage/issue-pr-cron",
       "number": 328,
       "url": "https://github.com/rainlanguage/issue-pr-cron/issues/328",
@@ -6263,7 +6257,7 @@
     "leaks": 1,
     "totalProducerPrs": 183,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 665,
+    "uncoveredIssues": 664,
     "designPresentable": 5,
     "designNoQuestion": 0,
     "openIssues": 847
@@ -6271,8 +6265,8 @@
   "ages": {
     "openIssues": {
       "meanDays": 293.6,
-      "medianDays": 107.0,
-      "oldestDays": 1666.4
+      "medianDays": 107.1,
+      "oldestDays": 1666.5
     }
   }
 }
