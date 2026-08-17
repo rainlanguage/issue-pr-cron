@@ -1033,8 +1033,14 @@
         ]
       },
       "un-vetted": {
-        "count": 43,
+        "count": 44,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.sol.codegen",
+            "number": 142,
+            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/142",
+            "title": "Remove only the link at a generated path, never what it resolves to"
+          },
           {
             "repo": "rainlanguage/rain.solmem",
             "number": 121,
@@ -6244,7 +6250,7 @@
     }
   ],
   "counts": {
-    "unvetted": 43,
+    "unvetted": 44,
     "blockedOn": 23,
     "ready": 2,
     "needsWork": 107,
@@ -6255,7 +6261,7 @@
     "closeCandidateUnvetted": 6,
     "closeCandidateUpheld": 2,
     "leaks": 1,
-    "totalProducerPrs": 183,
+    "totalProducerPrs": 184,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 664,
     "designPresentable": 5,
@@ -6264,7 +6270,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 293.6,
+      "meanDays": 293.7,
       "medianDays": 107.1,
       "oldestDays": 1666.5
     }
