@@ -3243,6 +3243,99 @@ data-only and never usage-gated — the one committer still awake during a pause
 which is exactly when skip rows are written and nothing else runs. A skip row is
 therefore visible to the dashboard within about an hour of its gated tick.
 
+### Which FSM items were touched — `fsm-touches.jsonl` and `touched`
+
+Per-item token attribution needs every actor's transitions to say which item
+they acted on, at the moment they act. That record is the **touch ledger**:
+`fsm-touches.jsonl` in the install dir, one JSON line per successful mutating
+transition, appended by the transition itself inside `pr-review-report` —
+whoever invoked it. The refresh tick commits it beside `metrics/runs.jsonl`.
+
+```jsonl
+{"ts":"2026-08-12T15:04:05Z","actor":"vetter-run","runId":"20260812T150004Z","repo":"org/name","number":123,"kind":"pr","action":"record-verdict","verb":"needs-work"}
+```
+
+- `actor` is typed: `producer-run` / `vetter-run` (stamped by the runners via
+  `FSM_TOUCH_ACTOR` + `FSM_TOUCH_RUN_ID`) or `interactive` (nothing exported —
+  the honest default, never a guess). Cron records join to their
+  `metrics/runs.jsonl` row by `runId`; interactive records carry no `runId` and
+  their spend side is **absent**, never estimated — the touch still exists,
+  which is the half a join cannot invent after the fact.
+- `action` is the transition's own name (`record-verdict`,
+  `record-close-candidate-verdict`, `open-pr`, `push`, `flag-state`,
+  `flag-close-candidate`, `send-back`, `clear-blocked-on`, `human-rule`,
+  `human-rule-issue`, `human-close`, `repair-qa-block`, `weaken-closes`,
+  `deploy`, `design-doctor-route`, `retire-blocked-infra`); `verb` carries the
+  fan-out where one subcommand rules several ways (a verdict, a ruling, a
+  flagged label). The `-gh` suffixed actions are the LOOSE paths — mutations
+  that ran through bare gh instead of a transition — recorded by the `ledger-gh`
+  PostToolUse hook from gh's own evidence, distinguishable by construction from
+  the tool's own records: `open-pr-gh` (the create `require-qa-block` gates),
+  and the landing verbs `merge-pr-gh` / `close-pr-gh` / `close-issue-gh`. A
+  dry-run or refused transition appends nothing.
+- **Landings are first-class actions.** The FSM should always move through the
+  tooling, and a landing must be sayable as a landing: `human-close` with verb
+  `close` is the tool-mediated terminal edge, and `merge-pr-gh` / `close-pr-gh`
+  / `close-issue-gh` are the bare-gh landings the hook records. Landed-history
+  derives from THESE records plus the doctor's sweep (a merged or closed item
+  still wearing FSM labels is found, cleaned, and recorded) — so a landing
+  bucketed as a generic mutation would be a landing the derived history cannot
+  see. Coverage honesty: a bare `gh pr merge` that names its subject only
+  through the cwd's repo (no `-R`, no url) records nothing — absence, never a
+  guess — and the doctor's sweep is the backstop that finds what the hook could
+  not attribute.
+- Appending is best-effort: an unwritable ledger is one stderr warning and a
+  completed transition. The metric never fails the pipeline it measures.
+
+`run-metrics` folds the ledger's records for its `runId` onto the row as
+`touched` — one entry per distinct (repo, number, kind, action, verb) with a
+`count`, `[]` for a run that touched nothing — and labels the row
+`touchedSource: "ledger"`. Rows rebuilt by `backfill-metrics` from a retained
+trace get `touchedSource: "trace"`: exact for the typed MCP transitions (call
+input / result, non-error result required), silently absent for Bash-invoked CLI
+transitions, because parsing shell strings out of traces invents work items
+(#175) — measured, not assumed. Rows with neither ledger nor trace carry no
+`touched` at all: absence, never a zero.
+
+Each `agents[]` row additionally carries its own `touched` (same shape), derived
+from the trace by `parent_tool_use_id` — the same key spend is grouped by, so a
+touch can be joined to the tokens of the actor that made it. `human_close` is
+absent from trace-derived touches (its `subject` input does not carry which
+population the ref resolved to; the ledger record does).
+
+**Rework lineage — `reworkOf`.** Delivery cost includes bugs and rework, not
+just the spend up to a first merge — so a touch record may carry an optional
+typed causal parent:
+
+```json
+"reworkOf": {"repo":"org/name","number":41,"kind":"pr"}
+```
+
+the previously LANDED item whose shipped defect the touched item reworks.
+Capture is at-source at diagnosis time: whoever files the fix knows the causal
+item then, and passes it typed (`open_pr`'s `rework_of` + `rework_of_kind`
+arguments — the fix-PR filing path, the one place the tool surface currently
+takes it). Absent means the actor named no causal item — it is **never**
+inferred post-hoc by blame or bisect heuristics. Coverage honesty: today only
+`open_pr` can populate it; every other action (`record-verdict`, `flag-*`,
+`human-*`, `push`, `open-pr-gh`, …) records without lineage, and issues filed
+outside the tool surface (audit outputs via `gh issue create`) carry none until
+filing moves behind a subcommand.
+
+What the field makes computable (the schema's contract, not something this
+binary computes): **delivered cost of item X = X's own lifetime touches + the
+touches of every item in rework chains rooted at X, transitively** — follow
+`reworkOf` edges backwards from each fix to the landed item that shipped the
+defect, and charge the fix's spend to that root.
+
+**When is an issue a valid root?** A root is a LANDED item, and issues land too
+(`human-close`, `close-issue-gh`). Root at an issue when the issue's own
+disposition was the shipped defect — closed as done when it wasn't, closed
+not-planned wrongly. When the defect traces to CODE a merged PR shipped, root at
+the PR, even if an issue rode it there via `closes` — one root per fix, the most
+causal landed artifact, and cost consumers must apply the same rule or
+double-charge a chain through both the PR and its closed issue.
+
 ### Live token spend — and the one number that is not knowable
 
 `run-metrics` reads tokens from the terminal `result` event, so a killed run
