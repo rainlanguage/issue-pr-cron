@@ -343,6 +343,22 @@ only `Read` still ran a `Bash` call with no permission denial — so what the
 contract enforces is that the declaration and the command's own prose agree, and
 that no shell line is fenced anywhere in the body.
 
+**Where `Task` was refused, and what #316 changed under it.** The refusal above
+had a stated reason — "a subagent's tool set is not this command's, so a spawned
+agent holding `Bash` is the shell fallback wearing another name" — and that
+reason is about an ANONYMOUS subagent, not about dispatch. It stops being true
+for an agent this plugin SHIPS beside the command: its tool list is a checked-in
+artefact under the same review, and, unlike `allowed-tools`, the harness
+actually enforces it (measured on 2.1.233: an agent given `tools: Read` and told
+in as many words to run `Bash` reported one tool and no `Bash` to call). #316
+ruled the four reading gates into a fresh context for a correctness reason —
+inline execution inherited the conversation, so a contaminated read and an
+independent one produced the same report — and the shape that satisfies it is a
+command granting `Agent` alone that dispatches a shipped agent holding the typed
+grant. `plugins/human-fsm/` ships that shape now; `command_contract` does not
+model it yet, so five `marketplace_tests` fail on it — see the landing note in
+that plugin's README for the exact change owed.
+
 **Why a plugin rather than files with an install step.** The org already
 distributes Claude Code assets this way — `claude-audit-skills`,
 `adversarial-mutation-test` and `rain-org-health` each publish a
@@ -579,6 +595,50 @@ verdict is not "next" at all — the queue's vetted-at-head gate withholds it, a
 `counts.unvetted` says so, because returning a verdict that no longer describes
 the code is worse than returning nothing.
 
+**The whole enumeration is ONE `gh api graphql` (#314).** It used to be a
+fan-out — one `gh search prs`, then a `gh pr view` plus a review-threads query
+per candidate over an 8-worker pool, plus the org-wide archived-repos walk — and
+it measured **41–56s** of dead time before anything reached the human. The
+concurrency was making it worse, not better: 8 concurrent full-field
+`gh pr view` took **19.1s** wall against 3.0s for one, because a burst from one
+token draws the secondary limit and `comments` is a heavy field. A single
+`search(type:ISSUE)` selection set returns every field the gates read, for 4 of
+5000 rate-limit points and 40,200 of the 500,000 node ceiling. Measured on the
+live queue: **20 subprocesses / 54.1s → 1 / 5.0s**, byte-identical `queue`
+output.
+
+What that buys has to be paid for in two places, because a batch answers with
+**windows** where a per-PR call answered with everything:
+
+- **`comments(last:100)` is the tail, not the set.** A PR with more comments
+  after its last `ai:vetter` comment than the window holds would lose its
+  verdict and read as un-vetted — a presentable PR silently dropped out of the
+  human's queue. So the truncation case is named: more comments than returned
+  AND no trusted vetter comment inside the window falls back to the per-PR
+  `gh pr view`. A truncated window that still holds a vetter comment holds the
+  LAST one, so it needs no fetch.
+- **`reviewThreads(first:100)` is the same shape, but only half of it is a
+  hazard.** A non-zero count inside the window is decisive — the PR is the
+  producer's thread work whatever the later pages hold. Only "all resolved so
+  far, with more pages" is unknown, and only a verified zero reaches a human, so
+  that one case falls back to the paginated walk.
+
+And **`mergeable` is computed lazily by GitHub**: the ask is what schedules the
+computation, so a COLD batch ask answers `UNKNOWN` where a per-PR view GitHub
+had already warmed answers `MERGEABLE`. `UNKNOWN` is bucketed as
+not-presentable, so taking a cold answer at face value shortens the human's
+queue. Rows whose bucket actually turns on `mergeable` (green, not already
+approved) are re-asked — twice at most, and never a row a re-ask could not move
+— and a row that still will not settle is left `UNKNOWN`: fail-closed is the
+existing contract for an unconfirmed merge and this does not relax it.
+
+`repository{isArchived}` rides on the same query, so the #206 withholding no
+longer costs the org-wide `archived_repos()` walk on this path (the flag, leak
+and design enumerations still take theirs from it — their hits are not all PRs
+of this shape). The guard is unchanged, including its refusal: an unreadable
+archived flag is `Malformed` and aborts, rather than collapsing to "not
+archived" and putting a frozen row back at the head of the queue.
+
 Three fields are worth their own note:
 
 - **CodeRabbit coverage is a typed verdict, not a check state.** Only a commit
@@ -781,6 +841,14 @@ question from the classifier is the `cc_gate` precedent one lane over: a
 `repo_root_tests` pin requires the enumeration to select through
 `classify_lane`, so the tool's definition and its population cannot be two
 facts.
+
+**A body repair is not a hand-off.** `repair-qa-block` and `weaken-closes`
+rewrite body text and move no state, so the note each posts is a RECEIPT:
+`leak_reason` walks past it to whatever marker stands behind. An unlabelled PR a
+repair touched is left un-vetted, which the vetter's own population — every open
+producer PR, unfiltered by label — reaches. The receipt is built by the single
+writer both repairs share (`write_repaired_body`, from a `BodyRepair` variant),
+so the marker the walk skips and the marker actually posted are one fact.
 
 **A deleted state is two different cases, and only one of them leaks.** A
 deleted `ai:*` label lands its PR in `un-vetted`: the vetter absorbs it and the
@@ -2892,6 +2960,34 @@ a RISK bound the design intends to move, the prompts state it two dozen times,
 and several of those statements are spelled as English words that a sweep for
 the digit does not find. A run whose budget cannot be resolved to a positive
 integer ABORTS rather than rendering a RUN BUDGET sentence with no number in it.
+### Timing the `gh` calls — `PRR_GH_TIMING`
+
+Set `PRR_GH_TIMING` to anything but empty or `0` and every `gh` the binary runs
+is timed. Unset, nothing is emitted and the run is unchanged, so it is safe on
+the shipped binary.
+
+Everything goes to **stderr**, never stdout: on `pr-review-report mcp` stdout is
+the JSON-RPC stream and a line there is a protocol violation.
+
+```
+gh-timing: 1306ms pr view 3 rainlanguage/rain.subgraph.docker
+gh-timing: unvetted: 359 calls, 278980ms in gh
+gh-timing: unvetted: slowest 6052ms search prs
+```
+
+A call line carries the child's wall time and enough argv to attribute it — the
+subcommand words plus the slug, api path or graphql operands, never the `--json`
+field list. It prints AS THE CALL LANDS, so a run that is killed still leaves
+every call it made on the record and loses only the summary.
+
+A summary closes each span and names its slowest three. The span is one MCP TOOL
+CALL, because that is the unit a client waits on and times out; for a CLI run it
+is the subcommand.
+
+Every figure is ONE child process's wall time, so a rate-limit retry shows up as
+a second line and its backoff sleep sits between the two rather than inside
+either. Time the binary spends on anything other than `gh` is the difference
+between the summary total and the run's own duration.
 
 ### The producer's scratch dir
 
@@ -3148,6 +3244,88 @@ own `modelUsage`/`costUSD` (sonnet-4-6 and opus-4-8 both fit to <0.1% error),
 the three exact fields account for a **median 72%** of a run's spend, range
 55–91% across the 36 model-runs where the rate is solvable. Cache-read alone is
 the term that runs away — the $37.02 run in #97 read 26.4M cached tokens.
+
+### What one `/nr` run spends, by phase — `nr-profile`
+
+`pr-review-report nr-profile <session-transcript.jsonl> [--run N] [--json]`.
+
+[#315](https://github.com/rainlanguage/issue-pr-cron/issues/315) decomposed ONE
+`/nr` run by hand, off a session transcript, and that decomposition is the
+evidence under everything else in the issue — the audit skill at 41% of the
+wall, the independent read the gate exists for at 22% of the output. The same
+issue's finding 3 is that 2 of the 4 runs that day did not follow the protocol
+at all. A hand-read of one transcript is not a series, so the issue orders
+instrumentation FIRST and defers the orientation digest until it has real
+numbers. This is that instrument.
+
+It reads a transcript after the fact rather than being something `/nr` emits
+mid-run, and both halves of that are forced: the command's grant is typed tool
+calls with **no shell at all**, so it can invoke nothing; and a turn's
+`output_tokens` is not knowable to the turn producing it.
+
+**Two cuts, not one.** #315's table uses both without saying so, and they
+disagree by exactly one call in two places.
+
+- **Wall clock is continuous.** The run is in the checkout phase from the
+  instant `pr_checkout` fires, so a phase opens at the first event of the turn
+  issuing its own call.
+- **Output tokens are quantised to a turn.** One turn carries one `usage`
+  record, so the turn that spent 2,871 tokens on the independent read and then
+  fired `pr_checkout` in its last block cannot be split — those tokens are the
+  read's.
+
+The cuts therefore fall one call apart wherever a phase's opening call is a
+TRAILING call on the previous phase's turn, which is what `pr_checkout` (step
+5's first bullet) and `clone_release` (step 6) are, and what `next_ready`,
+`pr_context` and the `Skill` invoke are not. A phase whose opening call never
+fired has no instant to open at, so its boundary falls back to when its first
+turn began and the row is marked `*`; a phase with neither collapses to zero
+rather than borrowing a neighbour's time.
+
+On the run #315 decomposed, every cell reproduces:
+
+| phase                           |   wall | #315 | output | #315   |
+| ------------------------------- | -----: | ---: | -----: | ------ |
+| `setup / ToolSearch`            |  12.1s |   12 |    374 | 374    |
+| `next_ready`                    |  61.3s |   61 |     45 | 45     |
+| `pr_context + independent read` |  43.1s |   43 |  2,954 | 2,954  |
+| `pr_checkout + skill invoke`    |  16.7s |   17 |    496 | 496    |
+| `audit skill`                   | 113.9s |  114 |  7,072 | 7,072  |
+| `final report`                  |  31.9s |   31 |  2,340 | 2,340  |
+| total                           | 278.8s |  278 | 13,281 | 13,281 |
+
+The issue's wall column is hand-rounded and internally inconsistent — its six
+cells round to 279s or truncate to 276s, against its own stated 278s total — so
+the seconds here are the milliseconds the transcript carries. Its **57% of
+output** for the audit skill does not follow from its own table either: 7,072 of
+13,281 is **53.2%**. The 41% of wall does (40.8%).
+
+**Reading `output_tokens` here does not contradict
+[the section above](#live-token-spend--and-the-one-number-that-is-not-knowable).**
+Both hold, of different files. In a `runs/*.jsonl` stream-json trace
+`output_tokens` is a message-START snapshot — 2–5 on a message that went on to
+emit ~1,100 — so the deduped sum is 0.2%–20.6% of the terminal `result.usage`. A
+session transcript is written per COMPLETED content block and its
+`output_tokens` tracks the message: over the 979 main-thread messages of
+`0fd06efc`, reported output against rendered content bytes is a median 3.0 bytes
+per token (p10 1.98, p90 3.91), which a start snapshot cannot produce. A session
+transcript carries no `result` event, so there is no terminal total to check
+against — and no figure from this reader may be compared with one from a run
+trace.
+
+**A run that did not follow the protocol is named as one**, which is what makes
+the series honest rather than larger. Conformance is the five calls steps 1–6
+make (`next_ready`, `pr_context`, `pr_checkout`, `Skill`, `clone_release`), the
+`Skill` being the `audit` one, and no tool outside the command's own grant. On
+the four runs of 2026-08-16 only 06:56 passes; 07:57 skipped `pr_context` and
+the skill and used `Bash` twice, which `/nr` forbids in as many words. The
+reader's peak-context column reproduces #315 finding 2 exactly across all four —
+423,969 / 579,590 / 588,209 / 42,545 — which is the number that says every turn
+re-read a 400–600k ambient context that had nothing to do with the PR.
+
+Finding 2's fix conflicts with `/nr`'s own INLINE ruling and is a human call,
+not a build; finding 1's orientation digest waits on numbers from this reader.
+Both are stated that way in #315 and neither is implemented.
 
 ### Tokens to land work — `work-tokens`
 
@@ -3473,8 +3651,8 @@ evidence is not evidence, and a false abort here costs a whole tick.
 
 ### The producer's state-load is one pre-grouped result
 
-`pr-review-report state-load --json` composes `worklist` and `uncovered-issues`
-and returns the groupings the producer traces show runs actually derive:
+`pr-review-report state-load` composes `worklist` and `uncovered-issues` and
+returns the groupings the producer traces show runs actually derive:
 
 | Grouping                                        | Runs asking for it |
 | ----------------------------------------------- | ------------------ |
@@ -3493,6 +3671,41 @@ three of the four are wanted by every run. The payload argument runs the other
 way too — `green-ready`, `wait` and `parked-skip` rows are **counted, not
 listed**, because no step acts on one, and they were 70–95% of the ~123 KB raw
 fleet across the measured runs.
+
+**The default output IS the digest, and the rows are flags** (#290). Composing
+the groupings removed the API calls and left the **re-slicing**: run
+`20260815T110709Z` opened by taking `--json` (95,370 bytes), redirecting it to a
+scratch file, and paying three main-thread `jq` calls before doing anything
+else. The first rebuilt, key by key, the digest the **bare** call already prints
+— 488 bytes and 19 lines as that run measured it, 21 lines now that the digest
+ends by naming the row calls — same answer, different route, and the route cost
+a scratch file plus an interpreter invocation in the run's most expensive
+position. That one was the prompt's fault, not the tool's: step 2 prescribed
+`--json`, so the run reached for it reflexively and then had a blob it had to
+reduce. It now prescribes the bare call and says the default output is the
+digest.
+
+The other two `jq` calls were the tool's fault, and they select **rows** —
+`nextAction == "rework-needs-work"` as
+`repo / number / ci / mergeState /
+closes / title`, and the first 12 actionable
+rows. The `--help` claimed the result contains "the rows that name work", and it
+did: inside 95 KB, reachable only by re-slicing. So every row list the digest
+counts now has a **selector** that projects it — `--action <nextAction>` (any
+action the histogram names, including the ones no step acts on), `--actionable`,
+`--approved`, `--audit`, each with `--limit N` — printing compact TSV columns
+under a `#` header, led by a `#` count line that states what a `--limit` cut so
+a truncated list is never read as the whole set. A row call after the digest
+re-fetches nothing per PR: it reads through the fleet cache the digest just
+wrote.
+
+That is **projection, not a query language**, and it does not undo the paragraph
+above. The selectors name the digest's own row lists and one `nextAction`; none
+of them groups, sorts or computes anything, so the digest stays the opening call
+and stays the thing a run reasons from. What changed is that the rows behind its
+counts are now reachable without an interpreter, which leaves `--json` as the
+escape hatch it was meant to be — and taken **with** a selector, so the escape
+hatch returns the rows rather than the whole document.
 
 Two of these are not merely round trips. `reviewDecision` was already in
 `WORKLIST_DETAIL_FIELDS` and thrown away, so every run re-asked GitHub for it
@@ -3662,7 +3875,9 @@ design question about that component and its message is the finding to quote, a
 
 1. `campaign-run.sh` asserts the environment before the model starts
    (`preflight --gh-auth --sol-shell`); unsatisfied ends the run.
-2. Load the whole opening state in one call (`state-load --json`).
+2. Load the whole opening state in one call (`state-load`, whose default output
+   is the digest; rows come from its `--action` / `--actionable` / `--approved`
+   / `--audit` selectors, never from `jq` over `--json`).
 3. Cheaply dedup against open PRs (single `jq` pass; byte-grepping the PR JSON
    is forbidden).
 4. For each tractable, genuinely-uncovered issue: clone, branch, implement a

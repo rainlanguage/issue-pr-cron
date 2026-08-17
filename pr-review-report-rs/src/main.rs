@@ -297,13 +297,357 @@ fn classify_gh_failure(head: Option<&HttpHead>, body: &[u8]) -> GhFailure {
         .unwrap_or(GhFailure::Unknown)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// `gh` call timing — off unless PRR_GH_TIMING is set.
+//
+// Every `gh` this binary runs goes through `gh_output`, so the whole surface is covered from one
+// place and no subcommand has to opt in. What it answers is per-call latency: how long a run spent
+// in `gh`, and which calls that was.
+//
+// IT WRITES TO STDERR AND NOWHERE ELSE. On the MCP server stdout IS the JSON-RPC stream and a line
+// there is a protocol violation, so the timing shares the channel `gh_run` already folds child
+// output into.
+//
+// `std::time::Instant` and a Vec are the whole mechanism: the question is wall time per child
+// process, which needs no span tree and no subscriber.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Set to any value other than empty or `0` to time every `gh` call.
+const GH_TIMING_ENV: &str = "PRR_GH_TIMING";
+
+/// Marks every line this instrumentation writes, so a run's timing greps out of a log that also
+/// carries gh's own stderr.
+const GH_TIMING_PREFIX: &str = "gh-timing:";
+
+/// How many of a span's slowest calls the summary names.
+const GH_TIMING_SLOWEST: usize = 3;
+
+/// Leading argv words a label keeps, how many subject tokens follow them, and the longest token it
+/// will quote as one.
+const GH_LABEL_WORDS: usize = 4;
+const GH_LABEL_SUBJECTS: usize = 3;
+const GH_LABEL_TOKEN_MAX: usize = 60;
+
+/// Flags a subcommand word can sit BEHIND. [`gh_api_result`] puts `--include` in front of the api
+/// path, so stopping the leading run at the first `-` labels every `gh api` call `api` and nothing
+/// more. Only value-LESS flags belong here: skipping one that takes a value admits the value as a
+/// subcommand word.
+const GH_LABEL_SKIP_FLAGS: [&str; 1] = ["--include"];
+
+/// Is the instrumentation on? Read per call rather than cached, so the answer is the environment
+/// the process actually has.
+fn gh_timing_enabled() -> bool {
+    match std::env::var(GH_TIMING_ENV) {
+        Ok(v) => !v.is_empty() && v != "0",
+        Err(_) => false,
+    }
+}
+
+/// One timed `gh` invocation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct GhTiming {
+    label: String,
+    ms: u64,
+}
+
+/// Timed calls not yet summarised. A summary DRAINS what it reports, which is what bounds this in
+/// the MCP server — one process serving many tool calls, each of which reports and clears.
+static GH_TIMINGS: std::sync::Mutex<Vec<GhTiming>> = std::sync::Mutex::new(Vec::new());
+
+/// PURE: does this argv token name the SUBJECT of a call — a slug or api path (`repos/o/r/…`), or
+/// a graphql operand (`owner=o`, `repo=r`, `num=1`)?
+///
+/// One short word carrying the separator. The whitespace test excludes
+/// `-H 'Accept: application/vnd.github.raw'`; the length test excludes a `query=` body and any
+/// other operand too long to be an identifier.
+fn gh_subject_token(arg: &str) -> bool {
+    (arg.contains('/') || arg.contains('='))
+        && !arg.starts_with('-')
+        && arg.len() <= GH_LABEL_TOKEN_MAX
+        && !arg.chars().any(char::is_whitespace)
+}
+
+/// PURE: the part of a `gh` argv that says WHICH call this was.
+///
+/// Never the whole array — a `--json` field list or a `-f body=…` is most of the argv and none of
+/// it distinguishes one call from another. The leading run of words carries `pr view <slug> <n>`
+/// and `api graphql`; a subject reached through a flag (`-R <slug>`, `-f owner=<o>`) comes from the
+/// second pass, which runs only where the words named no path — a positional slug is the whole
+/// subject and a `-f body=…` beside it is not part of it.
+fn gh_call_label(args: &[&str]) -> String {
+    let mut words: Vec<&str> = Vec::new();
+    for arg in args.iter().copied() {
+        if GH_LABEL_SKIP_FLAGS.contains(&arg) {
+            continue;
+        }
+        if arg.starts_with('-') || words.len() == GH_LABEL_WORDS {
+            break;
+        }
+        words.push(arg);
+    }
+    if !words.iter().any(|w| w.contains('/')) {
+        words.extend(
+            args.iter()
+                .copied()
+                .filter(|a| gh_subject_token(a))
+                .take(GH_LABEL_SUBJECTS),
+        );
+    }
+    if words.is_empty() {
+        "gh".to_string()
+    } else {
+        words.join(" ")
+    }
+}
+
+/// PURE: the per-call line.
+fn gh_timing_line(t: &GhTiming) -> String {
+    format!("{GH_TIMING_PREFIX} {}ms {}", t.ms, t.label)
+}
+
+/// PURE: the summary lines for one span, slowest first, or nothing at all for a span that ran no
+/// `gh`. Silence is what keeps an instrumented run that made no calls quiet.
+fn gh_timing_summary(span: &str, calls: &[GhTiming]) -> Vec<String> {
+    if calls.is_empty() {
+        return Vec::new();
+    }
+    let total: u64 = calls.iter().map(|c| c.ms).sum();
+    let mut lines = vec![format!(
+        "{GH_TIMING_PREFIX} {span}: {} calls, {total}ms in gh",
+        calls.len()
+    )];
+    let mut slowest: Vec<&GhTiming> = calls.iter().collect();
+    // Stable sort: equal timings stay in the order they ran.
+    slowest.sort_by_key(|c| std::cmp::Reverse(c.ms));
+    lines.extend(
+        slowest
+            .iter()
+            .take(GH_TIMING_SLOWEST)
+            .map(|c| format!("{GH_TIMING_PREFIX} {span}: slowest {}ms {}", c.ms, c.label)),
+    );
+    lines
+}
+
+/// Where the current span starts. Every call after this mark belongs to it.
+fn gh_timing_mark() -> usize {
+    GH_TIMINGS.lock().map_or(0, |v| v.len())
+}
+
+/// Report a call as it lands and hold it for the span summary.
+fn gh_timing_record(label: String, elapsed: std::time::Duration) {
+    let t = GhTiming {
+        label,
+        ms: u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+    };
+    eprintln!("{}", gh_timing_line(&t));
+    if let Ok(mut v) = GH_TIMINGS.lock() {
+        v.push(t);
+    }
+}
+
+/// Summarise the calls made since `mark` and forget them.
+fn gh_timing_report(span: &str, mark: usize) {
+    let calls = match GH_TIMINGS.lock() {
+        Ok(mut v) if mark <= v.len() => v.split_off(mark),
+        _ => return,
+    };
+    for line in gh_timing_summary(span, &calls) {
+        eprintln!("{line}");
+    }
+}
+
+/// The span name for a whole CLI invocation: the subcommand as it was typed.
+fn gh_timing_process_span() -> String {
+    std::env::args()
+        .nth(1)
+        .filter(|a| !a.starts_with('-'))
+        .unwrap_or_else(|| "run".to_string())
+}
+
+/// A `gh` command over `args`, un-run.
+fn gh_command(args: &[&str]) -> Command {
+    let mut cmd = Command::new("gh");
+    cmd.args(args);
+    cmd
+}
+
+/// Run a `gh` command to completion, timed when [`GH_TIMING_ENV`] is set. THE chokepoint: every
+/// `gh` invocation in this binary is one of these, so what is measured here is the whole of the
+/// time this process spends in `gh`.
+fn gh_output(mut cmd: Command, args: &[&str]) -> std::io::Result<std::process::Output> {
+    if !gh_timing_enabled() {
+        return cmd.output();
+    }
+    let started = std::time::Instant::now();
+    let out = cmd.output();
+    // A spawn failure is recorded too — an absent `gh` then reads as calls that cost nothing,
+    // rather than as a run that made no calls.
+    gh_timing_record(gh_call_label(args), started.elapsed());
+    out
+}
+
+/// [`gh_output`] for the callers that need no control over the command.
+fn gh_exec(args: &[&str]) -> std::io::Result<std::process::Output> {
+    gh_output(gh_command(args), args)
+}
+
+#[cfg(test)]
+mod gh_timing_tests {
+    use super::*;
+
+    fn t(label: &str, ms: u64) -> GhTiming {
+        GhTiming {
+            label: label.to_string(),
+            ms,
+        }
+    }
+
+    /// The shape the motivating call has: subcommand words then the subject, positionally.
+    #[test]
+    fn a_label_keeps_the_subcommand_and_the_subject_and_drops_the_field_list() {
+        assert_eq!(
+            gh_call_label(&[
+                "pr",
+                "view",
+                "rainlanguage/rain.orderbook",
+                "123",
+                "--json",
+                "headRefOid,labels,comments",
+            ]),
+            "pr view rainlanguage/rain.orderbook 123"
+        );
+    }
+
+    /// A subject reached through a flag still lands in the label — otherwise every
+    /// `-R <slug>` call and every `api --include <path>` is attributed to its verb alone.
+    #[test]
+    fn a_subject_behind_a_flag_is_still_named() {
+        assert_eq!(
+            gh_call_label(&[
+                "pr",
+                "view",
+                "12",
+                "-R",
+                "rainlanguage/rainix",
+                "--json",
+                "comments"
+            ]),
+            "pr view 12 rainlanguage/rainix"
+        );
+        assert_eq!(
+            gh_call_label(&[
+                "api",
+                "--include",
+                "repos/rainlanguage/rainix/issues/9/comments"
+            ]),
+            "api repos/rainlanguage/rainix/issues/9/comments"
+        );
+    }
+
+    /// The shape EVERY [`gh_api_result`] call has. `--include` sits in front of the subcommand
+    /// word, and the subject is in the `-f` operands rather than in a path, so a label that stopped
+    /// at the first flag would read `api` for a graphql probe and `api` for a REST read alike.
+    #[test]
+    fn a_graphql_call_is_told_apart_from_the_rest_of_the_api() {
+        let query = "query=query($owner:String!,$repo:String!,$num:Int!)\
+                     {repository(owner:$owner,name:$repo){pullRequest(number:$num){number}}}";
+        assert_eq!(
+            gh_call_label(&[
+                "api",
+                "--include",
+                "graphql",
+                "-f",
+                query,
+                "-f",
+                "owner=rainlanguage",
+                "-f",
+                "repo=rain.orderbook",
+                "-F",
+                "num=123",
+            ]),
+            "api graphql owner=rainlanguage repo=rain.orderbook num=123"
+        );
+    }
+
+    /// A header value and a query body both carry slashes and neither identifies a call.
+    #[test]
+    fn a_flag_value_that_is_not_a_subject_stays_out() {
+        let query = "q=a/b".repeat(40);
+        assert_eq!(
+            gh_call_label(&[
+                "api",
+                "-H",
+                "Accept: application/vnd.github.raw",
+                "-f",
+                query.as_str(),
+            ]),
+            "api"
+        );
+    }
+
+    #[test]
+    fn a_label_is_bounded_and_never_empty() {
+        assert_eq!(gh_call_label(&["a", "b", "c", "d", "e", "f"]), "a b c d");
+        assert_eq!(gh_call_label(&[]), "gh");
+        assert_eq!(gh_call_label(&["--version"]), "gh");
+    }
+
+    /// A span that ran no `gh` prints nothing, which is what lets an instrumented run stay quiet
+    /// where there is nothing to attribute.
+    #[test]
+    fn a_span_with_no_calls_has_no_summary() {
+        assert!(gh_timing_summary("next_design", &[]).is_empty());
+    }
+
+    /// Count and total are over EVERY call; only the naming is limited to the slowest few.
+    #[test]
+    fn a_summary_counts_every_call_and_names_the_slowest_few() {
+        let calls = [
+            t("search issues", 5600),
+            t("pr view a/b 1", 5300),
+            t("pr view a/b 2", 100),
+            t("pr view a/b 3", 4000),
+        ];
+        assert_eq!(
+            gh_timing_summary("next_design", &calls),
+            vec![
+                "gh-timing: next_design: 4 calls, 15000ms in gh",
+                "gh-timing: next_design: slowest 5600ms search issues",
+                "gh-timing: next_design: slowest 5300ms pr view a/b 1",
+                "gh-timing: next_design: slowest 4000ms pr view a/b 3",
+            ]
+        );
+    }
+
+    /// Equal timings read in the order they ran, so the summary of a uniform run is not a shuffle.
+    #[test]
+    fn ties_keep_call_order() {
+        let calls = [t("first", 7), t("second", 7)];
+        assert_eq!(
+            gh_timing_summary("s", &calls)[1..],
+            [
+                "gh-timing: s: slowest 7ms first".to_string(),
+                "gh-timing: s: slowest 7ms second".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_call_line_carries_the_prefix_the_summary_uses() {
+        assert_eq!(
+            gh_timing_line(&t("pr view a/b 1", 2713)),
+            "gh-timing: 2713ms pr view a/b 1"
+        );
+    }
+}
+
 /// Run `gh` and parse stdout as JSON, with a TYPED failure.
 ///
 /// The classes are only as good as the structure the invocation returns: a `gh pr view` failure is
 /// [`GhFailure::Unknown`] and can be nothing else, because an empty stdout supports nothing else.
 /// Use [`gh_api_result`] where the class has to be known.
 fn gh_result(args: &[&str]) -> Result<Value, GhFailure> {
-    let Ok(out) = Command::new("gh").args(args).output() else {
+    let Ok(out) = gh_exec(args) else {
         // `gh` never ran: there is no response, so there is nothing typed to read.
         return Err(GhFailure::Unknown);
     };
@@ -1118,7 +1462,7 @@ fn gh_output_report(out: &std::process::Output) -> (bool, String) {
 /// Capturing it keeps both invariants at once: the protocol stream stays ours, and the URL is read
 /// rather than leaked into a log.
 fn gh_capture(args: &[&str]) -> Result<String, String> {
-    match Command::new("gh").args(args).output() {
+    match gh_exec(args) {
         Ok(out) => {
             let (ok, text) = gh_output_report(&out);
             if ok {
@@ -1134,7 +1478,7 @@ fn gh_capture(args: &[&str]) -> Result<String, String> {
 /// Run gh for a WRITE that returns no JSON (label/comment/edit); true on success. The seam that keeps
 /// `--record-verdict`'s logic testable without network.
 fn gh_run(args: &[&str]) -> bool {
-    match Command::new("gh").args(args).output() {
+    match gh_exec(args) {
         Ok(out) => {
             let (ok, text) = gh_output_report(&out);
             if !text.is_empty() {
@@ -2295,6 +2639,406 @@ fn pr_exists_probe(slug: &str, num: u64) -> Result<Value, GhFailure> {
     ])
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// THE QUEUE IN ONE QUERY (#314)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// `presentable_queue` used to answer a one-PR question with ~29 `gh` subprocesses: one
+// `gh search prs`, then a `gh pr view` plus a review-threads `gh api graphql` per candidate over
+// [`QUEUE_FETCH_CONCURRENCY`] workers, plus the org-wide `archived_repos()` walk. MEASURED at 41-56s
+// of dead time before anything reached the human, and the concurrency was COUNTERPRODUCTIVE: 8
+// concurrent full-field `gh pr view` took 19.1s wall against 3.0s for one, because a burst from one
+// token draws the secondary limit and `comments` is a heavy field.
+//
+// Everything those calls asked for is one `search(type:ISSUE)` selection set away, and GitHub bills
+// it as FOUR of 5000 rate-limit points. The two windows this opens are the two things that must be
+// handled rather than assumed:
+//
+// * `comments(last:100)` is a WINDOW where `gh pr view --json comments` reads all of them. A PR with
+//   more than 100 comments after its last `ai:vetter` comment would lose the verdict and read as
+//   un-vetted — a PR silently dropped out of the human's queue. [`comments_windowed_out`] names that
+//   case exactly (truncated AND no trusted vetter comment in the window) and it falls back to the
+//   per-PR fetch, so a window can never spell "no verdict".
+// * `reviewThreads(first:100)` is the same shape. A non-zero unresolved count inside the window is
+//   already decisive (the PR is the producer's work either way), so only "all 100 resolved and there
+//   are more" is unknown — and that falls back to the paginated [`unresolved_threads`] walk.
+//
+// And `mergeable` is computed LAZILY by GitHub: a cold batch ask answers `UNKNOWN` where a per-PR
+// view GitHub had already warmed answers `MERGEABLE`. [`presentable_state`] buckets `UNKNOWN` as
+// not-presentable, so a cold answer would silently shorten the human's queue. See
+// [`settle_merge_unknown`].
+//
+// `archived_repos()` is GONE from this path, not because the withholding is: `repository{isArchived}`
+// rides on the same query, read live off the repository object rather than out of a search index, and
+// [`archived_from_nodes`] builds the same [`ArchivedRepos`] set [`withhold_archived`] already takes.
+// Unreadable archived state is still [`GhFailure::Malformed`] and still ABORTS (#206/#199) — it is
+// the org-wide paged walk that is redundant here, never the guard.
+
+/// Every field the queue's gate chain and both its consumers read, off ONE request.
+///
+/// The selection set is not a superset of what is needed — each entry has a reader:
+/// `mergeable`/`statusCheckRollup`/`reviewDecision` are [`presentable_state`]'s inputs,
+/// `headRefOid`+`comments` are [`vetted_at_head`]'s and [`cost_from_comment`]'s,
+/// `title`/`body`/`baseRefName`/`labels`/`url`/`number` are what `next_ready` renders (`body` is the
+/// deploy-marker read in [`requires_redeploy`]), `reviewThreads` is the open-threads gate,
+/// `isDraft` is the candidate filter and `repository{nameWithOwner isArchived}` is the #206
+/// withholding.
+///
+/// `commits(last:1)` is the ONLY way to reach a PR's check rollup in GraphQL, and its
+/// `contexts` nodes carry the `name`/`status`/`conclusion`/`context`/`state` fields verbatim in the
+/// shape `gh pr view --json statusCheckRollup` hands [`classify_ci`] and [`failing_check_names`] —
+/// so the rollup is PASSED THROUGH rather than re-derived from the aggregate `state`. The aggregate
+/// would have lost `failingChecks` and `checkCount`, which `next_ready` reports.
+///
+/// MEASURED against the live 14-PR queue: 4.1s, cost 4/5000, nodeCount 40,200 of the 500,000 ceiling
+/// — and nodeCount is computed from the `first:`/`last:` arguments, not the rows returned, so 40,200
+/// is already the figure for a FULL 100-PR page.
+const QUEUE_SEARCH_QUERY: &str = "query($q:String!,$c:String){\
+     search(query:$q,type:ISSUE,first:100,after:$c){\
+     pageInfo{hasNextPage endCursor}\
+     nodes{... on PullRequest{\
+     number url title body baseRefName headRefOid mergeable reviewDecision isDraft \
+     repository{nameWithOwner isArchived}\
+     labels(first:100){nodes{name}}\
+     comments(last:100){totalCount nodes{author{login} body}}\
+     reviewThreads(first:100){nodes{isResolved}pageInfo{hasNextPage}}\
+     commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){pageInfo{hasNextPage}\
+     nodes{__typename ... on CheckRun{name status conclusion} ... on StatusContext{context state}}}}}}}\
+     }}}}";
+
+/// PURE: the search qualifiers, from the ONE org scope every other search here reads.
+///
+/// The label is QUOTED because its own name contains the qualifier separator: bare `label:ai:ready`
+/// is a different query from `label:"ai:ready"`, and the difference is silent — it returns rows.
+fn queue_search_scope(orgs: &str) -> String {
+    format!("{} label:\"ai:ready\"", org_search_query(orgs))
+}
+
+/// PURE: one page of [`QUEUE_SEARCH_QUERY`] — its PullRequest nodes and the cursor after it.
+///
+/// A response whose shape cannot be read is [`GhFailure::Malformed`], NEVER an empty page: an empty
+/// page reads as "no `ai:ready` PRs", which is the falsely-empty queue the search-layer abort has
+/// refused since the 1-vs-75 failure. `hasNextPage` with no `endCursor` is malformed for the same
+/// reason [`archived_repos_page`] treats it so — reading it as the end truncates in the direction
+/// that hides work.
+fn queue_search_page(v: &Value) -> Result<(Vec<Value>, Option<String>), GhFailure> {
+    let Some(search) = v.pointer("/data/search") else {
+        return Err(GhFailure::Malformed);
+    };
+    let Some(nodes) = search.get("nodes").and_then(|n| n.as_array()) else {
+        return Err(GhFailure::Malformed);
+    };
+    // An `... on PullRequest` fragment over a type:ISSUE search yields `{}` for any hit that is not
+    // a PR. `is:pr` means GitHub returns none, and an empty object is dropped rather than carried as
+    // a numberless candidate.
+    let prs: Vec<Value> = nodes
+        .iter()
+        .filter(|n| n.get("number").is_some())
+        .cloned()
+        .collect();
+    let has_next = search
+        .pointer("/pageInfo/hasNextPage")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !has_next {
+        return Ok((prs, None));
+    }
+    let Some(cursor) = search
+        .pointer("/pageInfo/endCursor")
+        .and_then(|c| c.as_str())
+        .filter(|c| !c.is_empty())
+    else {
+        return Err(GhFailure::Malformed);
+    };
+    Ok((prs, Some(cursor.to_string())))
+}
+
+/// LIVE: every `ai:ready` open PR in the org scope, with every field the queue needs, cursor-walked.
+///
+/// TYPED failure, not `Option`: this one call now carries what ~29 did, so an `Unauthorized` here is
+/// the same token-wide fact [`queue_abort`] aborts on one candidate down (#129), and a `RateLimited`
+/// page is retried by [`gh_retrying`] rather than counted.
+///
+/// The `scope` is an ARGUMENT rather than read here, so the org scope is named in
+/// [`presentable_queue`] — beside the withholding it obliges. #206's gate is stated over the SOURCE
+/// ("every item that builds an org-scoped search must also withhold archived repos"), and an
+/// enumeration whose scope call has moved into a helper is an enumeration that gate can no longer
+/// see.
+fn queue_search_nodes(scope: &str) -> Result<Vec<Value>, GhFailure> {
+    let q = format!("q={scope}");
+    let query = format!("query={QUEUE_SEARCH_QUERY}");
+    let mut nodes: Vec<Value> = Vec::new();
+    let mut cursor: Option<String> = None;
+    for _ in 0..SEARCH_MAX_PAGES {
+        let mut args: Vec<&str> = vec!["graphql", "-f", &query, "-f", &q];
+        let cf;
+        if let Some(c) = cursor.as_deref() {
+            cf = format!("c={c}");
+            args.push("-f");
+            args.push(&cf);
+        }
+        let v = gh_retrying(|| gh_api_result(&args))?;
+        let (page, next) = queue_search_page(&v)?;
+        nodes.extend(page);
+        let Some(next) = next else {
+            return Ok(nodes);
+        };
+        cursor = Some(next);
+    }
+    Ok(nodes)
+}
+
+/// PURE: the message a failed queue search ABORTS with.
+///
+/// `Unauthorized` keeps #129's wording because it is #129's fact — the token cannot read the
+/// candidates, and one query answering for all of them does not make that a per-candidate problem.
+/// Everything else is the falsely-empty-queue refusal the search layer has always given.
+fn queue_search_error(f: GhFailure) -> String {
+    match f {
+        GhFailure::Unauthorized => "error: `gh` is not authorised to read the ai:ready candidates \
+             (bad credentials / insufficient scopes / suspended actor) — aborting rather than \
+             report a falsely-short queue"
+            .to_string(),
+        _ => format!(
+            "error: the ai:ready queue search failed ({f:?}) — aborting rather than report a \
+             falsely-empty queue"
+        ),
+    }
+}
+
+/// PURE: the archived set, read off the candidates' OWN repository objects.
+///
+/// This replaces the org-wide `archived_repos()` walk ON THIS PATH ONLY — the flag, leak and design
+/// enumerations still take theirs from the paged query, because their hits are not all PRs of this
+/// shape. It is not a weakening: `isArchived` here is read live off the repository object in the
+/// same response, and it covers exactly the repos the candidates are in rather than the whole org.
+///
+/// A node with no readable boolean is [`GhFailure::Malformed`], so unreadable archived-state still
+/// ABORTS (#199) instead of collapsing to "not archived" — the false negative that puts a frozen row
+/// back at the head of the human's queue.
+fn archived_from_nodes(nodes: &[Value]) -> Result<ArchivedRepos, GhFailure> {
+    let mut set = std::collections::BTreeSet::new();
+    for n in nodes {
+        let Some(slug) = n
+            .pointer("/repository/nameWithOwner")
+            .and_then(|s| s.as_str())
+        else {
+            return Err(GhFailure::Malformed);
+        };
+        let Some(archived) = n.pointer("/repository/isArchived").and_then(Value::as_bool) else {
+            return Err(GhFailure::Malformed);
+        };
+        if archived {
+            set.insert(slug.to_ascii_lowercase());
+        }
+    }
+    Ok(ArchivedRepos(set))
+}
+
+/// PURE: one search node, in the shape [`queue_pr_detail`] returns — so EVERY downstream reader
+/// (`candidate_outcome`, `vetted_at_head`, `next_ready_row`, `requires_redeploy`, `classify_ci`,
+/// `failing_check_names`) is untouched by where the document came from, and the per-PR fetch stays a
+/// drop-in fallback rather than a second shape.
+///
+/// Two connections are flattened to the arrays `gh pr view --json` produces: `labels` to
+/// `[{name}]`, `comments` to `[{author:{login}, body}]`. The rollup is the `contexts` nodes as they
+/// arrive — GraphQL spells `name`/`status`/`conclusion`/`context`/`state` exactly as gh does, and
+/// gh's own array is the same connection with the same 100-entry cap.
+///
+/// A missing rollup (no configured checks) becomes an EMPTY array, which is [`Ci::NoChecks`] —
+/// `null` would be too, and an array keeps one type for the field.
+fn queue_detail_from_node(node: &Value) -> Value {
+    let comments: Vec<Value> = node
+        .pointer("/comments/nodes")
+        .and_then(|n| n.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let labels: Vec<Value> = node
+        .pointer("/labels/nodes")
+        .and_then(|n| n.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let rollup: Vec<Value> = node
+        .pointer("/commits/nodes/0/commit/statusCheckRollup/contexts/nodes")
+        .and_then(|n| n.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let field = |k: &str| node.get(k).cloned().unwrap_or(Value::Null);
+    serde_json::json!({
+        "number": field("number"),
+        "url": field("url"),
+        "title": field("title"),
+        "body": field("body"),
+        "baseRefName": field("baseRefName"),
+        "headRefOid": field("headRefOid"),
+        "mergeable": field("mergeable"),
+        "reviewDecision": field("reviewDecision"),
+        "isDraft": field("isDraft"),
+        "repository": field("repository"),
+        "labels": labels,
+        "comments": comments,
+        "statusCheckRollup": rollup,
+    })
+}
+
+/// PURE: did the `comments(last:100)` WINDOW cost this PR its verdict?
+///
+/// True only when both halves hold: GitHub says there are more comments than the window returned,
+/// AND no trusted `🤖 ai:vetter` comment is inside it. Either half alone is not the hazard — a
+/// truncated window that still contains a vetter comment contains the LAST one (any later verdict
+/// would be later still, and the window is the tail), and an untruncated window with no vetter
+/// comment is a genuinely un-vetted PR.
+///
+/// The whole point is that "the verdict is outside the window" and "there is no verdict" must not be
+/// the same answer: the first is a fetch that has to be redone, the second is the vetter's work.
+///
+/// The truncation half is [`whole_connection`], the guard the other batched reads rest on, rather
+/// than a second copy of `totalCount > nodes.len()` — so a connection missing either field reads as
+/// unread here too, and pays a refetch instead of passing as a complete window.
+fn comments_windowed_out(node: &Value, detail: &Value) -> bool {
+    let whole = node.get("comments").and_then(whole_connection).is_some();
+    !whole && last_vetter_comment(detail).is_none()
+}
+
+/// PURE: the unresolved-thread count the batch can answer for, or `None` when only a paginated walk
+/// can.
+///
+/// `Some(n)` for any non-zero count inside the window — one unresolved thread routes the PR to
+/// [`CandidateOutcome::OpenThreads`] whatever the rest of the pages hold, so the window is decisive.
+/// `None` ONLY for all-resolved-so-far with more pages to come: that is the case where the window
+/// says zero and the truth may not be, and a zero is the one answer that reaches a human.
+fn threads_from_node(node: &Value) -> Option<u64> {
+    let nodes = node.pointer("/reviewThreads/nodes")?.as_array()?;
+    let unresolved = nodes
+        .iter()
+        .filter(|t| t.get("isResolved").and_then(Value::as_bool) == Some(false))
+        .count() as u64;
+    if unresolved > 0 {
+        return Some(unresolved);
+    }
+    let has_next = node
+        .pointer("/reviewThreads/pageInfo/hasNextPage")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if has_next {
+        None
+    } else {
+        Some(0)
+    }
+}
+
+/// PURE: the rows whose FATE turns on a `mergeable` GitHub has not computed.
+///
+/// Not "every UNKNOWN row" — only the ones [`presentable_state`] would call presentable if the
+/// answer were `MERGEABLE`. A red, pending or already-approved PR never consults `mergeable`, so
+/// re-asking for it would spend a request on a row whose bucket cannot move.
+fn merge_unsettled(details: &[Value]) -> Vec<usize> {
+    details
+        .iter()
+        .enumerate()
+        .filter(|(_, d)| {
+            if parse_merge(d.get("mergeable").and_then(|v| v.as_str())) != Merge::Unknown {
+                return false;
+            }
+            let ci = classify_ci(d.get("statusCheckRollup").unwrap_or(&Value::Null));
+            let rev = d
+                .get("reviewDecision")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty());
+            presentable_state(ci, Merge::Mergeable, rev) == PresentState::Presentable
+        })
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// PURE: copy a settled `mergeable` from a fresh read onto the rows still holding `UNKNOWN`,
+/// matched by URL. Returns how many rows settled.
+///
+/// ONLY the `mergeable` field moves. Everything else in the row was read in one consistent snapshot
+/// and the re-ask exists to answer one question; splicing a whole second document in would let a
+/// row's CI, comments and threads come from a different instant than the ranking that used them.
+///
+/// A fresh row that is STILL `UNKNOWN` changes nothing — it is not a settled answer, and writing it
+/// back would be indistinguishable from having settled.
+fn apply_settled_merge(details: &mut [Value], fresh: &[Value]) -> usize {
+    let mut settled = 0;
+    for d in details.iter_mut() {
+        if parse_merge(d.get("mergeable").and_then(|v| v.as_str())) != Merge::Unknown {
+            continue;
+        }
+        let Some(url) = d.get("url").and_then(|u| u.as_str()) else {
+            continue;
+        };
+        let Some(f) = fresh
+            .iter()
+            .find(|f| f.get("url").and_then(|u| u.as_str()) == Some(url))
+        else {
+            continue;
+        };
+        let m = f.get("mergeable").and_then(|v| v.as_str());
+        if parse_merge(m) == Merge::Unknown {
+            continue;
+        }
+        d["mergeable"] = Value::from(m.unwrap_or("UNKNOWN"));
+        settled += 1;
+    }
+    settled
+}
+
+/// Re-asks a batch whose `mergeable` came back `UNKNOWN` gets, the first ask excluded.
+///
+/// GitHub computes mergeability LAZILY, and the ask itself is what schedules the computation. The
+/// old per-PR `gh pr view` mostly found it already warm because something had asked recently; a cold
+/// batch ask is the case that returns `UNKNOWN` — and one re-ask a moment later is the answer,
+/// because the first ask started the work.
+const MERGE_SETTLE_RETRIES: usize = 2;
+
+/// How long to give GitHub between the ask that schedules the mergeability computation and the one
+/// that reads it. Short enough that two of them stay well inside the ~4s the query itself costs.
+const MERGE_SETTLE_WAIT: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// Settle the rows whose fate turns on an uncomputed `mergeable`, in place.
+///
+/// PURE given `refetch` and `pause`, which is what makes the retry POLICY testable without a
+/// network: that a settled answer is taken, that a row nobody re-asks for stays as it was, that the
+/// budget is finite, and that a failure PROPAGATES rather than being swallowed into a shortened
+/// queue (an `Unauthorized` re-ask is the same token-wide fact [`queue_abort`] aborts on).
+///
+/// A row still `UNKNOWN` when the budget runs out is LEFT `UNKNOWN` — [`presentable_state`] buckets
+/// it as `MergeUnknown` and the human is told the count. Fail-closed is the existing contract for an
+/// unconfirmed merge and this does not relax it; it only stops a COLD answer being mistaken for one.
+fn settle_merge_unknown(
+    details: &mut [Value],
+    retries: usize,
+    mut refetch: impl FnMut() -> Result<Vec<Value>, GhFailure>,
+    mut pause: impl FnMut(),
+) -> Result<(), GhFailure> {
+    for _ in 0..retries {
+        if merge_unsettled(details).is_empty() {
+            return Ok(());
+        }
+        pause();
+        let fresh = refetch()?;
+        apply_settled_merge(details, &fresh);
+    }
+    Ok(())
+}
+
+/// ONE `ai:ready` candidate as the batch query answered for it: the identity the gates need, the
+/// `gh pr view`-shaped detail, and the two places the batch's WINDOWS cannot answer and a per-PR
+/// fetch has to.
+struct QueueCandidate {
+    slug: String,
+    num: u64,
+    url: String,
+    detail: Value,
+    /// The verdict may be outside `comments(last:100)` — see [`comments_windowed_out`].
+    refetch_detail: bool,
+    /// The unresolved-thread count, or `None` when only the paginated walk can answer — see
+    /// [`threads_from_node`].
+    threads: Option<u64>,
+}
+
 /// The `ai:ready` PRs presentable for a human decision RIGHT NOW, ALREADY in the one cheapest-first
 /// order, plus the whole-queue counts.
 ///
@@ -2303,49 +3047,31 @@ fn pr_exists_probe(slug: &str, num: u64) -> Result<Value, GhFailure> {
 /// unresolved threads — and sorts with [`queue_order`] BEFORE returning, so neither consumer sorts
 /// and neither can hold a different opinion about which PR is next.
 ///
+/// ONE `gh api graphql` answers the whole thing (#314). The gate chain is untouched:
+/// [`candidate_outcome`] still takes its two fetchers, and they are now closures over the batch that
+/// reach the network ONLY where a window could not answer.
+///
 /// `Err` rather than `exit`: an MCP tool must answer a failed enumeration with a refusal the caller
 /// reads, not by killing the server.
 fn presentable_queue() -> Result<(Vec<PresentablePr>, QueueCounts), String> {
     // Candidates come from the `ai:ready` LABEL, NOT `gh search --checks success`. That qualifier is
     // unreliable — the identical query returned 93 then 203 open PRs minutes apart, which collapsed a
-    // 75-deep review queue to "1". Label search is reliable; CI/mergeability is then verified per-PR
-    // below (statusCheckRollup + mergeable), never trusted from the search layer.
+    // 75-deep review queue to "1". Label search is reliable; CI/mergeability is then verified from
+    // each PR's own fields (statusCheckRollup + mergeable), never trusted from the search layer.
     // Org scope comes from ORGS (single source: cron.env), NOT a hardcoded owner list, so the
     // queue covers exactly the orgs the prompts do — change scope in one place.
-    let mut search_args: Vec<String> = vec!["search".to_string(), "prs".to_string()];
-    search_args.extend(org_owner_args());
-    search_args.extend(
-        [
-            "--state",
-            "open",
-            "--label",
-            "ai:ready",
-            "--limit",
-            "1000",
-            "--json",
-            "url,number,repository,isDraft,labels",
-        ]
-        .iter()
-        .map(|s| s.to_string()),
-    );
-    let search_ref: Vec<&str> = search_args.iter().map(String::as_str).collect();
-    let Some(val) = gh_json(&search_ref) else {
-        return Err("error: `gh search prs --label ai:ready` failed (transient API error / auth?) — aborting rather than report a falsely-empty queue".to_string());
-    };
-    let Some(arr) = val.as_array() else {
-        return Err("error: `gh search prs` returned non-array JSON — aborting".to_string());
-    };
+    let scope = queue_search_scope(&std::env::var("ORGS").unwrap_or_default());
+    let nodes = queue_search_nodes(&scope).map_err(queue_search_error)?;
     // An `ai:ready` PR in an ARCHIVED repo cannot be merged, relabelled or commented on, so it is
-    // not presentable however green it is (#206). Withheld BEFORE the per-PR fetch below, which
-    // costs a `gh pr view` + a threads query per candidate — paying that for a row no ruling can
-    // reach is the second cost of the same bug.
-    let archived_set = archived_repos().map_err(archived_read_error)?;
-    let (arr, frozen) = withhold_archived(arr.clone(), &archived_set, hit_slug);
+    // not presentable however green it is (#206). The archived set now comes off the candidates'
+    // own `repository{isArchived}` in the same response, so the withholding costs no request at all.
+    let archived_set = archived_from_nodes(&nodes).map_err(archived_read_error)?;
+    let (nodes, frozen) = withhold_archived(nodes, &archived_set, hit_slug);
 
-    // Candidate filter (from the search JSON, no extra call): drop drafts. No `human:*` label
+    // Candidate filter (from the same response, no extra call): drop drafts. No `human:*` label
     // parks a PR any more (#133/#230) — a live human decision is a native review or a ruling pinned
-    // to the head, neither of which a search result carries, so every survivor is re-checked per-PR.
-    let candidates: Vec<(String, u64, String)> = arr
+    // to the head, neither of which a search result carries, so every survivor is re-checked below.
+    let mut candidates: Vec<QueueCandidate> = nodes
         .iter()
         .filter(|p| !p.get("isDraft").and_then(|x| x.as_bool()).unwrap_or(false))
         .filter_map(|p| {
@@ -2356,19 +3082,49 @@ fn presentable_queue() -> Result<(Vec<PresentablePr>, QueueCounts), String> {
                 .unwrap_or("")
                 .to_string();
             let slug = pr_slug(&url)?;
-            Some((slug, num, url))
+            let detail = queue_detail_from_node(p);
+            Some(QueueCandidate {
+                slug,
+                num,
+                url,
+                refetch_detail: comments_windowed_out(p, &detail),
+                threads: threads_from_node(p),
+                detail,
+            })
         })
         .collect();
 
-    // Full per-PR pass over every candidate — after the 1-vs-75 failure, an ACCURATE queue is the
-    // whole point, so each candidate's real CI rollup + mergeable + reviewDecision is fetched.
+    // GitHub computes `mergeable` lazily and a COLD batch ask answers `UNKNOWN`. Settled here,
+    // before any gate reads it, so a not-yet-computed answer cannot silently drop a mergeable PR out
+    // of the human's queue. Costs nothing when nothing is unknown, which is the ordinary case.
+    {
+        let mut details: Vec<Value> = candidates.iter().map(|c| c.detail.clone()).collect();
+        settle_merge_unknown(
+            &mut details,
+            MERGE_SETTLE_RETRIES,
+            || {
+                Ok(queue_search_nodes(&scope)?
+                    .iter()
+                    .map(queue_detail_from_node)
+                    .collect())
+            },
+            || std::thread::sleep(MERGE_SETTLE_WAIT),
+        )
+        .map_err(queue_search_error)?;
+        for (c, d) in candidates.iter_mut().zip(details) {
+            c.detail = d;
+        }
+    }
+
+    // Full pass over every candidate — after the 1-vs-75 failure, an ACCURATE queue is the whole
+    // point, so each candidate's real CI rollup + mergeable + reviewDecision is read.
     let mut rows: Vec<PresentablePr> = Vec::new();
     let mut counts = QueueCounts {
         // `raw` stays the WHOLE `ai:ready` population, frozen rows included, so the header's
         // "N ai:ready -> M presentable" still accounts for every row the search returned and the
         // archived count explains part of the difference rather than vanishing from both sides.
-        raw: arr.len() + frozen.len(),
-        excluded: arr.len() - candidates.len(),
+        raw: nodes.len() + frozen.len(),
+        excluded: nodes.len() - candidates.len(),
         needs_work: 0,
         red: 0,
         pending: 0,
@@ -2380,12 +3136,31 @@ fn presentable_queue() -> Result<(Vec<PresentablePr>, QueueCounts), String> {
         rate_limited: 0,
         archived_repo: frozen.len(),
     };
-    // The fetches run concurrently; the COUNTING does not. `map_bounded` hands back one outcome
-    // per candidate in candidate order, and `apply_outcome` folds them serially, so the counts and
-    // the row sequence are exactly what the same GitHub state produced one at a time.
-    let outcomes = map_bounded(&candidates, |(slug, num, url)| {
-        candidate_outcome(slug, *num, url, queue_pr_detail, unresolved_threads)
-    });
+    // The gate chain is unchanged and still runs in candidate order, so the counts and the row
+    // sequence are exactly what the same GitHub state produced one PR at a time. Its two fetchers
+    // now read the BATCH — and reach the network only for the two windows the batch cannot answer:
+    // a verdict outside `comments(last:100)`, and an all-resolved thread page with more to come.
+    let outcomes: Vec<CandidateOutcome> = candidates
+        .iter()
+        .map(|c| {
+            candidate_outcome(
+                &c.slug,
+                c.num,
+                &c.url,
+                |slug, num| {
+                    if c.refetch_detail {
+                        queue_pr_detail(slug, num)
+                    } else {
+                        Ok(c.detail.clone())
+                    }
+                },
+                |owner, repo, num| match c.threads {
+                    Some(n) => Ok(n),
+                    None => unresolved_threads(owner, repo, num),
+                },
+            )
+        })
+        .collect();
     for out in outcomes {
         // Checked BEFORE the fold, in candidate order, so an unauthorised token aborts the whole
         // enumeration on the first candidate that proves it rather than being counted (#129).
@@ -2404,6 +3179,544 @@ fn presentable_queue() -> Result<(Vec<PresentablePr>, QueueCounts), String> {
 /// second sort that could hold a different opinion about which PR is next.
 fn rank_presentable(rows: &mut [PresentablePr]) {
     rows.sort_by(|a, b| queue_order(&a.row, &b.row));
+}
+
+/// The two WINDOWS and the one LAZY field the batch query opened (#314), pinned.
+///
+/// Every test here is written against the ORACLE the old fan-out was: `gh pr view --json comments`
+/// read every comment, `unresolved_threads` walked every page, and a per-PR `mergeable` was one
+/// GitHub had usually already computed. A batch answers all three at once and each answer has an
+/// edge the per-PR call did not — so what is asserted is that the edge is NAMED, never that it is
+/// unlikely.
+#[cfg(test)]
+mod one_query_queue_tests {
+    use super::*;
+    use serde_json::json;
+    use std::cell::RefCell;
+
+    /// A search node as [`QUEUE_SEARCH_QUERY`] returns one. Every default is the SHAPE of a live
+    /// response (checked against `cyclofinance/cyclo.site#428`), so a test names only the field it
+    /// is about.
+    fn node(num: u64, slug: &str) -> Value {
+        json!({
+            "number": num,
+            "url": format!("https://github.com/{slug}/pull/{num}"),
+            "title": "t",
+            "body": "b",
+            "baseRefName": "main",
+            "headRefOid": "deadbeef",
+            "mergeable": "MERGEABLE",
+            "reviewDecision": Value::Null,
+            "isDraft": false,
+            "repository": {"nameWithOwner": slug, "isArchived": false},
+            "labels": {"nodes": [{"name": "ai:ready"}]},
+            "comments": {"totalCount": 0, "nodes": []},
+            "reviewThreads": {"nodes": [], "pageInfo": {"hasNextPage": false}},
+            "commits": {"nodes": [{"commit": {"statusCheckRollup": {"contexts": {
+                "pageInfo": {"hasNextPage": false},
+                "nodes": [{"__typename": "CheckRun", "name": "test", "status": "COMPLETED", "conclusion": "SUCCESS"}],
+            }}}}]},
+        })
+    }
+
+    /// A trusted verdict body, built by the REAL writer so the protocol stamp is the one in force.
+    fn verdict(sha: &str) -> Value {
+        json!({
+            "author": {"login": TRUSTED_AUTHOR},
+            "body": verdict_comment(sha, "ready", "", Some(40), "a basis", None),
+        })
+    }
+
+    fn comment(login: &str, body: &str) -> Value {
+        json!({"author": {"login": login}, "body": body})
+    }
+
+    fn set_comments(n: &mut Value, total: u64, nodes: Vec<Value>) {
+        n["comments"] = json!({"totalCount": total, "nodes": nodes});
+    }
+
+    // ── the NORMALISER: one shape, whichever call answered ────────────────────────────────────
+
+    /// The whole reason the gate chain, `next_ready`'s row builder and the per-PR FALLBACK could be
+    /// left untouched: a search node reads as the `gh pr view --json` document they were written
+    /// against. Asserted through the REAL readers, not by comparing keys — a key that is present
+    /// and unreadable is the failure this would otherwise miss.
+    #[test]
+    fn a_search_node_reads_as_the_gh_pr_view_document_every_consumer_expects() {
+        let mut n = node(428, "cyclofinance/cyclo.site");
+        n["body"] = json!(format!("needs {REDEPLOY_MARKER} first"));
+        set_comments(&mut n, 1, vec![verdict("deadbeef")]);
+        let d = queue_detail_from_node(&n);
+
+        assert!(classify_ci(&d["statusCheckRollup"]) == Ci::Green);
+        assert!(vetted_at_head(&d, "deadbeef"));
+        assert!(!vetted_at_head(&d, "0000000"));
+        assert_eq!(cost_from_comment(last_vetter_comment(&d).as_deref()).0, 40);
+        assert!(requires_redeploy(&d));
+        assert_eq!(label_names(&d), vec!["ai:ready".to_string()]);
+        assert_eq!(d["baseRefName"], json!("main"));
+        assert_eq!(
+            d["url"],
+            json!("https://github.com/cyclofinance/cyclo.site/pull/428")
+        );
+        assert!(parse_merge(d["mergeable"].as_str()) == Merge::Mergeable);
+    }
+
+    /// A repo with NO configured checks. `statusCheckRollup` is absent from the response entirely,
+    /// and the field must still be an ARRAY — `null` would read as no checks too, but `classify_ci`
+    /// and `failing_check_names` both take `.as_array()`, and one type for the field is what keeps
+    /// the fallback document and this one interchangeable.
+    #[test]
+    fn a_pr_with_no_checks_normalises_to_an_empty_rollup_array_not_null() {
+        let mut n = node(1, "o/r");
+        n["commits"] = json!({"nodes": [{"commit": {"statusCheckRollup": Value::Null}}]});
+        let d = queue_detail_from_node(&n);
+        assert_eq!(d["statusCheckRollup"], json!([]));
+        assert!(classify_ci(&d["statusCheckRollup"]) == Ci::NoChecks);
+    }
+
+    /// The rollup is PASSED THROUGH, so a red check is red and NAMED. The aggregate
+    /// `statusCheckRollup{state}` the issue proposed would have answered `FAILURE` and known no
+    /// name — `next_ready` reports `failingChecks`, so the contexts are what the query asks for.
+    #[test]
+    fn a_failing_context_survives_the_normaliser_with_its_name() {
+        let mut n = node(1, "o/r");
+        n["commits"] = json!({"nodes": [{"commit": {"statusCheckRollup": {"contexts": {
+            "pageInfo": {"hasNextPage": false},
+            "nodes": [
+                {"__typename": "CheckRun", "name": "test", "status": "COMPLETED", "conclusion": "FAILURE"},
+                {"__typename": "StatusContext", "context": "ci/legacy", "state": "SUCCESS"},
+            ],
+        }}}}]});
+        let d = queue_detail_from_node(&n);
+        assert!(classify_ci(&d["statusCheckRollup"]) == Ci::Red);
+        assert_eq!(
+            failing_check_names(&d["statusCheckRollup"]),
+            vec!["test".to_string()]
+        );
+    }
+
+    // ── RISK 2a: `comments(last:100)` is a window ─────────────────────────────────────────────
+
+    /// THE regression this guard exists for. More comments than the window returned AND no verdict
+    /// inside it: the verdict may be one of the ones the window dropped, and reading that as "no
+    /// verdict" would count a presentable PR as un-vetted and drop it out of the human's queue.
+    #[test]
+    fn a_verdict_the_comment_window_could_have_dropped_forces_the_per_pr_refetch() {
+        let mut n = node(1, "o/r");
+        set_comments(
+            &mut n,
+            140,
+            vec![comment(TRUSTED_AUTHOR, "🤖 ai:producer\nnote")],
+        );
+        let d = queue_detail_from_node(&n);
+        assert!(
+            !vetted_at_head(&d, "deadbeef"),
+            "the window holds no verdict"
+        );
+        assert!(
+            comments_windowed_out(&n, &d),
+            "so the window cannot be trusted to say so"
+        );
+    }
+
+    /// A truncated window that STILL holds a vetter comment holds the LAST one — the window is the
+    /// TAIL, so any later verdict would be inside it too. No refetch, and the verdict is read.
+    #[test]
+    fn a_truncated_window_that_still_holds_the_verdict_is_not_refetched() {
+        let mut n = node(1, "o/r");
+        set_comments(
+            &mut n,
+            140,
+            vec![comment(TRUSTED_AUTHOR, "chatter"), verdict("deadbeef")],
+        );
+        let d = queue_detail_from_node(&n);
+        assert!(!comments_windowed_out(&n, &d));
+        assert!(vetted_at_head(&d, "deadbeef"));
+    }
+
+    /// An UNTRUNCATED window with no verdict is a genuinely un-vetted PR — the vetter's work, not a
+    /// fetch to redo. Without this the guard would pay a per-PR fetch for all twelve un-vetted rows
+    /// of the live queue and be the fan-out again.
+    #[test]
+    fn an_untruncated_window_with_no_verdict_is_genuinely_unvetted() {
+        let mut n = node(1, "o/r");
+        set_comments(
+            &mut n,
+            2,
+            vec![comment(TRUSTED_AUTHOR, "a"), comment("someone", "b")],
+        );
+        let d = queue_detail_from_node(&n);
+        assert!(!comments_windowed_out(&n, &d));
+    }
+
+    /// A connection that does not say how many comments exist has not said the window is whole, so
+    /// it is unread rather than complete — [`whole_connection`]'s rule, which this guard now shares
+    /// with the other batched reads instead of re-deriving `totalCount > nodes.len()`. Reading a
+    /// missing count as zero would let a malformed response pass as a verdict-free PR, which is the
+    /// one answer that reaches a human.
+    #[test]
+    fn a_connection_that_omits_its_total_is_unread_not_complete() {
+        let mut n = node(1, "o/r");
+        set_comments(&mut n, 1, vec![comment("someone", "b")]);
+        n.pointer_mut("/comments")
+            .expect("comments set above")
+            .as_object_mut()
+            .expect("comments is an object")
+            .remove("totalCount");
+        let d = queue_detail_from_node(&n);
+        assert!(comments_windowed_out(&n, &d));
+    }
+
+    /// The window is searched with the AUTHOR filter, not for the marker text. A third party can
+    /// post `🤖 ai:vetter`, and a spoof suppressing the refetch would leave the real verdict outside
+    /// the window and unread — the trust rule and the truncation guard have to agree.
+    #[test]
+    fn a_spoofed_vetter_comment_in_the_window_does_not_suppress_the_refetch() {
+        let mut n = node(1, "o/r");
+        set_comments(
+            &mut n,
+            140,
+            vec![comment(
+                "impostor",
+                "🤖 ai:vetter\nReviewed deadbeef: ready",
+            )],
+        );
+        let d = queue_detail_from_node(&n);
+        assert!(comments_windowed_out(&n, &d));
+    }
+
+    // ── RISK 2b: `reviewThreads(first:100)` is the same window ────────────────────────────────
+
+    /// A non-zero count inside the window is DECISIVE — the PR is the producer's thread work
+    /// whatever the pages after it hold — so the batch answers and no walk is paid for.
+    #[test]
+    fn an_unresolved_thread_in_the_window_is_decisive_even_when_more_pages_exist() {
+        let mut n = node(1, "o/r");
+        n["reviewThreads"] = json!({
+            "nodes": [{"isResolved": true}, {"isResolved": false}],
+            "pageInfo": {"hasNextPage": true},
+        });
+        assert_eq!(threads_from_node(&n), Some(1));
+        assert_eq!(thread_route(Ok(1)), ThreadRoute::OpenThreads);
+    }
+
+    /// All resolved SO FAR with more pages to come is the one answer the window cannot give: a zero
+    /// here is the only value that reaches a human, so it must come from a complete read. `None`
+    /// routes to the paginated walk rather than to a fail-closed error — the PR is not unreadable.
+    #[test]
+    fn all_resolved_with_more_pages_cannot_answer_zero() {
+        let mut n = node(1, "o/r");
+        n["reviewThreads"] = json!({
+            "nodes": [{"isResolved": true}],
+            "pageInfo": {"hasNextPage": true},
+        });
+        assert_eq!(threads_from_node(&n), None);
+    }
+
+    /// A complete page of resolved threads IS the verified zero [`thread_route`] demands.
+    #[test]
+    fn all_resolved_and_complete_is_a_verified_zero() {
+        let mut n = node(1, "o/r");
+        n["reviewThreads"] = json!({
+            "nodes": [{"isResolved": true}, {"isResolved": true}],
+            "pageInfo": {"hasNextPage": false},
+        });
+        assert_eq!(threads_from_node(&n), Some(0));
+        assert_eq!(thread_route(Ok(0)), ThreadRoute::Present);
+    }
+
+    /// An unreadable connection is NOT a zero. `None` sends it to the walk, which has a typed
+    /// failure — a fabricated zero would be the laundering `thread_route` exists to refuse.
+    #[test]
+    fn an_unreadable_thread_connection_is_never_a_zero() {
+        let mut n = node(1, "o/r");
+        n["reviewThreads"] = Value::Null;
+        assert_eq!(threads_from_node(&n), None);
+    }
+
+    // ── RISK 1: `mergeable` is computed lazily ───────────────────────────────────────────────
+
+    fn detail(mergeable: &str, url: &str) -> Value {
+        let mut n = node(1, "o/r");
+        n["mergeable"] = json!(mergeable);
+        n["url"] = json!(url);
+        queue_detail_from_node(&n)
+    }
+
+    /// The whole of risk 1 in one assertion pair: a cold `UNKNOWN` and a settled `MERGEABLE` are
+    /// DIFFERENT BUCKETS for the same PR, so an uncomputed answer taken at face value shortens the
+    /// human's queue.
+    #[test]
+    fn a_cold_unknown_and_a_settled_mergeable_are_different_buckets() {
+        assert_eq!(
+            presentable_state(Ci::Green, Merge::Unknown, None),
+            PresentState::MergeUnknown
+        );
+        assert_eq!(
+            presentable_state(Ci::Green, Merge::Mergeable, None),
+            PresentState::Presentable
+        );
+    }
+
+    /// So it is RE-ASKED, and the settled answer is taken.
+    #[test]
+    fn an_unknown_row_is_re_asked_and_the_settled_answer_is_taken() {
+        let mut details = vec![detail("UNKNOWN", "u/1")];
+        let calls = RefCell::new(0);
+        settle_merge_unknown(
+            &mut details,
+            MERGE_SETTLE_RETRIES,
+            || {
+                *calls.borrow_mut() += 1;
+                Ok(vec![detail("MERGEABLE", "u/1")])
+            },
+            || {},
+        )
+        .expect("a settled re-ask is not a failure");
+        assert_eq!(details[0]["mergeable"], json!("MERGEABLE"));
+        assert_eq!(
+            *calls.borrow(),
+            1,
+            "one re-ask settles it; the budget is not spent"
+        );
+    }
+
+    /// A row whose bucket cannot MOVE is not re-asked. Red, pending and already-approved PRs never
+    /// consult `mergeable`, so a re-ask for one spends a request to change nothing — and with no
+    /// unsettled row at all the settle costs zero requests, which is the ordinary case.
+    #[test]
+    fn a_row_whose_bucket_cannot_move_is_never_re_asked() {
+        let mut red = detail("UNKNOWN", "u/1");
+        red["statusCheckRollup"] = json!([{"__typename": "CheckRun", "name": "t", "status": "COMPLETED", "conclusion": "FAILURE"}]);
+        let mut approved = detail("UNKNOWN", "u/2");
+        approved["reviewDecision"] = json!("APPROVED");
+        let mut details = vec![red, approved, detail("MERGEABLE", "u/3")];
+        assert!(merge_unsettled(&details).is_empty());
+
+        let calls = RefCell::new(0);
+        settle_merge_unknown(
+            &mut details,
+            MERGE_SETTLE_RETRIES,
+            || {
+                *calls.borrow_mut() += 1;
+                Ok(vec![])
+            },
+            || {},
+        )
+        .expect("nothing to settle is not a failure");
+        assert_eq!(*calls.borrow(), 0);
+    }
+
+    /// The budget is FINITE and a still-uncomputed row is LEFT `UNKNOWN`. Fail-closed is the
+    /// existing contract for an unconfirmed merge; guessing `MERGEABLE` to fill the queue would be
+    /// the opposite of what this guard is for.
+    #[test]
+    fn a_row_that_never_settles_stays_unknown_within_a_finite_budget() {
+        let mut details = vec![detail("UNKNOWN", "u/1")];
+        let calls = RefCell::new(0);
+        let pauses = RefCell::new(0);
+        settle_merge_unknown(
+            &mut details,
+            MERGE_SETTLE_RETRIES,
+            || {
+                *calls.borrow_mut() += 1;
+                Ok(vec![detail("UNKNOWN", "u/1")])
+            },
+            || *pauses.borrow_mut() += 1,
+        )
+        .expect("giving up is not a failure");
+        assert_eq!(details[0]["mergeable"], json!("UNKNOWN"));
+        assert_eq!(*calls.borrow(), MERGE_SETTLE_RETRIES);
+        assert_eq!(
+            *pauses.borrow(),
+            MERGE_SETTLE_RETRIES,
+            "it waits before each re-ask"
+        );
+    }
+
+    /// A FAILED re-ask propagates. An `Unauthorized` is the same token-wide fact [`queue_abort`]
+    /// aborts on (#129) — swallowing it here would report a queue silently missing every row whose
+    /// mergeability could not be settled.
+    #[test]
+    fn a_failed_re_ask_propagates_rather_than_shortening_the_queue() {
+        let mut details = vec![detail("UNKNOWN", "u/1")];
+        let err = settle_merge_unknown(
+            &mut details,
+            MERGE_SETTLE_RETRIES,
+            || Err(GhFailure::Unauthorized),
+            || {},
+        )
+        .expect_err("an unauthorised re-ask is not a settled answer");
+        assert_eq!(err, GhFailure::Unauthorized);
+        assert!(queue_search_error(err).contains("not authorised"));
+    }
+
+    /// The patch is BY URL and moves ONLY `mergeable`. A fresh document for a different PR must not
+    /// settle this one, and the rest of the row must stay on the snapshot the ranking used.
+    #[test]
+    fn the_settled_answer_is_matched_by_url_and_moves_only_mergeable() {
+        let mut details = vec![detail("UNKNOWN", "u/1")];
+        details[0]["title"] = json!("as ranked");
+        assert_eq!(
+            apply_settled_merge(&mut details, &[detail("MERGEABLE", "u/999")]),
+            0
+        );
+        assert_eq!(details[0]["mergeable"], json!("UNKNOWN"));
+
+        let mut fresh = detail("MERGEABLE", "u/1");
+        fresh["title"] = json!("a later instant");
+        assert_eq!(apply_settled_merge(&mut details, &[fresh]), 1);
+        assert_eq!(details[0]["mergeable"], json!("MERGEABLE"));
+        assert_eq!(details[0]["title"], json!("as ranked"));
+    }
+
+    // ── the ARCHIVED withholding, off the same response (#206) ────────────────────────────────
+
+    /// `repository{isArchived}` rides on the query, so the org-wide walk is redundant here — and the
+    /// withholding it fed is not. An archived candidate is still frozen out.
+    #[test]
+    fn an_archived_candidate_is_withheld_from_its_own_repository_field() {
+        let mut arch = node(9, "o/dead");
+        arch["repository"] = json!({"nameWithOwner": "o/dead", "isArchived": true});
+        let nodes = vec![node(1, "o/live"), arch];
+        let set = archived_from_nodes(&nodes).expect("readable flags");
+        let (live, frozen) = withhold_archived(nodes, &set, hit_slug);
+        assert_eq!(live.len(), 1);
+        assert_eq!(frozen.len(), 1);
+        assert_eq!(live[0]["number"], json!(1));
+    }
+
+    /// An UNREADABLE archived flag ABORTS (#199). Collapsing it to "not archived" is the false
+    /// negative that puts a frozen row back at the head of the human's queue, and the message is the
+    /// one every other surface refuses with.
+    #[test]
+    fn an_unreadable_archived_flag_aborts_rather_than_reading_as_live() {
+        let mut bad = node(1, "o/r");
+        bad["repository"] = json!({"nameWithOwner": "o/r"});
+        assert!(matches!(
+            archived_from_nodes(&[bad]),
+            Err(GhFailure::Malformed)
+        ));
+        assert!(archived_read_error(GhFailure::Malformed)
+            .contains("could not read which repos are archived"));
+    }
+
+    // ── the SEARCH: one page reader, one abort ────────────────────────────────────────────────
+
+    #[test]
+    fn a_page_yields_its_pull_requests_and_the_cursor_after_it() {
+        let v = json!({"data": {"search": {
+            "pageInfo": {"hasNextPage": true, "endCursor": "CUR"},
+            "nodes": [node(1, "o/r"), json!({})],
+        }}});
+        let (prs, cursor) = queue_search_page(&v).expect("a readable page");
+        assert_eq!(
+            prs.len(),
+            1,
+            "a non-PullRequest hit is an empty fragment, not a candidate"
+        );
+        assert_eq!(cursor.as_deref(), Some("CUR"));
+    }
+
+    #[test]
+    fn a_last_page_reports_no_cursor() {
+        let v = json!({"data": {"search": {
+            "pageInfo": {"hasNextPage": false},
+            "nodes": [node(1, "o/r")],
+        }}});
+        assert_eq!(queue_search_page(&v).expect("a readable page").1, None);
+    }
+
+    /// `hasNextPage` with no cursor is MALFORMED, not the end — reading it as the end truncates the
+    /// queue in the direction that hides work, exactly as [`archived_repos_page`] refuses to.
+    #[test]
+    fn a_page_that_says_more_with_no_cursor_is_malformed() {
+        let v = json!({"data": {"search": {
+            "pageInfo": {"hasNextPage": true, "endCursor": ""},
+            "nodes": [],
+        }}});
+        assert_eq!(queue_search_page(&v), Err(GhFailure::Malformed));
+    }
+
+    /// An unreadable response is MALFORMED and never an empty page. An empty page reads as "no
+    /// `ai:ready` PRs", which is the falsely-empty queue the 1-vs-75 failure taught this to refuse.
+    #[test]
+    fn an_unreadable_response_is_malformed_never_an_empty_queue() {
+        assert_eq!(
+            queue_search_page(&json!({"data": {}})),
+            Err(GhFailure::Malformed)
+        );
+        assert_eq!(
+            queue_search_page(&json!({"data": {"search": {"nodes": "not an array"}}})),
+            Err(GhFailure::Malformed)
+        );
+    }
+
+    /// #129 at the layer that now carries the whole fetch: an unauthorised token aborts with the
+    /// AUTH message, not the generic one — one query answering for every candidate does not make a
+    /// token-wide failure a per-candidate one.
+    #[test]
+    fn an_unauthorised_search_aborts_with_the_auth_message() {
+        assert!(queue_search_error(GhFailure::Unauthorized).contains("not authorised"));
+        for f in [
+            GhFailure::NotFound,
+            GhFailure::Malformed,
+            GhFailure::Unknown,
+            GhFailure::RateLimited { retry_after: None },
+        ] {
+            let msg = queue_search_error(f);
+            assert!(!msg.contains("not authorised"), "{msg}");
+            assert!(msg.contains("falsely-empty queue"), "{msg}");
+        }
+    }
+
+    /// The label's own name contains the qualifier separator, so an UNQUOTED `label:ai:ready` is a
+    /// different query — and a silently different one: it still returns rows.
+    #[test]
+    fn the_label_qualifier_is_quoted_and_the_org_scope_is_the_shared_one() {
+        let q = queue_search_scope("alpha, beta");
+        assert!(q.contains("label:\"ai:ready\""), "{q}");
+        assert_eq!(
+            q,
+            format!("{} label:\"ai:ready\"", org_search_query("alpha, beta"))
+        );
+        assert!(q.contains("org:alpha") && q.contains("org:beta") && q.contains("is:pr is:open"));
+    }
+
+    /// The one query has to carry EVERY field the gates and both consumers read. A dropped selection
+    /// does not fail the build — it reads back as `null`, which each reader has a default for, so
+    /// the PR quietly changes bucket. This is the only place that can notice.
+    #[test]
+    fn the_query_selects_every_field_a_consumer_reads() {
+        for field in [
+            "mergeable",
+            "reviewDecision",
+            "headRefOid",
+            "isDraft",
+            "baseRefName",
+            "title",
+            "body",
+            "number",
+            "url",
+            "isArchived",
+            "nameWithOwner",
+            "totalCount",
+            "isResolved",
+            "statusCheckRollup",
+            "conclusion",
+        ] {
+            assert!(QUEUE_SEARCH_QUERY.contains(field), "missing `{field}`");
+        }
+        assert!(
+            QUEUE_SEARCH_QUERY.contains("comments(last:100)"),
+            "the comment WINDOW is the tail"
+        );
+        assert!(
+            QUEUE_SEARCH_QUERY.contains("commits(last:1)"),
+            "the rollup is the HEAD commit's"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -17212,7 +18525,30 @@ enum CommandKind {
         /// lens (#150). Empty for a command that only reads typed results.
         native: Vec<String>,
     },
+    /// The whole grant is [`COMMAND_DISPATCH_TOOL`]: the command runs no protocol of its own, and
+    /// the protocol it used to hold lives in an agent this plugin SHIPS, named in the body and
+    /// resolved against the shipped set in [`command_check`].
+    ///
+    /// It is neither of the other two — it fences no transition and it grants no typed read — so
+    /// modelling it as either is what made #316's shape unrepresentable (#321).
+    Dispatcher,
 }
+
+/// The one harness tool a DISPATCHER command grants, and the whole of what it may grant.
+///
+/// `Agent`, not `Task`: MEASURED on Claude Code 2.1.233, a command declaring `allowed-tools: Task`
+/// invoked `Agent` when it dispatched, with zero `permission_denials` — so `Task` is a name this
+/// harness binds nothing to, and admitting it would bless a grant that was never the one reviewed.
+#[cfg(test)]
+const COMMAND_DISPATCH_TOOL: &str = "Agent";
+
+/// Every spelling of "spawn a subagent" this contract knows about, so a grant is judged by what it
+/// DOES rather than by which of the two names its author reached for.
+///
+/// One of them ([`COMMAND_DISPATCH_TOOL`]) is a whole grant on its own and nothing else. Both are
+/// refused beside anything, on a command and on an agent alike — the two halves of #321.
+#[cfg(test)]
+const SUBAGENT_TOOLS: &[&str] = &["Agent", "Task"];
 
 /// The harness tools an MCP command may grant BESIDE its typed reads: the audit lens, and the read
 /// it performs.
@@ -17227,8 +18563,16 @@ enum CommandKind {
 /// admitted matters as much:
 ///
 /// - `Bash` — the fallback itself, and the reason this contract exists;
-/// - `Task` — a subagent's tool set is not this command's, so a spawned agent holding `Bash` is the
-///   shell fallback wearing another name;
+/// - the [`SUBAGENT_TOOLS`] — an ANONYMOUS subagent's tool set is not this command's, so a spawned
+///   agent holding `Bash` is the shell fallback wearing another name. That refusal is about the
+///   ANONYMOUS case and #321 narrowed it to exactly that: an agent this plugin SHIPS is a
+///   checked-in artefact under the same review as the command, its `tools` list is walked by
+///   [`agent_check`], and — unlike `allowed-tools` — the harness ENFORCES it (measured on 2.1.233,
+///   an agent defined with `tools: Read` and told in as many words to run a `Bash` call reported
+///   that it held one tool and had no `Bash` to call). So a whole grant of
+///   [`COMMAND_DISPATCH_TOOL`] naming a shipped agent is admitted as a [`CommandKind::Dispatcher`],
+///   and a subagent grant BESIDE a typed read is refused exactly as it always was: what the pair
+///   would buy is a read this command's own contract does not describe;
 /// - `Grep`/`Glob` — MEASURED against Claude Code 2.1.220: they are not tools in this harness at
 ///   all, neither listed in the session's `init` event nor resolvable through `ToolSearch`
 ///   (`select:Grep` → "No matching deferred tools found"). A grant naming one would be a permitted
@@ -17284,16 +18628,22 @@ const AUDIT_SCOPES: &[&str] = &[AUDIT_SCOPE_WHOLE_REPO, AUDIT_SCOPE_PR, AUDIT_SC
 /// command granting only `Read` still ran a `Bash` call under `--permission-mode default` with zero
 /// `permission_denials` — so the frontmatter narrows nothing on its own, and the BODY is the only
 /// thing that actually steers the reader. That is exactly why the fenced-shell rule below is
-/// enforced over the body rather than inferred from the grant. Two shapes ship here, with OPPOSITE
-/// obligations:
+/// enforced over the body rather than inferred from the grant. Three shapes ship here, with
+/// OPPOSITE obligations:
 ///
 /// - a **subcommand** command must fence the transition it runs, or the caller is handed a name
 ///   and nothing to run;
 /// - an **MCP** command must fence NO shell command at all, because every input is supposed to
 ///   arrive typed and a fenced shell line is precisely the `gh` fallback an all-MCP grant exists
-///   to remove.
+///   to remove;
+/// - a **dispatcher** — the whole grant is [`COMMAND_DISPATCH_TOOL`] — must fence no shell either,
+///   and must NAME an agent this plugin ships (resolved in [`command_check`], which is the only
+///   place the shipped set is known). It holds no typed read because the protocol and every typed
+///   call moved into that agent (#316), so judging it by the MCP rules refuses it for granting no
+///   typed read, and judging it by the subcommand rules refuses it for fencing no transition —
+///   which is precisely how #321 was reported, as five failures all saying the wrong thing.
 ///
-/// Mixing the two is refused rather than ranked. A command that may both call a tool and shell out
+/// Mixing them is refused rather than ranked. A command that may both call a tool and shell out
 /// has no guarantee left, and the guarantee is the reason the grant is narrow: either the tools
 /// answered or the command fails loudly, because the way a merge decision goes wrong is not a
 /// refusal, it is a plausible answer nobody can trace.
@@ -17344,6 +18694,15 @@ fn command_contract(text: &str) -> Result<CommandKind, String> {
     if tools.is_empty() {
         return Err("allowed-tools is empty — a command granted nothing can run nothing".into());
     }
+    // The dispatch grant is decided BEFORE the three bins, because it is the one grant that is a
+    // whole shape by itself. A subagent name mixed with anything else never reaches the bins: it
+    // is refused here, with the mixture named, rather than falling into the shell bin and being
+    // refused for whichever obligation the remainder happened to attract.
+    let subagent: Vec<&str> = tools
+        .iter()
+        .copied()
+        .filter(|t| SUBAGENT_TOOLS.contains(t))
+        .collect();
     // Three bins, and every grant lands in exactly one: a typed read, an admitted native read, or
     // everything else — which is a shell grant as far as this contract is concerned.
     let mcp: Vec<String> = tools
@@ -17356,7 +18715,25 @@ fn command_contract(text: &str) -> Result<CommandKind, String> {
         .filter(|t| MCP_COMMAND_NATIVE_TOOLS.contains(t))
         .map(|t| (*t).to_string())
         .collect();
-    let kind = if mcp.len() + native.len() < tools.len() {
+    let kind = if !subagent.is_empty() {
+        if tools.len() > 1 {
+            return Err(format!(
+                "grants {subagent:?} beside the rest of {granted:?} — a command that both \
+                 dispatches and reads has no guarantee left: the agent's grant is not this \
+                 command's, so what the pair may do is not what either half describes. A \
+                 dispatcher's whole grant is `{COMMAND_DISPATCH_TOOL}`"
+            ));
+        }
+        if tools[0] != COMMAND_DISPATCH_TOOL {
+            return Err(format!(
+                "grants {granted:?} as its whole grant — the dispatch grant this harness binds is \
+                 `{COMMAND_DISPATCH_TOOL}`. MEASURED on Claude Code 2.1.233, a command declaring \
+                 `allowed-tools: Task` invoked `{COMMAND_DISPATCH_TOOL}` anyway, so the other \
+                 spelling pre-approves a name nothing is granted under"
+            ));
+        }
+        CommandKind::Dispatcher
+    } else if mcp.len() + native.len() < tools.len() {
         // A shell grant beside EITHER of the other two. Refused whichever way round they are
         // written, and refused with the MCP wording it has always had, because the guarantee being
         // lost is the same one: `Bash` under an audit lens is the fallback the lens was supposed to
@@ -17420,6 +18797,19 @@ fn command_contract(text: &str) -> Result<CommandKind, String> {
                 ));
             }
         }
+        // A dispatcher hands the work to an agent and runs nothing itself, so it owes the same
+        // no-shell obligation an MCP command owes and for a sharper reason: the protocol it used
+        // to hold moved OUT of this file, and a fenced `gh` left behind is a line the dispatching
+        // reader would run in the context the dispatch exists to keep out of the read.
+        CommandKind::Dispatcher => {
+            if let Some(line) = runnable.iter().find(|l| !l.starts_with('/')) {
+                return Err(format!(
+                    "fenced line {line:?} is a shell command, but this command's whole grant is \
+                     `{COMMAND_DISPATCH_TOOL}` — a dispatcher runs nothing of its own, so a fenced \
+                     fallback is exactly what the narrow grant exists to remove"
+                ));
+            }
+        }
     }
     Ok(kind)
 }
@@ -17458,29 +18848,254 @@ fn grantable_mcp_tools(manifest: &Value) -> Result<Vec<String>, String> {
     Ok(out)
 }
 
-/// PURE: one command's contract, resolved against what the plugin actually serves.
+/// PURE: one command's contract, resolved against what the plugin actually SHIPS — the tools its
+/// manifest serves, and the agents beside its commands.
 ///
 /// EVERY named tool is resolved, not just the first: a command may grant a set, and a set whose
 /// second member is misspelled is a command that runs half of what it says it does — silently,
 /// because the loader drops the name it cannot resolve rather than refusing the command.
 ///
-/// Only the TYPED names are resolved here. The [`MCP_COMMAND_NATIVE_TOOLS`] are the harness's own
-/// tools, so no plugin manifest serves them; they are checked where they are admitted, against the
-/// set that was measured to exist.
+/// A dispatcher's AGENT is resolved here for the identical reason, and it is resolved here rather
+/// than in [`command_contract`] because the shipped set is the only thing that can answer it. The
+/// failure it catches is the same one wearing a different coat: a command whose whole grant is
+/// [`COMMAND_DISPATCH_TOOL`] and whose body names an agent that does not ship is a command that
+/// silently does nothing.
+///
+/// Only the TYPED names are resolved against the manifest. The [`MCP_COMMAND_NATIVE_TOOLS`] are the
+/// harness's own tools, so no plugin manifest serves them; they are checked where they are
+/// admitted, against the set that was measured to exist.
 #[cfg(test)]
-fn command_check(text: &str, grantable: &[String]) -> Result<CommandKind, String> {
+fn command_check(
+    text: &str,
+    grantable: &[String],
+    agents: &[String],
+) -> Result<CommandKind, String> {
     let kind = command_contract(text)?;
-    if let CommandKind::McpTools { mcp, .. } = &kind {
-        for tool in mcp {
-            if !grantable.iter().any(|g| g == tool) {
-                return Err(format!(
-                    "grants {tool:?}, which no server in the manifest serves — the grantable set \
-                     is {grantable:?}"
-                ));
+    match &kind {
+        CommandKind::McpTools { mcp, .. } => {
+            for tool in mcp {
+                if !grantable.iter().any(|g| g == tool) {
+                    return Err(format!(
+                        "grants {tool:?}, which no server in the manifest serves — the grantable \
+                         set is {grantable:?}"
+                    ));
+                }
             }
         }
+        CommandKind::Dispatcher => {
+            dispatched_agent(text, agents)?;
+        }
+        CommandKind::Subcommand => {}
     }
     Ok(kind)
+}
+
+/// PURE: the agent one dispatcher hands its work to, resolved against the agents this plugin
+/// actually ships.
+///
+/// The reference is the plugin-qualified name in backticks ([`plugin_agent_name`]) — the same
+/// string the command's own closing line tells the reader to type, because names collide across
+/// plugins. Matching against the SHIPPED set rather than against a name-shaped pattern is what
+/// makes "names an agent that does not ship" reportable at all: an unshipped reference and no
+/// reference are the same defect, a command that dispatches nothing, and the error names the set
+/// that would have satisfied it either way.
+///
+/// EXACTLY one, in the BODY. Two is not richer, it is unsaid: the command relays ONE agent's report
+/// verbatim, and a body naming two has not decided which report that is. The frontmatter is
+/// excluded because a `description` is what the loader lists, not what the reader executes — the
+/// same reason the fenced-line rule is over the body.
+#[cfg(test)]
+fn dispatched_agent(text: &str, shipped: &[String]) -> Result<String, String> {
+    let body = markdown_body(text);
+    let named: Vec<&String> = shipped
+        .iter()
+        .filter(|a| body.contains(&format!("`{a}`")))
+        .collect();
+    match named.as_slice() {
+        [one] => Ok((*one).to_string()),
+        [] => Err(format!(
+            "names no agent this plugin ships — its whole grant is `{COMMAND_DISPATCH_TOOL}`, so \
+             the agent it dispatches IS its payload, and a dispatcher naming none of {shipped:?} \
+             is a command that silently does nothing"
+        )),
+        many => Err(format!(
+            "names {} shipped agents ({many:?}) — a dispatcher relays ONE agent's report verbatim, \
+             and a body naming two has not said which one that is",
+            many.len()
+        )),
+    }
+}
+
+/// PURE: the name a dispatcher writes to reach agent `agent` of plugin `plugin`.
+///
+/// Qualified by the plugin, because agent names collide across plugins exactly as command names do
+/// — which is what every one of these commands already tells its reader in its own closing line.
+#[cfg(test)]
+fn plugin_agent_name(plugin: &str, agent: &str) -> String {
+    format!("{plugin}:{agent}")
+}
+
+/// TEST HELPER: everything after the frontmatter — the part a reader executes.
+///
+/// A document with no closing delimiter has no frontmatter to strip, and is its own body; the
+/// missing-frontmatter refusal is [`command_contract`]'s and is not duplicated here.
+#[cfg(test)]
+fn markdown_body(text: &str) -> &str {
+    text.split_once("\n---\n").map_or(text, |(_, body)| body)
+}
+
+/// What one shipped AGENT holds: the name a dispatcher reaches it by, and the grant the command
+/// that dispatches it used to hold.
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AgentGrant {
+    /// The `name` frontmatter. It is what the harness dispatches BY, so it — not the filename —
+    /// is what a dispatcher's body has to name.
+    name: String,
+    /// The typed reads, in the order granted, each resolved against the manifest in
+    /// [`agent_check`].
+    mcp: Vec<String>,
+    /// The [`MCP_COMMAND_NATIVE_TOOLS`] granted beside them, in the order granted.
+    native: Vec<String>,
+}
+
+/// PURE: what one shipped agent may do, and whether its body keeps that promise.
+///
+/// The same contract [`command_contract`] holds over an MCP command, over the file the protocol
+/// MOVED to (#316) — with one refusal that has no counterpart on the command side.
+///
+/// **No agent may grant a [`SUBAGENT_TOOLS`] name.** That is the check that keeps the audit lens
+/// INLINE. The rule was never about which conversation the reader lives in: it is that the reader
+/// which declares `pr:<number>` must be the reader which consumes the findings. A further fan-out
+/// is a scope declared by somebody who does not read the report it produces, which is exactly how
+/// `rain.deploy#21` was audited whole-repo — twelve findings, five bearing on the PR — with the
+/// scope carried as prose nothing could check.
+///
+/// The grant here is worth more than a command's, and that is why the protocol was allowed to move
+/// at all: MEASURED on Claude Code 2.1.233, an agent defined with `tools: Read` and told in as many
+/// words to run a `Bash` call reported that it held exactly one tool and had no `Bash` to call,
+/// with zero `permission_denials` because there was nothing to deny — while a command's
+/// `allowed-tools` line binds nothing. So this walk is a gate over an ENFORCED list, not over an
+/// announced one, and a rename on either side has to fail here rather than become a permitted tool
+/// that does not exist.
+#[cfg(test)]
+fn agent_contract(text: &str) -> Result<AgentGrant, String> {
+    if !text.starts_with("---\n") {
+        return Err("no frontmatter — an agent without one is not discovered at all".to_string());
+    }
+    let front = text
+        .split("\n---\n")
+        .next()
+        .ok_or("frontmatter is not delimited")?;
+    let field = |key: &str| {
+        front
+            .lines()
+            .find_map(|l| l.trim().strip_prefix(key))
+            .map(str::trim)
+    };
+    // `description` is what the DISPATCHING model reads to decide this agent is the one, so an
+    // agent without one is reachable only by a caller that already knows it exists.
+    for key in ["name:", "description:", "tools:"] {
+        if field(key).is_none() {
+            return Err(format!("frontmatter has no {key}"));
+        }
+    }
+    // A key with nothing after it is what a half-finished edit leaves behind, and it is not the
+    // same defect as an absent key — the loader has a field and it says nothing. `tools:` is not
+    // in this list because an empty grant has its own, more useful refusal below.
+    for key in ["name:", "description:"] {
+        if field(key) == Some("") {
+            return Err(format!(
+                "frontmatter's {key} is empty — a key with nothing after it is a field the loader \
+                 reads and finds nothing in"
+            ));
+        }
+    }
+    let name = field("name:").unwrap_or_default().to_string();
+    let granted = field("tools:").unwrap_or_default();
+    let tools: Vec<&str> = granted
+        .split(',')
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .collect();
+    if tools.is_empty() {
+        return Err("tools is empty — an agent granted nothing can read nothing".into());
+    }
+    // Checked BEFORE the shell refusal, so a fan-out is reported as a fan-out. `Bash` beside it
+    // would be refused either way, and the error a reader gets has to name the rule they broke.
+    let subagent: Vec<&str> = tools
+        .iter()
+        .copied()
+        .filter(|t| SUBAGENT_TOOLS.contains(t))
+        .collect();
+    if !subagent.is_empty() {
+        return Err(format!(
+            "grants {subagent:?} — no agent may fan the read out. The reader that declares \
+             `{AUDIT_SCOPE_PR}<number>` must be the reader that consumes its findings; a further \
+             sub-agent declares a scope it does not read, which is the rain.deploy#21 regression \
+             the INLINE rule was protecting against all along"
+        ));
+    }
+    let mcp: Vec<String> = tools
+        .iter()
+        .filter(|t| t.starts_with("mcp__"))
+        .map(|t| (*t).to_string())
+        .collect();
+    let native: Vec<String> = tools
+        .iter()
+        .filter(|t| MCP_COMMAND_NATIVE_TOOLS.contains(t))
+        .map(|t| (*t).to_string())
+        .collect();
+    if mcp.len() + native.len() < tools.len() {
+        return Err(format!(
+            "grants a tool that is neither a typed read nor the audit lens ({granted:?}) — an \
+             agent that can shell out has no guarantee left, `Bash` first of all, and this list is \
+             the one the harness actually enforces"
+        ));
+    }
+    if mcp.is_empty() {
+        return Err(format!(
+            "grants the audit lens ({native:?}) with no typed read beside it ({granted:?}) — the \
+             lens audits a SUBJECT, and the subject arrives typed"
+        ));
+    }
+    // The protocol moved here, so the fenced-shell rule moved with it: a fenced `gh` in the file
+    // the reader actually executes is the fallback the typed grant exists to remove, and it does
+    // not stop being one because it now lives beside `tools:` instead of `allowed-tools:`.
+    let runnable: Vec<&str> = text
+        .split("```")
+        .skip(1)
+        .step_by(2)
+        .flat_map(|b| b.lines().skip(1))
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    if let Some(line) = runnable.iter().find(|l| !l.starts_with('/')) {
+        return Err(format!(
+            "fenced line {line:?} is a shell command, but every grant here is typed ({mcp:?}) — a \
+             fenced fallback is exactly what the all-MCP grant exists to remove"
+        ));
+    }
+    Ok(AgentGrant { name, mcp, native })
+}
+
+/// PURE: one agent's contract, resolved against what the plugin's manifest actually serves.
+///
+/// [`command_check`]'s obligation, over the file the typed grant moved to: every `mcp__*` name is
+/// resolved, so a rename fails here rather than becoming a permitted tool that does not exist. The
+/// [`MCP_COMMAND_NATIVE_TOOLS`] are the harness's own and no manifest serves them.
+#[cfg(test)]
+fn agent_check(text: &str, grantable: &[String]) -> Result<AgentGrant, String> {
+    let grant = agent_contract(text)?;
+    for tool in &grant.mcp {
+        if !grantable.iter().any(|g| g == tool) {
+            return Err(format!(
+                "grants {tool:?}, which no server in the manifest serves — the grantable set is \
+                 {grantable:?}"
+            ));
+        }
+    }
+    Ok(grant)
 }
 
 /// PURE: the name Claude Code exposes for `tool` on plugin `plugin`'s MCP server `server`.
@@ -18327,10 +19942,18 @@ fn is_leak_candidate(labels: &[String]) -> bool {
 /// is un-vetted by design, not leaked. A producer note posted AFTER the clearance supersedes it —
 /// the producer acting on an unlabelled PR is exactly what the leak bucket exists to catch.
 /// Ordinary vetter verdict comments are not hand-off markers and decide nothing here.
+///
+/// A [`BodyRepair`] receipt ([`is_body_repair_note`]) is the producer note that bears NO state: it
+/// rewrites body text, hands nothing to anyone, and leaves the PR exactly where it was. The walk
+/// steps past one to whatever older marker stands behind it, so a repair cannot MAKE a leak and
+/// cannot hide one either.
 fn leak_reason(trusted_bodies: &[String]) -> Option<String> {
     for b in trusted_bodies.iter().rev() {
         if b.starts_with(BLOCKED_ON_CLEARED_MARKER) {
             return None;
+        }
+        if is_body_repair_note(b) {
+            continue;
         }
         if b.starts_with("🤖 ai:producer") {
             return Some(b.replace('\n', " "));
@@ -19653,9 +21276,10 @@ struct Leak {
 /// Leak detection: a candidate PR the producer has commented on = a hand-off with no modeled state
 /// (the FSM leaking). A candidate with NO producer comment is just freshly-open/unvetted. The pure
 /// decision is [`leak_reason`]: a vetter blocked-on CLEARANCE as the newest hand-off marker is a
-/// MODELED transition into un-vetted (#161), never a leak. Costs one `gh pr view` per candidate, on
-/// both callers alike — and the candidate set is [`is_leak_candidate`]'s, so the classifier decides
-/// who is even asked about.
+/// MODELED transition into un-vetted (#161), never a leak. Costs one batched comment read per
+/// [`LEAK_COMMENT_BATCH`] candidates on both callers alike, plus a `gh pr view` for each candidate
+/// that read did not answer for — and the candidate set is [`is_leak_candidate`]'s, so the
+/// classifier decides who is even asked about.
 struct LeakScan {
     /// The leaks, oldest first ([`rank_leaks`]).
     leaks: Vec<Leak>,
@@ -19689,9 +21313,163 @@ fn rank_leaks(leaks: &mut [Leak]) {
     leaks.sort_by(|a, b| leak_order_key(a).cmp(&leak_order_key(b)));
 }
 
-/// Live leak scan: the real `gh pr view` behind [`leak_scan_with`].
-fn leak_scan(candidates: &[LeakCandidate]) -> LeakScan {
+// ─────────────────────────────────────────────────────────────────────────────
+// ALIASED PER-PR GRAPHQL — the shape both batched reads are built from
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// PURE: the `$o<i>/$r<i>/$p<i>` declarations `n` aliased per-PR reads share, so GitHub types and
+/// escapes every slug rather than this binary interpolating one into query text.
+fn aliased_pr_vars(n: usize) -> String {
+    (0..n)
+        .map(|i| format!("$o{i}: String!, $r{i}: String!, $p{i}: Int!"))
+        .collect::<Vec<String>>()
+        .join(", ")
+}
+
+/// PURE: the `gh api graphql` argv for one chunk — the query, then the three operands each alias
+/// declared, in alias order.
+///
+/// The flag is decided by the variable's DECLARED TYPE, as in [`subject_query_args`]: `gh api
+/// graphql` retypes a `-F` value that parses as an integer, so an all-numeric owner or repo name
+/// passed with `-F` would send an `Int` at a `String!` and GitHub would refuse the whole chunk.
+/// One copy of that rule, because two could disagree about it.
+fn aliased_pr_args(query: String, chunk: &[&SubjectRef]) -> Vec<String> {
+    let mut args = vec![
+        "graphql".to_string(),
+        "-f".to_string(),
+        format!("query={query}"),
+    ];
+    for (i, s) in chunk.iter().enumerate() {
+        let (owner, repo) = s.repo.split_once('/').unwrap_or(("", s.repo.as_str()));
+        args.push("-f".to_string());
+        args.push(format!("o{i}={owner}"));
+        args.push("-f".to_string());
+        args.push(format!("r{i}={repo}"));
+        args.push("-F".to_string());
+        args.push(format!("p{i}={}", s.number));
+    }
+    args
+}
+
+/// PURE: a GraphQL connection's nodes, or `None` when the page did NOT carry the whole set.
+///
+/// The truncation guard both batched reads rest on: a page shorter than `totalCount` has hidden
+/// something, and an alias reported unread costs a refetch rather than a verdict computed over a
+/// partial set. A connection missing either field is unread for the same reason.
+fn whole_connection(conn: &Value) -> Option<&Vec<Value>> {
+    let nodes = conn.get("nodes")?.as_array()?;
+    if conn.get("totalCount")?.as_u64()? > nodes.len() as u64 {
+        return None;
+    }
+    Some(nodes)
+}
+
+/// PRs one batched comment read asks GitHub about. The scan's cost is round trips, and this is how
+/// many candidates each one buys; the product with [`LEAK_COMMENT_PAGE`] is the payload one
+/// response may weigh.
+const LEAK_COMMENT_BATCH: usize = 20;
+
+/// Comments fetched per PR in a batched read, newest last — GitHub's page cap for one connection.
+/// A PR holding more is not read short: [`leak_comments_page`] reports it UNREAD and [`leak_scan`]
+/// pays a per-PR `gh pr view`, so the batch is a speed change and never a different answer.
+const LEAK_COMMENT_PAGE: usize = 100;
+
+/// PURE: the aliased GraphQL query reading `n` PRs' comments in one round trip — one `c<i>` alias
+/// per PR over [`aliased_pr_vars`]'s three declared variables each.
+fn leak_comments_query(n: usize) -> String {
+    let fields: Vec<String> = (0..n)
+        .map(|i| {
+            format!(
+                "  c{i}: repository(owner: $o{i}, name: $r{i}) {{ pullRequest(number: $p{i}) \
+                 {{ comments(last: {LEAK_COMMENT_PAGE}) {{ totalCount nodes {{ author {{ login }} \
+                 body }} }} }} }}"
+            )
+        })
+        .collect();
+    format!(
+        "query({}) {{\n{}\n}}",
+        aliased_pr_vars(n),
+        fields.join("\n")
+    )
+}
+
+/// PURE: the `gh api graphql` argv for one chunk.
+fn leak_comments_args(chunk: &[&SubjectRef]) -> Vec<String> {
+    aliased_pr_args(leak_comments_query(chunk.len()), chunk)
+}
+
+/// PURE: one chunk's response, split back into `n` per-PR reads IN ALIAS ORDER and reshaped into
+/// the `{"comments": […]}` document [`trusted_comments`] reads — so the batch and the per-PR
+/// `gh pr view` are two ways to obtain ONE shape, not two shapes to keep in step.
+///
+/// `None` at an alias means UNREAD, and every uncertainty resolves that way: a null repository or
+/// pull request, a node list that is not one, and a `totalCount` above what the page returned.
+/// That last is the truncation guard — a newest-100 page of a longer thread can hide the trusted
+/// marker [`leak_reason`] answers on, and an unread alias costs a refetch rather than a verdict.
+fn leak_comments_page(doc: &Value, n: usize) -> Vec<Option<Value>> {
+    (0..n)
+        .map(|i| {
+            let conn = doc.pointer(&format!("/data/c{i}/pullRequest/comments"))?;
+            Some(serde_json::json!({ "comments": whole_connection(conn)? }))
+        })
+        .collect()
+}
+
+/// LIVE: every candidate's comments, batched, keyed by `(repo, number)`.
+///
+/// An ABSENT key means this read did not answer for that PR and the caller must ask again — never
+/// "no comments". A chunk that fails outright contributes no keys, which says that of all its
+/// members at once.
+fn leak_comments_batch(
+    candidates: &[LeakCandidate],
+) -> std::collections::HashMap<(String, u64), Value> {
+    let subjects: Vec<&SubjectRef> = candidates.iter().map(|c| &c.subject).collect();
+    let chunks: Vec<&[&SubjectRef]> = subjects.chunks(LEAK_COMMENT_BATCH).collect();
+    let pages = map_bounded(&chunks, |chunk| {
+        let args = leak_comments_args(chunk);
+        let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+        match gh_retrying(|| gh_api_result(&argref)) {
+            Ok(doc) => leak_comments_page(&doc, chunk.len()),
+            Err(_) => vec![None; chunk.len()],
+        }
+    });
+    chunks
+        .into_iter()
+        .flatten()
+        .zip(pages.into_iter().flatten())
+        .filter_map(|(s, read)| read.map(|v| ((s.repo.clone(), s.number), v)))
+        .collect()
+}
+
+/// [`leak_scan_with`] over a batch that answered for SOME of the candidates, with `per_pr` asked
+/// about the rest.
+///
+/// The per-PR read is the FALLBACK, not the plan, and it is what keeps the batch a pure speed
+/// change: every candidate the batch left out is still asked about one at a time, so the scan reads
+/// the same population it always did and a PR reaches `unreadable` only when BOTH reads failed.
+/// `per_pr` is a seam for that reason — the fallback is only reachable in production when a chunk
+/// or an alias fails, so without it nothing could exercise the branch that keeps the population
+/// whole.
+fn leak_scan_batched<F>(
+    candidates: &[LeakCandidate],
+    batched: &std::collections::HashMap<(String, u64), Value>,
+    per_pr: F,
+) -> LeakScan
+where
+    F: Fn(&SubjectRef) -> Option<Value> + Sync,
+{
     leak_scan_with(candidates, |s| {
+        batched
+            .get(&(s.repo.clone(), s.number))
+            .cloned()
+            .or_else(|| per_pr(s))
+    })
+}
+
+/// Live leak scan: one batched GraphQL read for the whole candidate set, and `gh pr view` for
+/// whatever it did not answer for.
+fn leak_scan(candidates: &[LeakCandidate]) -> LeakScan {
+    leak_scan_batched(candidates, &leak_comments_batch(candidates), |s| {
         gh_json(&[
             "pr",
             "view",
@@ -19754,9 +21532,9 @@ where
 /// producer acting outside the FSM). The leak count is the conformance metric: it trends to zero as
 /// the producer is restricted to labeled transitions. The legacy `states`/`counts`/`leaks` keys are
 /// kept UNCHANGED for the dashboard's existing reads; the new `lanes` object + additive `counts` keys
-/// are the full-machine view. Runtime is O(unlabeled + ai:ready + ai:design producer PRs) extra
-/// `gh` calls (the leak/reason check, the verdict-currency check that returns an ai:ready PR to
-/// un-vetted, and — `--json` only — the design cell's split, #240).
+/// are the full-machine view. Runtime is O(ai:ready + ai:design producer PRs) extra `gh` calls (the
+/// verdict-currency check that returns an ai:ready PR to un-vetted, and — `--json` only — the
+/// design cell's split, #240), plus [`leak_scan`]'s batched read over the unlabeled ones.
 fn human_queue_mode(json_out: bool) -> i32 {
     let ProducerPrInventory {
         buckets,
@@ -21374,7 +23152,7 @@ fn fmt_decl(decl: &[WorkflowInput]) -> String {
 /// Run gh and return raw stdout as text; None on non-zero exit / spawn failure. The text sibling of
 /// [`gh_json`], used to read a raw file via the contents API and to tail a run log.
 fn gh_text(args: &[&str]) -> Option<String> {
-    let out = Command::new("gh").args(args).output().ok()?;
+    let out = gh_exec(args).ok()?;
     if !out.status.success() {
         return None;
     }
@@ -23412,7 +25190,7 @@ fn blocked_on_state_load_row(
                 "-R",
                 slug,
                 "--json",
-                "headRefOid,baseRefName,labels,reviewDecision,mergeable,statusCheckRollup,comments,isDraft",
+                UNVETTED_DETAIL_FIELDS,
             ]) else {
                 return Err(format!(
                     "error: `gh pr view {slug}#{num}` failed after blocked-on clearance — \
@@ -23428,6 +25206,235 @@ fn blocked_on_state_load_row(
             ))
         }
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE STATE-LOAD'S DETAIL READ — one round trip per [`UNVETTED_DETAIL_BATCH`] PRs (#312)
+//
+// `unvetted` classifies NOTHING off the search JSON, and that reasoning stands ([`unvetted_fetch`]
+// states it). What did not follow from it was a round trip per PR: the measured state-load spent
+// 287s in 354 `gh` calls — one `gh pr view` per open PR, plus one [`unresolved_threads`] query per
+// PR that reached the vet gate. The population is the same population and every read it ever made
+// is still made; only the number of round trips it costs changes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The `gh pr view --json` field list the state-load classifies a PR from. ONE constant because
+/// three call sites read it — the batch below, its per-PR fallback, and the post-clearance re-fetch
+/// in [`blocked_on_state_load_row`] — and a batch fetching a different set from the fallback is a
+/// PR classified differently depending on which read answered for it.
+const UNVETTED_DETAIL_FIELDS: &str =
+    "headRefOid,baseRefName,labels,reviewDecision,mergeable,statusCheckRollup,comments,isDraft";
+
+/// PRs one batched detail read asks GitHub about. Same trade as [`LEAK_COMMENT_BATCH`] — round
+/// trips bought per response — over a wider field set, so the response one chunk may weigh is
+/// larger for the same count.
+const UNVETTED_DETAIL_BATCH: usize = 20;
+
+/// Comments, labels and check contexts fetched per PR in a batched read — GitHub's page cap for one
+/// connection. A PR holding more is not read short: [`whole_connection`] reports it UNREAD and the
+/// per-PR `gh pr view` answers for it instead, so the batch is a speed change and never a different
+/// answer.
+const UNVETTED_DETAIL_PAGE: usize = 100;
+
+/// PURE: the aliased GraphQL query reading `n` PRs' whole detail in one round trip — one `d<i>`
+/// alias per PR over [`aliased_pr_vars`]'s three declared variables each.
+///
+/// The selection is [`UNVETTED_DETAIL_FIELDS`] expressed in GraphQL, and the check rollup is where
+/// the two spellings differ: `gh pr view` FLATTENS the head commit's rollup contexts into one array
+/// and that is the shape [`classify_ci`] reads, so the connection is walked here and flattened by
+/// [`unvetted_detail_page`] rather than the classifier learning a second shape.
+///
+/// `reviewThreads` rides along because it is a read of the SAME PR the same loop already made
+/// ([`gate_open_threads`]'s, one query per PR that reached the vet gate) and asking for it here
+/// costs no round trip at all. The gate is unchanged in what it decides: a first page short of its
+/// own `totalCount` answers for nobody, and the per-PR [`unresolved_threads`] walk — which pages —
+/// is still what those PRs are gated on.
+fn unvetted_detail_query(n: usize) -> String {
+    let fields: Vec<String> = (0..n)
+        .map(|i| {
+            format!(
+                "  d{i}: repository(owner: $o{i}, name: $r{i}) {{ pullRequest(number: $p{i}) {{ \
+                 headRefOid baseRefName isDraft reviewDecision mergeable \
+                 labels(first: {UNVETTED_DETAIL_PAGE}) {{ totalCount nodes {{ name }} }} \
+                 comments(last: {UNVETTED_DETAIL_PAGE}) {{ totalCount nodes {{ author {{ login }} \
+                 body }} }} \
+                 reviewThreads(first: {UNVETTED_DETAIL_PAGE}) {{ totalCount nodes {{ isResolved }} }} \
+                 commits(last: 1) {{ nodes {{ commit {{ statusCheckRollup {{ \
+                 contexts(last: {UNVETTED_DETAIL_PAGE}) {{ totalCount nodes {{ __typename \
+                 ... on StatusContext {{ state }} \
+                 ... on CheckRun {{ status conclusion }} }} }} }} }} }} }} }} }}"
+            )
+        })
+        .collect();
+    format!(
+        "query({}) {{\n{}\n}}",
+        aliased_pr_vars(n),
+        fields.join("\n")
+    )
+}
+
+/// PURE: the `gh api graphql` argv for one chunk.
+fn unvetted_detail_args(chunk: &[&SubjectRef]) -> Vec<String> {
+    aliased_pr_args(unvetted_detail_query(chunk.len()), chunk)
+}
+
+/// PURE: the head commit's check rollup, flattened into the array `gh pr view --json
+/// statusCheckRollup` returns — or `None` for UNREAD.
+///
+/// A null `statusCheckRollup` is an ANSWER, not a gap: GitHub spells "this head has no checks"
+/// that way and `gh` spells the same PR's rollup `[]`, which [`classify_ci`] reads as
+/// [`Ci::NoChecks`]. A missing commit node is the gap — nothing was said about the head at all.
+fn unvetted_detail_rollup(pr: &Value) -> Option<Value> {
+    let commit = pr
+        .pointer("/commits/nodes")?
+        .as_array()?
+        .first()?
+        .get("commit")?;
+    match commit.get("statusCheckRollup")? {
+        Value::Null => Some(Value::Array(Vec::new())),
+        rollup => Some(Value::Array(
+            whole_connection(rollup.get("contexts")?)?.clone(),
+        )),
+    }
+}
+
+/// ONE PR as the batched read answers for it: the document the classifier reads, and the
+/// unresolved-thread count the vet gate reads.
+#[derive(Clone, Debug, PartialEq)]
+struct UnvettedDetail {
+    /// The `gh pr view --json {UNVETTED_DETAIL_FIELDS}` document, whichever read produced it.
+    detail: Value,
+    /// Unresolved review threads, or `None` when THIS read did not answer for them — a first page
+    /// short of `totalCount` is not a count, and the gate gets the per-PR paginated walk instead of
+    /// a number derived from part of the threads.
+    threads: Option<u64>,
+}
+
+/// PURE: one chunk's response, split back into `n` per-PR reads IN ALIAS ORDER and reshaped into
+/// the `gh pr view --json {UNVETTED_DETAIL_FIELDS}` document the classifier reads — so the batch
+/// and the per-PR fetch are two ways to obtain ONE shape, not two shapes to keep in step.
+///
+/// `None` at an alias means UNREAD and every uncertainty resolves that way: a null repository or
+/// pull request, a field of the wrong type, a missing head commit, and any connection
+/// [`whole_connection`] found short of its own `totalCount`. An unread alias costs a per-PR
+/// `gh pr view`, never a classification off a partial read.
+///
+/// `reviewDecision` is the one null that is NOT a gap: nobody having reviewed is what GitHub means
+/// by it, and `gh` renders that as the empty string [`unvetted_row`] already discards.
+///
+/// The thread count is unread INDEPENDENTLY of the rest. A long review history is the one thing on
+/// a PR that routinely outruns a single page, and there is no reason a PR's classification should
+/// be refetched because its threads did not fit.
+fn unvetted_detail_page(doc: &Value, n: usize) -> Vec<Option<UnvettedDetail>> {
+    (0..n)
+        .map(|i| {
+            let pr = doc.pointer(&format!("/data/d{i}/pullRequest"))?;
+            let review = match pr.get("reviewDecision")? {
+                Value::Null => "",
+                v => v.as_str()?,
+            };
+            Some(UnvettedDetail {
+                detail: serde_json::json!({
+                    "headRefOid": pr.get("headRefOid")?.as_str()?,
+                    "baseRefName": pr.get("baseRefName")?.as_str()?,
+                    "isDraft": pr.get("isDraft")?.as_bool()?,
+                    "reviewDecision": review,
+                    "mergeable": pr.get("mergeable")?.as_str()?,
+                    "labels": whole_connection(pr.get("labels")?)?,
+                    "statusCheckRollup": unvetted_detail_rollup(pr)?,
+                    "comments": whole_connection(pr.get("comments")?)?,
+                }),
+                threads: pr
+                    .get("reviewThreads")
+                    .and_then(whole_connection)
+                    .map(|nodes| {
+                        nodes
+                            .iter()
+                            .filter(|t| t.get("isResolved") == Some(&Value::Bool(false)))
+                            .count() as u64
+                    }),
+            })
+        })
+        .collect()
+}
+
+/// LIVE: every PR's detail, batched, keyed by `(repo, number)`.
+///
+/// An ABSENT key means this read did not answer for that PR and the caller must ask again — never
+/// "no detail". A chunk that fails outright contributes no keys, which says that of all its members
+/// at once.
+fn unvetted_detail_batch(
+    subjects: &[SubjectRef],
+) -> std::collections::HashMap<(String, u64), UnvettedDetail> {
+    let refs: Vec<&SubjectRef> = subjects.iter().collect();
+    let chunks: Vec<&[&SubjectRef]> = refs.chunks(UNVETTED_DETAIL_BATCH).collect();
+    let pages = map_bounded(&chunks, |chunk| {
+        let args = unvetted_detail_args(chunk);
+        let argref: Vec<&str> = args.iter().map(String::as_str).collect();
+        match gh_retrying(|| gh_api_result(&argref)) {
+            Ok(doc) => unvetted_detail_page(&doc, chunk.len()),
+            Err(_) => vec![None; chunk.len()],
+        }
+    });
+    chunks
+        .into_iter()
+        .flatten()
+        .zip(pages.into_iter().flatten())
+        .filter_map(|(s, read)| read.map(|v| ((s.repo.clone(), s.number), v)))
+        .collect()
+}
+
+/// One PR's detail: the batch's answer, or `per_pr` for whatever it did not answer for, or the
+/// ABORT.
+///
+/// The per-PR read is the FALLBACK, not the plan, and it is what keeps the batch a pure speed
+/// change: every PR the batch left out is still fetched one at a time, so the state-load classifies
+/// the same population it always did. The `Err` is the failure seam #302 established and it is
+/// louder here than a per-PR one, because it stops the whole run: a PR silently dropped from this
+/// queue reads as "nothing to vet", and a queue of dropped PRs reports healthy. `per_pr` is a seam
+/// for that reason — both branches are only reachable in production when GitHub fails.
+fn unvetted_detail_with<F>(
+    subject: &SubjectRef,
+    batched: &std::collections::HashMap<(String, u64), UnvettedDetail>,
+    per_pr: F,
+) -> Result<UnvettedDetail, String>
+where
+    F: Fn(&SubjectRef) -> Option<Value>,
+{
+    if let Some(d) = batched.get(&(subject.repo.clone(), subject.number)) {
+        return Ok(d.clone());
+    }
+    per_pr(subject)
+        .map(|detail| UnvettedDetail {
+            detail,
+            // `gh pr view` says nothing about review threads, so a refetched PR is gated on the
+            // per-PR walk exactly as it always was.
+            threads: None,
+        })
+        .ok_or_else(|| {
+            format!(
+                "error: `gh pr view {}#{}` failed — aborting rather than report an incomplete vet queue",
+                subject.repo, subject.number
+            )
+        })
+}
+
+/// LIVE: [`unvetted_detail_with`] over the real per-PR `gh pr view`.
+fn unvetted_detail(
+    subject: &SubjectRef,
+    batched: &std::collections::HashMap<(String, u64), UnvettedDetail>,
+) -> Result<UnvettedDetail, String> {
+    unvetted_detail_with(subject, batched, |s| {
+        gh_json(&[
+            "pr",
+            "view",
+            &s.number.to_string(),
+            "-R",
+            &s.repo,
+            "--json",
+            UNVETTED_DETAIL_FIELDS,
+        ])
+    })
 }
 
 fn unvetted_fetch(include_skipped: bool, limit: Option<usize>) -> Result<Value, String> {
@@ -23479,39 +25486,53 @@ fn unvetted_fetch(include_skipped: bool, limit: Option<usize>) -> Result<Value, 
             }),
         ));
     }
-    for p in &prs {
-        let url = p.get("url").and_then(|u| u.as_str()).unwrap_or("");
-        let (Some(slug), Some(num)) = (pr_slug(url), p.get("number").and_then(|n| n.as_u64()))
-        else {
-            continue;
-        };
-        let title = p.get("title").and_then(|t| t.as_str()).unwrap_or("");
-        // NOTHING is classified off the search JSON. No `human:*` label parks a PR any more
-        // (#133/#230), the two forms a human decision does take — a native REVIEW and a ruling
-        // comment — are invisible to search, and the draft send-back's currency check reads the
-        // comment thread, so every open PR is fetched and classified from its detail below.
-        let Some(detail) = gh_json(&[
-            "pr",
-            "view",
-            &num.to_string(),
-            "-R",
-            &slug,
-            "--json",
-            "headRefOid,baseRefName,labels,reviewDecision,mergeable,statusCheckRollup,comments,isDraft",
-        ]) else {
-            return Err(format!(
-                "error: `gh pr view {slug}#{num}` failed — aborting rather than report an incomplete vet queue"
-            ));
-        };
+    // NOTHING is classified off the search JSON. No `human:*` label parks a PR any more
+    // (#133/#230), the two forms a human decision does take — a native REVIEW and a ruling
+    // comment — are invisible to search, and the draft send-back's currency check reads the
+    // comment thread, so every open PR is fetched and classified from its detail.
+    //
+    // The whole population is read FIRST, [`UNVETTED_DETAIL_BATCH`] PRs to a round trip (#312), and
+    // the loop below is unchanged in what it reads: a PR the batch did not answer for still costs
+    // its own `gh pr view`. A row unreachable from its search entry (an unparseable url) is dropped
+    // here exactly as the loop dropped it, so nothing enters the batch that the loop would skip.
+    let subjects: Vec<SubjectRef> = prs
+        .iter()
+        .filter_map(|p| {
+            let url = p.get("url").and_then(|u| u.as_str()).unwrap_or("");
+            Some(SubjectRef::new(
+                pr_slug(url)?,
+                p.get("number").and_then(|n| n.as_u64())?,
+                url,
+                p.get("title").and_then(|t| t.as_str()).unwrap_or(""),
+            ))
+        })
+        .collect();
+    let details = unvetted_detail_batch(&subjects);
+
+    // SERIAL, in search order: this loop WRITES (the send-backs and the blocked-on clearance), and
+    // the rows it pushes are the order everything downstream ranks and pages.
+    for subject in &subjects {
+        let (slug, num, url, title) = (
+            subject.repo.as_str(),
+            subject.number,
+            subject.url.as_str(),
+            subject.title.as_str(),
+        );
+        let UnvettedDetail { detail, threads } = unvetted_detail(subject, &details)?;
         // #161: an `ai:blocked-on` PR takes the clearance path, not the vet path — see
         // [`blocked_on_state_load_row`]. Checked on the DETAIL labels (fresh), not the search row.
         let row = if label_names(&detail).iter().any(|l| l == "ai:blocked-on") {
-            blocked_on_state_load_row(&slug, num, url, title, &detail)?
+            blocked_on_state_load_row(slug, num, url, title, &detail)?
         } else {
             // Classify first, THEN gate on open threads — the gate's `fetch` runs only for a row that
             // would actually be vetted, so an already-skipped PR costs no extra GraphQL round-trip.
             // An unsplittable slug fails the fetch (fail-closed: not vetted this run), never a dropped PR.
-            gate_open_threads(unvetted_row(&slug, num, url, title, &detail), || {
+            gate_open_threads(unvetted_row(slug, num, url, title, &detail), || {
+                // The batch answered for most PRs' threads at no extra round trip; the walk is what
+                // a PR whose threads outran one page still costs.
+                if let Some(open) = threads {
+                    return Ok(open);
+                }
                 let (owner, repo) = slug.split_once('/').ok_or(GhFailure::Malformed)?;
                 unresolved_threads(owner, repo, num)
             })
@@ -23523,10 +25544,10 @@ fn unvetted_fetch(include_skipped: bool, limit: Option<usize>) -> Result<Value, 
         // modeled state). The two are mutually exclusive by [`vet_action`]'s arm order, so at most
         // one `write` fires per PR.
         let row = send_back_conflict(row, |head, labels, base| {
-            record_conflict_send_back(&slug, num, head, labels, base)
+            record_conflict_send_back(slug, num, head, labels, base)
         });
         rows.push(send_back_draft(row, |head, labels| {
-            record_draft_send_back(&slug, num, head, labels)
+            record_draft_send_back(slug, num, head, labels)
         }));
     }
     Ok(unvetted_doc(&rows, include_skipped, limit))
@@ -23949,14 +25970,12 @@ fn checkout_failure_error(pr: &str, dir: &str, why: &str) -> String {
 /// Run `gh` for its exit status only, optionally inside `dir`, capturing BOTH streams (nothing leaks
 /// to this process's stdout — the MCP JSON-RPC stream lives there).
 fn gh_quiet(dir: Option<&std::path::Path>, args: &[&str]) -> Result<(), String> {
-    let mut cmd = Command::new("gh");
-    cmd.args(args);
+    let mut cmd = gh_command(args);
     if let Some(d) = dir {
         cmd.current_dir(d);
     }
-    let out = cmd
-        .output()
-        .map_err(|e| format!("failed to run gh {}: {e}", args.join(" ")))?;
+    let out =
+        gh_output(cmd, args).map_err(|e| format!("failed to run gh {}: {e}", args.join(" ")))?;
     if out.status.success() {
         return Ok(());
     }
@@ -25806,6 +27825,37 @@ fn next_close_candidate_page(ordered: &[PresentableFlag], limit: usize) -> Vec<&
     ordered.iter().take(limit).collect()
 }
 
+/// PURE: the page's ROWS — one per paged flag, paired with the coverage already read for it, each
+/// built at the prose share a `limit`-row page leaves. `limit` is what the caller ASKED for, never
+/// the number of rows the queue happened to hold, so the clip a given argument produces is the same
+/// on every call.
+///
+/// Separate from the fetch for [`next_design_rows`]' reason: the wiring from `limit` to the clip is
+/// reachable by no test while it is folded into a network call.
+fn next_close_candidate_rows(
+    page: &[&PresentableFlag],
+    coverage: &[(PrCoverage, Vec<String>)],
+    limit: usize,
+) -> Vec<Value> {
+    page.iter()
+        .zip(coverage)
+        .map(|(f, (coverage, covering))| {
+            next_close_candidate_row(
+                &NextCcFacts {
+                    slug: &f.slug,
+                    num: f.num,
+                    detail: &f.detail,
+                    flag_at: &f.flag_at,
+                    flag_body: &f.flag_body,
+                    coverage: *coverage,
+                    covering,
+                },
+                limit,
+            )
+        })
+        .collect()
+}
+
 /// Rows one call may return, and the default.
 ///
 /// The cap is 3 for [`NEXT_READY_MAX_ROWS`]'s reason, and the argument applies here with MORE force
@@ -25822,9 +27872,9 @@ const NEXT_CC_MAX_ROWS: usize = 3;
 const NEXT_CC_DEFAULT_ROWS: usize = 1;
 
 // Per-field RAW byte caps, for the reason `next_ready`'s exist: the result is structurally unable to
-// exceed the budget rather than merely unlikely to.
-const NCC_REASON_BYTES: usize = 1_000;
-const NCC_NOTE_BYTES: usize = 1_000;
+// exceed the budget rather than merely unlikely to. The row's two PROSE fields — the flag's reason
+// and the verdict's note — have no constant here: they are [`ncc_prose_bytes`], derived from what
+// these leave, for [`nd_note_bytes`]'s reason.
 const NCC_TITLE_BYTES: usize = 200;
 const NCC_URL_BYTES: usize = 200;
 const NCC_ISSUE_BYTES: usize = 160;
@@ -25838,11 +27888,14 @@ const NCC_PR_REF_BYTES: usize = 160;
 const NCC_MAX_PRS: usize = 3;
 const NCC_ERROR_BYTES: usize = 200;
 
-/// Every capped field in one row, summed. Three timestamps (the issue's `createdAt`, the flag's, and
-/// the one the vetter's verdict pinned) are counted at their own cap.
-const NCC_ROW_FIELD_BYTES: usize = NCC_REASON_BYTES
-    + NCC_NOTE_BYTES
-    + NCC_TITLE_BYTES
+/// The row's two prose fields: the flag's `reason` and the verdict's `note`. They split the share
+/// evenly — the ruling is the second checked against the first, so a page that carried one whole
+/// and cut the other would be answering half the question.
+const NCC_PROSE_FIELDS: usize = 2;
+
+/// Every capped field in one row EXCEPT those two, summed. Three timestamps (the issue's
+/// `createdAt`, the flag's, and the one the vetter's verdict pinned) are counted at their own cap.
+const NCC_ROW_FIELD_BYTES_LESS_PROSE: usize = NCC_TITLE_BYTES
     + NCC_URL_BYTES
     + NCC_ISSUE_BYTES
     + 3 * NCC_TIME_BYTES
@@ -25855,7 +27908,11 @@ const NCC_ROW_FIELD_BYTES: usize = NCC_REASON_BYTES
 /// The row's FIXED cost — keys, punctuation, typed enum strings, numbers. Held honest by
 /// `the_fixed_allowances_cover_a_row_a_withheld_entry_and_an_envelope`, which measures a real one.
 const NCC_ROW_FIXED_BYTES: usize = 1_200;
-const NCC_ROW_CEILING: usize = NCC_ROW_FIELD_BYTES * JSON_ESCAPE_WORST_CASE + NCC_ROW_FIXED_BYTES;
+
+/// What one row costs BEFORE its prose: its other fields at their caps, escaped, plus that fixed
+/// cost.
+const NCC_ROW_LESS_PROSE_CEILING: usize =
+    NCC_ROW_FIELD_BYTES_LESS_PROSE * JSON_ESCAPE_WORST_CASE + NCC_ROW_FIXED_BYTES;
 
 // The two withheld lists. They are CAPPED and their overflow COUNTED, rather than unbounded,
 // because they ride inside the same one budget the rows do — and an unbounded list of stranded
@@ -25870,15 +27927,56 @@ const NCC_WITHHELD_CEILING: usize =
 /// The document minus its rows and its withheld lists: `counts`, `queue`, the keys around them.
 const NCC_ENVELOPE_BYTES: usize = 1_500;
 
-/// THE GUARANTEE, as arithmetic the compiler checks — a full page of maximal rows PLUS both withheld
-/// lists at their caps cannot reach [`MCP_MAX_RESULT_BYTES`]. Raise a cap past what fits and this
-/// crate does not build.
-const _: () = assert!(
-    NEXT_CC_MAX_ROWS * NCC_ROW_CEILING
+/// Everything in the document that is NOT prose, for a page of `rows`.
+const fn ncc_non_prose_bytes(rows: usize) -> usize {
+    rows * NCC_ROW_LESS_PROSE_CEILING
         + (NCC_MAX_STRANDED + NCC_MAX_ERRORS) * NCC_WITHHELD_CEILING
         + NCC_ENVELOPE_BYTES
-        <= MCP_MAX_RESULT_BYTES
-);
+}
+
+/// The allowance for ONE prose field of ONE row of a `rows`-row page — DERIVED from the budget,
+/// never picked, for [`nd_note_bytes`]'s reason: a constant has to be sized for the WIDEST page,
+/// and the caller asking the tool's own question then pays for rows it did not ask for out of the
+/// two fields it cannot reconstruct.
+/// A `rows` outside the page sizes [`next_close_candidate_limit`] admits is clamped to the SAFE
+/// side, for [`nd_note_rows`]'s reason: zero divides, and a number past the cap wraps a subtraction
+/// into an unbounded share.
+const fn ncc_prose_rows(rows: usize) -> usize {
+    if rows < 1 {
+        1
+    } else if rows > NEXT_CC_MAX_ROWS {
+        NEXT_CC_MAX_ROWS
+    } else {
+        rows
+    }
+}
+
+const fn ncc_prose_bytes(rows: usize) -> usize {
+    let rows = ncc_prose_rows(rows);
+    (MCP_MAX_RESULT_BYTES - ncc_non_prose_bytes(rows))
+        / (JSON_ESCAPE_WORST_CASE * rows * NCC_PROSE_FIELDS)
+}
+
+/// The floor under [`ncc_prose_bytes`] at its tightest — [`ND_NOTE_FLOOR_BYTES`]'s job here: a
+/// field added to the row is paid for out of the prose, so the build is where that lands.
+const NCC_PROSE_FLOOR_BYTES: usize = 1_000;
+
+/// THE GUARANTEE, as arithmetic the compiler checks — for EVERY page size this tool serves, a full
+/// page of maximal rows PLUS both withheld lists at their caps cannot reach
+/// [`MCP_MAX_RESULT_BYTES`], and the prose is still worth reading. Raise a cap past what fits and
+/// this crate does not build.
+const _: () = {
+    let mut rows = 1;
+    while rows <= NEXT_CC_MAX_ROWS {
+        assert!(
+            ncc_non_prose_bytes(rows)
+                + rows * NCC_PROSE_FIELDS * ncc_prose_bytes(rows) * JSON_ESCAPE_WORST_CASE
+                <= MCP_MAX_RESULT_BYTES
+        );
+        assert!(ncc_prose_bytes(rows) >= NCC_PROSE_FLOOR_BYTES);
+        rows += 1;
+    }
+};
 
 /// PURE: this state-load's page size. Out of range is REFUSED rather than clamped, for the reason
 /// [`next_ready_limit`]'s is.
@@ -25909,15 +28007,17 @@ struct NextCcFacts<'a> {
     covering: &'a [String],
 }
 
-/// PURE: the flag decision for ONE issue. Every string is clipped, so the row's size is bounded by
-/// [`NCC_ROW_CEILING`] whatever GitHub returns.
+/// PURE: the flag decision for ONE issue. Every string is clipped — the two prose fields at the
+/// share [`ncc_prose_bytes`] leaves a `rows`-row page — so the row's size is bounded whatever
+/// GitHub returns. It takes the PAGE SIZE rather than a byte count so a row cannot be built at a
+/// share no page would have given it.
 ///
 /// The row's centre is the pair a ruling turns on: `flag.reason` is the producer's CLAIM — the thing
 /// being checked, never a fact — and `verdict` is what the vetter made of that same claim, pinned to
 /// the flag it judged so a stale one is visibly stale. They are separate objects because collapsing
 /// them into one "reason" is the restatement `/nr` was built against, in the data instead of the
 /// prose.
-fn next_close_candidate_row(f: &NextCcFacts) -> Value {
+fn next_close_candidate_row(f: &NextCcFacts, rows: usize) -> Value {
     let labels_all = label_names(f.detail);
     let labels: Vec<String> = labels_all
         .iter()
@@ -25958,9 +28058,9 @@ fn next_close_candidate_row(f: &NextCcFacts) -> Value {
             "at": clip_field(f.flag_at, NCC_TIME_BYTES),
             // The CLAIM. `close_candidate_context` carries the flag body whole; this is the payload
             // line, clipped, and `reasonTruncated` says when the whole one has to be read there.
-            "reason": clip_field(&reason_full, NCC_REASON_BYTES),
+            "reason": clip_field(&reason_full, ncc_prose_bytes(rows)),
             "reasonBytes": reason_full.len(),
-            "reasonTruncated": reason_full.len() > NCC_REASON_BYTES,
+            "reasonTruncated": reason_full.len() > ncc_prose_bytes(rows),
             // Stated because it is the second input to `openPr.blocksClose`, and a decision whose
             // inputs are not both on the row is one a reader has to take on trust. It is a fact
             // about the reason's TEXT — what it cites, never whether the citation holds.
@@ -25973,9 +28073,9 @@ fn next_close_candidate_row(f: &NextCcFacts) -> Value {
             "flagAt": parts.as_ref().map(|(at, _)| clip_field(at, NCC_TIME_BYTES)),
             "atFlag": parts.as_ref().is_some_and(|(at, _)| at == f.flag_at),
             "verdict": parts.as_ref().map(|(_, v)| clip_field(v, NCC_VERDICT_BYTES)),
-            "note": clip_field(&note_full, NCC_NOTE_BYTES),
+            "note": clip_field(&note_full, ncc_prose_bytes(rows)),
             "noteBytes": note_full.len(),
-            "noteTruncated": note_full.len() > NCC_NOTE_BYTES,
+            "noteTruncated": note_full.len() > ncc_prose_bytes(rows),
         },
         "openPr": {
             // REPORTED whatever the flag says: a human ruling on this issue must see that a PR
@@ -26439,28 +28539,22 @@ fn next_close_candidate_fetch(limit: usize) -> Result<Value, String> {
         errors,
     } = ncc_classify(&found, &archived_repos, ncc_issue_detail);
     rank_flags(&mut flags);
-    let rows: Vec<Value> = next_close_candidate_page(&flags, limit)
-        .into_iter()
+    let page_flags = next_close_candidate_page(&flags, limit);
+    // The covering-PR read is an ISSUE question (GitHub answers it on the Issue type only), so a
+    // PR row states `not-applicable` rather than paying for a read that cannot answer and
+    // reporting its failure as an unread signal. Read HERE, ahead of the rows, so the row build
+    // below is pure.
+    let coverage: Vec<(PrCoverage, Vec<String>)> = page_flags
+        .iter()
         .map(|f| {
-            // The covering-PR read is an ISSUE question (GitHub answers it on the Issue type
-            // only), so a PR row states `not-applicable` rather than paying for a read that
-            // cannot answer and reporting its failure as an unread signal.
-            let (coverage, covering) = if subject_is_pr(&f.detail) {
+            if subject_is_pr(&f.detail) {
                 (PrCoverage::NotApplicable, Vec::new())
             } else {
                 covering_open_prs_fetch(&f.slug, f.num)
-            };
-            next_close_candidate_row(&NextCcFacts {
-                slug: &f.slug,
-                num: f.num,
-                detail: &f.detail,
-                flag_at: &f.flag_at,
-                flag_body: &f.flag_body,
-                coverage,
-                covering: &covering,
-            })
+            }
         })
         .collect();
+    let rows = next_close_candidate_rows(&page_flags, &coverage, limit);
     let (stranded, more_stranded) = page(stranded, Some(NCC_MAX_STRANDED));
     let (errors, more_errors) = page(errors, Some(NCC_MAX_ERRORS));
     Ok(next_close_candidate_doc(
@@ -27439,15 +29533,18 @@ mod next_close_candidate_tests {
                 vetter(at, "uphold", "diff matches the ask"),
             ],
         );
-        let row = next_close_candidate_row(&NextCcFacts {
-            slug: "o/r",
-            num: 7,
-            detail: &detail,
-            flag_at: at,
-            flag_body: body,
-            coverage: PrCoverage::Uncovered,
-            covering: &[],
-        });
+        let row = next_close_candidate_row(
+            &NextCcFacts {
+                slug: "o/r",
+                num: 7,
+                detail: &detail,
+                flag_at: at,
+                flag_body: body,
+                coverage: PrCoverage::Uncovered,
+                covering: &[],
+            },
+            NEXT_CC_DEFAULT_ROWS,
+        );
         assert_eq!(row["issue"], json!("o/r#7"));
         assert_eq!(row["url"], json!("https://github.com/o/r/issues/7"));
         assert_eq!(row["title"], json!("the thing does not work"));
@@ -27493,15 +29590,18 @@ mod next_close_candidate_tests {
                 producer(second, "already-fixed: #11"),
             ],
         );
-        let row = next_close_candidate_row(&NextCcFacts {
-            slug: "o/r",
-            num: 7,
-            detail: &detail,
-            flag_at: second,
-            flag_body: "🤖 ai:producer\nClose-candidate: already-fixed: #11",
-            coverage: PrCoverage::Uncovered,
-            covering: &[],
-        });
+        let row = next_close_candidate_row(
+            &NextCcFacts {
+                slug: "o/r",
+                num: 7,
+                detail: &detail,
+                flag_at: second,
+                flag_body: "🤖 ai:producer\nClose-candidate: already-fixed: #11",
+                coverage: PrCoverage::Uncovered,
+                covering: &[],
+            },
+            NEXT_CC_DEFAULT_ROWS,
+        );
         assert_eq!(row["flag"]["at"], json!(second));
         assert_eq!(row["verdict"]["flagAt"], json!(first));
         assert_eq!(row["verdict"]["atFlag"], json!(false));
@@ -27526,15 +29626,18 @@ mod next_close_candidate_tests {
             "o/r#111".to_string(),
             "o/r#112".to_string(),
         ];
-        let row = next_close_candidate_row(&NextCcFacts {
-            slug: "o/r",
-            num: 7,
-            detail: &detail,
-            flag_at: at,
-            flag_body: &format!("🤖 ai:producer\nClose-candidate: {reason}"),
-            coverage: PrCoverage::Covered,
-            covering: &covering,
-        });
+        let row = next_close_candidate_row(
+            &NextCcFacts {
+                slug: "o/r",
+                num: 7,
+                detail: &detail,
+                flag_at: at,
+                flag_body: &format!("🤖 ai:producer\nClose-candidate: {reason}"),
+                coverage: PrCoverage::Covered,
+                covering: &covering,
+            },
+            NEXT_CC_DEFAULT_ROWS,
+        );
         assert_eq!(row["flag"]["grounds"], json!("cites-no-landing"));
         assert_eq!(row["openPr"]["coverage"], json!("covered-by-open-pr"));
         assert_eq!(row["openPr"]["blocksClose"], json!(true));
@@ -27569,15 +29672,18 @@ mod next_close_candidate_tests {
             ],
         );
         let covering = vec!["o/r#60".to_string()];
-        let row = next_close_candidate_row(&NextCcFacts {
-            slug: "o/r",
-            num: 6,
-            detail: &detail,
-            flag_at: at,
-            flag_body: &format!("🤖 ai:producer\nClose-candidate: {reason}"),
-            coverage: PrCoverage::Covered,
-            covering: &covering,
-        });
+        let row = next_close_candidate_row(
+            &NextCcFacts {
+                slug: "o/r",
+                num: 6,
+                detail: &detail,
+                flag_at: at,
+                flag_body: &format!("🤖 ai:producer\nClose-candidate: {reason}"),
+                coverage: PrCoverage::Covered,
+                covering: &covering,
+            },
+            NEXT_CC_DEFAULT_ROWS,
+        );
         assert_eq!(row["flag"]["grounds"], json!("cites-a-landing"));
         assert_eq!(
             row["openPr"]["coverage"],
@@ -27596,31 +29702,113 @@ mod next_close_candidate_tests {
     #[test]
     fn a_clipped_claim_or_note_says_it_was_clipped() {
         let at = "2026-07-20T09:00:00Z";
-        let long = "x".repeat(NCC_REASON_BYTES + 500);
+        let cap = ncc_prose_bytes(NEXT_CC_DEFAULT_ROWS);
+        let long = "x".repeat(cap + 500);
         let detail = issue(
             &["ai:close-candidate"],
-            vec![vetter(at, "uphold", &"y".repeat(NCC_NOTE_BYTES + 500))],
+            vec![vetter(at, "uphold", &"y".repeat(cap + 500))],
         );
-        let row = next_close_candidate_row(&NextCcFacts {
-            slug: "o/r",
-            num: 7,
-            detail: &detail,
-            flag_at: at,
-            flag_body: &format!("🤖 ai:producer\nClose-candidate: {long}"),
-            coverage: PrCoverage::Uncovered,
-            covering: &[],
-        });
-        assert_eq!(
-            row["flag"]["reason"].as_str().unwrap().len(),
-            NCC_REASON_BYTES
+        let row = next_close_candidate_row(
+            &NextCcFacts {
+                slug: "o/r",
+                num: 7,
+                detail: &detail,
+                flag_at: at,
+                flag_body: &format!("🤖 ai:producer\nClose-candidate: {long}"),
+                coverage: PrCoverage::Uncovered,
+                covering: &[],
+            },
+            NEXT_CC_DEFAULT_ROWS,
         );
+        assert_eq!(row["flag"]["reason"].as_str().unwrap().len(), cap);
         assert_eq!(row["flag"]["reasonBytes"], json!(long.len()));
         assert_eq!(row["flag"]["reasonTruncated"], json!(true));
-        assert_eq!(
-            row["verdict"]["note"].as_str().unwrap().len(),
-            NCC_NOTE_BYTES
-        );
+        assert_eq!(row["verdict"]["note"].as_str().unwrap().len(), cap);
         assert_eq!(row["verdict"]["noteTruncated"], json!(true));
+    }
+
+    // The prose share is the PAGE's, so a claim the widest page cuts, the tool's own default call
+    // carries whole — and the escape from a clip is a narrower page, not only
+    // `close_candidate_context`. The wiring is the claim, so this asks for both PAGES rather than
+    // handing the row builder two numbers by hand.
+    #[test]
+    fn a_narrower_page_carries_a_longer_claim() {
+        let widest = ncc_prose_bytes(NEXT_CC_MAX_ROWS);
+        let default = ncc_prose_bytes(NEXT_CC_DEFAULT_ROWS);
+        assert!(
+            default > widest,
+            "the one-row page must not be charged for rows it did not ask for: \
+             {default} vs {widest}"
+        );
+
+        let at = "2026-07-20T09:00:00Z";
+        let long = "x".repeat(widest + 1);
+        let detail = issue(
+            &["ai:close-candidate"],
+            vec![vetter(at, "uphold", &"y".repeat(widest + 1))],
+        );
+        let ordered: Vec<PresentableFlag> = (0..NEXT_CC_MAX_ROWS)
+            .map(|i| PresentableFlag {
+                slug: "o/r".to_string(),
+                num: i as u64 + 1,
+                flag_at: at.to_string(),
+                flag_body: format!("🤖 ai:producer\nClose-candidate: {long}"),
+                detail: detail.clone(),
+            })
+            .collect();
+        let coverage: Vec<(PrCoverage, Vec<String>)> = (0..NEXT_CC_MAX_ROWS)
+            .map(|_| (PrCoverage::Uncovered, Vec::new()))
+            .collect();
+
+        let page = next_close_candidate_page(&ordered, NEXT_CC_MAX_ROWS);
+        for row in next_close_candidate_rows(&page, &coverage, NEXT_CC_MAX_ROWS) {
+            assert_eq!(row["flag"]["reasonTruncated"], json!(true));
+            assert_eq!(row["verdict"]["noteTruncated"], json!(true));
+        }
+        let page = next_close_candidate_page(&ordered, NEXT_CC_DEFAULT_ROWS);
+        let narrow = next_close_candidate_rows(&page, &coverage, NEXT_CC_DEFAULT_ROWS);
+        assert_eq!(narrow.len(), NEXT_CC_DEFAULT_ROWS);
+        assert_eq!(narrow[0]["flag"]["reasonTruncated"], json!(false));
+        assert_eq!(narrow[0]["verdict"]["noteTruncated"], json!(false));
+    }
+
+    // A page size the limit would have refused never reaches an unbounded share, for the reason
+    // `next_design`'s twin states: zero divides and a number past the cap wraps a subtraction.
+    #[test]
+    fn a_page_size_the_limit_refuses_never_reaches_an_unbounded_share() {
+        let tightest = ncc_prose_bytes(NEXT_CC_MAX_ROWS);
+        assert_eq!(ncc_prose_bytes(0), ncc_prose_bytes(1));
+        assert_eq!(ncc_prose_bytes(NEXT_CC_MAX_ROWS + 1), tightest);
+        assert_eq!(ncc_prose_bytes(usize::MAX), tightest);
+    }
+
+    // Every page size the limit admits is inside the ONE budget, and every one of them still
+    // carries prose worth reading — so a `limit` widened without re-deriving the share fails here.
+    #[test]
+    fn every_admitted_page_size_keeps_its_prose_share() {
+        for rows in 1..=NEXT_CC_MAX_ROWS {
+            let cap = ncc_prose_bytes(rows);
+            assert!(
+                cap >= NCC_PROSE_FLOOR_BYTES,
+                "a {rows}-row page leaves {cap} bytes of prose, under the \
+                 {NCC_PROSE_FLOOR_BYTES}-byte floor"
+            );
+            let total =
+                ncc_non_prose_bytes(rows) + rows * NCC_PROSE_FIELDS * cap * JSON_ESCAPE_WORST_CASE;
+            assert!(
+                total <= MCP_MAX_RESULT_BYTES,
+                "a {rows}-row page is {total} bytes, over the {MCP_MAX_RESULT_BYTES}-byte budget"
+            );
+            // And it is the WHOLE of what the page leaves, for the reason `next_design`'s twin
+            // says so: a share that merely fits is one a smaller divisor also satisfies.
+            let over = ncc_non_prose_bytes(rows)
+                + rows * NCC_PROSE_FIELDS * (cap + 1) * JSON_ESCAPE_WORST_CASE;
+            assert!(
+                over > MCP_MAX_RESULT_BYTES,
+                "a {rows}-row page leaves {cap} bytes of prose but could carry more — {over} \
+                 bytes is still inside the {MCP_MAX_RESULT_BYTES}-byte budget"
+            );
+        }
     }
 
     // --- the document ---------------------------------------------------------------------------
@@ -27822,57 +30010,67 @@ mod next_close_candidate_tests {
             }],
         });
         let covering: Vec<String> = (0..20).map(|_| h.clone()).collect();
-        let rows: Vec<Value> = (0..NEXT_CC_MAX_ROWS)
-            .map(|i| {
-                next_close_candidate_row(&NextCcFacts {
-                    slug: &h,
-                    num: u64::MAX - i as u64,
-                    detail: &detail,
-                    flag_at: &at,
-                    flag_body: &format!("🤖 ai:producer\nClose-candidate: {h}"),
-                    coverage: PrCoverage::Covered,
-                    covering: &covering,
+        for limit in 1..=NEXT_CC_MAX_ROWS {
+            let prose_bytes = ncc_prose_bytes(limit);
+            let ceiling = NCC_ROW_LESS_PROSE_CEILING
+                + NCC_PROSE_FIELDS * prose_bytes * JSON_ESCAPE_WORST_CASE;
+            let rows: Vec<Value> = (0..limit)
+                .map(|i| {
+                    next_close_candidate_row(
+                        &NextCcFacts {
+                            slug: &h,
+                            num: u64::MAX - i as u64,
+                            detail: &detail,
+                            flag_at: &at,
+                            flag_body: &format!("🤖 ai:producer\nClose-candidate: {h}"),
+                            coverage: PrCoverage::Covered,
+                            covering: &covering,
+                        },
+                        limit,
+                    )
                 })
-            })
-            .collect();
-        for (i, row) in rows.iter().enumerate() {
-            let len = row.to_string().len();
+                .collect();
+            for (i, row) in rows.iter().enumerate() {
+                let len = row.to_string().len();
+                assert!(
+                    len <= ceiling,
+                    "row {i} of a {limit}-row page is {len} bytes, over the {ceiling}-byte \
+                     ceiling the budget assertion is computed from"
+                );
+            }
+            let entry = withheld_entry(&h, &h);
+            let entry_len = entry.to_string().len();
             assert!(
-                len <= NCC_ROW_CEILING,
-                "row {i} is {len} bytes, over the {NCC_ROW_CEILING}-byte ceiling the compile-time \
-                 budget assertion is computed from"
+                entry_len <= NCC_WITHHELD_CEILING,
+                "a withheld entry is {entry_len} bytes, over the {NCC_WITHHELD_CEILING}-byte \
+                 ceiling"
+            );
+            let doc = next_close_candidate_doc(
+                rows,
+                &FlagQueueWithheld {
+                    counts: FlagQueueCounts {
+                        flagged: usize::MAX,
+                        presentable: usize::MAX,
+                        vetter_close: usize::MAX,
+                        torn_human_ruling: usize::MAX,
+                        unvetted: usize::MAX,
+                        no_flag: usize::MAX,
+                        rejected_still_flagged: usize::MAX,
+                        fetch_errors: usize::MAX,
+                    },
+                    stranded: (0..NCC_MAX_STRANDED).map(|_| entry.clone()).collect(),
+                    more_stranded: usize::MAX,
+                    errors: (0..NCC_MAX_ERRORS).map(|_| entry.clone()).collect(),
+                    more_errors: usize::MAX,
+                },
+            );
+            let len = doc.to_string().len();
+            assert!(
+                len <= MCP_MAX_RESULT_BYTES,
+                "a full adversarial {limit}-row page is {len} bytes, over the \
+                 {MCP_MAX_RESULT_BYTES}-byte budget"
             );
         }
-        let entry = withheld_entry(&h, &h);
-        let entry_len = entry.to_string().len();
-        assert!(
-            entry_len <= NCC_WITHHELD_CEILING,
-            "a withheld entry is {entry_len} bytes, over the {NCC_WITHHELD_CEILING}-byte ceiling"
-        );
-        let doc = next_close_candidate_doc(
-            rows,
-            &FlagQueueWithheld {
-                counts: FlagQueueCounts {
-                    flagged: usize::MAX,
-                    presentable: usize::MAX,
-                    vetter_close: usize::MAX,
-                    torn_human_ruling: usize::MAX,
-                    unvetted: usize::MAX,
-                    no_flag: usize::MAX,
-                    rejected_still_flagged: usize::MAX,
-                    fetch_errors: usize::MAX,
-                },
-                stranded: (0..NCC_MAX_STRANDED).map(|_| entry.clone()).collect(),
-                more_stranded: usize::MAX,
-                errors: (0..NCC_MAX_ERRORS).map(|_| entry.clone()).collect(),
-                more_errors: usize::MAX,
-            },
-        );
-        let len = doc.to_string().len();
-        assert!(
-            len <= MCP_MAX_RESULT_BYTES,
-            "a full adversarial page is {len} bytes, over the {MCP_MAX_RESULT_BYTES}-byte budget"
-        );
     }
 
     // The three fixed allowances the compile-time assertion rests on are MEASURED, not guessed. A
@@ -27880,15 +30078,18 @@ mod next_close_candidate_tests {
     #[test]
     fn the_fixed_allowances_cover_a_row_a_withheld_entry_and_an_envelope() {
         // Every enum at its longest spelling, every string empty.
-        let row = next_close_candidate_row(&NextCcFacts {
-            slug: "",
-            num: 0,
-            detail: &json!({}),
-            flag_at: "",
-            flag_body: "",
-            coverage: PrCoverage::Covered,
-            covering: &[],
-        });
+        let row = next_close_candidate_row(
+            &NextCcFacts {
+                slug: "",
+                num: 0,
+                detail: &json!({}),
+                flag_at: "",
+                flag_body: "",
+                coverage: PrCoverage::Covered,
+                covering: &[],
+            },
+            NEXT_CC_DEFAULT_ROWS,
+        );
         // Two numeric fields per row: reasonBytes and noteBytes.
         let row_len = row.to_string().len() + 2 * NCC_MAX_DIGITS;
         assert!(
@@ -28325,6 +30526,141 @@ mod next_leak_tests {
         json!({"comments": [{"author": {"login": TRUSTED_AUTHOR}, "body": body}]})
     }
 
+    // ── the batched read ──────────────────────────────────────────────────────────────────────
+
+    /// One chunk's response as GitHub returns it: an entry per alias under `data`.
+    fn batch_doc(entries: &[(usize, Value)]) -> Value {
+        let mut data = serde_json::Map::new();
+        for (i, v) in entries {
+            data.insert(format!("c{i}"), v.clone());
+        }
+        json!({ "data": data })
+    }
+
+    fn pr_with(total: u64, bodies: &[&str]) -> Value {
+        let nodes: Vec<Value> = bodies
+            .iter()
+            .map(|b| json!({"author": {"login": TRUSTED_AUTHOR}, "body": b}))
+            .collect();
+        json!({"pullRequest": {"comments": {"totalCount": total, "nodes": nodes}}})
+    }
+
+    // The argv is TYPED per variable: an all-numeric owner or repo passed with `-F` would be sent
+    // as an `Int` at a `String!` and GitHub would refuse the whole chunk.
+    #[test]
+    fn a_batched_read_declares_one_typed_alias_per_pr() {
+        let subjects = [subject("123/456", 7), subject("o/r", 9)];
+        let refs: Vec<&SubjectRef> = subjects.iter().collect();
+        let args = leak_comments_args(&refs);
+        assert_eq!(args[0], "graphql");
+        assert_eq!(args[1], "-f");
+        let query = args[2].strip_prefix("query=").expect("the query flag");
+        // Two aliases, and the last one is the second PR's — so a chunk cannot silently ask about
+        // fewer PRs than it was handed.
+        assert!(
+            query.contains("c0: repository(owner: $o0, name: $r0)"),
+            "{query}"
+        );
+        assert!(
+            query.contains("c1: repository(owner: $o1, name: $r1)"),
+            "{query}"
+        );
+        assert!(!query.contains("c2:"), "{query}");
+        assert_eq!(
+            args[3..],
+            [
+                "-f", "o0=123", "-f", "r0=456", "-F", "p0=7", //
+                "-f", "o1=o", "-f", "r1=r", "-F", "p1=9",
+            ]
+            .map(String::from)
+        );
+    }
+
+    // The split is BY ALIAS, so a response's own ordering cannot reorder the chunk, and the shape
+    // handed back is the one `trusted_comments` reads.
+    #[test]
+    fn a_batch_response_splits_by_alias_into_the_per_pr_shape() {
+        let doc = batch_doc(&[
+            (1, pr_with(1, &["🤖 ai:producer second"])),
+            (0, pr_with(1, &["🤖 ai:producer first"])),
+        ]);
+        let reads = leak_comments_page(&doc, 2);
+        assert_eq!(reads.len(), 2);
+        assert_eq!(
+            trusted_comments(reads[0].as_ref().expect("alias c0"), None),
+            vec!["🤖 ai:producer first"]
+        );
+        assert_eq!(
+            trusted_comments(reads[1].as_ref().expect("alias c1"), None),
+            vec!["🤖 ai:producer second"]
+        );
+    }
+
+    // EVERY uncertainty is UNREAD, which is what keeps the batch a speed change: an alias reported
+    // unread is refetched per-PR by `leak_scan`, and only a failure of BOTH reads reaches
+    // `unreadable`. A truncated page is in that set because the trusted marker `leak_reason`
+    // answers on can sit below the newest page.
+    #[test]
+    fn an_uncertain_alias_is_unread_rather_than_read_as_no_comments() {
+        let unread = batch_doc(&[
+            (0, json!(null)),
+            (1, json!({"pullRequest": null})),
+            (2, pr_with(300, &["🤖 ai:producer newest of many"])),
+            (3, json!({"pullRequest": {"comments": {"totalCount": 0}}})),
+        ]);
+        assert_eq!(leak_comments_page(&unread, 4), vec![None, None, None, None]);
+        // An alias the response omits entirely is unread too, never an empty thread.
+        assert_eq!(leak_comments_page(&batch_doc(&[]), 1), vec![None]);
+        // A PR with no comments at all IS read, and reads as no comments.
+        let empty = leak_comments_page(&batch_doc(&[(0, pr_with(0, &[]))]), 1);
+        assert_eq!(empty[0], Some(json!({"comments": []})));
+    }
+
+    // WHAT THE BATCH LEFT OUT IS STILL ASKED ABOUT. A candidate absent from the batch is a PR
+    // nobody has read yet, so it costs a per-PR fetch — dropping the fallback would turn every
+    // batch gap into an `unreadable`, and a chunk that failed wholesale into 20 of them.
+    #[test]
+    fn a_candidate_the_batch_missed_is_refetched_not_declared_unknown() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let candidates = vec![
+            candidate("o/batched", 1, "2026-01-01T00:00:00Z"),
+            candidate("o/missed", 2, "2026-01-02T00:00:00Z"),
+            candidate("o/gone", 3, "2026-01-03T00:00:00Z"),
+        ];
+        let batched = std::collections::HashMap::from([(
+            ("o/batched".to_string(), 1),
+            producer_comments("🤖 ai:producer from the batch"),
+        )]);
+        let fetches = AtomicUsize::new(0);
+        let scan = leak_scan_batched(&candidates, &batched, |s| {
+            fetches.fetch_add(1, Ordering::SeqCst);
+            match s.repo.as_str() {
+                "o/missed" => Some(producer_comments("🤖 ai:producer from the refetch")),
+                _ => None,
+            }
+        });
+        // The batch hit is NOT refetched; the two it missed each are.
+        assert_eq!(fetches.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            scan.leaks
+                .iter()
+                .map(|l| (l.subject.repo.as_str(), l.reason.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("o/batched", "🤖 ai:producer from the batch"),
+                ("o/missed", "🤖 ai:producer from the refetch"),
+            ]
+        );
+        // Only the PR NEITHER read answered for is unknown.
+        assert_eq!(
+            scan.unreadable
+                .iter()
+                .map(|s| s.repo.as_str())
+                .collect::<Vec<_>>(),
+            vec!["o/gone"]
+        );
+    }
+
     // THE POPULATION, and the defect it was: the leak set is [`classify_lane`]'s OWN Leak verdict,
     // never a second reading of the labels.
     //
@@ -28407,6 +30743,36 @@ mod next_leak_tests {
         // makes a DELETED state (as opposed to a retired-but-bucketed one) surface here.
         assert!(is_leak_candidate(&s(&["enhancement"])));
         assert!(is_leak_candidate(&s(&["human:parked-forever"])));
+    }
+
+    // A BODY REPAIR IS NOT A HAND-OFF, asserted where the queue is actually built: an unlabelled PR
+    // whose only trusted note is a repair receipt is nobody's leak, while the PR beside it — same
+    // labels, a real hand-off note — still is. A leak is a PR nothing will pick up, and the
+    // vetter's population is every open producer PR, unfiltered by label, so a repaired PR is in it.
+    #[test]
+    fn a_repair_receipt_is_not_a_leak_and_does_not_mask_one() {
+        let candidates = vec![
+            candidate("o/repaired", 1, "2026-01-01T00:00:00Z"),
+            candidate("o/handed-off", 2, "2026-01-02T00:00:00Z"),
+        ];
+        let receipt = body_repair_comment(BodyRepair::QaBlock, "restated the evidence block");
+        let scan = leak_scan_with(&candidates, |s| match s.repo.as_str() {
+            "o/repaired" => Some(producer_comments(&receipt)),
+            _ => Some(producer_comments(
+                "🤖 ai:producer\nDesign-question: which constant is shared?",
+            )),
+        });
+        assert_eq!(
+            scan.leaks
+                .iter()
+                .map(|l| l.subject.repo.as_str())
+                .collect::<Vec<_>>(),
+            vec!["o/handed-off"]
+        );
+        // Not a leak and not an unknown either — the read SUCCEEDED and answered "no hand-off".
+        assert!(scan.unreadable.is_empty());
+        // And the receipt is no shield: the read failing over the same PR is still unknown.
+        assert_eq!(leak_scan_with(&candidates, |_| None).unreadable.len(), 2);
     }
 
     // OLDEST FIRST, and the ranking is the tool's own decision rather than `gh search prs`'s.
@@ -29006,6 +31372,31 @@ fn next_design_page(ordered: &[PresentableDesign], limit: usize) -> Vec<&Present
     ordered.iter().take(limit).collect()
 }
 
+/// PURE: the page's ROWS — [`next_design_page`]'s prefix, each built at the note share a `limit`-row
+/// page leaves. `limit` is what the caller ASKED for, never the number of rows the queue happened
+/// to hold: the clip a given argument produces is then the same on every call, and a reader can
+/// predict it rather than discover it.
+///
+/// Separate from the fetch so that wiring is a fact a test holds: folded into a network call it is
+/// reachable by no test, and a share that collapsed back to one constant for every page size would
+/// be invisible until a reader got half a sentence.
+fn next_design_rows(ordered: &[PresentableDesign], limit: usize) -> Vec<Value> {
+    next_design_page(ordered, limit)
+        .into_iter()
+        .map(|d| {
+            next_design_row(
+                &NextDesignFacts {
+                    slug: &d.slug,
+                    num: d.num,
+                    detail: &d.detail,
+                    question: &d.question,
+                },
+                limit,
+            )
+        })
+        .collect()
+}
+
 /// Rows one call may return, and the default.
 ///
 /// The cap is 3 for [`NEXT_READY_MAX_ROWS`]'s reason, with [`NEXT_CC_MAX_ROWS`]'s sharpening:
@@ -29017,8 +31408,8 @@ const NEXT_DESIGN_MAX_ROWS: usize = 3;
 const NEXT_DESIGN_DEFAULT_ROWS: usize = 1;
 
 // Per-field RAW byte caps, for the reason `next_ready`'s exist: the result is structurally unable
-// to exceed the budget rather than merely unlikely to.
-const ND_NOTE_BYTES: usize = 2_600;
+// to exceed the budget rather than merely unlikely to. The note has no constant here: it is
+// [`nd_note_bytes`], derived from what these leave.
 const ND_TITLE_BYTES: usize = 200;
 const ND_URL_BYTES: usize = 200;
 const ND_PR_BYTES: usize = 160;
@@ -29029,21 +31420,24 @@ const ND_LABEL_BYTES: usize = 60;
 const ND_MAX_LABELS: usize = 8;
 const ND_ERROR_BYTES: usize = 200;
 
-/// Every capped field in one row, summed. Two shas (the PR's head, and the one a vetter-raised
-/// question pinned itself to) are counted at their own cap.
-const ND_ROW_FIELD_BYTES: usize = ND_PR_BYTES
+/// Every capped field in one row EXCEPT the note, summed. Two shas (the PR's head, and the one a
+/// vetter-raised question pinned itself to) are counted at their own cap.
+const ND_ROW_FIELD_BYTES_LESS_NOTE: usize = ND_PR_BYTES
     + ND_URL_BYTES
     + ND_TITLE_BYTES
     + ND_BRANCH_BYTES
     + 2 * ND_SHA_BYTES
     + ND_TIME_BYTES
-    + ND_NOTE_BYTES
     + ND_MAX_LABELS * ND_LABEL_BYTES;
 
 /// The row's FIXED cost — keys, punctuation, typed enum strings, numbers. Held honest by
 /// `the_fixed_allowances_cover_a_row_a_withheld_entry_and_an_envelope`, which measures a real one.
 const ND_ROW_FIXED_BYTES: usize = 1_200;
-const ND_ROW_CEILING: usize = ND_ROW_FIELD_BYTES * JSON_ESCAPE_WORST_CASE + ND_ROW_FIXED_BYTES;
+
+/// What one row costs BEFORE its note: its other fields at their caps, escaped, plus that fixed
+/// cost.
+const ND_ROW_LESS_NOTE_CEILING: usize =
+    ND_ROW_FIELD_BYTES_LESS_NOTE * JSON_ESCAPE_WORST_CASE + ND_ROW_FIXED_BYTES;
 
 // The two withheld lists — capped, their overflow counted, because they ride inside the same one
 // budget the rows do, which is `next_close_candidate`'s reasoning unchanged.
@@ -29057,15 +31451,63 @@ const ND_WITHHELD_CEILING: usize =
 /// The document minus its rows and its withheld lists: `counts`, `queue`, the keys around them.
 const ND_ENVELOPE_BYTES: usize = 1_500;
 
-/// THE GUARANTEE, as arithmetic the compiler checks — the same one both sibling tools hold: a full
-/// page of maximal rows plus both withheld lists at their caps cannot reach
-/// [`MCP_MAX_RESULT_BYTES`]. Raise a cap past what fits and this crate does not build.
-const _: () = assert!(
-    NEXT_DESIGN_MAX_ROWS * ND_ROW_CEILING
+/// Everything in the document that is NOT a note, for a page of `rows`: the rows' other fields,
+/// both withheld lists at their caps, and the envelope.
+const fn nd_non_note_bytes(rows: usize) -> usize {
+    rows * ND_ROW_LESS_NOTE_CEILING
         + (ND_MAX_WITHHELD + ND_MAX_ERRORS) * ND_WITHHELD_CEILING
         + ND_ENVELOPE_BYTES
-        <= MCP_MAX_RESULT_BYTES
-);
+}
+
+/// The note allowance for ONE row of a `rows`-row page — DERIVED from the budget, never picked.
+/// Whatever [`MCP_MAX_RESULT_BYTES`] has left after [`nd_non_note_bytes`] belongs to the notes,
+/// split evenly and de-escaped back to raw bytes.
+///
+/// It is a function of the page rather than a constant because a constant has to be sized for the
+/// WIDEST page, and then the caller asking the tool's own question — `limit: 1`, which is also its
+/// default — pays for two rows it did not ask for, out of the one field it cannot reconstruct.
+/// Sized per page, the narrow call carries several times what the widest can, and a `noteTruncated`
+/// on a wide page has a cheaper escape than `pr_context`: ask for a narrower page.
+/// A `rows` outside the page sizes [`next_design_limit`] admits is a caller bug — and the budget is
+/// the thing that must not bend for one. Clamped to the SAFE side rather than refused, because the
+/// refusal already happened at the argument: zero would divide by it, and a number past the cap
+/// would subtract past zero and wrap into an unbounded share. Both land on a real page's own
+/// arithmetic instead.
+const fn nd_note_rows(rows: usize) -> usize {
+    if rows < 1 {
+        1
+    } else if rows > NEXT_DESIGN_MAX_ROWS {
+        NEXT_DESIGN_MAX_ROWS
+    } else {
+        rows
+    }
+}
+
+const fn nd_note_bytes(rows: usize) -> usize {
+    let rows = nd_note_rows(rows);
+    (MCP_MAX_RESULT_BYTES - nd_non_note_bytes(rows)) / (JSON_ESCAPE_WORST_CASE * rows)
+}
+
+/// The floor under [`nd_note_bytes`] at its tightest. A field added to the row is paid for out of
+/// the notes' share, silently and only there — so the build is where that lands, rather than a
+/// reader handed the half of a sentence that survived.
+const ND_NOTE_FLOOR_BYTES: usize = 2_600;
+
+/// THE GUARANTEE, as arithmetic the compiler checks — the same one both sibling tools hold: for
+/// EVERY page size this tool serves, a full page of maximal rows plus both withheld lists at their
+/// caps cannot reach [`MCP_MAX_RESULT_BYTES`], and the note is still worth reading. Raise a cap
+/// past what fits and this crate does not build.
+const _: () = {
+    let mut rows = 1;
+    while rows <= NEXT_DESIGN_MAX_ROWS {
+        assert!(
+            nd_non_note_bytes(rows) + rows * nd_note_bytes(rows) * JSON_ESCAPE_WORST_CASE
+                <= MCP_MAX_RESULT_BYTES
+        );
+        assert!(nd_note_bytes(rows) >= ND_NOTE_FLOOR_BYTES);
+        rows += 1;
+    }
+};
 
 /// PURE: this state-load's page size. Out of range is REFUSED rather than clamped, for the reason
 /// [`next_ready_limit`]'s is: a silently clamped argument leaves the caller believing it asked for
@@ -29093,15 +31535,17 @@ struct NextDesignFacts<'a> {
     question: &'a DesignQuestion,
 }
 
-/// PURE: the design question for ONE PR. Every string is clipped, so the row's size is bounded by
-/// [`ND_ROW_CEILING`] whatever GitHub returns.
+/// PURE: the design question for ONE PR. Every string is clipped — the note at the share
+/// [`nd_note_bytes`] leaves a `rows`-row page — so the row's size is bounded whatever GitHub
+/// returns. It takes the PAGE SIZE rather than a byte count so a row cannot be built at a share no
+/// page would have given it.
 ///
 /// The row's centre is `question.note` — the raising comment itself, the CLAIM the human checks,
 /// never a fact. `sha`/`atHead` exist for the vetter-raised case exactly as `next_ready` states
 /// `verdict.sha` beside `headRefOid`: the reader can see whether the reasoning describes the code
 /// that is there now. A producer flag pins no sha, and the pair is null rather than a bool that
 /// would assert a comparison nothing performed.
-fn next_design_row(f: &NextDesignFacts) -> Value {
+fn next_design_row(f: &NextDesignFacts, rows: usize) -> Value {
     let head = f
         .detail
         .get("headRefOid")
@@ -29134,9 +31578,9 @@ fn next_design_row(f: &NextDesignFacts) -> Value {
             "at": clip_field(&f.question.at, ND_TIME_BYTES),
             "sha": sha.map(|s| clip_field(s, ND_SHA_BYTES)),
             "atHead": sha.map(|s| !head.is_empty() && s == head),
-            "note": clip_field(&f.question.body, ND_NOTE_BYTES),
+            "note": clip_field(&f.question.body, nd_note_bytes(rows)),
             "noteBytes": f.question.body.len(),
-            "noteTruncated": f.question.body.len() > ND_NOTE_BYTES,
+            "noteTruncated": f.question.body.len() > nd_note_bytes(rows),
         },
     })
 }
@@ -29575,17 +32019,7 @@ fn next_design_fetch(limit: usize) -> Result<Value, String> {
         no_question: _,
     } = nd_classify(&arr, frozen.len(), nd_pr_detail);
     rank_designs(&mut designs);
-    let rows: Vec<Value> = next_design_page(&designs, limit)
-        .into_iter()
-        .map(|d| {
-            next_design_row(&NextDesignFacts {
-                slug: &d.slug,
-                num: d.num,
-                detail: &d.detail,
-                question: &d.question,
-            })
-        })
-        .collect();
+    let rows = next_design_rows(&designs, limit);
     let (withheld, more_withheld) = page(withheld, Some(ND_MAX_WITHHELD));
     let (errors, more_errors) = page(errors, Some(ND_MAX_ERRORS));
     Ok(next_design_doc(
@@ -31051,12 +33485,15 @@ mod next_design_tests {
             "comments": [vetter_design("2026-08-01T00:00:00Z", &head, "shared or duplicated?")],
         });
         let q = last_design_question(&detail).expect("raised");
-        let row = next_design_row(&NextDesignFacts {
-            slug: "rainlanguage/raindex",
-            num: 960,
-            detail: &detail,
-            question: &q,
-        });
+        let row = next_design_row(
+            &NextDesignFacts {
+                slug: "rainlanguage/raindex",
+                num: 960,
+                detail: &detail,
+                question: &q,
+            },
+            NEXT_DESIGN_DEFAULT_ROWS,
+        );
         assert_eq!(row["pr"], json!("rainlanguage/raindex#960"));
         assert_eq!(
             row["url"],
@@ -31083,12 +33520,15 @@ mod next_design_tests {
             "comments": [vetter_design("2026-08-01T00:00:00Z", &head, "shared or duplicated?")],
         });
         let q = last_design_question(&moved).expect("raised");
-        let row = next_design_row(&NextDesignFacts {
-            slug: "o/r",
-            num: 1,
-            detail: &moved,
-            question: &q,
-        });
+        let row = next_design_row(
+            &NextDesignFacts {
+                slug: "o/r",
+                num: 1,
+                detail: &moved,
+                question: &q,
+            },
+            NEXT_DESIGN_DEFAULT_ROWS,
+        );
         assert_eq!(row["question"]["atHead"], json!(false));
     }
 
@@ -31101,12 +33541,15 @@ mod next_design_tests {
             "comments": [producer_design("2026-08-01T00:00:00Z", "version slot taken")],
         });
         let q = last_design_question(&detail).expect("raised");
-        let row = next_design_row(&NextDesignFacts {
-            slug: "o/r",
-            num: 1,
-            detail: &detail,
-            question: &q,
-        });
+        let row = next_design_row(
+            &NextDesignFacts {
+                slug: "o/r",
+                num: 1,
+                detail: &detail,
+                question: &q,
+            },
+            NEXT_DESIGN_DEFAULT_ROWS,
+        );
         assert_eq!(row["question"]["source"], json!("producer-flag"));
         assert_eq!(row["question"]["sha"], Value::Null);
         assert_eq!(row["question"]["atHead"], Value::Null);
@@ -31120,24 +33563,102 @@ mod next_design_tests {
     // it — the caller reads the rest with `pr_context`, which is on the same profile.
     #[test]
     fn an_oversized_question_is_clipped_and_says_so() {
-        let long = "z".repeat(ND_NOTE_BYTES * 2);
+        let cap = nd_note_bytes(NEXT_DESIGN_DEFAULT_ROWS);
+        let long = "z".repeat(cap * 2);
         let detail = json!({
             "headRefOid": "1".repeat(40),
             "comments": [producer_design("2026-08-01T00:00:00Z", &long)],
         });
         let q = last_design_question(&detail).expect("raised");
-        let row = next_design_row(&NextDesignFacts {
-            slug: "o/r",
-            num: 1,
-            detail: &detail,
-            question: &q,
-        });
-        assert_eq!(
-            row["question"]["note"].as_str().unwrap().len(),
-            ND_NOTE_BYTES
+        let row = next_design_row(
+            &NextDesignFacts {
+                slug: "o/r",
+                num: 1,
+                detail: &detail,
+                question: &q,
+            },
+            NEXT_DESIGN_DEFAULT_ROWS,
         );
+        assert_eq!(row["question"]["note"].as_str().unwrap().len(), cap);
         assert_eq!(row["question"]["noteTruncated"], json!(true));
-        assert!(row["question"]["noteBytes"].as_u64().unwrap() > ND_NOTE_BYTES as u64);
+        assert!(row["question"]["noteBytes"].as_u64().unwrap() > cap as u64);
+    }
+
+    // The note's share is the PAGE's, so the escape from a clip is a narrower page and not only
+    // `pr_context`: a question the widest page cuts, the tool's own default call carries whole.
+    // And the wiring is the claim — `next_design_rows` is asked for both pages, not the row
+    // builder handed two numbers by hand.
+    #[test]
+    fn a_narrower_page_carries_a_longer_question() {
+        let widest = nd_note_bytes(NEXT_DESIGN_MAX_ROWS);
+        let default = nd_note_bytes(NEXT_DESIGN_DEFAULT_ROWS);
+        assert!(
+            default > widest,
+            "the one-row page must not be charged for rows it did not ask for: \
+             {default} vs {widest}"
+        );
+
+        let body = "z".repeat(widest + 1);
+        let ordered: Vec<PresentableDesign> = (0..NEXT_DESIGN_MAX_ROWS)
+            .map(|i| PresentableDesign {
+                slug: "o/r".to_string(),
+                num: i as u64 + 1,
+                question: DesignQuestion {
+                    at: "2026-08-01T00:00:00Z".to_string(),
+                    body: format!("🤖 ai:producer\nDesign-question: {body}"),
+                    source: DesignQuestionSource::ProducerFlag,
+                },
+                detail: json!({"headRefOid": "1".repeat(40)}),
+            })
+            .collect();
+
+        for row in next_design_rows(&ordered, NEXT_DESIGN_MAX_ROWS) {
+            assert_eq!(row["question"]["noteTruncated"], json!(true));
+        }
+        let narrow = next_design_rows(&ordered, NEXT_DESIGN_DEFAULT_ROWS);
+        assert_eq!(narrow.len(), NEXT_DESIGN_DEFAULT_ROWS);
+        assert_eq!(narrow[0]["question"]["noteTruncated"], json!(false));
+    }
+
+    // A page size the limit would have refused never reaches an unbounded share: zero would divide
+    // by it, and a number past the cap would subtract past zero and wrap. Both land on a real
+    // page's arithmetic instead — zero on the one-row share, since a zero-row page has no rows to
+    // spend it on, and anything oversized on the tightest.
+    #[test]
+    fn a_page_size_the_limit_refuses_never_reaches_an_unbounded_share() {
+        let tightest = nd_note_bytes(NEXT_DESIGN_MAX_ROWS);
+        assert_eq!(nd_note_bytes(0), nd_note_bytes(1));
+        assert_eq!(nd_note_bytes(NEXT_DESIGN_MAX_ROWS + 1), tightest);
+        assert_eq!(nd_note_bytes(usize::MAX), tightest);
+    }
+
+    // Every page size the limit admits is inside the ONE budget, and every one of them still
+    // carries a note worth reading. The compile-time assertion says so; this says which sizes it
+    // was asked about, so a `limit` widened without re-deriving the share fails here.
+    #[test]
+    fn every_admitted_page_size_keeps_its_note_share() {
+        for rows in 1..=NEXT_DESIGN_MAX_ROWS {
+            let cap = nd_note_bytes(rows);
+            assert!(
+                cap >= ND_NOTE_FLOOR_BYTES,
+                "a {rows}-row page leaves {cap} bytes of note, under the \
+                 {ND_NOTE_FLOOR_BYTES}-byte floor"
+            );
+            let total = nd_non_note_bytes(rows) + rows * cap * JSON_ESCAPE_WORST_CASE;
+            assert!(
+                total <= MCP_MAX_RESULT_BYTES,
+                "a {rows}-row page is {total} bytes, over the {MCP_MAX_RESULT_BYTES}-byte budget"
+            );
+            // And it is the WHOLE of what the page leaves. Fitting is only half the claim — a share
+            // that merely fits is one a smaller divisor also satisfies, and a note clipped with
+            // budget still on the table is the same clip, quieter.
+            let over = nd_non_note_bytes(rows) + rows * (cap + 1) * JSON_ESCAPE_WORST_CASE;
+            assert!(
+                over > MCP_MAX_RESULT_BYTES,
+                "a {rows}-row page leaves {cap} bytes of note but could carry more — {over} bytes \
+                 is still inside the {MCP_MAX_RESULT_BYTES}-byte budget"
+            );
+        }
     }
 
     // An empty queue is an ANSWER: zero rows under zeroed counts says the lane is clear. A failed
@@ -31659,9 +34180,10 @@ mod next_design_tests {
         }
     }
 
-    // THE GUARANTEE, exercised rather than asserted: a full page of rows built from the worst
-    // input GitHub can hand us, plus both withheld lists at their caps, fits the ONE budget.
-    // Remove any `clip_field` in `next_design_row` and this fails.
+    // THE GUARANTEE, exercised rather than asserted, at EVERY page size the limit admits: a full
+    // page of rows built from the worst input GitHub can hand us, plus both withheld lists at
+    // their caps, fits the ONE budget. Remove any `clip_field` in `next_design_row` and this
+    // fails; widen the note's share past what the page leaves and this fails at the widest page.
     #[test]
     fn a_maximal_page_of_adversarial_rows_still_fits_the_budget() {
         let hostile = hostile_text(20_000);
@@ -31678,58 +34200,66 @@ mod next_design_tests {
             body: hostile.clone(),
             source: DesignQuestionSource::VetterVerdict,
         };
-        let rows: Vec<Value> = (0..NEXT_DESIGN_MAX_ROWS)
-            .map(|i| {
-                next_design_row(&NextDesignFacts {
-                    slug: &hostile,
-                    num: u64::MAX - i as u64,
-                    detail: &detail,
-                    question: &question,
+        for limit in 1..=NEXT_DESIGN_MAX_ROWS {
+            let note_bytes = nd_note_bytes(limit);
+            let ceiling = ND_ROW_LESS_NOTE_CEILING + note_bytes * JSON_ESCAPE_WORST_CASE;
+            let rows: Vec<Value> = (0..limit)
+                .map(|i| {
+                    next_design_row(
+                        &NextDesignFacts {
+                            slug: &hostile,
+                            num: u64::MAX - i as u64,
+                            detail: &detail,
+                            question: &question,
+                        },
+                        limit,
+                    )
                 })
-            })
-            .collect();
-        for (i, row) in rows.iter().enumerate() {
-            let len = row.to_string().len();
-            assert!(
-                len <= ND_ROW_CEILING,
-                "row {i} is {len} bytes, over the {ND_ROW_CEILING}-byte row ceiling the \
-                 compile-time budget assertion is computed from"
-            );
-        }
-        let withheld_hostile: Vec<Value> = (0..ND_MAX_WITHHELD)
-            .map(|_| nd_withheld_entry(&hostile, &hostile))
-            .collect();
-        for w in &withheld_hostile {
-            let len = w.to_string().len();
-            assert!(
-                len <= ND_WITHHELD_CEILING,
-                "a withheld entry is {len} bytes, over its {ND_WITHHELD_CEILING}-byte ceiling"
-            );
-        }
-        let len = next_design_doc(
-            rows,
-            &DesignQueueWithheld {
-                counts: DesignQueueCounts {
-                    raw: usize::MAX,
-                    draft: usize::MAX,
-                    unaddressable: usize::MAX,
-                    presentable: usize::MAX,
-                    no_question: usize::MAX,
-                    fetch_errors: usize::MAX,
-                    archived_repo: usize::MAX,
+                .collect();
+            for (i, row) in rows.iter().enumerate() {
+                let len = row.to_string().len();
+                assert!(
+                    len <= ceiling,
+                    "row {i} of a {limit}-row page is {len} bytes, over the {ceiling}-byte row \
+                     ceiling the budget assertion is computed from"
+                );
+            }
+            let withheld_hostile: Vec<Value> = (0..ND_MAX_WITHHELD)
+                .map(|_| nd_withheld_entry(&hostile, &hostile))
+                .collect();
+            for w in &withheld_hostile {
+                let len = w.to_string().len();
+                assert!(
+                    len <= ND_WITHHELD_CEILING,
+                    "a withheld entry is {len} bytes, over its {ND_WITHHELD_CEILING}-byte ceiling"
+                );
+            }
+            let len = next_design_doc(
+                rows,
+                &DesignQueueWithheld {
+                    counts: DesignQueueCounts {
+                        raw: usize::MAX,
+                        draft: usize::MAX,
+                        unaddressable: usize::MAX,
+                        presentable: usize::MAX,
+                        no_question: usize::MAX,
+                        fetch_errors: usize::MAX,
+                        archived_repo: usize::MAX,
+                    },
+                    withheld: withheld_hostile.clone(),
+                    more_withheld: usize::MAX,
+                    errors: withheld_hostile,
+                    more_errors: usize::MAX,
                 },
-                withheld: withheld_hostile.clone(),
-                more_withheld: usize::MAX,
-                errors: withheld_hostile,
-                more_errors: usize::MAX,
-            },
-        )
-        .to_string()
-        .len();
-        assert!(
-            len <= MCP_MAX_RESULT_BYTES,
-            "a full adversarial page is {len} bytes, over the {MCP_MAX_RESULT_BYTES}-byte budget"
-        );
+            )
+            .to_string()
+            .len();
+            assert!(
+                len <= MCP_MAX_RESULT_BYTES,
+                "a full adversarial {limit}-row page is {len} bytes, over the \
+                 {MCP_MAX_RESULT_BYTES}-byte budget"
+            );
+        }
     }
 
     // The allowances the compile-time assertion is built on are MEASURED, not guessed — a field
@@ -31742,12 +34272,15 @@ mod next_design_tests {
             // The longer source spelling, so the fixed cost is measured at its widest.
             source: DesignQuestionSource::VetterVerdict,
         };
-        let row = next_design_row(&NextDesignFacts {
-            slug: "",
-            num: 0,
-            detail: &json!({}),
-            question: &question,
-        });
+        let row = next_design_row(
+            &NextDesignFacts {
+                slug: "",
+                num: 0,
+                detail: &json!({}),
+                question: &question,
+            },
+            NEXT_DESIGN_DEFAULT_ROWS,
+        );
         // The numeric fields are COUNTED from the row, not asserted from a comment.
         let row_len = row.to_string().len() + numeric_fields(&row) * ND_MAX_DIGITS;
         assert!(
@@ -32003,7 +34536,7 @@ fn mcp_all_tools() -> Value {
         {
             "name": "next_close_candidate",
             "narrows": "limit",
-            "description": "The next close-candidate to rule on — an upheld flag on an ISSUE OR A PR, or a PR the vetter verdicted `close` (one mixed queue, #211/#212) — OLDEST FIRST (the flag parks the subject — it is neither the producer's work nor closed — so the wait is the cost, and evidence about a moving main decays). Per row: the subject's title/state/labels/createdAt (`url` says which subject type), the producer's stated reason (the CLAIM being checked, never a fact) with `flag.grounds` saying whether it cites a landing, and the vetter's judgement pinned to what it judged (`atFlag` false means a superseded claim; a PR close verdict reports as `close` at its own timestamp). Coverage is reported for issues; on a PR row it is `not-applicable-subject-is-a-pr` and never blocks. For issues `openPr.blocksClose` pairs coverage with the grounds — a flag citing no landing is the `merely COVERED BY AN OPEN PR` case and blocks (an unreadable answer blocks too), while a flag citing a merged commit/PR does not, since a redundant PR in flight does not un-land what landed. `counts.unvetted` is where a flag the vetter has not judged went; `counts.vetterCloseVerdict` is the PR-close-verdict share of the queue; `strandedFlags` are labels parking a subject with nothing consuming them — the vetter's state-load clears both kinds, so one listed here is a clearance that has not run yet or could not write.",
+            "description": "The next close-candidate to rule on — an upheld flag on an ISSUE OR A PR, or a PR the vetter verdicted `close` (one mixed queue, #211/#212) — OLDEST FIRST (the flag parks the subject — it is neither the producer's work nor closed — so the wait is the cost, and evidence about a moving main decays). Per row: the subject's title/state/labels/createdAt (`url` says which subject type), the producer's stated reason (the CLAIM being checked, never a fact) with `flag.grounds` saying whether it cites a landing, and the vetter's judgement pinned to what it judged (`atFlag` false means a superseded claim; a PR close verdict reports as `close` at its own timestamp). Coverage is reported for issues; on a PR row it is `not-applicable-subject-is-a-pr` and never blocks. For issues `openPr.blocksClose` pairs coverage with the grounds — a flag citing no landing is the `merely COVERED BY AN OPEN PR` case and blocks (an unreadable answer blocks too), while a flag citing a merged commit/PR does not, since a redundant PR in flight does not un-land what landed. `reasonTruncated`/`noteTruncated` say when those two were clipped — their share is the PAGE's, so a narrower `limit` carries more of them and close_candidate_context carries all of them. `counts.unvetted` is where a flag the vetter has not judged went; `counts.vetterCloseVerdict` is the PR-close-verdict share of the queue; `strandedFlags` are labels parking a subject with nothing consuming them — the vetter's state-load clears both kinds, so one listed here is a clearance that has not run yet or could not write.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -32014,7 +34547,7 @@ fn mcp_all_tools() -> Value {
         {
             "name": "next_design",
             "narrows": "limit",
-            "description": "The next ai:design PR for the human to rule on — OLDEST QUESTION FIRST (the label parks the PR outside every AI actor's queue, so the wait is the cost and FIFO bounds it). Per row: the PR's title/baseRefName/headRefOid/labels and the trusted comment that raised the live question (`question.note`; `question.source` says whether the vetter's record-verdict design note or the producer's flag-design note raised it; a vetter-raised question carries the sha it pinned and `atHead` says whether it still describes this head; `noteTruncated` says when the whole comment must be read via pr_context). The question is a CLAIM to check, never a fact. `counts` partition the whole labelled population and `withheld` NAMES the rows behind three of them — `noQuestion` (labelled, nothing trusted raised a question), `draft` (answerable, but the code is still being shaped) and `unaddressable` — so a PR you expected and did not get is findable without re-running the search; `archivedRepo` is frozen (no ruling can be written there at all). The exit is the design ruling: the answer routes the PR back to the producer as ai:needs-work + the answer as the work order, one call.",
+            "description": "The next ai:design PR for the human to rule on — OLDEST QUESTION FIRST (the label parks the PR outside every AI actor's queue, so the wait is the cost and FIFO bounds it). Per row: the PR's title/baseRefName/headRefOid/labels and the trusted comment that raised the live question (`question.note`; `question.source` says whether the vetter's record-verdict design note or the producer's flag-design note raised it; a vetter-raised question carries the sha it pinned and `atHead` says whether it still describes this head; `noteTruncated` says when the note was clipped — the note's share is the PAGE's, so a narrower `limit` carries more of it and pr_context carries all of it). The question is a CLAIM to check, never a fact. `counts` partition the whole labelled population and `withheld` NAMES the rows behind three of them — `noQuestion` (labelled, nothing trusted raised a question), `draft` (answerable, but the code is still being shaped) and `unaddressable` — so a PR you expected and did not get is findable without re-running the search; `archivedRepo` is frozen (no ruling can be written there at all). The exit is the design ruling: the answer routes the PR back to the producer as ai:needs-work + the answer as the work order, one call.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -33006,7 +35539,13 @@ fn mcp_handle(
                     // narrowing advice is read off the tool NAME instead (#117), so it survives the
                     // call being consumed and comes from the same table entry as the schema.
                     let budget = call_result_budget(&call);
-                    match exec(call) {
+                    // The span is ONE tool call, because that is the unit a caller waits on and
+                    // times out. The server outlives it, so a process-wide total would attribute
+                    // nothing.
+                    let mark = gh_timing_mark();
+                    let result = exec(call);
+                    gh_timing_report(name, mark);
+                    match result {
                         // A result over budget is THIS server's error to raise. Handing it back and
                         // letting the harness reject it is what left the vetter improvising (#78).
                         Ok(text) if text.len() > budget => tool_result(
@@ -35601,17 +38140,152 @@ fn body_edit_vet_note(prj: &Value) -> Option<String> {
     })
 }
 
+/// A transition that rewrites PR BODY TEXT and moves no state.
+///
+/// Its trusted note is a RECEIPT for a rewrite, not a hand-off: nothing is handed to the vetter, to
+/// a human or to the producer's next run, and the PR is left in the state it already had. So
+/// [`leak_reason`] walks past one — an unlabelled PR a body repair touched is the ordinary
+/// un-vetted PR the vetter's unfiltered enumeration reaches, not a PR in nobody's queue.
+///
+/// [`write_repaired_body`] is the ONE writer of these notes and builds every one from a variant
+/// here, so the marker the leak walk skips and the marker actually posted cannot be two facts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BodyRepair {
+    /// `repair-qa-block`.
+    QaBlock,
+    /// `weaken-closes`.
+    Linkage,
+}
+
+impl BodyRepair {
+    /// Every variant — the skip set [`is_body_repair_note`] reads. A repair whose marker is missing
+    /// here posts a note the leak walk reads as a hand-off, and `the_skip_set_is_every_repair` is
+    /// what catches that.
+    const ALL: [BodyRepair; 2] = [BodyRepair::QaBlock, BodyRepair::Linkage];
+
+    /// The line-2 marker naming this repair. Distinct from every state noun ([`state_noun`]), which
+    /// is what keeps a hand-off from being skipped as a repair.
+    fn marker(self) -> &'static str {
+        match self {
+            BodyRepair::QaBlock => "QA-block repair:",
+            BodyRepair::Linkage => "Linkage repair:",
+        }
+    }
+}
+
+/// PURE: the trusted note a body repair posts — `🤖 ai:producer`, the repair's marker, the detail.
+fn body_repair_comment(repair: BodyRepair, detail: &str) -> String {
+    format!("🤖 ai:producer\n{} {detail}", repair.marker())
+}
+
+/// PURE: is this trusted body a body-repair receipt? The marker counts under the producer head, on
+/// the note's own second line, nowhere else — so no other note is skipped for quoting one.
+fn is_body_repair_note(body: &str) -> bool {
+    body.strip_prefix("🤖 ai:producer\n").is_some_and(|rest| {
+        BodyRepair::ALL
+            .iter()
+            .any(|repair| rest.starts_with(repair.marker()))
+    })
+}
+
+#[cfg(test)]
+mod body_repair_note_tests {
+    use super::*;
+
+    const DETAIL: &str = "rewrote one span of the body";
+
+    /// Every variant, written out HERE rather than read off [`BodyRepair::ALL`] — a repair the skip
+    /// set omits is then a test failure rather than a note the leak walk misreads. The `match` is
+    /// the compile error a variant added to neither list hits.
+    const EVERY: [BodyRepair; 2] = [BodyRepair::QaBlock, BodyRepair::Linkage];
+
+    fn cleared() -> String {
+        blocked_on_cleared_comment(&[(BlockedByRef::parse("o/r#2").unwrap(), DepState::Merged)])
+    }
+
+    #[test]
+    fn the_skip_set_is_every_repair() {
+        for repair in EVERY {
+            match repair {
+                BodyRepair::QaBlock | BodyRepair::Linkage => {}
+            }
+            assert!(
+                BodyRepair::ALL.contains(&repair),
+                "{repair:?} is outside the skip set"
+            );
+        }
+        assert_eq!(BodyRepair::ALL.len(), EVERY.len());
+    }
+
+    /// Every repair's receipt is walked past — and walked PAST, not stopped at: whatever marker
+    /// stands behind it still decides.
+    #[test]
+    fn every_body_repair_note_is_walked_past() {
+        let hand_off = state_comment(STATE_DESIGN.key, "which constant is shared?", &[]);
+        for repair in EVERY {
+            let note = body_repair_comment(repair, DETAIL);
+            assert!(is_body_repair_note(&note), "{note}");
+            // Nothing was handed off, so the PR is left where it already was — un-vetted, a lane
+            // the vetter's own enumeration reaches, rather than the bucket for PRs in no queue.
+            assert_eq!(leak_reason(std::slice::from_ref(&note)), None);
+            assert_eq!(
+                classify_lane(&[], None, false),
+                (Lane::VetLifecycle, STATE_UN_VETTED.key.to_string())
+            );
+            // It cannot HIDE a leak behind it…
+            assert!(leak_reason(&[hand_off.clone(), note.clone()]).is_some());
+            // …nor undo a clearance that already modelled the transition.
+            assert_eq!(leak_reason(&[cleared(), note]), None);
+        }
+    }
+
+    /// The skip is a marker read, so a repair marker must be no state noun a real hand-off spells.
+    #[test]
+    fn a_state_hand_off_is_never_read_as_a_repair() {
+        let mut notes: Vec<String> = PRODUCER_STATE_LABELS
+            .iter()
+            .map(|l| state_comment(l, "why", &[]))
+            .collect();
+        notes.push("🤖 ai:producer\nClose-candidate: already fixed on main".to_string());
+        for note in notes {
+            assert!(!is_body_repair_note(&note), "{note}");
+            assert!(leak_reason(std::slice::from_ref(&note)).is_some(), "{note}");
+        }
+    }
+
+    /// The marker counts only under the producer's own head, and only on the note's own second
+    /// line: every other placement is read as the ordinary producer note it is.
+    #[test]
+    fn only_a_producer_notes_own_marker_line_is_a_receipt() {
+        for repair in EVERY {
+            let marker = repair.marker();
+            for imposter in [
+                format!("🤖 ai:vetter\n{marker} {DETAIL}"),
+                format!("🤖 ai:producer {marker} {DETAIL}"),
+                format!("🤖 ai:producer\nBlocked-on: waiting\n{marker} {DETAIL}"),
+            ] {
+                assert!(!is_body_repair_note(&imposter), "{imposter}");
+            }
+        }
+    }
+}
+
 /// Write a repaired body and leave the trusted `🤖 ai:producer` marker that says so. GitHub hides
 /// body edit history, so without the comment the only record of a repair is the body it produced.
 /// An identical marker already present is not re-posted, which is what keeps a retried repair from
 /// accumulating notes.
+///
+/// The note is BUILT here rather than accepted as text: a repair that could hand in its own
+/// wording could hand in one [`leak_reason`] reads as a hand-off.
 fn write_repaired_body(
     slug: &str,
     pr: &str,
     prj: &Value,
     new_body: &str,
-    comment: &str,
+    repair: BodyRepair,
+    detail: &str,
 ) -> Result<(), (i32, String)> {
+    let comment = body_repair_comment(repair, detail);
     let subject = format!("{slug}#{pr}");
     if !gh_run(&["pr", "edit", pr, "-R", slug, "--body", new_body]) {
         return Err((
@@ -35621,8 +38295,8 @@ fn write_repaired_body(
     }
     let already = trusted_comments(prj, Some("🤖 ai:producer"))
         .iter()
-        .any(|b| b == comment);
-    if !already && !gh_run(&["pr", "comment", pr, "-R", slug, "--body", comment]) {
+        .any(|b| b == &comment);
+    if !already && !gh_run(&["pr", "comment", pr, "-R", slug, "--body", &comment]) {
         return Err((
             1,
             format!("error: {subject} body repaired but FAILED to post the marker comment"),
@@ -35697,14 +38371,13 @@ fn repair_qa_block_apply(
     } else {
         "replaced"
     };
-    let comment = format!(
-        "🤖 ai:producer\nQA-block repair: {verb} QA-GUIDE section 8's evidence block in the PR \
-         body via `pr-review-report repair-qa-block`. Every byte outside the `## QA` section is \
-         unchanged."
+    let detail = format!(
+        "{verb} QA-GUIDE section 8's evidence block in the PR body via `pr-review-report \
+         repair-qa-block`. Every byte outside the `## QA` section is unchanged."
     );
     let skip_comment = trusted_comments(&prj, Some("🤖 ai:producer"))
         .iter()
-        .any(|b| b == &comment);
+        .any(|b| b == &body_repair_comment(BodyRepair::QaBlock, &detail));
 
     if dry_run {
         return Ok(format!(
@@ -35722,7 +38395,7 @@ fn repair_qa_block_apply(
         ));
     }
 
-    write_repaired_body(slug, pr, &prj, &new_body, &comment)?;
+    write_repaired_body(slug, pr, &prj, &new_body, BodyRepair::QaBlock, &detail)?;
     let mut out = format!("{subject}: {verb} the QA block ({} bytes)", new_body.len());
     if let Some(note) = body_edit_vet_note(&prj) {
         out.push('\n');
@@ -35762,10 +38435,10 @@ fn weaken_closes_apply(
         Err(r) => return Err((r.exit(), r.render(&subject).trim_end().to_string())),
     };
     let new_body = apply_body_edits(body, &edits);
-    let comment = format!(
-        "🤖 ai:producer\nLinkage repair: weakened `Closes #{issue}` to `Refs #{issue}` in the PR \
-         body via `pr-review-report weaken-closes`. Every byte outside that keyword is unchanged, \
-         and the `## QA` section was not touched."
+    let detail = format!(
+        "weakened `Closes #{issue}` to `Refs #{issue}` in the PR body via `pr-review-report \
+         weaken-closes`. Every byte outside that keyword is unchanged, and the `## QA` section was \
+         not touched."
     );
 
     if dry_run {
@@ -35785,7 +38458,7 @@ fn weaken_closes_apply(
         ));
     }
 
-    write_repaired_body(slug, pr, &prj, &new_body, &comment)?;
+    write_repaired_body(slug, pr, &prj, &new_body, BodyRepair::Linkage, &detail)?;
     let still = closing_keywords(&new_body);
     let mut out = format!(
         "{subject}: weakened {} `Closes #{issue}` reference(s) to `Refs` — closing set is now {:?}",
@@ -37355,6 +40028,1220 @@ fn token_profile_mode(path: &str, json: bool) -> i32 {
         );
     }
     0
+}
+
+// ---------------------------------------------------------------------------------------------
+// `/nr` PHASE INSTRUMENTATION (#315).
+//
+// #315 decomposed ONE `/nr` run by hand off a session transcript, and that decomposition is the
+// evidence under everything else in the issue — the audit skill at 41% of the wall, the
+// independent read the gate exists for at 22% of the output. The same issue's finding 3 is that 2
+// of the 4 runs that day did not follow the protocol at all, so the decomposition is n=1 and the
+// issue orders instrumentation FIRST for that reason. This is that instrument.
+//
+// It reads a transcript after the fact rather than being something `/nr` emits mid-run, and both
+// halves of that are forced. The command's grant is typed tool calls with "no shell at all", so it
+// can invoke nothing; and a turn's `output_tokens` is not knowable to the turn producing it.
+//
+// TWO CUTS, NOT ONE. #315's table uses both without saying so, and they disagree by exactly one
+// call in two places. Wall clock is CONTINUOUS: the run is in the checkout phase from the instant
+// `pr_checkout` fires. Output tokens are QUANTIZED TO A TURN: one turn carries one `usage` record,
+// so the turn that spent 2,871 tokens on the independent read and then fired `pr_checkout` in its
+// last block cannot be split, and those tokens are the read's. The cuts therefore fall one call
+// apart wherever a phase's opening call is a TRAILING call on the previous phase's turn — which is
+// what `pr_checkout` (step 5's first bullet) and `clone_release` (step 6) are, and what
+// `next_ready` / `pr_context` / the `Skill` invoke are not.
+//
+// OUTPUT TOKENS ARE READ HERE, and the `UsageProbe` section comment says they are not recoverable.
+// Both hold, of different files. In a `runs/*.jsonl` stream-json trace `output_tokens` is a
+// message-START snapshot — 2-5 on a message that went on to emit ~1,100 — so the deduped sum is
+// 0.2%-20.6% of the terminal `result.usage`. A session transcript is written per COMPLETED content
+// block and its `output_tokens` tracks the message: over the 979 main-thread messages of
+// `0fd06efc`, reported output against rendered content bytes is a median 3.0 bytes per token (p10
+// 1.98, p90 3.91), which a start snapshot cannot produce. A session transcript carries no `result`
+// event, so there is no terminal total to check against and no figure from this reader may be
+// compared with one from a run trace.
+// ---------------------------------------------------------------------------------------------
+
+/// What a `/nr` invocation looks like in a session transcript. Both spellings, because the plugin
+/// name is only required where the command name collides across plugins.
+const NR_COMMAND_MARKERS: &[&str] = &[
+    "<command-name>/human-fsm:nr</command-name>",
+    "<command-name>/nr</command-name>",
+];
+
+/// The tools `/nr` grants (its own frontmatter, plus `ToolSearch`, which is the harness's
+/// deferred-tool loader and is what the issue's `setup` phase is made of). Anything else in a run
+/// is off-protocol — `Bash` above all, which the command forbids in as many words and which the
+/// 07:57 run used anyway.
+const NR_GRANTED_TOOLS: &[&str] = &[
+    "ToolSearch",
+    "Read",
+    "Skill",
+    "next_ready",
+    "pr_context",
+    "pr_checkout",
+    "clone_release",
+    "human_rule",
+];
+
+/// The calls steps 1-6 make. A run missing any of them is not a sample of the protocol, which is
+/// the distinction finding 3 needed and nothing was drawing.
+const NR_REQUIRED_CALLS: &[&str] = &[
+    "next_ready",
+    "pr_context",
+    "pr_checkout",
+    "Skill",
+    "clone_release",
+];
+
+/// The skill `/nr` step 5 names. A `Skill` call for anything else is a lens that was not this one.
+const NR_AUDIT_SKILL: &str = "audit";
+
+/// The phases of one `/nr` run, in the order the command's own numbered steps run them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NrPhase {
+    Setup,
+    Queue,
+    Context,
+    Lens,
+    Audit,
+    Report,
+}
+
+impl NrPhase {
+    const ALL: [NrPhase; 6] = [
+        NrPhase::Setup,
+        NrPhase::Queue,
+        NrPhase::Context,
+        NrPhase::Lens,
+        NrPhase::Audit,
+        NrPhase::Report,
+    ];
+
+    fn key(self) -> &'static str {
+        match self {
+            NrPhase::Setup => "setup",
+            NrPhase::Queue => "queue",
+            NrPhase::Context => "context",
+            NrPhase::Lens => "lens",
+            NrPhase::Audit => "audit",
+            NrPhase::Report => "report",
+        }
+    }
+
+    /// The issue's own row labels, so a reader can hold the two tables side by side.
+    fn label(self) -> &'static str {
+        match self {
+            NrPhase::Setup => "setup / ToolSearch",
+            NrPhase::Queue => "next_ready",
+            NrPhase::Context => "pr_context + independent read",
+            NrPhase::Lens => "pr_checkout + skill invoke",
+            NrPhase::Audit => "audit skill",
+            NrPhase::Report => "final report",
+        }
+    }
+
+    /// The call whose firing moves the WALL clock into this phase. `None` for `Setup`, which the
+    /// `/nr` invocation itself opens.
+    fn wall_call(self) -> Option<&'static str> {
+        match self {
+            NrPhase::Setup => None,
+            NrPhase::Queue => Some("next_ready"),
+            NrPhase::Context => Some("pr_context"),
+            NrPhase::Lens => Some("pr_checkout"),
+            NrPhase::Audit => Some("Skill"),
+            NrPhase::Report => Some("clone_release"),
+        }
+    }
+}
+
+/// Why a run stopped — the difference between a run that finished and one the human cut off, which
+/// decides whether its numbers belong in a series at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NrEnd {
+    /// The human spoke again.
+    Human,
+    /// Another slash command started.
+    Command,
+    /// The transcript ended. A live session's newest run always reads this way.
+    Eof,
+}
+
+impl NrEnd {
+    fn key(self) -> &'static str {
+        match self {
+            NrEnd::Human => "human",
+            NrEnd::Command => "command",
+            NrEnd::Eof => "eof",
+        }
+    }
+}
+
+/// One main-thread turn: a `message.id`, however many events the transcript wrote it across.
+#[derive(Debug, Clone, PartialEq)]
+struct NrTurn {
+    id: String,
+    /// First and last event of the turn. Events are written as each content block COMPLETES, so
+    /// `first_ms` is when the turn's first block landed — the instant #315's wall column cuts on.
+    first_ms: i64,
+    last_ms: i64,
+    /// When the turn BEGAN: the timestamp of the event before it, a tool result or the `/nr`
+    /// invocation. The fallback boundary for a phase whose opening call never fired.
+    began_ms: i64,
+    output_tokens: u64,
+    cache_read: u64,
+    /// Every `tool_use` block, in order, un-deduped — the same rule [`token_profile`] counts calls
+    /// by, because a streamed message carries a different content block per event.
+    tools: Vec<String>,
+}
+
+/// One `/nr` invocation and everything the main loop did under it.
+#[derive(Debug, Clone, PartialEq)]
+struct NrRun {
+    started_at: String,
+    started_ms: i64,
+    turns: Vec<NrTurn>,
+    /// The `skill` argument of every `Skill` call, so "invoked a skill" and "invoked THE skill" stay
+    /// distinguishable.
+    skills: Vec<String>,
+    ended_by: NrEnd,
+}
+
+impl NrRun {
+    /// The run's last instant. A run with no turns at all is zero-width at its invocation.
+    fn ended_ms(&self) -> i64 {
+        self.turns.last().map_or(self.started_ms, |t| t.last_ms)
+    }
+
+    fn output_tokens(&self) -> u64 {
+        self.turns.iter().map(|t| t.output_tokens).sum()
+    }
+
+    fn tool_calls(&self) -> usize {
+        self.turns.iter().map(|t| t.tools.len()).sum()
+    }
+
+    /// The peak `cache_read_input_tokens` — #315's finding 2 in one number: what the run re-read on
+    /// its widest turn, none of which is about the PR.
+    fn peak_context(&self) -> u64 {
+        self.turns.iter().map(|t| t.cache_read).max().unwrap_or(0)
+    }
+
+    /// The first turn that made this call.
+    fn first_call(&self, tool: &str) -> Option<usize> {
+        self.turns
+            .iter()
+            .position(|t| t.tools.iter().any(|x| x == tool))
+    }
+
+    /// Required calls that never fired.
+    fn missing_calls(&self) -> Vec<&'static str> {
+        NR_REQUIRED_CALLS
+            .iter()
+            .copied()
+            .filter(|c| self.first_call(c).is_none())
+            .collect()
+    }
+
+    /// Tools used outside the command's grant, with how often.
+    fn off_protocol(&self) -> Vec<(String, usize)> {
+        let mut counts: std::collections::BTreeMap<String, usize> =
+            std::collections::BTreeMap::new();
+        for t in self.turns.iter().flat_map(|t| t.tools.iter()) {
+            if !NR_GRANTED_TOOLS.contains(&t.as_str()) {
+                *counts.entry(t.clone()).or_default() += 1;
+            }
+        }
+        counts.into_iter().collect()
+    }
+
+    fn audit_invoked(&self) -> bool {
+        self.skills.iter().any(|s| s == NR_AUDIT_SKILL)
+    }
+
+    /// A run whose numbers are a sample of the protocol rather than of something else.
+    fn conforming(&self) -> bool {
+        self.missing_calls().is_empty() && self.off_protocol().is_empty() && self.audit_invoked()
+    }
+}
+
+/// One phase of one run, under both cuts.
+#[derive(Debug, Clone, PartialEq)]
+struct NrPhaseStat {
+    phase: NrPhase,
+    wall_ms: i64,
+    output_tokens: u64,
+    turns: usize,
+    /// The phase's opening call fired, so its wall boundary is that call's own instant rather than
+    /// the fallback. False marks a boundary a reader should not lean on.
+    called: bool,
+}
+
+/// PURE: normalise a tool name to the thing the protocol talks about.
+///
+/// An MCP tool arrives as `mcp__plugin_human-fsm_fsm__next_ready`; the server prefix is deployment
+/// detail and a match on the whole string breaks the moment the plugin is mounted differently.
+fn nr_tool_name(raw: &str) -> String {
+    raw.rsplit("__").next().unwrap_or(raw).to_string()
+}
+
+/// PURE: every `/nr` run in a session transcript, in order.
+///
+/// A run ends where the human speaks again — `/nr` produces its report and stops, so everything
+/// after that is different work. `isMeta` events (the command's own argument expansion, a skill's
+/// base-directory note) are nobody speaking, and tool results are the run itself.
+fn nr_runs(content: &str) -> Vec<NrRun> {
+    let mut runs: Vec<NrRun> = Vec::new();
+    let mut cur: Option<NrRun> = None;
+    // The instant the current turn began — moved by every event that is not the assistant's own.
+    let mut boundary_ms: i64 = 0;
+    let close = |cur: &mut Option<NrRun>, runs: &mut Vec<NrRun>, why: NrEnd| {
+        if let Some(mut r) = cur.take() {
+            r.ended_by = why;
+            runs.push(r);
+        }
+    };
+    for line in content.lines() {
+        let Ok(ev) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        // A subagent's turn is real spend but not the main loop's, and `/nr` dispatches none —
+        // a sidechain under one is somebody else's work sharing the file.
+        if ev.get("isSidechain").and_then(Value::as_bool) == Some(true) {
+            continue;
+        }
+        if ["parentToolUseId", "parent_tool_use_id"]
+            .iter()
+            .any(|k| ev.get(k).is_some_and(|v| !v.is_null()))
+        {
+            continue;
+        }
+        let Some(ts) = ev.get("timestamp").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(ms) = iso_to_epoch_ms(ts) else {
+            continue;
+        };
+        let body = ev.get("message").and_then(|m| m.get("content"));
+        match ev.get("type").and_then(Value::as_str).unwrap_or("") {
+            "user" => {
+                let text = body.and_then(Value::as_str).unwrap_or("");
+                if NR_COMMAND_MARKERS.iter().any(|m| text.contains(m)) {
+                    close(&mut cur, &mut runs, NrEnd::Command);
+                    cur = Some(NrRun {
+                        started_at: ts.to_string(),
+                        started_ms: ms,
+                        turns: Vec::new(),
+                        skills: Vec::new(),
+                        ended_by: NrEnd::Eof,
+                    });
+                    boundary_ms = ms;
+                    continue;
+                }
+                let Some(run) = cur.as_ref() else {
+                    continue;
+                };
+                let meta = ev.get("isMeta").and_then(Value::as_bool) == Some(true);
+                let tool_result = body.and_then(Value::as_array).is_some_and(|b| {
+                    b.iter()
+                        .any(|x| x.get("type").and_then(Value::as_str) == Some("tool_result"))
+                });
+                if !meta && !tool_result && !run.turns.is_empty() {
+                    close(&mut cur, &mut runs, NrEnd::Human);
+                    continue;
+                }
+                boundary_ms = ms;
+            }
+            "assistant" => {
+                let Some(run) = cur.as_mut() else {
+                    continue;
+                };
+                let Some(msg) = ev.get("message") else {
+                    continue;
+                };
+                let id = msg.get("id").and_then(Value::as_str).unwrap_or("");
+                // An absent or empty id identifies no message, so each such event stands alone —
+                // the reading [`token_profile`] gives, for the same reason: letting `""` into the
+                // set would make the first empty-id turn swallow every later one.
+                let existing = (!id.is_empty())
+                    .then(|| run.turns.iter().position(|t| t.id == id))
+                    .flatten();
+                let idx = match existing {
+                    Some(i) => {
+                        run.turns[i].last_ms = ms;
+                        i
+                    }
+                    None => {
+                        let g = |k: &str| {
+                            msg.get("usage")
+                                .and_then(|u| u.get(k))
+                                .and_then(Value::as_u64)
+                                .unwrap_or(0)
+                        };
+                        run.turns.push(NrTurn {
+                            id: id.to_string(),
+                            first_ms: ms,
+                            last_ms: ms,
+                            began_ms: boundary_ms,
+                            output_tokens: g("output_tokens"),
+                            cache_read: g("cache_read_input_tokens"),
+                            tools: Vec::new(),
+                        });
+                        run.turns.len() - 1
+                    }
+                };
+                let Some(blocks) = msg.get("content").and_then(Value::as_array) else {
+                    continue;
+                };
+                for b in blocks {
+                    if b.get("type").and_then(Value::as_str) != Some("tool_use") {
+                        continue;
+                    }
+                    let Some(name) = b.get("name").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    let name = nr_tool_name(name);
+                    if name == "Skill" {
+                        if let Some(s) = b
+                            .get("input")
+                            .and_then(|i| i.get("skill"))
+                            .and_then(Value::as_str)
+                        {
+                            run.skills.push(s.to_string());
+                        }
+                    }
+                    run.turns[idx].tools.push(name);
+                }
+            }
+            _ => {}
+        }
+    }
+    close(&mut cur, &mut runs, NrEnd::Eof);
+    runs
+}
+
+/// PURE: the six phases of one run, under both cuts.
+///
+/// TOKENS. A phase opens at the turn that first does its work: `queue`/`context` at the turn
+/// issuing their own call (the call IS that turn's whole output), `lens` at the turn that invokes
+/// the skill, `audit` at the turn after it — the first turn with the skill loaded — and `report` at
+/// the first turn of the run's trailing block of turns that call nothing, which is what step 7 is.
+/// `pr_checkout` opens no token phase: it fires as a trailing call on the read turn, and that
+/// turn's tokens are the read's. Where no skill was invoked at all, `pr_checkout` is the only thing
+/// left that separates the checkout from the reading done in place of the skill, so it opens `lens`
+/// there.
+///
+/// WALL. A phase opens at the first event of the turn issuing its own opening call, which is the
+/// instant the run entered it. A phase whose call never fired has no such instant, so it falls back
+/// to when its first attributed turn began; a phase with neither is zero-width and collapses onto
+/// the next boundary rather than borrowing time from a neighbour.
+fn nr_phase_stats(run: &NrRun) -> Vec<NrPhaseStat> {
+    let n = run.turns.len();
+    // The trailing block of turns that call nothing.
+    let report_start = {
+        let mut i = n;
+        while i > 0 && run.turns[i - 1].tools.is_empty() {
+            i -= 1;
+        }
+        (i < n).then_some(i)
+    };
+    let lens_start = run
+        .first_call("Skill")
+        .or_else(|| run.first_call("pr_checkout"));
+    let mut starts: [Option<usize>; 6] = [
+        (n > 0).then_some(0),
+        run.first_call("next_ready"),
+        run.first_call("pr_context"),
+        lens_start,
+        lens_start.map(|i| i + 1),
+        report_start,
+    ];
+    // Phases run in order, so a later phase can never open before an earlier one. Clamping rather
+    // than trusting the scan keeps an out-of-order run (a second `pr_context` after the audit, an
+    // interrupted run whose trailing silence starts mid-audit) from producing negative spans.
+    let mut floor = 0usize;
+    for s in starts.iter_mut() {
+        let Some(i) = *s else { continue };
+        let v = i.max(floor);
+        if v >= n {
+            *s = None;
+        } else {
+            *s = Some(v);
+            floor = v;
+        }
+    }
+    // Wall boundaries, then the same fill: a collapsed phase takes the next real boundary, so it
+    // reports zero rather than absorbing the gap.
+    let mut edges: [i64; 7] = [run.ended_ms(); 7];
+    let raw: Vec<Option<i64>> = NrPhase::ALL
+        .iter()
+        .enumerate()
+        .map(|(p, phase)| match phase.wall_call() {
+            None => Some(run.started_ms),
+            Some(call) => run
+                .first_call(call)
+                .map(|i| run.turns[i].first_ms)
+                .or_else(|| starts[p].map(|i| run.turns[i].began_ms)),
+        })
+        .collect();
+    for p in (0..6).rev() {
+        edges[p] = raw[p].unwrap_or(edges[p + 1]);
+    }
+    for p in 1..7 {
+        edges[p] = edges[p].max(edges[p - 1]);
+    }
+    NrPhase::ALL
+        .iter()
+        .enumerate()
+        .map(|(p, phase)| {
+            let end = starts[p + 1..]
+                .iter()
+                .flatten()
+                .next()
+                .copied()
+                .unwrap_or(n);
+            let range = starts[p].map(|i| i..end.max(i)).unwrap_or(0..0);
+            NrPhaseStat {
+                phase: *phase,
+                wall_ms: edges[p + 1] - edges[p],
+                output_tokens: run.turns[range.clone()]
+                    .iter()
+                    .map(|t| t.output_tokens)
+                    .sum(),
+                turns: range.len(),
+                called: phase
+                    .wall_call()
+                    .is_none_or(|c| run.first_call(c).is_some()),
+            }
+        })
+        .collect()
+}
+
+/// `nr-profile <transcript> [--run N] [--json]`: what each `/nr` run in a session spent, by phase.
+fn nr_profile_mode(path: &str, run: Option<usize>, json: bool) -> i32 {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: cannot read transcript {path}: {e}");
+            return 2;
+        }
+    };
+    let all = nr_runs(&content);
+    let picked: Vec<(usize, &NrRun)> = match run {
+        Some(k) => {
+            let Some(r) = k.checked_sub(1).and_then(|i| all.get(i)) else {
+                eprintln!(
+                    "error: --run {k} but this transcript has {} `/nr` run(s) — runs are numbered \
+                     from 1 in transcript order",
+                    all.len()
+                );
+                return 2;
+            };
+            vec![(k, r)]
+        }
+        None => all.iter().enumerate().map(|(i, r)| (i + 1, r)).collect(),
+    };
+    if json {
+        let rows: Vec<Value> = picked
+            .iter()
+            .map(|(n, r)| {
+                let phases: Vec<Value> = nr_phase_stats(r)
+                    .iter()
+                    .map(|s| {
+                        serde_json::json!({
+                            "phase": s.phase.key(),
+                            "label": s.phase.label(),
+                            "wallMs": s.wall_ms,
+                            "outputTokens": s.output_tokens,
+                            "turns": s.turns,
+                            "openingCallFired": s.called,
+                        })
+                    })
+                    .collect();
+                serde_json::json!({
+                    "run": n,
+                    "startedAt": r.started_at,
+                    "wallMs": r.ended_ms() - r.started_ms,
+                    "endedBy": r.ended_by.key(),
+                    "turns": r.turns.len(),
+                    "toolCalls": r.tool_calls(),
+                    "outputTokens": r.output_tokens(),
+                    "peakContext": r.peak_context(),
+                    "conforming": r.conforming(),
+                    "missingCalls": r.missing_calls(),
+                    "offProtocolTools": r.off_protocol().into_iter()
+                        .map(|(t, c)| serde_json::json!({"tool": t, "calls": c}))
+                        .collect::<Vec<_>>(),
+                    "auditSkillInvoked": r.audit_invoked(),
+                    "phases": phases,
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({"transcript": path, "runs": rows})).unwrap()
+        );
+        return 0;
+    }
+    println!("transcript  {path}");
+    println!("/nr runs    {}", all.len());
+    if all.is_empty() {
+        println!(
+            "\n! no `/nr` invocation in this transcript — a run is found by its own \
+                  `<command-name>` line, so a session that never typed the command has none"
+        );
+        return 0;
+    }
+    for (n, r) in &picked {
+        let stats = nr_phase_stats(r);
+        let total_out = r.output_tokens();
+        println!(
+            "\nrun {n}  {}  {:.1}s  ({} turns, {} calls, ended: {})",
+            r.started_at,
+            (r.ended_ms() - r.started_ms) as f64 / 1000.0,
+            r.turns.len(),
+            r.tool_calls(),
+            r.ended_by.key()
+        );
+        println!(
+            "  {:<31}{:>9}{:>9}{:>8}",
+            "phase", "wall", "output", "share"
+        );
+        for s in &stats {
+            let share = if total_out == 0 {
+                "—".to_string()
+            } else {
+                format!("{:.1}%", s.output_tokens as f64 * 100.0 / total_out as f64)
+            };
+            println!(
+                "  {:<31}{:>8.1}s{:>9}{:>8}{}",
+                s.phase.label(),
+                s.wall_ms as f64 / 1000.0,
+                s.output_tokens,
+                share,
+                if s.called { "" } else { "  *" }
+            );
+        }
+        println!(
+            "  {:<31}{:>8.1}s{:>9}",
+            "total",
+            (r.ended_ms() - r.started_ms) as f64 / 1000.0,
+            total_out
+        );
+        println!("  peak context                 {}", r.peak_context());
+        if r.conforming() {
+            println!("  protocol                     CONFORMING");
+        } else {
+            let mut why: Vec<String> = Vec::new();
+            let missing = r.missing_calls();
+            if !missing.is_empty() {
+                why.push(format!("never called: {}", missing.join(", ")));
+            }
+            if !r.audit_invoked() && r.first_call("Skill").is_some() {
+                why.push(format!("Skill invoked, but not `{NR_AUDIT_SKILL}`"));
+            }
+            let off = r.off_protocol();
+            if !off.is_empty() {
+                why.push(format!(
+                    "outside the grant: {}",
+                    off.iter()
+                        .map(|(t, c)| format!("{t} x{c}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+            println!(
+                "  protocol                     OFF-PROTOCOL — {}",
+                why.join("; ")
+            );
+        }
+        if stats.iter().any(|s| !s.called) {
+            println!(
+                "  * the phase's own call never fired, so its boundary is when its first turn \
+                 began, not when the run entered it"
+            );
+        }
+    }
+    if picked.iter().any(|(_, r)| !r.conforming()) {
+        println!(
+            "\n! an OFF-PROTOCOL run is not a sample of the protocol. #315's decomposition rests \
+             on one run because 2 of 4 were this."
+        );
+    }
+    0
+}
+
+#[cfg(test)]
+mod nr_profile_tests {
+    use super::{nr_phase_stats, nr_runs, nr_tool_name, NrEnd, NrPhase};
+    use serde_json::{json, Value};
+
+    /// One assistant event: a turn is however many of these share a `message.id`.
+    fn ev(ts: &str, id: &str, out: u64, ctx: u64, tools: &[&str]) -> String {
+        let blocks: Vec<Value> = tools
+            .iter()
+            .map(|t| match t.strip_prefix("Skill:") {
+                Some(skill) => json!({"type":"tool_use","name":"Skill","input":{"skill":skill}}),
+                None => json!({"type":"tool_use","name":t,"input":{}}),
+            })
+            .collect();
+        format!(
+            "{}\n",
+            json!({"type":"assistant","timestamp":ts,"isSidechain":false,"message":{
+                "id": id, "content": blocks,
+                "usage": {"output_tokens": out, "cache_read_input_tokens": ctx}}})
+        )
+    }
+
+    /// A tool result coming back — part of the run, and what a turn's `began_ms` is taken from.
+    fn result(ts: &str) -> String {
+        format!(
+            "{}\n",
+            json!({"type":"user","timestamp":ts,"message":{"content":[
+                {"type":"tool_result","tool_use_id":"t","content":"ok"}]}})
+        )
+    }
+
+    /// The `/nr` invocation itself.
+    fn invoke(ts: &str) -> String {
+        format!(
+            "{}\n",
+            json!({"type":"user","timestamp":ts,"message":{"content":
+                "<command-message>human-fsm:nr</command-message>\n<command-name>/human-fsm:nr</command-name>"}})
+        )
+    }
+
+    /// The command's own argument expansion, and the skill's base-directory note. Text, from
+    /// nobody.
+    fn meta(ts: &str) -> String {
+        format!(
+            "{}\n",
+            json!({"type":"user","timestamp":ts,"isMeta":true,"message":{"content":[
+                {"type":"text","text":"Arguments: ``"}]}})
+        )
+    }
+
+    /// The human speaking.
+    fn human(ts: &str, text: &str) -> String {
+        format!(
+            "{}\n",
+            json!({"type":"user","timestamp":ts,"message":{"content":text}})
+        )
+    }
+
+    fn q(name: &str) -> String {
+        format!("mcp__plugin_human-fsm_fsm__{name}")
+    }
+
+    /// The 2026-08-16 06:56:22 run against `S01-Issuer/st0x.deploy#312`, event for event: every
+    /// timestamp, `output_tokens` and `cache_read_input_tokens` is the one in the transcript
+    /// #315 decomposed by hand.
+    fn full_protocol_run() -> String {
+        let nr = q("next_ready");
+        let ctx = q("pr_context");
+        let co = q("pr_checkout");
+        let rel = q("clone_release");
+        [
+            invoke("2026-08-16T06:56:22.145Z"),
+            meta("2026-08-16T06:56:22.145Z"),
+            ev("2026-08-16T06:56:28.724Z", "m1", 374, 336_538, &[]),
+            ev(
+                "2026-08-16T06:56:29.816Z",
+                "m1",
+                374,
+                336_538,
+                &["ToolSearch"],
+            ),
+            result("2026-08-16T06:56:29.823Z"),
+            ev("2026-08-16T06:56:34.219Z", "m2", 45, 343_131, &[&nr]),
+            result("2026-08-16T06:57:30.491Z"),
+            ev("2026-08-16T06:57:35.474Z", "m3", 83, 344_218, &[&ctx]),
+            result("2026-08-16T06:57:44.565Z"),
+            // The straddling turn: 2,871 tokens of independent read, then `pr_checkout` in its
+            // last block.
+            ev("2026-08-16T06:58:18.559Z", "m4", 2_871, 345_233, &[]),
+            ev("2026-08-16T06:58:21.988Z", "m4", 2_871, 345_233, &[]),
+            ev("2026-08-16T06:58:21.989Z", "m4", 2_871, 345_233, &[&co]),
+            result("2026-08-16T06:58:28.303Z"),
+            ev("2026-08-16T06:58:35.236Z", "m5", 496, 356_129, &[]),
+            ev(
+                "2026-08-16T06:58:36.684Z",
+                "m5",
+                496,
+                356_129,
+                &["Skill:audit"],
+            ),
+            result("2026-08-16T06:58:36.712Z"),
+            meta("2026-08-16T06:58:36.711Z"),
+            ev("2026-08-16T06:58:55.167Z", "m6", 1_098, 359_179, &[]),
+            ev("2026-08-16T06:58:55.852Z", "m6", 1_098, 359_179, &["Read"]),
+            result("2026-08-16T06:58:55.863Z"),
+            ev("2026-08-16T06:59:24.969Z", "m7", 2_192, 412_571, &[]),
+            ev("2026-08-16T06:59:25.176Z", "m7", 2_192, 412_571, &["Read"]),
+            result("2026-08-16T06:59:25.196Z"),
+            ev("2026-08-16T06:59:41.840Z", "m8", 1_162, 415_952, &[]),
+            ev("2026-08-16T06:59:42.758Z", "m8", 1_162, 415_952, &["Read"]),
+            result("2026-08-16T06:59:42.776Z"),
+            ev("2026-08-16T06:59:55.493Z", "m9", 575, 419_426, &[]),
+            ev("2026-08-16T06:59:55.522Z", "m9", 575, 419_426, &["Read"]),
+            result("2026-08-16T06:59:55.533Z"),
+            ev("2026-08-16T07:00:05.045Z", "m10", 534, 421_380, &[]),
+            ev("2026-08-16T07:00:05.204Z", "m10", 534, 421_380, &["Read"]),
+            result("2026-08-16T07:00:05.216Z"),
+            // The other straddling turn: the audit's sixth turn, ending in `clone_release`.
+            ev("2026-08-16T07:00:29.107Z", "m11", 1_511, 422_503, &[]),
+            ev("2026-08-16T07:00:29.131Z", "m11", 1_511, 422_503, &[&rel]),
+            result("2026-08-16T07:00:29.161Z"),
+            ev("2026-08-16T07:01:00.977Z", "m12", 2_340, 423_969, &[]),
+            human("2026-08-16T07:01:39.885Z", "fix the pr body and merge"),
+        ]
+        .concat()
+    }
+
+    /// ACCEPTANCE (#315): pointed at the run the issue decomposed by hand, the reader reproduces
+    /// that decomposition — every phase boundary and every per-phase output-token count.
+    ///
+    /// The issue's wall column is hand-rounded and internally inconsistent (its six cells round to
+    /// 279s or truncate to 276s, against its own stated 278s total), so the seconds are asserted
+    /// here in milliseconds and the issue's own cell is named beside each.
+    #[test]
+    fn the_decomposition_of_the_full_protocol_run_reproduces() {
+        let runs = nr_runs(&full_protocol_run());
+        assert_eq!(runs.len(), 1);
+        let r = &runs[0];
+        assert_eq!(r.turns.len(), 12);
+        assert_eq!(r.tool_calls(), 11);
+        assert_eq!(r.ended_by, NrEnd::Human);
+        // Finding 2's number for this run, straight off the widest turn.
+        assert_eq!(r.peak_context(), 423_969);
+        assert_eq!(r.output_tokens(), 13_281);
+        assert_eq!(r.ended_ms() - r.started_ms, 278_832);
+
+        let stats = nr_phase_stats(r);
+        let expect = [
+            // phase, wall ms, the issue's wall cell, output tokens
+            (NrPhase::Setup, 12_074i64, 12i64, 374u64),
+            (NrPhase::Queue, 61_255, 61, 45),
+            (NrPhase::Context, 43_085, 43, 2_954),
+            (NrPhase::Lens, 16_677, 17, 496),
+            (NrPhase::Audit, 113_871, 114, 7_072),
+            (NrPhase::Report, 31_870, 31, 2_340),
+        ];
+        for (s, (phase, wall, issue_secs, out)) in stats.iter().zip(expect) {
+            assert_eq!(s.phase, phase);
+            assert_eq!(s.wall_ms, wall, "{} wall", phase.label());
+            assert_eq!(s.output_tokens, out, "{} output", phase.label());
+            assert!(s.called, "{} lost its own opening call", phase.label());
+            assert!(
+                (s.wall_ms - issue_secs * 1000).abs() <= 1_000,
+                "{} is {}ms against the issue's {issue_secs}s",
+                phase.label(),
+                s.wall_ms
+            );
+        }
+        // The headline the issue draws from this table: the audit skill is 41% of the wall. Its
+        // 57% of output does NOT follow from the same table — 7,072 of 13,281 is 53.2%.
+        let audit = &stats[4];
+        assert_eq!((audit.wall_ms * 100 / 278_832) as u64, 40);
+        assert_eq!(audit.output_tokens * 1000 / 13_281, 532);
+        assert!(r.conforming());
+    }
+
+    /// The two cuts are the design, so the turn they disagree about is pinned. `m4` spent 2,871
+    /// tokens on the independent read and then fired `pr_checkout`: its tokens are the context
+    /// phase's, and the same event is the instant the wall clock entered the lens phase.
+    #[test]
+    fn a_trailing_call_moves_the_wall_without_moving_the_tokens() {
+        let runs = nr_runs(&full_protocol_run());
+        let stats = nr_phase_stats(&runs[0]);
+        // Tokens: the straddling turn is the context phase's second turn.
+        assert_eq!(stats[2].turns, 2);
+        assert_eq!(stats[2].output_tokens, 83 + 2_871);
+        assert_eq!(stats[3].turns, 1);
+        assert_eq!(stats[3].output_tokens, 496);
+        // Wall: the lens phase opens at that same turn's first event, 43.085s into the run, not at
+        // the turn its tokens went to.
+        assert_eq!(
+            stats[0].wall_ms + stats[1].wall_ms + stats[2].wall_ms,
+            116_414
+        );
+        // And the same shape again at the other end: `clone_release` rides the audit's last turn.
+        assert_eq!(stats[4].turns, 6);
+        assert_eq!(stats[4].output_tokens, 7_072);
+        assert_eq!(stats[5].turns, 1);
+    }
+
+    /// #315 finding 3: the 07:57 run skipped `pr_context` and the skill entirely and used `Bash`,
+    /// which `/nr` forbids in as many words. Its numbers are not a sample of the protocol, and the
+    /// reader has to be able to SAY so — that is the whole reason the decomposition is n=1.
+    #[test]
+    fn a_run_that_skipped_the_protocol_is_named_as_one() {
+        let nr = q("next_ready");
+        let co = q("pr_checkout");
+        let rel = q("clone_release");
+        let trace = [
+            invoke("2026-08-16T07:57:47.067Z"),
+            meta("2026-08-16T07:57:47.067Z"),
+            ev("2026-08-16T07:57:57.793Z", "n1", 343, 100, &[&nr]),
+            result("2026-08-16T07:58:45.233Z"),
+            ev("2026-08-16T07:58:49.317Z", "n2", 85, 110, &[&co]),
+            result("2026-08-16T07:58:55.568Z"),
+            ev("2026-08-16T07:59:02.476Z", "n3", 347, 120, &["Read"]),
+            result("2026-08-16T07:59:03.533Z"),
+            ev("2026-08-16T07:59:08.133Z", "n4", 76, 130, &["Read"]),
+            result("2026-08-16T07:59:08.146Z"),
+            ev("2026-08-16T07:59:21.728Z", "n5", 737, 140, &["Read"]),
+            result("2026-08-16T07:59:23.074Z"),
+            ev("2026-08-16T07:59:30.238Z", "n6", 174, 150, &["Bash"]),
+            result("2026-08-16T07:59:31.975Z"),
+            ev("2026-08-16T07:59:37.400Z", "n7", 138, 160, &["Bash"]),
+            result("2026-08-16T07:59:39.149Z"),
+            ev("2026-08-16T07:59:44.178Z", "n8", 78, 170, &[&rel]),
+            result("2026-08-16T07:59:44.217Z"),
+            ev("2026-08-16T08:00:03.635Z", "n9", 1_246, 180, &[]),
+            human("2026-08-16T08:02:59.807Z", "merge 308"),
+        ]
+        .concat();
+        let runs = nr_runs(&trace);
+        assert_eq!(runs.len(), 1);
+        let r = &runs[0];
+        assert!(!r.conforming());
+        assert_eq!(r.missing_calls(), vec!["pr_context", "Skill"]);
+        assert!(!r.audit_invoked());
+        assert_eq!(r.off_protocol(), vec![("Bash".to_string(), 2)]);
+        let stats = nr_phase_stats(r);
+        // The skipped phase is EMPTY, not merged into a neighbour — a context phase silently
+        // holding the queue's turns would read as a protocol run that was expensive.
+        assert_eq!(stats[2].turns, 0);
+        assert_eq!(stats[2].output_tokens, 0);
+        assert_eq!(stats[2].wall_ms, 0);
+        assert!(!stats[2].called);
+        // With no skill invoked, `pr_checkout` is what separates the checkout from the reading
+        // done in its place, so the reads still land in the audit phase.
+        assert_eq!(stats[3].output_tokens, 85);
+        assert_eq!(stats[4].output_tokens, 347 + 76 + 737 + 174 + 138 + 78);
+        assert_eq!(stats[5].output_tokens, 1_246);
+        assert!(!stats[4].called);
+    }
+
+    /// The 08:03 run: `next_ready` and nothing else. Its report has no `clone_release` to open it,
+    /// and the phase still has to find it — otherwise 30s of writing and 363 tokens are billed to
+    /// the queue, which is exactly the call #314 is optimising.
+    #[test]
+    fn a_queue_only_run_still_separates_its_report() {
+        let trace = [
+            invoke("2026-08-16T08:03:27.011Z"),
+            meta("2026-08-16T08:03:27.011Z"),
+            ev(
+                "2026-08-16T08:03:32.725Z",
+                "p1",
+                45,
+                42_545,
+                &[&q("next_ready")],
+            ),
+            result("2026-08-16T08:04:13.935Z"),
+            ev("2026-08-16T08:04:23.189Z", "p2", 363, 42_545, &[]),
+            human("2026-08-16T08:04:50.878Z", "next"),
+        ]
+        .concat();
+        let runs = nr_runs(&trace);
+        let r = &runs[0];
+        let stats = nr_phase_stats(r);
+        assert_eq!(stats[1].output_tokens, 45);
+        assert_eq!(stats[5].output_tokens, 363);
+        // 41.2s, which is what #314 measured `next_ready` at on this run — not the 50.5s the
+        // report's own generation would add if the fallback boundary were the phase's first EVENT
+        // instead of when it began.
+        assert_eq!(stats[1].wall_ms, 41_210);
+        assert_eq!(stats[5].wall_ms, 9_254);
+        assert!(!stats[5].called);
+        assert_eq!(r.peak_context(), 42_545);
+    }
+
+    /// A streamed turn is written one completed block at a time, all carrying the same `usage`.
+    /// Summing the events instead of the turns triples this run's output.
+    #[test]
+    fn a_turn_is_counted_once_however_many_events_wrote_it() {
+        let runs = nr_runs(&full_protocol_run());
+        let r = &runs[0];
+        assert_eq!(r.output_tokens(), 13_281);
+        assert_eq!(r.turns.iter().filter(|t| t.id == "m4").count(), 1);
+        // The turn still spans every event it was written across.
+        let m4 = r.turns.iter().find(|t| t.id == "m4").unwrap();
+        assert_eq!(m4.last_ms - m4.first_ms, 3_430);
+        assert_eq!(m4.tools.len(), 1);
+    }
+
+    /// A `Task` subagent's turns are real spend the main loop's `result` does not carry, and
+    /// `/nr` dispatches none — a sidechain sharing the transcript is somebody else's work.
+    #[test]
+    fn subagent_and_sidechain_turns_are_not_the_main_loop() {
+        let sub = format!(
+            "{}\n{}\n",
+            json!({"type":"assistant","timestamp":"2026-08-16T06:56:30.000Z",
+                   "parentToolUseId":"toolu_1","message":{"id":"s1","content":[],
+                   "usage":{"output_tokens":9_999,"cache_read_input_tokens":9_999_999}}}),
+            json!({"type":"assistant","timestamp":"2026-08-16T06:56:31.000Z","isSidechain":true,
+                   "message":{"id":"s2","content":[],
+                   "usage":{"output_tokens":8_888,"cache_read_input_tokens":8_888_888}}})
+        );
+        let trace = full_protocol_run().replace(
+            &result("2026-08-16T06:56:29.823Z"),
+            &format!("{}{sub}", result("2026-08-16T06:56:29.823Z")),
+        );
+        let r = &nr_runs(&trace)[0];
+        assert_eq!(r.turns.len(), 12);
+        assert_eq!(r.output_tokens(), 13_281);
+        assert_eq!(r.peak_context(), 423_969);
+    }
+
+    /// Run delimiting. The command's argument expansion and the skill's base-directory note are
+    /// `isMeta` text from nobody; a tool result is the run itself; a plain message is the human,
+    /// and `/nr` has stopped by the time they speak.
+    #[test]
+    fn the_human_speaking_ends_the_run_and_meta_events_do_not() {
+        let r = &nr_runs(&full_protocol_run())[0];
+        assert_eq!(r.turns.len(), 12);
+        assert_eq!(r.ended_by, NrEnd::Human);
+        // Nothing after the human's turn belongs to it.
+        let after = [
+            full_protocol_run(),
+            ev("2026-08-16T07:01:54.483Z", "z1", 1_036, 427_928, &["Bash"]),
+        ]
+        .concat();
+        let r = &nr_runs(&after)[0];
+        assert_eq!(r.turns.len(), 12);
+        assert!(r.conforming(), "a later turn's Bash was billed to this run");
+    }
+
+    /// Two invocations in one session are two runs, and the second closes the first even with no
+    /// human turn between them.
+    #[test]
+    fn each_invocation_is_its_own_run() {
+        let trace = [full_protocol_run(), full_protocol_run()].concat();
+        let runs = nr_runs(&trace);
+        assert_eq!(runs.len(), 2);
+        assert!(runs.iter().all(|r| r.turns.len() == 12));
+        let back_to_back = [
+            invoke("2026-08-16T06:56:22.145Z"),
+            ev("2026-08-16T06:56:28.724Z", "a1", 10, 1, &[&q("next_ready")]),
+            invoke("2026-08-16T06:57:00.000Z"),
+            ev("2026-08-16T06:57:05.000Z", "b1", 20, 1, &[&q("next_ready")]),
+        ]
+        .concat();
+        let runs = nr_runs(&back_to_back);
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].ended_by, NrEnd::Command);
+        assert_eq!(runs[0].output_tokens(), 10);
+        assert_eq!(runs[1].output_tokens(), 20);
+        assert_eq!(runs[1].ended_by, NrEnd::Eof);
+    }
+
+    /// A run cut off mid-protocol — the 11:29 one — is reported as reaching where it reached, and
+    /// never as a protocol sample.
+    #[test]
+    fn an_interrupted_run_is_not_a_sample_either() {
+        let trace = [
+            invoke("2026-08-16T11:29:21.683Z"),
+            ev(
+                "2026-08-16T11:29:30.000Z",
+                "i1",
+                40,
+                500,
+                &[&q("next_ready")],
+            ),
+            result("2026-08-16T11:30:24.000Z"),
+            ev(
+                "2026-08-16T11:30:30.000Z",
+                "i2",
+                90,
+                600,
+                &[&q("pr_context")],
+            ),
+            result("2026-08-16T11:30:40.000Z"),
+            ev(
+                "2026-08-16T11:30:50.000Z",
+                "i3",
+                700,
+                700,
+                &[&q("pr_checkout")],
+            ),
+        ]
+        .concat();
+        let r = &nr_runs(&trace)[0];
+        assert_eq!(r.ended_by, NrEnd::Eof);
+        assert!(!r.conforming());
+        assert_eq!(r.missing_calls(), vec!["Skill", "clone_release"]);
+        let stats = nr_phase_stats(r);
+        // No trailing silence, so there is no report phase to find.
+        assert_eq!(stats[5].turns, 0);
+        assert_eq!(stats[5].wall_ms, 0);
+        // Every phase that did happen still accounts for its turns.
+        assert_eq!(stats.iter().map(|s| s.turns).sum::<usize>(), r.turns.len());
+    }
+
+    /// Every turn lands in exactly one phase, on every shape above — a decomposition that drops or
+    /// double-counts a turn is not one.
+    #[test]
+    fn the_phases_partition_the_run() {
+        for trace in [
+            full_protocol_run(),
+            [full_protocol_run(), full_protocol_run()].concat(),
+        ] {
+            for r in nr_runs(&trace) {
+                let stats = nr_phase_stats(&r);
+                assert_eq!(stats.iter().map(|s| s.turns).sum::<usize>(), r.turns.len());
+                assert_eq!(
+                    stats.iter().map(|s| s.output_tokens).sum::<u64>(),
+                    r.output_tokens()
+                );
+                assert_eq!(
+                    stats.iter().map(|s| s.wall_ms).sum::<i64>(),
+                    r.ended_ms() - r.started_ms
+                );
+                assert!(stats.iter().all(|s| s.wall_ms >= 0));
+            }
+        }
+    }
+
+    /// A phase can only open after the one before it. An out-of-order run — a second `pr_context`
+    /// arriving after the audit — must never produce a negative span or steal the audit's turns.
+    #[test]
+    fn a_phase_never_opens_before_the_one_before_it() {
+        let trace = [
+            invoke("2026-08-16T09:00:00.000Z"),
+            ev("2026-08-16T09:00:05.000Z", "x1", 10, 1, &["Skill:audit"]),
+            result("2026-08-16T09:00:06.000Z"),
+            ev("2026-08-16T09:00:10.000Z", "x2", 20, 1, &[&q("next_ready")]),
+            result("2026-08-16T09:00:20.000Z"),
+            ev("2026-08-16T09:00:30.000Z", "x3", 30, 1, &[&q("pr_context")]),
+            result("2026-08-16T09:00:31.000Z"),
+            ev("2026-08-16T09:00:40.000Z", "x4", 40, 1, &[]),
+        ]
+        .concat();
+        let r = &nr_runs(&trace)[0];
+        let stats = nr_phase_stats(r);
+        assert!(stats.iter().all(|s| s.wall_ms >= 0));
+        assert_eq!(stats.iter().map(|s| s.turns).sum::<usize>(), 4);
+        assert_eq!(stats.iter().map(|s| s.output_tokens).sum::<u64>(), 100);
+    }
+
+    /// Two phases opened by one turn — the 11:29 run called `pr_context` and `pr_checkout` in the
+    /// same turn — resolve to the LATER phase, and the one it stepped over reports zero rather
+    /// than a span it did not have. A turn is atomic; the alternative is billing it twice.
+    #[test]
+    fn one_turn_opening_two_phases_lands_in_the_later_one() {
+        let trace = [
+            invoke("2026-08-16T11:29:21.683Z"),
+            ev(
+                "2026-08-16T11:29:26.000Z",
+                "c1",
+                186,
+                42_545,
+                &["ToolSearch"],
+            ),
+            result("2026-08-16T11:29:27.000Z"),
+            ev(
+                "2026-08-16T11:29:30.000Z",
+                "c2",
+                45,
+                42_545,
+                &[&q("next_ready")],
+            ),
+            result("2026-08-16T11:30:20.000Z"),
+            ev(
+                "2026-08-16T11:30:26.000Z",
+                "c3",
+                262,
+                42_545,
+                &[&q("pr_context"), &q("pr_checkout")],
+            ),
+            human("2026-08-16T11:31:00.000Z", "stop"),
+        ]
+        .concat();
+        let stats = nr_phase_stats(&nr_runs(&trace)[0]);
+        assert_eq!(stats[2].turns, 0);
+        assert_eq!(stats[2].wall_ms, 0);
+        assert!(
+            stats[2].called,
+            "`pr_context` DID fire — the phase is empty, not absent"
+        );
+        assert_eq!(stats[3].turns, 1);
+        assert_eq!(stats[3].output_tokens, 262);
+    }
+
+    /// A `Skill` call is not the lens unless it is the skill step 5 names.
+    #[test]
+    fn a_skill_that_is_not_the_audit_skill_is_not_the_lens() {
+        let trace = full_protocol_run().replace("\"skill\":\"audit\"", "\"skill\":\"dataviz\"");
+        let r = &nr_runs(&trace)[0];
+        assert!(!r.audit_invoked());
+        assert!(!r.conforming());
+        // The call still fired, so `Skill` is not reported as missing — the defect is which skill.
+        assert!(r.missing_calls().is_empty());
+    }
+
+    /// The server prefix on an MCP tool is deployment detail; the protocol is about the name.
+    #[test]
+    fn mcp_tool_names_normalise_past_the_server_prefix() {
+        assert_eq!(
+            nr_tool_name("mcp__plugin_human-fsm_fsm__next_ready"),
+            "next_ready"
+        );
+        assert_eq!(nr_tool_name("mcp__other_server__pr_context"), "pr_context");
+        assert_eq!(nr_tool_name("Read"), "Read");
+        assert_eq!(nr_tool_name(""), "");
+    }
+
+    /// Off-protocol counts CALLS, not turns — three `Bash` calls in one turn is three.
+    #[test]
+    fn off_protocol_counts_every_call() {
+        let trace = [
+            invoke("2026-08-16T09:00:00.000Z"),
+            ev(
+                "2026-08-16T09:00:05.000Z",
+                "y1",
+                10,
+                1,
+                &["Bash", "Bash", "Write"],
+            ),
+        ]
+        .concat();
+        let r = &nr_runs(&trace)[0];
+        assert_eq!(
+            r.off_protocol(),
+            vec![("Bash".to_string(), 2), ("Write".to_string(), 1)]
+        );
+    }
+
+    /// Peak context is the widest turn, not the last one — the run whose context falls back after
+    /// its peak is exactly the one a last-value read misreports.
+    #[test]
+    fn peak_context_is_the_widest_turn() {
+        let trace = [
+            invoke("2026-08-16T09:00:00.000Z"),
+            ev(
+                "2026-08-16T09:00:05.000Z",
+                "z1",
+                10,
+                588_209,
+                &[&q("next_ready")],
+            ),
+            result("2026-08-16T09:00:06.000Z"),
+            ev("2026-08-16T09:00:10.000Z", "z2", 10, 1_000, &[]),
+        ]
+        .concat();
+        assert_eq!(nr_runs(&trace)[0].peak_context(), 588_209);
+    }
+
+    /// A transcript with no invocation is not an error and not an empty run.
+    #[test]
+    fn a_session_that_never_ran_the_command_has_no_runs() {
+        assert!(nr_runs("").is_empty());
+        assert!(nr_runs(&human("2026-08-16T09:00:00.000Z", "hello")).is_empty());
+        assert!(nr_runs("not json\n{}\n").is_empty());
+    }
 }
 
 /// Command-position tokens that mean the run reached for an interpreter rather than for a tool.
@@ -43352,6 +47239,23 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// The per-phase decomposition of every `/nr` run in a SESSION transcript (#315): phase
+    /// boundaries, per-phase wall and output tokens, peak context, and whether the run followed the
+    /// command's own protocol at all. Wall cuts on the call that opened a phase; output tokens cut
+    /// on whole turns, because a turn carries one `usage` record and cannot be split.
+    ///
+    /// Not a sibling of `token-profile`: that one reads a `runs/*.jsonl` stream-json trace, where
+    /// `output_tokens` is a message-start snapshot and unusable. This reads an interactive session
+    /// transcript, where it is not. Neither file's totals are comparable with the other's.
+    NrProfile {
+        /// The session transcript to read (`~/.claude/projects/<slug>/<session>.jsonl`).
+        transcript: String,
+        /// Only the run at this position, numbered from 1 in transcript order.
+        #[arg(long)]
+        run: Option<usize>,
+        #[arg(long)]
+        json: bool,
+    },
     /// What every RETAINED trace still hand-rolls: per-run counts of probe-shaped `gh pr
     /// view`/`checks`, raw `gh api`, tarball fetch/extract, interpreter invocations, helper scripts
     /// written, and render-harness scaffold rebuilds — with each metric's shape across the series.
@@ -43500,12 +47404,48 @@ enum Cmd {
     /// The PRODUCER's state-load in ONE result: the fleet's `nextAction` histogram, the rows that
     /// name work, the approved set, and the audit backlog by severity — pre-grouped, so a run opens
     /// on a typed answer rather than on a blob it re-slices with `jq`.
+    ///
+    /// WITH NO FLAG this prints the DIGEST — 21 lines, the whole opening picture. WITH A ROW
+    /// SELECTOR (`--action`/`--actionable`/`--approved`/`--audit`) it prints THOSE ROWS as compact
+    /// columns, which is the half that used to be reachable only by re-slicing `--json` with `jq`
+    /// (#290). `--json` is the ESCAPE HATCH for a field the columns do not carry, and with a
+    /// selector it emits only the selected rows rather than the whole ~95 KB document.
+    #[command(group(clap::ArgGroup::new("rows").args([
+        "action",
+        "actionable",
+        "approved",
+        "audit",
+    ])))]
     StateLoad {
         #[arg(long)]
         json: bool,
         /// Bypass the fleet's read-through cache entirely (always fetch fresh).
         #[arg(long)]
         no_cache: bool,
+        /// ROWS: the fleet rows carrying this one `nextAction` — the histogram's own vocabulary
+        /// (`rework-needs-work`, `conflict-3d`, …). An action no classifier produces is REFUSED,
+        /// naming every legal one: a typo that silently printed zero rows would read as "no work".
+        #[arg(long, value_name = "ACTION")]
+        action: Option<String>,
+        /// ROWS: every fleet row that names WORK this run — `fleet.actionable`, in dispatch order.
+        #[arg(long)]
+        actionable: bool,
+        /// ROWS: every fleet row GitHub reports as APPROVED — `fleet.approved`, worked first.
+        #[arg(long)]
+        approved: bool,
+        /// ROWS: the audit backlog — `backlog.audit.issues`, worst severity first.
+        #[arg(long)]
+        audit: bool,
+        /// Print at most this many rows. The count line says what was cut, so a truncated list is
+        /// never mistaken for the whole set. Meaningless without a row selector, so it REQUIRES
+        /// one, and `0` is refused rather than printing a header over nothing.
+        #[arg(
+            long,
+            value_name = "N",
+            requires = "rows",
+            value_parser = clap::value_parser!(u64).range(1..)
+        )]
+        limit: Option<u64>,
     },
     /// END THE RUN: the infrastructure the work depends on is down. Records the reason on the run
     /// record and exits 12. Writes NOTHING to any PR — no label, no comment (#108).
@@ -43760,7 +47700,7 @@ enum Cmd {
 
 /// The producer's next step for one of its own open PRs — the FSM state `worklist` computes so the
 /// producer knows WHICH PRs need action without re-deriving it from scratch each run.
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum NextAction {
     GreenReady, // green + mergeable + no open threads -> present to the human (step 2z)
     // red prod-pin/testProdDeploy*, or "REQUIRES redeploy at land" residue: the repo has not
@@ -45035,6 +48975,434 @@ fn worklist_rows(use_cache: bool) -> Option<(Vec<Value>, usize)> {
     Some((rows, n_archived))
 }
 
+/// WHICH ROWS one `state-load` call is asking for — the typed answer to "what work is there",
+/// which used to be reachable only by re-slicing `--json` with `jq` (#290).
+///
+/// Every ROW LIST the digest holds gets a selector, not just the two a trace happened to slice:
+/// the defect is that rows live only inside a 95 KB document, and a selector for the two projected
+/// on 2026-08-15 would leave the same defect standing for the third. `--action` is the one
+/// selector that is not a digest field, and it exists because `fleet.actionable` is a UNION — a
+/// run dispatching one step wants that step's rows, which is what the trace's own `jq` selected.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum StateLoadRows {
+    /// Fleet rows carrying exactly this `nextAction`, including the actions that name no work:
+    /// `green-ready` is what 2z presents to the human, and a selector that could not name it would
+    /// send that step back to `jq`.
+    Action(NextAction),
+    /// Every fleet row that names work — `fleet.actionable`, in dispatch order.
+    Actionable,
+    /// Every fleet row GitHub reports as APPROVED — `fleet.approved`, the set 2z works first.
+    Approved,
+    /// The audit backlog — `backlog.audit.issues`, worst severity first.
+    Audit,
+}
+
+/// PURE: the row selector a `state-load` invocation names, or `None` for the DIGEST.
+///
+/// TOTAL over the flag tuple rather than trusting the caller: clap's `rows` [`clap::ArgGroup`]
+/// already refuses two selectors at once, but a resolver that silently picked a precedence order
+/// for a combination it was never meant to see would answer a question nobody asked. Both refusals
+/// name the legal spellings, because a refusal that only says "no" sends the run back to `jq` —
+/// which is the whole thing this selector exists to stop.
+fn state_load_rows(
+    action: Option<&str>,
+    actionable: bool,
+    approved: bool,
+    audit: bool,
+) -> Result<Option<StateLoadRows>, String> {
+    let flags = usize::from(action.is_some())
+        + usize::from(actionable)
+        + usize::from(approved)
+        + usize::from(audit);
+    if flags > 1 {
+        return Err(format!(
+            "error: --action/--actionable/--approved/--audit select DIFFERENT rows — pass one, \
+             or none for the digest ({})",
+            STATE_LOAD_ROWS_HINT
+        ));
+    }
+    match (action, actionable, approved, audit) {
+        (Some(a), ..) => NextAction::from_str(a)
+            .map(|a| Some(StateLoadRows::Action(a)))
+            .ok_or_else(|| {
+                format!(
+                    "error: --action {a}: no classifier produces that action. One of: {}",
+                    ALL_ACTIONS.join(", ")
+                )
+            }),
+        (None, true, ..) => Ok(Some(StateLoadRows::Actionable)),
+        (None, false, true, _) => Ok(Some(StateLoadRows::Approved)),
+        (None, false, false, true) => Ok(Some(StateLoadRows::Audit)),
+        (None, false, false, false) => Ok(None),
+    }
+}
+
+/// The line the DIGEST ends on: where the ROWS are. The tool teaches its own next call, so a run
+/// whose prompt never learned the selectors still finds them without reaching for `jq` — which is
+/// what the run that opened `state-load --json | jq` three times did have to reach for (#290).
+const STATE_LOAD_ROWS_HINT: &str =
+    "rows: state-load --action <nextAction> | --actionable | --approved | --audit  [--limit N]";
+
+/// The compact FLEET columns, in order — the projection the producer traces' own `jq` calls made,
+/// minus the `repo`/`number` split: `owner/repo#n` is the ref every other subcommand here TAKES
+/// (`await`, `already-fixed`), so emitting it whole is one fewer join at the call site.
+const FLEET_ROW_COLUMNS: [&str; 6] = ["action", "ref", "ci", "merge", "closes", "title"];
+
+/// The compact AUDIT-BACKLOG columns, in order. Severity leads because the row ORDER is already
+/// the priority order, and a column that restates it is what lets a reader check that.
+const AUDIT_ROW_COLUMNS: [&str; 3] = ["severity", "ref", "title"];
+
+/// PURE: one TSV cell.
+///
+/// Every control character becomes a space — a tab or a newline inside a PR title would otherwise
+/// invent a column or a row, and GitHub accepts titles this binary does not author. Empty becomes
+/// `-`, so a missing value is visible rather than being an empty run between two tabs.
+fn column_cell(s: &str) -> String {
+    let out = s
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect::<String>()
+        .trim()
+        .to_string();
+    if out.is_empty() {
+        "-".to_string()
+    } else {
+        out
+    }
+}
+
+/// PURE: the header line for a set of columns. `#`-prefixed like the count line, so the two lines
+/// a reader must not parse as data are the two lines that start with `#`.
+fn column_header(columns: &[&str]) -> String {
+    format!("# {}", columns.join("\t"))
+}
+
+/// PURE: what this row list IS — how many rows, out of how many, and what an archived repo froze
+/// out of the population before either number was taken (#206).
+///
+/// A truncated list SAYS it was truncated. `--limit 12` over 60 rows printed without this line
+/// reads exactly like a fleet with 12 rows in it, and "the tool said there were 12" is the shape
+/// of every silent omission this binary refuses elsewhere.
+fn row_count_line(shown: usize, total: usize, limit: Option<usize>, archived: usize) -> String {
+    let cut = if shown < total {
+        format!(
+            " of {total} rows{}",
+            limit.map_or_else(String::new, |n| format!(" (--limit {n})"))
+        )
+    } else {
+        " rows".to_string()
+    };
+    format!("# {shown}{cut}{}", archived_note(archived))
+}
+
+/// PURE: does this fleet row belong to the selection?
+///
+/// The predicates are the DIGEST's, spelled the same way: `Actionable` reads [`ACTIONABLE_ACTIONS`]
+/// and `Approved` reads `reviewDecision`, exactly as [`fleet_digest`] does, so the rows a selector
+/// prints and the rows the digest counts cannot become two answers.
+///
+/// `Audit` selects NO fleet row. It is the other half's population and [`state_load_mode`] routes
+/// it to the backlog before a fleet row exists — this arm is the fail-safe if that ever stops
+/// being true, because an `--audit` call that printed PRs would be worse than one that printed
+/// nothing.
+fn fleet_row_selected(r: &Value, sel: StateLoadRows) -> bool {
+    let action = r
+        .get("nextAction")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    match sel {
+        StateLoadRows::Action(a) => action == a.as_str(),
+        StateLoadRows::Actionable => ACTIONABLE_ACTIONS.contains(&action),
+        StateLoadRows::Approved => {
+            r.get("reviewDecision").and_then(|v| v.as_str()) == Some("APPROVED")
+        }
+        StateLoadRows::Audit => false,
+    }
+}
+
+/// PURE: one fleet row as [`FLEET_ROW_COLUMNS`].
+fn fleet_row_line(r: &Value) -> String {
+    let str_at = |k: &str| {
+        r.get(k)
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+    let closes = r
+        .get("closes")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(serde_json::Value::as_u64)
+                .map(|n| n.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .unwrap_or_default();
+    [
+        str_at("nextAction"),
+        format!(
+            "{}#{}",
+            str_at("repo"),
+            r.get("number")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0)
+        ),
+        str_at("ci"),
+        str_at("mergeState"),
+        closes,
+        str_at("title"),
+    ]
+    .iter()
+    .map(|c| column_cell(c))
+    .collect::<Vec<_>>()
+    .join("\t")
+}
+
+/// PURE: one audit-backlog row as [`AUDIT_ROW_COLUMNS`]. Reads the rows [`backlog_digest`] built,
+/// so the severity a column shows is the severity the histogram counted.
+fn audit_row_line(r: &Value) -> String {
+    let str_at = |k: &str| {
+        r.get(k)
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+    [
+        str_at("severity"),
+        format!(
+            "{}#{}",
+            str_at("repo"),
+            r.get("number")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0)
+        ),
+        str_at("title"),
+    ]
+    .iter()
+    .map(|c| column_cell(c))
+    .collect::<Vec<_>>()
+    .join("\t")
+}
+
+/// PURE: the whole plain-text answer to a ROW call — count line, header, then the rows.
+///
+/// The count comes FIRST because it is the line that must not be missed: a reader who stops at the
+/// rows has still read how many there are and how many were cut.
+fn row_report(
+    columns: &[&str],
+    rows: &[Value],
+    line: impl Fn(&Value) -> String,
+    total: usize,
+    limit: Option<usize>,
+    archived: usize,
+) -> Vec<String> {
+    let mut out = vec![
+        row_count_line(rows.len(), total, limit, archived),
+        column_header(columns),
+    ];
+    out.extend(rows.iter().map(line));
+    out
+}
+
+/// PURE: the first `limit` rows, or all of them. Split out so the truncation the count line
+/// reports and the truncation the row list performs are ONE decision.
+fn take_limit(rows: Vec<Value>, limit: Option<usize>) -> Vec<Value> {
+    match limit {
+        Some(n) if n < rows.len() => rows.into_iter().take(n).collect(),
+        _ => rows,
+    }
+}
+
+/// The BACKLOG half of the state-load: every uncovered open issue's search row, plus how many an
+/// archived repo froze out (#206). Split out so the digest and `--audit` read ONE computation.
+fn state_load_backlog_issues() -> Option<(Vec<Value>, usize)> {
+    let OrgIssues {
+        uncovered: open,
+        meta,
+        archived_repo,
+        ..
+    } = coverage_uncovered()?;
+    Some((
+        open.iter().filter_map(|k| meta.get(k).cloned()).collect(),
+        archived_repo,
+    ))
+}
+
+/// THE SHAPE A SELECTOR'S ROWS PRINT IN: the header, and the projection that fills it.
+///
+/// The two travel together because they have to AGREE — an audit projection under the FLEET header
+/// still compiles and prints three cells under six column names — and this pairs them ONCE, as a
+/// property of the SELECTOR rather than of whichever code path fetched the rows. That is also what
+/// makes the pairing checkable without a fleet: [`StateLoadRows::shape`] is pure, so every selector
+/// can be asked what it prints and held to it.
+struct RowShape {
+    /// The header these rows print under — [`FLEET_ROW_COLUMNS`] or [`AUDIT_ROW_COLUMNS`].
+    columns: &'static [&'static str],
+    /// How ONE selected row projects to a line under those columns.
+    line: fn(&Value) -> String,
+}
+
+impl StateLoadRows {
+    /// PURE: the columns this selector's rows print under, and the projection that fills them.
+    ///
+    /// EXHAUSTIVE over the selector — no `_` arm — so a selector added to the enum cannot reach the
+    /// printer without saying what shape it prints in. A catch-all would default a new row list
+    /// into the fleet header, which is the exact mispairing this function exists to make
+    /// unspellable.
+    fn shape(self) -> RowShape {
+        match self {
+            // The backlog half. Its rows are issues, and they carry none of the fleet's columns.
+            StateLoadRows::Audit => RowShape {
+                columns: &AUDIT_ROW_COLUMNS,
+                line: audit_row_line,
+            },
+            // The three fleet selectors differ in WHICH rows they take, never in what a row is.
+            StateLoadRows::Action(_) | StateLoadRows::Actionable | StateLoadRows::Approved => {
+                RowShape {
+                    columns: &FLEET_ROW_COLUMNS,
+                    line: fleet_row_line,
+                }
+            }
+        }
+    }
+}
+
+/// The rows one selector names, read from the ONE half that holds them, plus what an archived repo
+/// froze out of that half's population before any selection (#206) — the same withhold the digest
+/// reports for it.
+///
+/// ONE HALF, NOT BOTH. A fleet selector reads the fleet and a backlog selector reads the backlog:
+/// the digest composes both because it IS the whole opening picture, but making a row list pay for
+/// an org-wide issue search it cannot report on would price the typed route above the `jq` one it
+/// replaces. `None` is the digest's ABORT rule applied to the half that was asked for: a read that
+/// refused to report a falsely-empty set is never laundered into an empty row list.
+///
+/// The rows come back WHOLE. `--limit` is applied downstream in [`row_output`], so the count line
+/// can state what it cut against the number that was actually there.
+fn state_load_row_selection(use_cache: bool, sel: StateLoadRows) -> Option<(Vec<Value>, usize)> {
+    if sel == StateLoadRows::Audit {
+        let (issues, archived) = state_load_backlog_issues()?;
+        return Some((
+            backlog_digest(&issues)
+                .pointer("/audit/issues")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default(),
+            archived,
+        ));
+    }
+    let (rows, archived) = worklist_rows(use_cache)?;
+    Some((
+        rows.into_iter()
+            .filter(|r| fleet_row_selected(r, sel))
+            .collect(),
+        archived,
+    ))
+}
+
+/// PURE: the WHOLE answer to a row call, line by line — in the shape the selector names.
+///
+/// `--limit` is applied HERE, in the one function BOTH output formats go through, so the TSV list
+/// and the `--json` escape hatch cannot cut different numbers of rows. A `--json` array that
+/// ignored the flag under a count line that honoured it would be two answers to one call.
+fn row_output(
+    sel: StateLoadRows,
+    all: Vec<Value>,
+    limit: Option<usize>,
+    archived: usize,
+    json_out: bool,
+) -> Vec<String> {
+    let RowShape { columns, line } = sel.shape();
+    let total = all.len();
+    let shown = take_limit(all, limit);
+    if json_out {
+        return vec![
+            serde_json::to_string_pretty(&Value::Array(shown)).unwrap_or_else(|_| "[]".into())
+        ];
+    }
+    row_report(columns, &shown, line, total, limit, archived)
+}
+
+/// `state-load --audit` / `--action` / `--actionable` / `--approved`: the ROWS, typed.
+fn state_load_row_mode(
+    json_out: bool,
+    use_cache: bool,
+    sel: StateLoadRows,
+    limit: Option<usize>,
+) -> i32 {
+    let Some((all, archived)) = state_load_row_selection(use_cache, sel) else {
+        return 1;
+    };
+    for l in row_output(sel, all, limit, archived, json_out) {
+        println!("{l}");
+    }
+    0
+}
+
+/// PURE: the DIGEST itself, line by line, off the two half-documents [`state_load_mode`] composed.
+///
+/// A function of the two documents rather than a run of `println!`s, because the digest's LENGTH is
+/// a fact the producer prompt quotes — it tells a run what the opening call costs, and a prompt
+/// that says a number the tool no longer prints is teaching the run something false. Here that
+/// number is `digest_lines(..).len()`, so the prompt's claim is checkable against the code that
+/// produces it rather than against somebody's memory of a measurement.
+///
+/// The withhold notes are read back off `archivedRepo`, the field [`state_load_mode`] inserted into
+/// each half, rather than taken as separate arguments: the plain-text note and the `--json` field
+/// then state one number from one place, and a digest whose two renderings disagreed about what an
+/// archived repo froze out would be the silent-omission defect (#206) wearing the fix's clothes.
+fn digest_lines(fleet: &Value, backlog: &Value, assignee: &str) -> Vec<String> {
+    let count = |doc: &Value, ptr: &str| {
+        doc.pointer(ptr)
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0)
+    };
+    let withheld = |doc: &Value| usize::try_from(count(doc, "/archivedRepo")).unwrap_or(usize::MAX);
+    let mut out = vec![format!(
+        "fleet: {} open PRs by {}{}",
+        count(fleet, "/total"),
+        assignee,
+        archived_note(withheld(fleet))
+    )];
+    out.extend(
+        ALL_ACTIONS
+            .iter()
+            .map(|a| format!("  {a:<14} {}", count(fleet, &format!("/byAction/{a}")))),
+    );
+    out.push(format!(
+        "  approved       {}",
+        fleet
+            .get("approved")
+            .and_then(|v| v.as_array())
+            .map_or(0, Vec::len)
+    ));
+    out.push(String::new());
+    out.push(format!(
+        "backlog: {} uncovered issues ({} audit-labelled){}",
+        count(backlog, "/uncovered"),
+        count(backlog, "/audit/total"),
+        archived_note(withheld(backlog))
+    ));
+    out.extend(
+        SEVERITY_LABELS
+            .iter()
+            .chain(std::iter::once(&SEVERITY_NONE))
+            .map(|s| {
+                format!(
+                    "  {s:<14} {}",
+                    count(backlog, &format!("/audit/bySeverity/{s}"))
+                )
+            }),
+    );
+    // The digest counts rows it does not print, so it ENDS by naming the call that prints them.
+    // Without this the only route from a count to the rows behind it was `--json` plus `jq`, and a
+    // run that had already paid for the digest paid for the 95 KB document as well (#290).
+    out.push(String::new());
+    out.push(STATE_LOAD_ROWS_HINT.to_string());
+    out
+}
+
 /// `state-load`: the producer's WHOLE opening picture in ONE result.
 ///
 /// It composes the two state-loads a run already made — the fleet and the uncovered backlog — and
@@ -45044,29 +49412,33 @@ fn worklist_rows(use_cache: bool) -> Option<(Vec<Value>, usize)> {
 /// given data the two subcommands already hold, so each round trip that computed one was buying an
 /// answer the tool could have handed over.
 ///
-/// PRE-GROUPED, NOT QUERYABLE. A query interface would put the round trip back for the caller that
-/// wants one grouping, and the payload argument does not survive the counts: three of the four are
-/// wanted by every run and the fourth by most, so the inflation a general result pays is a fraction
-/// of one grouping's summary — against 6–31 shell calls whose results also sit in context for the
-/// rest of the run.
+/// PRE-GROUPED BY DEFAULT, PROJECTED ON REQUEST (#290). The digest stays the opening call and stays
+/// unqueryable: it is 21 lines ([`digest_lines`]), every run wants nearly all of it, and a caller
+/// that had to ask for
+/// each grouping would pay the round trip the digest exists to remove. What the digest cannot do is
+/// hand over a ROW — the row lists it holds were reachable only by taking `--json` (95 KB) and
+/// re-slicing it, which is the hand-roll this subcommand was built to end, so the row lists get
+/// SELECTORS. That is projection, not a query language: the selectors name the digest's own row
+/// lists and one `nextAction`, and none of them can group, sort or compute anything.
 ///
 /// A FAILED half is an ABORT, never a partial digest: the two underlying reads each refuse to
 /// report a falsely-empty set, and a digest that quietly dropped one would launder exactly the
 /// emptiness they refuse.
-fn state_load_mode(json_out: bool, use_cache: bool) -> i32 {
+fn state_load_mode(
+    json_out: bool,
+    use_cache: bool,
+    rows: Option<StateLoadRows>,
+    limit: Option<usize>,
+) -> i32 {
+    if let Some(sel) = rows {
+        return state_load_row_mode(json_out, use_cache, sel, limit);
+    }
     let Some((rows, fleet_archived)) = worklist_rows(use_cache) else {
         return 1;
     };
-    let Some(OrgIssues {
-        uncovered: open,
-        meta,
-        archived_repo: backlog_archived,
-        ..
-    }) = coverage_uncovered()
-    else {
+    let Some((issues, backlog_archived)) = state_load_backlog_issues() else {
         return 1;
     };
-    let issues: Vec<Value> = open.iter().filter_map(|k| meta.get(k).cloned()).collect();
     let mut fleet = fleet_digest(&rows);
     let mut backlog = backlog_digest(&issues);
     // Both halves report what an archived repo froze out of them, in the digest itself: this is
@@ -45091,54 +49463,8 @@ fn state_load_mode(json_out: bool, use_cache: bool) -> i32 {
         );
         return 0;
     }
-    println!(
-        "fleet: {} open PRs by {}{}",
-        fleet
-            .get("total")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0),
-        pr_assignee(),
-        archived_note(fleet_archived)
-    );
-    for a in ALL_ACTIONS {
-        println!(
-            "  {a:<14} {}",
-            fleet
-                .pointer(&format!("/byAction/{a}"))
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0)
-        );
-    }
-    println!(
-        "  approved       {}",
-        fleet
-            .get("approved")
-            .and_then(|v| v.as_array())
-            .map_or(0, Vec::len)
-    );
-    println!(
-        "\nbacklog: {} uncovered issues ({} audit-labelled){}",
-        backlog
-            .get("uncovered")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0),
-        backlog
-            .pointer("/audit/total")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0),
-        archived_note(backlog_archived)
-    );
-    for s in SEVERITY_LABELS
-        .iter()
-        .chain(std::iter::once(&SEVERITY_NONE))
-    {
-        println!(
-            "  {s:<14} {}",
-            backlog
-                .pointer(&format!("/audit/bySeverity/{s}"))
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0)
-        );
+    for l in digest_lines(&fleet, &backlog, &pr_assignee()) {
+        println!("{l}");
     }
     0
 }
@@ -47418,6 +51744,7 @@ fn already_fixed_mode(refs: &[String], json_out: bool) -> i32 {
 }
 
 fn main() {
+    let mark = gh_timing_mark();
     let code = match Cli::parse().command {
         Cmd::Queue { n } => {
             queue_mode(n.unwrap_or(20));
@@ -47557,6 +51884,11 @@ fn main() {
         } => force_run_mode(&role, install_dir.as_deref(), no_run),
         Cmd::WatchRun { log, timeout_secs } => watch_run_mode(&log, timeout_secs),
         Cmd::TokenProfile { trace, json } => token_profile_mode(&trace, json),
+        Cmd::NrProfile {
+            transcript,
+            run,
+            json,
+        } => nr_profile_mode(&transcript, run, json),
         Cmd::CorpusReport { dir, json } => corpus_report_mode(&dir, json),
         Cmd::JournalReport {
             journal,
@@ -47583,7 +51915,26 @@ fn main() {
             json,
         } => await_mode(&refs, pin_current, timeout_secs, interval_secs, json),
         Cmd::AlreadyFixed { refs, json } => already_fixed_mode(&refs, json),
-        Cmd::StateLoad { json, no_cache } => state_load_mode(json, !no_cache),
+        Cmd::StateLoad {
+            json,
+            no_cache,
+            action,
+            actionable,
+            approved,
+            audit,
+            limit,
+        } => match state_load_rows(action.as_deref(), actionable, approved, audit) {
+            Ok(rows) => state_load_mode(
+                json,
+                !no_cache,
+                rows,
+                limit.map(|n| usize::try_from(n).unwrap_or(usize::MAX)),
+            ),
+            Err(msg) => {
+                eprintln!("{msg}");
+                2
+            }
+        },
         Cmd::InfraDown { reason, root_cause } => infra_down_mode(&reason.join(" "), &root_cause),
         Cmd::RunInfra { record, json } => run_infra_mode(record.as_deref(), json),
         Cmd::RetireBlockedInfra { dry_run } => retire_blocked_infra_mode(dry_run),
@@ -47692,6 +52043,9 @@ fn main() {
             }
         },
     };
+    // Whatever the subcommand did not report itself: everything for a CLI run, and for `mcp` only
+    // calls made outside a tool call, which the empty-span rule keeps silent.
+    gh_timing_report(&gh_timing_process_span(), mark);
     std::process::exit(code);
 }
 
@@ -50313,6 +54667,262 @@ mod open_threads_tests {
             "a gated PR is not handed to the vetter"
         );
     }
+
+    // --- the state-load's BATCHED detail read (#312) ----------------------------------------------
+
+    /// One chunk's response as GitHub returns it: an entry per alias under `data`.
+    fn detail_doc(entries: &[(usize, Value)]) -> Value {
+        let mut data = serde_json::Map::new();
+        for (i, v) in entries {
+            data.insert(format!("d{i}"), v.clone());
+        }
+        json!({ "data": data })
+    }
+
+    /// A whole PR node as the query selects it, with every connection at its full width.
+    fn detail_node(head: &str, rollup: Value) -> Value {
+        json!({"pullRequest": {
+            "headRefOid": head,
+            "baseRefName": "main",
+            "isDraft": false,
+            "reviewDecision": null,
+            "mergeable": "MERGEABLE",
+            "labels": {"totalCount": 1, "nodes": [{"name": "ai:ready"}]},
+            "comments": {"totalCount": 1, "nodes": [
+                {"author": {"login": TRUSTED_AUTHOR}, "body": "🤖 ai:vetter Reviewed x: ready"}
+            ]},
+            // Asymmetric on purpose: resolved and unresolved counts differ, so counting the wrong
+            // half — or the whole list — is a different number.
+            "reviewThreads": {"totalCount": 3, "nodes": [
+                {"isResolved": true}, {"isResolved": false}, {"isResolved": true}
+            ]},
+            "commits": {"nodes": [{"commit": {"statusCheckRollup": rollup}}]},
+        }})
+    }
+
+    fn rollup_of(nodes: Vec<Value>) -> Value {
+        json!({"contexts": {"totalCount": nodes.len(), "nodes": nodes}})
+    }
+
+    // The argv is TYPED per variable, for the reason `aliased_pr_args` states: an all-numeric owner
+    // or repo passed with `-F` would be sent as an `Int` at a `String!` and GitHub would refuse the
+    // whole chunk.
+    #[test]
+    fn a_batched_detail_read_declares_one_typed_alias_per_pr() {
+        let subjects = [
+            SubjectRef::new("123/456", 7, "u", "t"),
+            SubjectRef::new("o/r", 9, "u", "t"),
+        ];
+        let refs: Vec<&SubjectRef> = subjects.iter().collect();
+        let args = unvetted_detail_args(&refs);
+        assert_eq!(args[0], "graphql");
+        assert_eq!(args[1], "-f");
+        let query = args[2].strip_prefix("query=").expect("the query flag");
+        assert!(
+            query.contains("d0: repository(owner: $o0, name: $r0)"),
+            "{query}"
+        );
+        assert!(
+            query.contains("d1: repository(owner: $o1, name: $r1)"),
+            "{query}"
+        );
+        assert!(!query.contains("d2:"), "{query}");
+        // EVERY field the classifier reads is asked for. A selection short of
+        // `UNVETTED_DETAIL_FIELDS` classifies a batched PR differently from a refetched one.
+        for field in [
+            "headRefOid",
+            "baseRefName",
+            "isDraft",
+            "reviewDecision",
+            "mergeable",
+            "labels(first: 100)",
+            "comments(last: 100)",
+            "reviewThreads(first: 100)",
+            "contexts(last: 100)",
+        ] {
+            assert!(query.contains(field), "{field} missing from {query}");
+        }
+        assert_eq!(
+            args[3..],
+            [
+                "-f", "o0=123", "-f", "r0=456", "-F", "p0=7", //
+                "-f", "o1=o", "-f", "r1=r", "-F", "p1=9",
+            ]
+            .map(String::from)
+        );
+    }
+
+    // The split is BY ALIAS, so a response's own ordering cannot reorder the chunk, and what comes
+    // out is the `gh pr view --json` document ITSELF — the check rollup flattened, `reviewDecision`
+    // null rendered as gh's empty string — not a second shape the classifier would have to learn.
+    #[test]
+    fn a_detail_response_splits_by_alias_into_the_gh_pr_view_shape() {
+        let check =
+            json!({"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "SUCCESS"});
+        let status = json!({"__typename": "StatusContext", "state": "SUCCESS"});
+        let doc = detail_doc(&[
+            (1, detail_node("second", rollup_of(vec![status.clone()]))),
+            (0, detail_node("first", rollup_of(vec![check.clone()]))),
+        ]);
+        let reads = unvetted_detail_page(&doc, 2);
+        assert_eq!(reads.len(), 2);
+        assert_eq!(
+            reads[0],
+            Some(UnvettedDetail {
+                detail: json!({
+                    "headRefOid": "first",
+                    "baseRefName": "main",
+                    "isDraft": false,
+                    "reviewDecision": "",
+                    "mergeable": "MERGEABLE",
+                    "labels": [{"name": "ai:ready"}],
+                    "statusCheckRollup": [check],
+                    "comments": [{"author": {"login": TRUSTED_AUTHOR}, "body": "🤖 ai:vetter Reviewed x: ready"}],
+                }),
+                // The UNRESOLVED ones only — a resolved thread never withheld a PR from the vetter.
+                threads: Some(1),
+            })
+        );
+        let second = reads[1].as_ref().expect("alias d1");
+        assert_eq!(second.detail["headRefOid"], json!("second"));
+        assert_eq!(second.detail["statusCheckRollup"], json!([status]));
+        // And the classifier reads it: green CI, mergeable, `ai:ready` with no verdict at this head.
+        let first = reads[0].as_ref().expect("alias d0");
+        let (action, _, row) = unvetted_row("o/r", 1, "u", "t", &first.detail);
+        assert_eq!(action, VetAction::Vet);
+        assert_eq!(row["ci"], json!("green"));
+        assert_eq!(row["mergeable"], json!("MERGEABLE"));
+        assert_eq!(row["labels"], json!(["ai:ready"]));
+        // And the vet gate withholds it on the batched count, with no query of its own.
+        let (gated, _, grow) = gate_open_threads((action, 0, row), || {
+            Ok(first.threads.expect("the batch counted this PR's threads"))
+        });
+        assert_eq!(gated, VetAction::SkipOpenThreads);
+        assert_eq!(grow["unresolvedThreads"], json!(1));
+    }
+
+    // EVERY uncertainty is UNREAD, which is what keeps the batch a speed change: an unread alias is
+    // refetched per-PR, and only a failure of BOTH reads stops the run. A truncated connection is in
+    // that set — a label or a verdict below the page decides the PR's whole classification.
+    #[test]
+    fn an_uncertain_detail_alias_is_unread_rather_than_read_as_a_bare_pr() {
+        let full = |mutate: fn(&mut Value)| {
+            let mut n = detail_node("h", rollup_of(vec![]));
+            mutate(&mut n);
+            n
+        };
+        let unread = detail_doc(&[
+            (0, json!(null)),
+            (1, json!({"pullRequest": null})),
+            // A head nothing was said about: no commit node, so no rollup either way.
+            (
+                2,
+                full(|n| n["pullRequest"]["commits"]["nodes"] = json!([])),
+            ),
+            // Truncated connections, one per connection the query pages.
+            (
+                3,
+                full(|n| n["pullRequest"]["comments"]["totalCount"] = json!(300)),
+            ),
+            (
+                4,
+                full(|n| n["pullRequest"]["labels"]["totalCount"] = json!(300)),
+            ),
+            (
+                5,
+                full(|n| {
+                    n["pullRequest"]["commits"]["nodes"][0]["commit"]["statusCheckRollup"] =
+                        json!({"contexts": {"totalCount": 300, "nodes": []}})
+                }),
+            ),
+            // A field of the wrong type says nothing usable about the PR.
+            (6, full(|n| n["pullRequest"]["headRefOid"] = json!(null))),
+            (7, full(|n| n["pullRequest"]["mergeable"] = json!(null))),
+            (8, full(|n| n["pullRequest"]["isDraft"] = json!("no"))),
+        ]);
+        assert_eq!(unvetted_detail_page(&unread, 9), vec![None; 9]);
+        // An alias the response omits entirely is unread too.
+        assert_eq!(unvetted_detail_page(&detail_doc(&[]), 1), vec![None]);
+        // A NULL rollup is GitHub's answer for a head with no checks, and it is an ANSWER: gh
+        // spells the same PR `[]`, which classifies as no-checks rather than unread.
+        let none = unvetted_detail_page(&detail_doc(&[(0, detail_node("h", json!(null)))]), 1);
+        let rollup = &none[0].as_ref().expect("alias d0").detail["statusCheckRollup"];
+        assert_eq!(rollup, &json!([]));
+        assert_eq!(ci_str(classify_ci(rollup)), ci_str(Ci::NoChecks));
+    }
+
+    // A thread list that outran its page is unread ON ITS OWN — the PR is still classified off the
+    // batch, and only the GATE pays the paginated walk. Nothing about a long review history should
+    // make a PR's labels or CI worth a second fetch.
+    #[test]
+    fn a_truncated_thread_list_is_unread_without_making_the_pr_unread() {
+        let mut node = detail_node("h", rollup_of(vec![]));
+        node["pullRequest"]["reviewThreads"]["totalCount"] = json!(300);
+        let read = unvetted_detail_page(&detail_doc(&[(0, node)]), 1);
+        let d = read[0].as_ref().expect("the PR is still read");
+        assert_eq!(d.detail["headRefOid"], json!("h"));
+        assert_eq!(d.threads, None, "a partial page is not a count");
+        // A connection GitHub said nothing about at all is unread for the same reason.
+        let mut bare = detail_node("h", rollup_of(vec![]));
+        bare["pullRequest"]
+            .as_object_mut()
+            .expect("object")
+            .remove("reviewThreads");
+        let bare = unvetted_detail_page(&detail_doc(&[(0, bare)]), 1);
+        assert_eq!(
+            bare[0].as_ref().expect("the PR is still read").threads,
+            None
+        );
+    }
+
+    // WHAT THE BATCH LEFT OUT IS STILL ASKED ABOUT — dropping the fallback would turn every batch
+    // gap into an aborted state-load, and a failed chunk into 20 of them.
+    #[test]
+    fn a_pr_the_batch_missed_is_refetched_rather_than_dropped() {
+        let from_batch = UnvettedDetail {
+            detail: json!({"headRefOid": "from-the-batch"}),
+            threads: Some(0),
+        };
+        let batched = std::collections::HashMap::from([(
+            ("o/batched".to_string(), 1u64),
+            from_batch.clone(),
+        )]);
+        let hit = SubjectRef::new("o/batched", 1, "u", "t");
+        let missed = SubjectRef::new("o/missed", 2, "u", "t");
+        let fetches = Cell::new(0);
+        let per_pr = |s: &SubjectRef| {
+            fetches.set(fetches.get() + 1);
+            Some(json!({"headRefOid": format!("refetched {}", s.repo)}))
+        };
+        assert_eq!(unvetted_detail_with(&hit, &batched, per_pr), Ok(from_batch));
+        assert_eq!(fetches.get(), 0, "a batch hit must not be refetched");
+        assert_eq!(
+            unvetted_detail_with(&missed, &batched, per_pr),
+            // `gh pr view` carries no thread count, so the refetched PR is gated on the per-PR walk.
+            Ok(UnvettedDetail {
+                detail: json!({"headRefOid": "refetched o/missed"}),
+                threads: None,
+            })
+        );
+        assert_eq!(fetches.get(), 1);
+    }
+
+    // THE FAILURE SEAM. A PR NEITHER read answered for aborts the whole state-load — it is never
+    // skipped, because a dropped PR reads as "nothing to vet" and a queue of them reports healthy.
+    #[test]
+    fn a_pr_neither_read_answered_for_aborts_the_state_load() {
+        let err = unvetted_detail_with(
+            &SubjectRef::new("o/gone", 3, "u", "t"),
+            &std::collections::HashMap::new(),
+            |_| None,
+        )
+        .expect_err("an unreadable PR must not yield a row");
+        assert!(
+            err.starts_with("error: `gh pr view o/gone#3` failed"),
+            "{err}"
+        );
+        assert!(err.contains("incomplete vet queue"), "{err}");
+    }
 }
 
 #[cfg(test)]
@@ -52268,6 +56878,13 @@ mod repo_root_tests {
         // Assembled, so this test's own source is not a hit for the shape it hunts — the same
         // move the filesystem gate above makes, for the same reason.
         let scope = format!("org_owner{}", "_args()");
+        // #314: the human's queue names the org scope as GraphQL search QUALIFIERS now, not as
+        // gh's `--owner` flags, so the scope has a second spelling and the scan must see BOTH —
+        // otherwise an enumeration escapes this gate merely by changing how it spells the scope,
+        // which is #206 arriving through the guard written to stop it. The two spellings are
+        // provably the same scope: `queue_search_scope` is `org_search_query` plus the label
+        // qualifier, pinned by `the_label_qualifier_is_quoted_and_the_org_scope_is_the_shared_one`.
+        let queue_scope = format!("queue_search_sc{}", "ope(");
         let filter = format!("withhold_arch{}", "ived(");
 
         // The enumerations that FEED a queue, a state-load or a dashboard. Every one of these
@@ -52298,12 +56915,20 @@ mod repo_root_tests {
             // population is fixed and shrinking, and it does not OFFER work: a per-PR edit that
             // fails is already reported as a failed edit rather than queued as a task.
             "retire_blocked_infra_mode",
-            // A test.
+            // The accessor for the queue's spelling of the same scope (#314).
+            "queue_search_scope",
+            // Tests.
             "next_close_candidate_tests",
+            "one_query_queue_tests",
         ];
         let mut want: Vec<&str> = filtered.iter().chain(exempt.iter()).copied().collect();
         want.sort_unstable();
         let mut got = items_whose_code_contains(&scope);
+        for item in items_whose_code_contains(&queue_scope) {
+            if !got.contains(&item) {
+                got.push(item);
+            }
+        }
         got.sort_unstable();
         assert_eq!(
             got, want,
@@ -52645,8 +57270,8 @@ ONE-SHOT, NOT A LOOP
 #[cfg(test)]
 mod settings_tests {
     use super::{
-        journal_citations, journal_entries, producer_preamble, producer_step, repo_root_text,
-        vetter_bullet, JOURNAL_FILE,
+        digest_lines, journal_citations, journal_entries, producer_preamble, producer_step,
+        repo_root_text, vetter_bullet, JOURNAL_FILE,
     };
     use serde_json::Value;
 
@@ -52862,6 +57487,82 @@ mod settings_tests {
         assert!(
             prompt.contains("Do NOT hand-roll this with `git clone`"),
             "clone CREATION must be the tool's, said as a prohibition and not merely omitted"
+        );
+    }
+
+    /// #290, the PROMPT half. `state-load` exists so a run opens on a typed answer "rather than on
+    /// a blob it re-slices with `jq`" — and every producer run opened by taking `--json` (95,370
+    /// bytes), redirecting it to a scratch file and paying three main-thread `jq` calls, the first
+    /// of which rebuilt, key by key, the digest the DEFAULT output already prints — 488 bytes when
+    /// that run measured it, and 21 lines now that the digest ends by naming the row calls. The
+    /// tool was not at fault for that one: the prompt was, because it prescribed `--json`.
+    ///
+    /// Asserted both ways round, like the send-back rules below: the `--json` opening must be GONE
+    /// as an instruction AND present as a prohibition, because a rule merely deleted is a rule the
+    /// next edit reinvents. And the ROWS have to be routed somewhere — a step told not to reach for
+    /// `jq` and not told what to call instead reaches for `jq`.
+    #[test]
+    fn the_state_load_step_opens_on_the_digest_and_takes_its_rows_as_flags() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let step2 = producer_step(&prompt, "2");
+        assert!(
+            !step2.contains("`pr-review-report state-load --json`"),
+            "step 2 must not prescribe the 95 KB document as the opening call: {step2}"
+        );
+        assert!(
+            step2.contains("`pr-review-report state-load`, BARE"),
+            "…the opening call is the BARE one, whose DEFAULT output is the digest: {step2}"
+        );
+        assert!(
+            step2.contains("THE DEFAULT OUTPUT IS THE DIGEST"),
+            "…and the step must SAY so, or the next reader takes --json again: {step2}"
+        );
+        // The step tells the run what the opening call COSTS, and that number is the TOOL's — the
+        // digest's own length, not a measurement somebody took once. It is structural (a line per
+        // action, a line per severity, the two the rows hint added), so the empty documents give
+        // the same count as a live fleet does. A prompt quoting a stale one teaches the run that
+        // the call is cheaper or dearer than it is, which is the class of claim #290 is about.
+        let digest_len = digest_lines(&Value::Null, &Value::Null, "assignee").len();
+        assert!(
+            step2.contains(&format!("{digest_len} lines")),
+            "step 2 must state the digest's real length ({digest_len} lines): {step2}"
+        );
+        assert!(
+            step2.contains("NEVER OPEN ON `--json`, AND NEVER RE-SLICE IT WITH `jq`"),
+            "…stated as a prohibition, not merely by omitting the old instruction: {step2}"
+        );
+        // Every row selector the tool offers is routed, so no row list is left reachable only
+        // through `jq` — which is the defect, and the two the trace happened to slice are only
+        // examples of it.
+        for flag in [
+            "state-load --action <nextAction>",
+            "--actionable",
+            "--approved",
+            "--audit",
+            "--limit N",
+        ] {
+            assert!(
+                step2.contains(flag),
+                "step 2 must route rows via {flag}: {step2}"
+            );
+        }
+        // …and `--json` survives as what it now is: the escape hatch, narrowed by a selector.
+        assert!(
+            step2.contains("`--json` IS THE ESCAPE HATCH AND IT TAKES A SELECTOR"),
+            "step 2 must keep --json reachable as the escape hatch: {step2}"
+        );
+        // The approved set is 2z's FIRST work, and it was the one grouping the step named by JSON
+        // pointer — a pointer only a `--json` reader can follow.
+        let step2z = producer_step(&prompt, "2z");
+        assert!(
+            step2z.contains("`pr-review-report state-load --approved`"),
+            "step 2z must take the approved set as rows, not as a JSON pointer: {step2z}"
+        );
+        assert!(
+            !step2z.contains("`fleet.approved`"),
+            "…and must not send the reader back into the document for it: {step2z}"
         );
     }
 
@@ -54480,24 +59181,19 @@ mod settings_tests {
         }
     }
 
-    /// #261. WHERE EACH DOCUMENTED SECTION LIVES — the whole rule of the router, as data.
+    /// WHERE EACH DOCUMENTED SECTION LIVES — the split, as data.
     ///
     /// `CLAUDE.md` is the one file a model receives without asking for it: `review-run.sh` cds to
-    /// the install dir, so the repo root is the vetter's project memory and every byte here is
+    /// the install dir, so the repo root is the vetter's project memory and every byte of it is
     /// re-read on every one of its turns. (`campaign-run.sh` cds to `$WORK_DIR`, which holds no
-    /// `CLAUDE.md`, which is why the producer's first context measured 14,199 against the vetter's
-    /// 48,060 on 2026-08-10.) So the split is: what governs JUDGEMENT stays and auto-loads; a
-    /// role's reference material is a file of its own and the router POINTS at it.
+    /// `CLAUDE.md`.) So what lives there is irreversible hazards and rulings whose rationale is
+    /// not recoverable from the code; reference material is a file of its own, found the way any
+    /// other file in the tree is found.
     ///
-    /// A section named here is asserted to be in its home and in NO other home, so the two ways
-    /// this split can rot both fail loudly: moving a section back into the router (its cost
-    /// returns silently, which is #261) and moving one out of the router while losing it (an agent
-    /// that never learns a rule does not error on it — it violates it).
+    /// A section named here is asserted to be in its home and in NO other home, so both ways the
+    /// split rots fail loudly: a reference section drifting into the file every turn pays for,
+    /// and one vanishing from the file that owns it.
     const DOC_SECTIONS: &[(&str, &str)] = &[
-        // Judgement, and what binds every reader. These are what the vetter's verdicts rest on.
-        ("## The pipeline is a finite state machine", "CLAUDE.md"),
-        ("## The FSM as a tool surface (MCP)", "CLAUDE.md"),
-        ("## Invariants", "CLAUDE.md"),
         // The CLI, and the human layer above it. The vetter has no `Bash` and cannot invoke one;
         // the producer never receives `CLAUDE.md` and is handed each transition at the point of
         // use by `campaign-prompt.txt`.
@@ -54512,60 +59208,16 @@ mod settings_tests {
         ("## Work-clone lifecycle", "WORK-CLONES.md"),
     ];
 
-    /// TEST HELPER: the files the router NAMES — the bullet list in its preamble, above the first
-    /// section heading. Parsed rather than listed, so the assertion is about what a reader is
-    /// actually told, not about a list kept in step by hand. A wrapped bullet's continuation lines
-    /// carry no `- **[`, so one pointer is one file however it wraps.
-    fn router_pointers(router: &str) -> Vec<String> {
-        router
-            .lines()
-            .take_while(|l| !l.starts_with("## "))
-            .filter_map(|l| l.trim_start().strip_prefix("- **["))
-            .filter_map(|rest| rest.split_once("](").map(|(_, target)| target))
-            .filter_map(|target| target.split_once(')').map(|(path, _)| path.to_string()))
-            .collect()
-    }
-
-    /// The pointer is the whole reason this is a split and not a deletion, so it is the thing
-    /// asserted: every file the router names is a file that is there, with something in it. A
-    /// dangling pointer is worse than the section it replaced — the reference is now gone AND the
-    /// reader has been told where it is.
-    #[test]
-    fn every_router_pointer_resolves_to_a_file_that_exists() {
-        let Some(router) = repo_root_text("CLAUDE.md") else {
-            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
-        };
-        let pointers = router_pointers(&router);
-        assert!(
-            !pointers.is_empty(),
-            "CLAUDE.md names no file at all. The router's preamble bullets ARE the mechanism that \
-             keeps a moved reference discoverable; with none, every assertion below about them \
-             passes against nothing"
-        );
-        for p in &pointers {
-            let target = repo_root_text(p);
-            assert!(
-                target.is_some(),
-                "CLAUDE.md points at {p}, which does not exist. Every reader is told to go there"
-            );
-            assert!(
-                !target.unwrap_or_default().trim().is_empty(),
-                "CLAUDE.md points at {p}, which is empty — a pointer that resolves to nothing is \
-                 a dangling pointer that passes an existence check"
-            );
-        }
-    }
-
     /// Both halves of the split, from [`DOC_SECTIONS`]: a section is in its home, and in no other
-    /// home; and a home that is not the router is one the router points at.
+    /// home — `CLAUDE.md` included, which is the copy that would be paid for on every turn.
     #[test]
-    fn every_documented_section_is_in_exactly_one_home_and_a_moved_one_is_pointed_at() {
-        let Some(router) = repo_root_text("CLAUDE.md") else {
+    fn every_documented_section_is_in_exactly_one_home() {
+        if repo_root_text("CLAUDE.md").is_none() {
             return; // not checked out (nix build sandbox) — enforced by the rs-test gate
-        };
-        let pointers = router_pointers(&router);
+        }
         let homes: Vec<&str> = {
             let mut h: Vec<&str> = DOC_SECTIONS.iter().map(|(_, home)| *home).collect();
+            h.push("CLAUDE.md");
             h.sort_unstable();
             h.dedup();
             h
@@ -54589,40 +59241,115 @@ mod settings_tests {
                     );
                 }
             }
-            assert!(
-                *home == "CLAUDE.md" || pointers.iter().any(|p| p == home),
-                "{home} holds a section moved out of the router, so the router must name it. A \
-                 file no reader is told about is one no reader consults"
-            );
         }
     }
 
-    /// The cost property the split exists for, and the only one a reader cannot see by reading.
-    ///
-    /// Every byte of `CLAUDE.md` is re-read on every turn of the vetter's main loop. Run
-    /// `20260810T103008Z` took 48 turns, and `20260810T091521Z` implies $1.736/MTok of cache read,
-    /// so one byte here costs 48/4 tokens x $1.736/MTok = $2.1e-5 per run, and the vetter ticks
-    /// six times a day: ~$1.3e-4 per byte per day. The 47,797-byte file this replaced was standing
-    /// at roughly $5.70 a day of pure re-reading.
-    ///
-    /// The ceiling is DERIVED from the split rather than picked: it sits below the router plus the
-    /// SMALLEST section that moved out (2,304 bytes), so any reference section coming back in
-    /// fails here — whichever one it is — while genuine growth of a rule has room. Raising it is
-    /// then a deliberate act with this arithmetic in front of whoever does it, which is exactly
-    /// what the old file never made anyone do.
+    /// The org's cap on launch-loaded agent context, in bytes: `rainix-static
+    /// agent-context-cap`, a floor-only ratchet, run by the shared static CI job. It charges the
+    /// TOTAL — `CLAUDE.md`, everything that pulls in via `@path`, and every
+    /// `.claude/rules/**/*.md` WITHOUT `paths:` frontmatter — so a rule moved sideways is still
+    /// charged and only on-demand scoping is free.
+    const AGENT_CONTEXT_CAP_BYTES: usize = 4096;
+
+    /// The cost property, and the only one a reader cannot see by reading: every byte of
+    /// `CLAUDE.md` is in the window on every turn of the vetter's main loop whether or not the
+    /// turn needs a word of it. The fix for a failure here is to CUT — ask of each line whether a
+    /// capable agent looking at this repo would get it WRONG, or merely take a moment to find it
+    /// — or to scope the rule with `paths:` so it loads on demand.
     #[test]
-    fn the_router_stays_a_router() {
-        const ROUTER_BYTE_CEILING: usize = 22_528;
-        let Some(router) = repo_root_text("CLAUDE.md") else {
+    fn claude_md_fits_the_launch_context_cap() {
+        let Some(memory) = repo_root_text("CLAUDE.md") else {
             return; // not checked out (nix build sandbox) — enforced by the rs-test gate
         };
         assert!(
-            router.len() <= ROUTER_BYTE_CEILING,
-            "CLAUDE.md is {} bytes, over the {ROUTER_BYTE_CEILING}-byte ceiling. It auto-loads \
-             into every vetter turn, so growth here is a standing cost nothing else reports. \
-             Move the reference material into a file and point at it — or raise the ceiling \
-             deliberately, having done the arithmetic above",
-            router.len()
+            memory.len() <= AGENT_CONTEXT_CAP_BYTES,
+            "CLAUDE.md is {} bytes, over the {AGENT_CONTEXT_CAP_BYTES}-byte launch-context cap. \
+             The cap is on the TOTAL, so this file alone must fit inside it with room for any \
+             unscoped rule. Cut, or scope with `paths:`; the cap itself may only ever be LOWERED.",
+            memory.len()
+        );
+    }
+
+    /// The other half of the total: an unscoped `.claude/rules/*.md` auto-loads with the same
+    /// priority as project memory, so a rule filed there without `paths:` is a rule every turn
+    /// pays for while looking like it was filed away. Scoping is what makes relocation real.
+    #[test]
+    fn every_agent_rule_is_path_scoped() {
+        let root = crate::repo_root_path(".claude/rules");
+        let mut stack = vec![root];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue; // not checked out (nix build sandbox) — enforced by the rs-test gate
+            };
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    stack.push(p);
+                    continue;
+                }
+                if p.extension().and_then(|e| e.to_str()) != Some("md") {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&p).unwrap_or_default();
+                assert!(
+                    frontmatter_is_path_scoped(&text),
+                    "{} has no top-level `paths:` frontmatter key, so it loads at launch and is \
+                     charged against the {AGENT_CONTEXT_CAP_BYTES}-byte cap. A rule that only \
+                     matters for some files says which files.",
+                    p.display()
+                );
+            }
+        }
+    }
+
+    /// TEST HELPER: the same read `agent-context-cap` makes — a `---` fenced block whose first
+    /// delimiter is the first line, carrying an unindented `paths:` key. A key nested under
+    /// something else is a different key, and an unterminated block is not frontmatter at all.
+    fn frontmatter_is_path_scoped(text: &str) -> bool {
+        let mut lines = text.lines();
+        if lines.next().map(str::trim) != Some("---") {
+            return false;
+        }
+        let mut found = false;
+        for line in lines {
+            if line.trim() == "---" {
+                return found;
+            }
+            if !line.starts_with([' ', '\t', '-'])
+                && line
+                    .split_once(':')
+                    .is_some_and(|(k, _)| k.trim() == "paths")
+            {
+                found = true;
+            }
+        }
+        false
+    }
+
+    /// The scoping read is what [`every_agent_rule_is_path_scoped`] decides on, and every rule in
+    /// the tree is scoped — so that test alone would pass against a helper that answered `true` to
+    /// everything. These are the answers it must get wrong to fail.
+    #[test]
+    fn frontmatter_scoping_reads_the_way_the_cap_checker_does() {
+        assert!(frontmatter_is_path_scoped(
+            "---\npaths:\n  - \"src/**\"\n---\n# rule\n"
+        ));
+        assert!(frontmatter_is_path_scoped("---\npaths: src/**\n---\n"));
+        assert!(
+            !frontmatter_is_path_scoped("---\ndescription: a rule\n---\n"),
+            "frontmatter without `paths:` is unscoped and IS charged"
+        );
+        assert!(
+            !frontmatter_is_path_scoped("---\nrule:\n  paths: src/**\n---\n"),
+            "an indented `paths:` is nested under another key, not the top-level one"
+        );
+        assert!(
+            !frontmatter_is_path_scoped("---\npaths:\n  - \"src/**\"\n"),
+            "an unterminated block is not frontmatter at all"
+        );
+        assert!(
+            !frontmatter_is_path_scoped("# rule\npaths: src/**\n"),
+            "the opening delimiter must be the first line"
         );
     }
 
@@ -59193,17 +63920,93 @@ mod cli_tests {
             parse(&["prr", "state-load"]),
             Cmd::StateLoad {
                 json: false,
-                no_cache: false
-            }
+                no_cache: false,
+                action: None,
+                actionable: false,
+                approved: false,
+                audit: false,
+                limit: None,
+            },
+            "the BARE call is the digest — the opening call, and the one the prompt makes"
         );
         assert_eq!(
             parse(&["prr", "state-load", "--json", "--no-cache"]),
             Cmd::StateLoad {
                 json: true,
-                no_cache: true
+                no_cache: true,
+                action: None,
+                actionable: false,
+                approved: false,
+                audit: false,
+                limit: None,
             },
             "the fleet half reads through worklist's cache, so it takes worklist's bypass too"
         );
+    }
+
+    /// #290: the ROW selectors reach the CLI, one at a time, with `--limit` attached to them.
+    #[test]
+    fn state_load_row_selectors_cli() {
+        assert_eq!(
+            parse(&["prr", "state-load", "--action", "rework-needs-work"]),
+            Cmd::StateLoad {
+                json: false,
+                no_cache: false,
+                action: Some("rework-needs-work".to_string()),
+                actionable: false,
+                approved: false,
+                audit: false,
+                limit: None,
+            }
+        );
+        assert_eq!(
+            parse(&["prr", "state-load", "--actionable", "--limit", "12"]),
+            Cmd::StateLoad {
+                json: false,
+                no_cache: false,
+                action: None,
+                actionable: true,
+                approved: false,
+                audit: false,
+                limit: Some(12),
+            }
+        );
+        assert!(matches!(
+            parse(&["prr", "state-load", "--approved"]),
+            Cmd::StateLoad { approved: true, .. }
+        ));
+        assert!(
+            matches!(
+                parse(&["prr", "state-load", "--audit", "--json"]),
+                Cmd::StateLoad {
+                    audit: true,
+                    json: true,
+                    ..
+                }
+            ),
+            "`--json` stays reachable WITH a selector: the escape hatch is the rows, not the fleet"
+        );
+    }
+
+    /// The `rows` group, both ways round. Two selectors name two different sets, and a `--limit`
+    /// with nothing to limit is a call the caller did not mean to make — a silently-ignored flag
+    /// is how a run believes it asked for 12 rows and reads all 174.
+    #[test]
+    fn state_load_refuses_two_selectors_and_a_limit_with_nothing_to_limit() {
+        for args in [
+            vec!["prr", "state-load", "--actionable", "--approved"],
+            vec!["prr", "state-load", "--action", "needs-3b", "--audit"],
+            vec!["prr", "state-load", "--approved", "--audit"],
+            vec!["prr", "state-load", "--limit", "5"],
+            vec!["prr", "state-load", "--json", "--limit", "5"],
+            // …and a zero page is refused rather than printing a header over nothing.
+            vec!["prr", "state-load", "--actionable", "--limit", "0"],
+        ] {
+            assert!(
+                Cli::try_parse_from(&args).is_err(),
+                "{args:?} must not parse"
+            );
+        }
     }
 
     #[test]
@@ -61456,6 +66259,509 @@ mod state_load_tests {
             .as_array()
             .unwrap()
             .is_empty());
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #290 — the state-load's ROWS, typed.
+//
+// `state-load` replaced the producer's hand-rolled API calls and left the RE-SLICING: the run
+// `runs/20260815T110709Z.jsonl` opened by taking `--json` (95,370 bytes), redirecting it to a
+// scratch file, and paying three main-thread `jq` calls — one rebuilding the digest the default
+// output already prints (488 bytes and 19 lines as that run measured it; 21 lines now, because the
+// digest ends by naming these very selectors), two selecting ROWS the tool had no way to hand over:
+//
+//   jq -r '.fleet.actionable[] | select(.nextAction=="rework-needs-work")
+//          | [.repo, (.number|tostring), .ci, .mergeState, (.closes|tostring), .title] | @tsv'
+//   jq -r '.fleet.actionable[:12] | .[]
+//          | [.nextAction, .repo, (.number|tostring), .ci, .mergeState, .title] | @tsv'
+//
+// The `--help` claimed the result contains "the rows that name work". It did — inside 95 KB,
+// reachable only by re-slicing, which is the hand-roll this subcommand exists to remove. These
+// tests pin the typed route: a selector per row list the digest holds, the projection those two
+// `jq` calls made, and a count line that says what a `--limit` cut.
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod state_load_row_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// A fleet row as the projection reads it — every column's source field, so a dropped column
+    /// shows up as a missing value rather than as an empty string that could have come from
+    /// anywhere.
+    fn row(action: &str, n: u64) -> Value {
+        json!({
+            "repo": "o/r", "number": n, "nextAction": action, "reviewDecision": "",
+            "ci": "green", "mergeState": "CLEAN", "closes": [n * 10], "title": "t"
+        })
+    }
+
+    fn approved(action: &str, n: u64) -> Value {
+        let mut r = row(action, n);
+        r["reviewDecision"] = json!("APPROVED");
+        r
+    }
+
+    fn refs(rows: &[Value], sel: StateLoadRows) -> Vec<u64> {
+        rows.iter()
+            .filter(|r| fleet_row_selected(r, sel))
+            .filter_map(|r| r["number"].as_u64())
+            .collect()
+    }
+
+    /// No selector is the DIGEST — the opening call, unchanged. This is the half of #290 the
+    /// prompt owns, and the resolver has to keep it expressible.
+    #[test]
+    fn no_selector_is_the_digest() {
+        assert_eq!(state_load_rows(None, false, false, false), Ok(None));
+    }
+
+    /// Every selector resolves, and `--action` covers EVERY action the classifier can emit —
+    /// derived from [`ALL_ACTIONS`] rather than a list here, so an action added to the enum is
+    /// selectable the day it exists instead of the day somebody remembers this test.
+    #[test]
+    fn every_selector_resolves_and_every_action_is_selectable() {
+        assert_eq!(
+            state_load_rows(None, true, false, false),
+            Ok(Some(StateLoadRows::Actionable))
+        );
+        assert_eq!(
+            state_load_rows(None, false, true, false),
+            Ok(Some(StateLoadRows::Approved))
+        );
+        assert_eq!(
+            state_load_rows(None, false, false, true),
+            Ok(Some(StateLoadRows::Audit))
+        );
+        for a in ALL_ACTIONS {
+            assert_eq!(
+                state_load_rows(Some(a), false, false, false),
+                Ok(Some(StateLoadRows::Action(
+                    NextAction::from_str(a).expect("ALL_ACTIONS is the enum's own spelling")
+                ))),
+                "--action {a}"
+            );
+        }
+    }
+
+    /// An action no classifier produces is REFUSED, and the refusal enumerates the legal ones.
+    /// A typo that printed zero rows would read as "nothing to do", which is the one wrong answer
+    /// this whole subcommand exists to stop a run believing.
+    #[test]
+    fn an_unknown_action_is_refused_and_the_refusal_names_the_legal_ones() {
+        // `deploy` is not hypothetical: it is the retired spelling the hand-written action list
+        // carried for months while no variant could produce it.
+        for typo in [
+            "deploy",
+            "rework-ruling",
+            "",
+            "REWORK-NEEDS-WORK",
+            "needs3b",
+        ] {
+            let e = match state_load_rows(Some(typo), false, false, false) {
+                Err(e) => e,
+                Ok(v) => panic!("{typo:?} names no action, so it must be REFUSED — got {v:?}"),
+            };
+            for a in ALL_ACTIONS {
+                assert!(e.contains(a), "the refusal for {typo:?} must name {a}: {e}");
+            }
+        }
+    }
+
+    /// Two selectors name two different row sets, so there is no answer to give. clap's `rows`
+    /// group refuses it first; the resolver is TOTAL rather than picking a precedence order for a
+    /// combination it was never meant to see.
+    #[test]
+    fn two_selectors_are_refused_rather_than_ranked() {
+        for (a, actionable, approved, audit) in [
+            (Some("needs-3b"), true, false, false),
+            (Some("needs-3b"), false, false, true),
+            (None, true, true, false),
+            (None, true, false, true),
+            (None, false, true, true),
+            (None, true, true, true),
+        ] {
+            let e = match state_load_rows(a, actionable, approved, audit) {
+                Err(e) => e,
+                Ok(v) => panic!("two selectors have no single answer — got {v:?}"),
+            };
+            assert!(e.contains(STATE_LOAD_ROWS_HINT), "{e}");
+        }
+    }
+
+    /// THE SEAM. `--actionable` and `--approved` must return exactly the rows the digest counts —
+    /// the same predicates, not a second filter beside them. A run that read one number from the
+    /// digest and then the rows behind it from a selector must never be handed two populations.
+    #[test]
+    fn the_selectors_are_the_digests_own_row_lists() {
+        let rows = vec![
+            row("green-ready", 1),
+            approved("needs-3b", 2),
+            row("conflict-3d", 3),
+            approved("wait", 4),
+            row("parked-skip", 5),
+            row("rework-needs-work", 6),
+        ];
+        let d = fleet_digest(&rows);
+        let picked = |sel| -> Vec<Value> {
+            rows.iter()
+                .filter(|r| fleet_row_selected(r, sel))
+                .cloned()
+                .collect()
+        };
+        assert_eq!(
+            picked(StateLoadRows::Actionable),
+            *d["actionable"].as_array().unwrap(),
+            "--actionable must BE fleet.actionable"
+        );
+        assert_eq!(
+            picked(StateLoadRows::Approved),
+            *d["approved"].as_array().unwrap(),
+            "--approved must BE fleet.approved"
+        );
+        // …and the histogram's count for an action is the number of rows `--action` prints for it.
+        for a in ALL_ACTIONS {
+            let sel = StateLoadRows::Action(NextAction::from_str(a).unwrap());
+            assert_eq!(
+                Value::from(picked(sel).len()),
+                d["byAction"][a],
+                "--action {a} must print byAction[{a}] rows"
+            );
+        }
+    }
+
+    /// `--action` reaches the rows `--actionable` cannot: `green-ready` is 2z's own step and no
+    /// union of work actions contains it. This is why the selector set is not just "actionable".
+    #[test]
+    fn an_action_that_names_no_work_is_still_selectable() {
+        let rows = vec![row("green-ready", 1), row("wait", 2), row("needs-3b", 3)];
+        assert_eq!(
+            refs(&rows, StateLoadRows::Action(NextAction::GreenReady)),
+            vec![1]
+        );
+        assert!(refs(&rows, StateLoadRows::Actionable).contains(&3));
+        assert!(!refs(&rows, StateLoadRows::Actionable).contains(&1));
+    }
+
+    /// The fail-safe arm: an `--audit` call never selects a PR. It is routed to the backlog half
+    /// before a fleet row exists, and if that ever stops being true, printing nothing is the
+    /// answer that cannot mislead.
+    #[test]
+    fn the_audit_selector_claims_no_fleet_row() {
+        let rows = vec![row("needs-3b", 1), approved("green-ready", 2)];
+        assert!(refs(&rows, StateLoadRows::Audit).is_empty());
+    }
+
+    /// The projection itself: the columns the trace's `jq` built, in order, with the ref joined.
+    #[test]
+    fn a_fleet_row_projects_to_the_columns_the_header_names() {
+        let r = json!({
+            "repo": "rainlanguage/raindex", "number": 2777, "nextAction": "rework-needs-work",
+            "ci": "red", "mergeState": "DIRTY", "closes": [12, 34], "title": "Fix the thing"
+        });
+        assert_eq!(
+            fleet_row_line(&r),
+            "rework-needs-work\trainlanguage/raindex#2777\tred\tDIRTY\t12,34\tFix the thing"
+        );
+        assert_eq!(
+            fleet_row_line(&r).split('\t').count(),
+            FLEET_ROW_COLUMNS.len(),
+            "one cell per column, or the header names something the rows do not carry"
+        );
+        // An empty cell is `-`, never an empty run between two tabs: a PR closing nothing and a
+        // PR whose closes the row lost must not print the same way.
+        let bare = json!({"repo": "o/r", "number": 1, "nextAction": "wait", "closes": []});
+        assert_eq!(fleet_row_line(&bare), "wait\to/r#1\t-\t-\t-\t-");
+    }
+
+    /// A title is DATA, and GitHub accepts characters this binary does not author. A tab inside
+    /// one would invent a column and a newline would invent a row, so every control character
+    /// becomes a space — the row stays parseable whatever the title says.
+    #[test]
+    fn a_control_character_in_a_title_cannot_invent_a_column_or_a_row() {
+        let r = json!({
+            "repo": "o/r", "number": 1, "nextAction": "needs-3b", "ci": "red",
+            "mergeState": "CLEAN", "closes": [],
+            "title": "tab\there\nand a newline\r\n"
+        });
+        let line = fleet_row_line(&r);
+        assert_eq!(
+            line.split('\t').count(),
+            FLEET_ROW_COLUMNS.len(),
+            "a tab in the title added a column: {line}"
+        );
+        assert!(!line.contains('\n') && !line.contains('\r'), "{line}");
+        assert!(line.ends_with("tab here and a newline"), "{line}");
+        // …and a title made ENTIRELY of control characters is empty, not a run of spaces.
+        assert_eq!(column_cell("\t\n \r"), "-");
+    }
+
+    /// The audit projection reads the rows [`backlog_digest`] built, so the severity a column
+    /// shows is the severity the histogram counted — and worst-first order survives the print.
+    #[test]
+    fn the_audit_rows_project_worst_first_off_the_digests_own_rows() {
+        let issue = |labels: &[&str], n: u64| {
+            json!({
+                "number": n, "url": "u", "title": "t",
+                "repository": {"nameWithOwner": "o/r"},
+                "labels": labels.iter().map(|l| json!({"name": l})).collect::<Vec<_>>(),
+            })
+        };
+        let b = backlog_digest(&[
+            issue(&["audit", "low"], 1),
+            issue(&["audit", "critical"], 2),
+            issue(&["bug"], 3),
+        ]);
+        let rows = b["audit"]["issues"].as_array().unwrap();
+        let lines: Vec<String> = rows.iter().map(audit_row_line).collect();
+        assert_eq!(lines, vec!["critical\to/r#2\tt", "low\to/r#1\tt"]);
+        for l in &lines {
+            assert_eq!(l.split('\t').count(), AUDIT_ROW_COLUMNS.len(), "{l}");
+        }
+    }
+
+    /// A truncated list SAYS it was truncated, and names the flag that cut it. Twelve rows printed
+    /// without this line read exactly like a fleet with twelve rows in it.
+    #[test]
+    fn a_limited_list_states_what_it_cut() {
+        assert_eq!(
+            row_count_line(12, 60, Some(12), 0),
+            "# 12 of 60 rows (--limit 12)"
+        );
+        assert_eq!(row_count_line(60, 60, Some(99), 0), "# 60 rows");
+        assert_eq!(row_count_line(60, 60, None, 0), "# 60 rows");
+        assert_eq!(row_count_line(0, 0, None, 0), "# 0 rows");
+        // A truncation with no `--limit` behind it is still stated: the count is about the ROWS,
+        // never about which argument produced them.
+        assert_eq!(row_count_line(3, 9, None, 0), "# 3 of 9 rows");
+        // …and an archived repo's withhold rides on the same line (#206): a row list that silently
+        // omits a repo is one the run re-derives from outside the tool.
+        assert_eq!(
+            row_count_line(5, 5, None, 4),
+            "# 5 rows (4 withheld: archived repo, unactionable)"
+        );
+    }
+
+    /// The cut the count line reports and the cut the row list performs are ONE decision.
+    #[test]
+    fn the_limit_takes_the_first_rows_and_nothing_below_the_length_truncates() {
+        let rows = vec![row("needs-3b", 1), row("needs-3b", 2), row("needs-3b", 3)];
+        let nums =
+            |v: Vec<Value>| -> Vec<u64> { v.iter().filter_map(|r| r["number"].as_u64()).collect() };
+        assert_eq!(nums(take_limit(rows.clone(), Some(2))), vec![1, 2]);
+        assert_eq!(nums(take_limit(rows.clone(), Some(3))), vec![1, 2, 3]);
+        assert_eq!(nums(take_limit(rows.clone(), Some(99))), vec![1, 2, 3]);
+        assert_eq!(nums(take_limit(rows.clone(), None)), vec![1, 2, 3]);
+        assert!(take_limit(Vec::new(), Some(5)).is_empty());
+    }
+
+    /// The whole plain-text answer: count first, header second, one line per row and no more.
+    #[test]
+    fn a_row_report_leads_with_the_count_then_the_header_then_the_rows() {
+        let rows = vec![row("needs-3b", 1), row("needs-3b", 2)];
+        let out = row_report(&FLEET_ROW_COLUMNS, &rows, fleet_row_line, 7, Some(2), 0);
+        assert_eq!(out[0], "# 2 of 7 rows (--limit 2)");
+        assert_eq!(out[1], "# action\tref\tci\tmerge\tcloses\ttitle");
+        assert_eq!(out.len(), 2 + rows.len());
+        assert_eq!(out[2], fleet_row_line(&rows[0]));
+        // Both non-data lines are marked, and no data line is: `#` is the whole rule a reader needs.
+        assert_eq!(out.iter().filter(|l| l.starts_with('#')).count(), 2);
+        // An empty selection is an ANSWER — the count line and the header, and nothing to read
+        // into the silence.
+        let empty = row_report(&AUDIT_ROW_COLUMNS, &[], audit_row_line, 0, None, 0);
+        assert_eq!(empty, vec!["# 0 rows", "# severity\tref\ttitle"]);
+    }
+
+    /// The digest ENDS by naming the call that prints the rows it counted. Without it the only
+    /// route from a count to its rows was `--json` plus `jq`, which is #290.
+    #[test]
+    fn the_rows_hint_names_every_selector() {
+        for flag in [
+            "--action",
+            "--actionable",
+            "--approved",
+            "--audit",
+            "--limit",
+        ] {
+            assert!(
+                STATE_LOAD_ROWS_HINT.contains(flag),
+                "the hint must name {flag}: {STATE_LOAD_ROWS_HINT}"
+            );
+        }
+        assert!(STATE_LOAD_ROWS_HINT.contains("state-load"));
+        assert!(
+            !STATE_LOAD_ROWS_HINT.contains("jq"),
+            "the hint is the route AWAY from jq"
+        );
+    }
+
+    /// EVERY selector this binary can resolve — the three named row lists plus one per action, so
+    /// a selector added to the enum is held to the properties below the day it exists.
+    fn every_selector() -> Vec<StateLoadRows> {
+        let mut all = vec![
+            StateLoadRows::Actionable,
+            StateLoadRows::Approved,
+            StateLoadRows::Audit,
+        ];
+        all.extend(ALL_ACTIONS.iter().map(|a| {
+            StateLoadRows::Action(NextAction::from_str(a).expect("ALL_ACTIONS is the enum's own"))
+        }));
+        all
+    }
+
+    /// A selector's HEADER and its PROJECTION are one decision. The audit rows carry none of the
+    /// fleet's columns, so pairing them with the fleet header prints three cells under six names —
+    /// in a format whose entire contract is that a reader may split it on tabs and index the
+    /// result. Held for every selector, not just the two halves, because the mispairing compiles.
+    #[test]
+    fn every_selector_names_a_header_its_own_projection_fills() {
+        // ONE row carrying BOTH halves' source fields, so each shape is asked for its own columns
+        // off the same document: a mismatch is then the shape's and never the fixture's.
+        let probe = json!({
+            "repo": "o/r", "number": 7, "nextAction": "needs-3b", "reviewDecision": "APPROVED",
+            "ci": "green", "mergeState": "CLEAN", "closes": [1], "title": "t",
+            "severity": "critical"
+        });
+        for sel in every_selector() {
+            let shape = sel.shape();
+            assert_eq!(
+                (shape.line)(&probe).split('\t').count(),
+                shape.columns.len(),
+                "{sel:?} prints a line its own header cannot name: {:?} under {:?}",
+                (shape.line)(&probe),
+                shape.columns
+            );
+        }
+        // …and the two halves are not interchangeable: the backlog selector takes the backlog's
+        // columns and every fleet selector takes the fleet's.
+        assert_eq!(StateLoadRows::Audit.shape().columns, &AUDIT_ROW_COLUMNS[..]);
+        for sel in every_selector()
+            .into_iter()
+            .filter(|s| *s != StateLoadRows::Audit)
+        {
+            assert_eq!(sel.shape().columns, &FLEET_ROW_COLUMNS[..], "{sel:?}");
+        }
+    }
+
+    /// `--limit` cuts the ROWS, and it cuts them once: the TSV list and the `--json` escape hatch
+    /// go through the same decision. A `--json` array that ignored the flag under a count line that
+    /// honoured it would be two answers to one call — and the JSON reader is the one that cannot
+    /// see the count line at all.
+    #[test]
+    fn the_limit_cuts_the_tsv_and_the_json_array_alike() {
+        let rows = vec![row("needs-3b", 1), row("needs-3b", 2), row("needs-3b", 3)];
+        let json_rows = |out: Vec<String>| -> Vec<Value> {
+            assert_eq!(out.len(), 1, "--json is ONE document: {out:?}");
+            serde_json::from_str::<Value>(&out[0])
+                .expect("--json emits a document")
+                .as_array()
+                .expect("…and that document is the row ARRAY")
+                .clone()
+        };
+
+        let tsv = row_output(StateLoadRows::Actionable, rows.clone(), Some(2), 0, false);
+        assert_eq!(tsv[0], "# 2 of 3 rows (--limit 2)");
+        assert_eq!(tsv[1], column_header(&FLEET_ROW_COLUMNS));
+        assert_eq!(
+            tsv.len(),
+            2 + 2,
+            "the count line, the header, and TWO rows: {tsv:?}"
+        );
+        assert_eq!(tsv[2], fleet_row_line(&rows[0]));
+        assert_eq!(tsv[3], fleet_row_line(&rows[1]));
+        assert_eq!(
+            json_rows(row_output(
+                StateLoadRows::Actionable,
+                rows.clone(),
+                Some(2),
+                0,
+                true
+            )),
+            rows[..2],
+            "--json must hand back the CUT rows, not the whole selection"
+        );
+
+        // No limit is the whole selection, both ways round — the cut is the flag's, never the
+        // shape's.
+        assert_eq!(
+            row_output(StateLoadRows::Actionable, rows.clone(), None, 0, false).len(),
+            2 + rows.len()
+        );
+        assert_eq!(
+            json_rows(row_output(
+                StateLoadRows::Actionable,
+                rows.clone(),
+                None,
+                0,
+                true
+            )),
+            rows
+        );
+
+        // …and the withhold an archived repo caused rides the count line here too (#206).
+        let cut = row_output(StateLoadRows::Audit, Vec::new(), None, 4, false);
+        assert_eq!(
+            cut,
+            vec![
+                "# 0 rows (4 withheld: archived repo, unactionable)".to_string(),
+                column_header(&AUDIT_ROW_COLUMNS),
+            ]
+        );
+    }
+
+    /// THE DIGEST, whole. Its LENGTH is what the producer prompt quotes when it tells a run what
+    /// the opening call costs, and its LAST line is the only route from a count to the rows behind
+    /// it — the route that replaced `--json | jq` (#290). Both are asserted here, against the
+    /// digest documents the two halves actually build, so a count printed under the wrong label or
+    /// a hint quietly dropped is a failing test rather than a prompt that has gone stale.
+    #[test]
+    fn the_digest_is_the_whole_opening_picture_and_ends_by_naming_the_row_calls() {
+        let issue = |labels: &[&str], n: u64| {
+            json!({
+                "number": n, "url": "u", "title": "t",
+                "repository": {"nameWithOwner": "o/r"},
+                "labels": labels.iter().map(|l| json!({"name": l})).collect::<Vec<_>>(),
+            })
+        };
+        let mut fleet = fleet_digest(&[approved("needs-3b", 1), row("green-ready", 2)]);
+        let mut backlog = backlog_digest(&[issue(&["audit", "critical"], 1), issue(&["bug"], 2)]);
+        // The two insertions `state_load_mode` makes before it renders anything — the withhold each
+        // half reports (#206). Read back here, so the note and the `--json` field are one number.
+        fleet
+            .as_object_mut()
+            .expect("fleet_digest builds an object")
+            .insert("archivedRepo".into(), Value::from(3));
+        backlog
+            .as_object_mut()
+            .expect("backlog_digest builds an object")
+            .insert("archivedRepo".into(), Value::from(0));
+
+        assert_eq!(
+            digest_lines(&fleet, &backlog, "someone"),
+            vec![
+                "fleet: 2 open PRs by someone (3 withheld: archived repo, unactionable)",
+                "  flag-migration 0",
+                "  rework-needs-work 0",
+                "  needs-3b       1",
+                "  conflict-3d    0",
+                "  coderabbit-3e  0",
+                "  screenshot-3c  0",
+                "  green-ready    1",
+                "  wait           0",
+                "  parked-skip    0",
+                "  approved       1",
+                "",
+                "backlog: 2 uncovered issues (1 audit-labelled)",
+                "  critical       1",
+                "  high           0",
+                "  medium         0",
+                "  low            0",
+                "  info           0",
+                "  none           0",
+                "",
+                STATE_LOAD_ROWS_HINT,
+            ]
+        );
     }
 }
 
@@ -65664,35 +70970,73 @@ mod marketplace_tests {
         }
     }
 
+    /// TEST HELPER: every `.md` this plugin ships in one of its directories, as (stem, text),
+    /// sorted by stem. `None` when the tree is not checked out (nix build sandbox).
+    fn plugin_markdown(dir: &str) -> Option<Vec<(String, String)>> {
+        let mut out: Vec<(String, String)> = std::fs::read_dir(repo_root_path(dir))
+            .ok()?
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("md"))
+            .map(|p| {
+                let stem = p.file_stem().unwrap().to_string_lossy().to_string();
+                (stem, std::fs::read_to_string(&p).expect("readable"))
+            })
+            .collect();
+        out.sort();
+        Some(out)
+    }
+
+    /// TEST HELPER: this plugin's own MCP surface — what a grant is resolved against.
+    fn human_fsm_grantable(manifest: &Value) -> Vec<String> {
+        grantable_mcp_tools(manifest).expect("the manifest's own MCP surface")
+    }
+
+    /// TEST HELPER: the agents this repo ships, plugin-qualified — the set a dispatcher's body is
+    /// resolved against.
+    ///
+    /// Keyed by FILENAME, and the agent sweep asserts each file's `name` frontmatter equals its
+    /// stem, so the two ways of naming an agent cannot come apart without a test saying so.
+    ///
+    /// A tree with no `agents/` directory ships no agents, and that is a real answer rather than a
+    /// bail: every caller here has already established the tree IS checked out by reading
+    /// `commands/`. A dispatcher landing in such a tree is then refused for naming an agent that
+    /// does not ship — which is exactly what a dispatcher arriving before its agent should do.
+    fn shipped_agents(manifest: &Value) -> Vec<String> {
+        let plugin = manifest["name"]
+            .as_str()
+            .expect("the manifest names the plugin");
+        plugin_markdown("plugins/human-fsm/agents")
+            .unwrap_or_default()
+            .iter()
+            .map(|(stem, _)| plugin_agent_name(plugin, stem))
+            .collect()
+    }
+
     // The commands are the plugin's payload, and a plugin whose command directory is empty
     // installs a name and nothing else. Each one must also carry the frontmatter the loader reads,
     // or it is listed with no description and no argument hint.
     #[test]
     fn every_shipped_command_carries_its_frontmatter() {
-        let Ok(entries) = std::fs::read_dir(repo_root_path("plugins/human-fsm/commands")) else {
+        let Some(commands) = plugin_markdown("plugins/human-fsm/commands") else {
             return; // not checked out (nix build sandbox)
         };
         // The MCP grants are resolved against what this repo ACTUALLY ships — the plugin's own
         // name, the servers its manifest declares, and the tools that profile serves — so a rename
-        // on either side fails here rather than becoming a command with no tool to call.
+        // on either side fails here rather than becoming a command with no tool to call. A
+        // dispatcher's AGENT is resolved the same way and for the same reason (#321).
         let manifest = read_json("plugins/human-fsm/.claude-plugin/plugin.json")
             .expect("the plugin manifest is checked out beside its commands");
-        let grantable = grantable_mcp_tools(&manifest).expect("the manifest's own MCP surface");
+        let grantable = human_fsm_grantable(&manifest);
+        let agents = shipped_agents(&manifest);
 
         let mut seen = Vec::new();
-        for e in entries.flatten() {
-            let path = e.path();
-            if path.extension().and_then(|x| x.to_str()) != Some("md") {
-                continue;
-            }
-            let text = std::fs::read_to_string(&path).expect("readable command");
-            let name = path.file_stem().unwrap().to_string_lossy().to_string();
-            if let Err(why) = command_check(&text, &grantable) {
+        for (name, text) in &commands {
+            if let Err(why) = command_check(text, &grantable, &agents) {
                 panic!("{name}: {why}");
             }
-            seen.push(name);
+            seen.push(name.clone());
         }
-        seen.sort();
         assert_eq!(
             seen,
             vec![
@@ -65710,15 +71054,113 @@ mod marketplace_tests {
         );
     }
 
+    // The agents are the other half of the payload since #316: the four reading gates' protocols
+    // live here, and the typed grant that used to sit in `allowed-tools` sits in `tools` — where,
+    // unlike `allowed-tools`, the harness enforces it. So the directory is walked exactly as
+    // `commands/` is: frontmatter present, every `mcp__*` name resolved against what the manifest
+    // serves, `Skill` and `Read` admitted by name, everything else refused and `Bash` first of all
+    // — and no agent granting a subagent tool, which is what keeps the audit lens inline.
+    #[test]
+    fn every_shipped_agent_carries_its_frontmatter_and_grants_no_fan_out() {
+        let Some(agents) = plugin_markdown("plugins/human-fsm/agents") else {
+            return; // not checked out (nix build sandbox)
+        };
+        let manifest = read_json("plugins/human-fsm/.claude-plugin/plugin.json")
+            .expect("the plugin manifest is checked out beside its agents");
+        let grantable = human_fsm_grantable(&manifest);
+
+        let mut seen = Vec::new();
+        for (stem, text) in &agents {
+            let grant = agent_check(text, &grantable).unwrap_or_else(|why| panic!("{stem}: {why}"));
+            // A dispatcher names the agent by its frontmatter `name`, and a reader opens the FILE.
+            // Letting the two differ means the command that dispatches an agent and the file a
+            // human edits to change it are related by nothing a test can see.
+            assert_eq!(
+                &grant.name, stem,
+                "agents/{stem}.md declares `name: {}` — the file a reader opens and the name a \
+                 dispatcher writes have to be the same string",
+                grant.name
+            );
+            seen.push(stem.clone());
+        }
+        assert_eq!(
+            seen,
+            vec!["ncc", "ndd", "nm", "nr"],
+            "the shipped agent set changed"
+        );
+    }
+
+    // The pairing, asserted BOTH ways. A dispatcher pointing at an agent that does not ship is a
+    // command that silently does nothing — the same failure mode as the `agents` key in
+    // `plugin.json`, which SUPPRESSES agent discovery rather than declaring it (measured on
+    // 2.1.233, and the reason the manifest deliberately omits it). And an agent no dispatcher
+    // names is a protocol with no way in: it is discovered, it is loadable, and nothing reaches it.
+    #[test]
+    fn every_dispatcher_names_a_shipped_agent_and_every_agent_has_a_dispatcher() {
+        let Some(commands) = plugin_markdown("plugins/human-fsm/commands") else {
+            return; // not checked out (nix build sandbox)
+        };
+        let manifest = read_json("plugins/human-fsm/.claude-plugin/plugin.json")
+            .expect("the plugin manifest is checked out beside its commands");
+        let shipped = shipped_agents(&manifest);
+
+        let mut dispatched = Vec::new();
+        for (name, text) in &commands {
+            if command_contract(text) == Ok(CommandKind::Dispatcher) {
+                dispatched.push(
+                    dispatched_agent(text, &shipped).unwrap_or_else(|why| panic!("{name}: {why}")),
+                );
+            }
+        }
+        dispatched.sort();
+        assert_eq!(
+            dispatched, shipped,
+            "every shipped agent needs exactly one dispatcher and every dispatcher needs a shipped \
+             agent — an agent nothing dispatches is unreachable, and two commands dispatching one \
+             agent is two doors onto one protocol with nothing saying which is current"
+        );
+
+        // The manifest must NOT declare an `agents` key. Measured on 2.1.233: present, it
+        // SUPPRESSES discovery of the directory rather than declaring it, so the four agents
+        // become unloadable and every dispatcher above becomes a command that does nothing — with
+        // no error anywhere, which is why this is asserted rather than left to be rediscovered.
+        assert!(
+            manifest.get("agents").is_none(),
+            "plugin.json declares `agents` — measured, that SUPPRESSES agent discovery, and these \
+             agents are found by living in agents/"
+        );
+    }
+
     fn command(front: &str, body: &str) -> String {
         format!("---\ndescription: d\nargument-hint: h\nallowed-tools: {front}\n---\n\n{body}")
     }
+
+    /// A synthetic AGENT, in the frontmatter the harness reads: `name`, `description`, and the
+    /// `tools` list it actually enforces.
+    fn agent(tools: &str, body: &str) -> String {
+        format!("---\nname: a\ndescription: d\ntools: {tools}\n---\n\n{body}")
+    }
+
+    /// The shipped-agent set for a fixture that does not dispatch. A synthetic command reaches this
+    /// argument only through [`CommandKind::Dispatcher`], and the dispatcher fixtures below name
+    /// their own set, so an empty one here says "this case is not about agents" rather than
+    /// standing in for one.
+    const NO_AGENTS: &[String] = &[];
 
     /// The expected kind for a command granting typed reads and no native tool beside them.
     fn typed_only(mcp: &[&str]) -> Result<CommandKind, String> {
         Ok(CommandKind::McpTools {
             mcp: mcp.iter().map(|t| (*t).to_string()).collect(),
             native: vec![],
+        })
+    }
+
+    /// The expected grant for an agent, spelled the way the file spells it.
+    fn agent_grant(name: &str, mcp: &[&str], native: &[&str]) -> Result<AgentGrant, String> {
+        Ok(AgentGrant {
+            name: name.to_string(),
+            mcp: mcp.iter().map(|t| (*t).to_string()).collect(),
+            native: native.iter().map(|t| (*t).to_string()).collect(),
         })
     }
 
@@ -65903,7 +71345,7 @@ mod marketplace_tests {
             "prose",
         );
         assert_eq!(
-            command_check(&good, &grantable),
+            command_check(&good, &grantable, NO_AGENTS),
             typed_only(&["mcp__plugin_human-fsm_fsm__next_ready"])
         );
         // A tool the profile does not serve.
@@ -65911,12 +71353,12 @@ mod marketplace_tests {
             &plugin_mcp_tool_name("human-fsm", "fsm", "next_ready_pr"),
             "prose",
         );
-        assert!(command_check(&unserved, &grantable)
+        assert!(command_check(&unserved, &grantable, NO_AGENTS)
             .unwrap_err()
             .contains("no server in the manifest serves"));
         // The right tool under the shape the name reads like — `mcp__<server>__<tool>`.
         let wrong_shape = command("mcp__fsm__next_ready", "prose");
-        assert!(command_check(&wrong_shape, &grantable)
+        assert!(command_check(&wrong_shape, &grantable, NO_AGENTS)
             .unwrap_err()
             .contains("no server in the manifest serves"));
         // A subcommand command is not resolved against the MCP surface at all.
@@ -65924,7 +71366,10 @@ mod marketplace_tests {
             "Bash(pr-review-report human-close:*)",
             "```\npr-review-report human-close a/b 1 n\n```",
         );
-        assert_eq!(command_check(&sub, &grantable), Ok(CommandKind::Subcommand));
+        assert_eq!(
+            command_check(&sub, &grantable, NO_AGENTS),
+            Ok(CommandKind::Subcommand)
+        );
     }
 
     // A fence's LANGUAGE TAG is markdown for a renderer, not a line the caller runs, so the
@@ -65942,7 +71387,8 @@ mod marketplace_tests {
             assert_eq!(
                 command_check(
                     &command(grant, &format!("{fence}\n{order}\n```")),
-                    &grantable
+                    &grantable,
+                    NO_AGENTS
                 ),
                 Ok(CommandKind::Subcommand),
                 "{fence} is a fence, not a transition"
@@ -65956,11 +71402,13 @@ mod marketplace_tests {
                 &format!("```text\n{order}\ngh pr edit 1 --add-label ai:needs-work\n```"),
             ),
             &grantable,
+            NO_AGENTS,
         )
         .unwrap_err();
         assert!(raw.contains("is not a transition of this binary"), "{raw}");
         // And a block whose only line IS the tag still runs nothing.
-        let empty = command_check(&command(grant, "```text\n```"), &grantable).unwrap_err();
+        let empty =
+            command_check(&command(grant, "```text\n```"), &grantable, NO_AGENTS).unwrap_err();
         assert!(
             empty.contains("names no pr-review-report transition"),
             "{empty}"
@@ -65978,17 +71426,29 @@ mod marketplace_tests {
         let ctx = plugin_mcp_tool_name("human-fsm", "fsm", "pr_context");
         let bogus = plugin_mcp_tool_name("human-fsm", "fsm", "pr_contexts");
         assert_eq!(
-            command_check(&command(&format!("{next}, {ctx}"), "prose"), &grantable),
+            command_check(
+                &command(&format!("{next}, {ctx}"), "prose"),
+                &grantable,
+                NO_AGENTS
+            ),
             typed_only(&[&next, &ctx])
         );
         // Real first, unserved second.
-        let err =
-            command_check(&command(&format!("{next}, {bogus}"), "prose"), &grantable).unwrap_err();
+        let err = command_check(
+            &command(&format!("{next}, {bogus}"), "prose"),
+            &grantable,
+            NO_AGENTS,
+        )
+        .unwrap_err();
         assert!(err.contains("pr_contexts"), "{err}");
         assert!(err.contains("no server in the manifest serves"), "{err}");
         // …and unserved first, real second, so the check is not merely reading the LAST one.
-        let err =
-            command_check(&command(&format!("{bogus}, {next}"), "prose"), &grantable).unwrap_err();
+        let err = command_check(
+            &command(&format!("{bogus}, {next}"), "prose"),
+            &grantable,
+            NO_AGENTS,
+        )
+        .unwrap_err();
         assert!(err.contains("pr_contexts"), "{err}");
     }
 
@@ -66019,7 +71479,8 @@ mod marketplace_tests {
         assert_eq!(
             command_check(
                 &command(&format!("{next}, Skill, Read"), "prose"),
-                &grantable
+                &grantable,
+                NO_AGENTS
             ),
             Ok(CommandKind::McpTools {
                 mcp: vec![next.clone()],
@@ -66061,9 +71522,12 @@ mod marketplace_tests {
                 format!("{next}, Bash, Skill, Read"),
                 "bare Bash, in the middle",
             ),
-            // A SUBAGENT is the fallback wearing another name: its tool set is not this command's,
-            // and the one thing it reliably holds is a shell.
+            // A SUBAGENT beside a typed read. #321 admitted a WHOLE grant of `Agent` naming an
+            // agent this plugin ships — and narrowed nothing here: the pair is still refused,
+            // because what an anonymous subagent holds is not this command's grant, and a command
+            // that both dispatches and reads has a contract describing neither half.
             (format!("{next}, Skill, Task"), "Task"),
+            (format!("{next}, Skill, Agent"), "Agent"),
             // Writes are not part of a read that precedes a ruling.
             (format!("{next}, Skill, Write"), "Write"),
             (format!("{next}, Skill, Edit"), "Edit"),
@@ -66129,14 +71593,269 @@ mod marketplace_tests {
         assert_eq!(MCP_COMMAND_NATIVE_TOOLS, &["Skill", "Read"]);
     }
 
-    // `/nr` is why the rule was relaxed both times, so the file that motivated it is pinned here
-    // rather than left to the generic shipped-command sweep: a later edit that drops `pr_context`,
-    // the checkout, its release or the audit lens back out leaves a command whose prose promises a
+    // #321, and the relaxation it is: a command whose WHOLE grant is `Agent` and whose body names
+    // an agent this plugin ships. #316 ruled the four reading gates into a fresh context, and this
+    // is the shape that satisfies it — so before this the branch implementing the human's own
+    // ruling was red, with a dispatcher falling into the shell bin and being refused for fencing
+    // no transition it was never supposed to have.
+    #[test]
+    fn a_dispatcher_is_a_whole_grant_of_agent_and_the_agent_it_names() {
+        let nr = plugin_agent_name("human-fsm", "nr");
+        let shipped = vec![nr.clone()];
+        let body = format!("Dispatch the `{nr}` agent and relay its report verbatim.");
+        assert_eq!(
+            command_contract(&command("Agent", &body)),
+            Ok(CommandKind::Dispatcher)
+        );
+        assert_eq!(
+            command_check(&command("Agent", &body), NO_AGENTS, &shipped),
+            Ok(CommandKind::Dispatcher),
+            "a dispatcher grants no typed read, so the MCP surface has nothing to say about it"
+        );
+        assert_eq!(dispatched_agent(&command("Agent", &body), &shipped), Ok(nr));
+        // The name is read from the BODY, which is what the reader executes. A `description` is
+        // what the loader LISTS, and a command whose only mention of its agent is in frontmatter
+        // has told the reader nothing.
+        let front_only = format!(
+            "---\ndescription: dispatches `{}`\nargument-hint: h\nallowed-tools: Agent\n---\n\nprose",
+            plugin_agent_name("human-fsm", "nr")
+        );
+        assert!(command_check(&front_only, NO_AGENTS, &shipped)
+            .unwrap_err()
+            .contains("names no agent this plugin ships"));
+    }
+
+    // The floor the relaxation must not fall through, and the reason `Agent` is admitted as a
+    // WHOLE grant rather than added to the native set: a subagent's grant is not this command's,
+    // so a dispatch beside a typed read is a read whose contract describes neither half. Refused
+    // in every order and against every spelling, exactly as `Bash` is.
+    #[test]
+    fn a_dispatch_grant_beside_anything_else_is_refused() {
+        let next = plugin_mcp_tool_name("human-fsm", "fsm", "next_ready");
+        for (front, why) in [
+            (format!("{next}, Agent"), "Agent after a typed read"),
+            (format!("Agent, {next}"), "Agent before one"),
+            (
+                format!("{next}, Skill, Read, Agent"),
+                "Agent beside the lens",
+            ),
+            ("Agent, Bash(gh pr view:*)".to_string(), "Agent and a shell"),
+            (format!("{next}, Task"), "Task, the other spelling"),
+            ("Agent, Task".to_string(), "both spellings"),
+        ] {
+            let err = command_contract(&command(&front, "prose")).unwrap_err();
+            assert!(err.contains("no guarantee left"), "{why}: {err}");
+        }
+        // `Task` ALONE is not a dispatcher either. Admission is by exact name for the same reason
+        // `Skill(audit)` is refused: measured on 2.1.233, a command declaring `allowed-tools: Task`
+        // invoked `Agent` when it dispatched, so `Task` pre-approves a name nothing runs under.
+        let err = command_contract(&command("Task", "Dispatch `human-fsm:nr`.")).unwrap_err();
+        assert!(
+            err.contains("the dispatch grant this harness binds"),
+            "{err}"
+        );
+        assert_eq!(COMMAND_DISPATCH_TOOL, "Agent");
+        assert_eq!(SUBAGENT_TOOLS, &["Agent", "Task"]);
+    }
+
+    // A dispatcher pointing at an agent that does not ship. The whole grant is `Agent`, so the
+    // agent IS the payload — and the harness reports a missing one as nothing at all, which is the
+    // identical silent failure a misspelled `mcp__*` grant produces one bin over.
+    #[test]
+    fn a_dispatcher_naming_an_agent_that_does_not_ship_is_refused() {
+        let shipped = vec![plugin_agent_name("human-fsm", "nr")];
+        for body in [
+            "Dispatch the `human-fsm:nope` agent.",
+            // The bare name, unqualified: names collide across plugins, which is why every one of
+            // these commands tells its reader the qualified spelling in its own closing line.
+            "Dispatch the `nr` agent.",
+            // A dispatcher that names nothing at all.
+            "Read the queue and rule on it.",
+        ] {
+            let err = command_check(&command("Agent", body), NO_AGENTS, &shipped).unwrap_err();
+            assert!(err.contains("names no agent this plugin ships"), "{err}");
+            assert!(err.contains("silently does nothing"), "{err}");
+        }
+        // Two shipped agents named in one body is not richer, it is unsaid: the command relays ONE
+        // report verbatim and this one has not said whose.
+        let both = vec![
+            plugin_agent_name("human-fsm", "nr"),
+            plugin_agent_name("human-fsm", "ncc"),
+        ];
+        let err = command_check(
+            &command("Agent", "Dispatch `human-fsm:nr`, then `human-fsm:ncc`."),
+            NO_AGENTS,
+            &both,
+        )
+        .unwrap_err();
+        assert!(err.contains("names 2 shipped agents"), "{err}");
+    }
+
+    // A dispatcher owes the no-shell obligation an MCP command owes, for a sharper reason: the
+    // protocol moved OUT of the file, so a fenced `gh` left behind is a line the DISPATCHING
+    // reader runs — in the very context the dispatch exists to keep out of the read.
+    #[test]
+    fn a_dispatcher_fences_no_shell_either() {
+        let body = "Dispatch `human-fsm:nr`.\n\n```\ngh pr view 1 --json headRefOid\n```";
+        let err = command_contract(&command("Agent", body)).unwrap_err();
+        assert!(err.contains("gh pr view"), "{err}");
+        assert!(err.contains("runs nothing of its own"), "{err}");
+        // A cross-reference to a sibling command stays legal, exactly as it is under an MCP grant.
+        assert_eq!(
+            command_contract(&command(
+                "Agent",
+                "Dispatch `human-fsm:ncc`; see ```\n/close-candidate\n```"
+            )),
+            Ok(CommandKind::Dispatcher)
+        );
+    }
+
+    // The agent side of #321: the same three bins over the file the typed grant MOVED to, and one
+    // refusal that has no counterpart on the command side.
+    #[test]
+    fn an_agent_holds_typed_reads_and_the_lens_and_nothing_else() {
+        let next = plugin_mcp_tool_name("human-fsm", "fsm", "next_ready");
+        assert_eq!(
+            agent_contract(&agent(&format!("{next}, Skill, Read"), "the protocol")),
+            agent_grant("a", &[&next], &["Skill", "Read"])
+        );
+        assert_eq!(
+            agent_contract(&agent(&next, "the protocol")),
+            agent_grant("a", &[&next], &[]),
+            "an agent that takes no lens is a decision, not a defect — /ncc's is one"
+        );
+        // `Bash` first of all, and every other shell grant with it.
+        for spelling in [
+            "Bash",
+            "Bash(gh pr view:*)",
+            "Write",
+            "Edit",
+            "Grep",
+            "Glob",
+        ] {
+            let err = agent_contract(&agent(&format!("{next}, {spelling}"), "p")).unwrap_err();
+            assert!(err.contains("no guarantee left"), "{spelling}: {err}");
+        }
+        // The lens with no subject, refused here for the reason it is refused on a command.
+        let err = agent_contract(&agent("Skill, Read", "p")).unwrap_err();
+        assert!(err.contains("no typed read beside it"), "{err}");
+        // The protocol moved here, so the fenced-shell rule moved with it.
+        let err = agent_contract(&agent(&next, "```\ngh pr diff 1 --repo o/r\n```")).unwrap_err();
+        assert!(err.contains("gh pr diff"), "{err}");
+        // Frontmatter the harness reads. `description` is how a dispatching model tells this agent
+        // from another; `name` is what it dispatches BY. Each is refused ABSENT and refused EMPTY,
+        // because a key with nothing after it is the shape a half-finished edit leaves behind.
+        for (front, key) in [
+            (
+                format!("---\ndescription: d\ntools: {next}\n---\n\np"),
+                "name:",
+            ),
+            (
+                format!("---\nname: a\ntools: {next}\n---\n\np"),
+                "description:",
+            ),
+            (
+                "---\nname: a\ndescription: d\n---\n\np".to_string(),
+                "tools:",
+            ),
+        ] {
+            let err = agent_contract(&front).unwrap_err();
+            assert!(
+                err.contains(&format!("has no {key}")),
+                "{key} is required, and ABSENT is not the same defect as empty: {err}"
+            );
+        }
+        for (front, key) in [
+            (
+                format!("---\nname:\ndescription: d\ntools: {next}\n---\n\np"),
+                "name:",
+            ),
+            (
+                format!("---\nname: a\ndescription:\ntools: {next}\n---\n\np"),
+                "description:",
+            ),
+        ] {
+            let err = agent_contract(&front).unwrap_err();
+            assert!(
+                err.contains(&format!("{key} is empty")),
+                "a key with nothing after it is its own defect, not an absent key: {err}"
+            );
+        }
+        assert!(agent_contract(&agent("", "p"))
+            .unwrap_err()
+            .contains("granted nothing"));
+        assert!(agent_contract("name: a\n")
+            .unwrap_err()
+            .contains("no frontmatter"));
+    }
+
+    // THE check that keeps the audit lens inline, and the reason the INLINE rule survives #316 at
+    // all. The rule was never about which conversation the reader lives in: it is that the reader
+    // which declares `pr:<number>` must be the reader which consumes the findings. An agent that
+    // could dispatch would hand the audit onward to somebody who declares a scope they never read
+    // — which is how `rain.deploy#21` was swept whole-repo, twelve findings with five bearing on
+    // the PR.
+    #[test]
+    fn an_agent_may_not_fan_the_read_out() {
+        let next = plugin_mcp_tool_name("human-fsm", "fsm", "next_ready");
+        for spelling in ["Agent", "Task"] {
+            for front in [
+                format!("{next}, Skill, Read, {spelling}"),
+                format!("{spelling}, {next}"),
+                spelling.to_string(),
+            ] {
+                let err = agent_contract(&agent(&front, "the protocol")).unwrap_err();
+                assert!(err.contains("fan the read out"), "{front}: {err}");
+                assert!(
+                    err.contains(AUDIT_SCOPE_PR),
+                    "the error has to say WHY — the scope declared and the findings read are one \
+                     reader's, or the declaration binds nothing: {err}"
+                );
+            }
+        }
+    }
+
+    // Every `mcp__*` name in an agent's `tools` is resolved against what the manifest serves, for
+    // the reason a command's grant is: a plausible-but-unserved name is a permitted tool that does
+    // not exist, and the harness reports it as nothing at all. This list is the one the harness
+    // ENFORCES, so a name missing from it is a call the protocol makes and cannot complete.
+    #[test]
+    fn every_typed_grant_an_agent_holds_is_resolved_against_the_manifest() {
+        let grantable = grantable_mcp_tools(&human_manifest()).unwrap();
+        let next = plugin_mcp_tool_name("human-fsm", "fsm", "next_ready");
+        let bogus = plugin_mcp_tool_name("human-fsm", "fsm", "next_ready_pr");
+        assert_eq!(
+            agent_check(&agent(&format!("{next}, Skill"), "p"), &grantable),
+            agent_grant("a", &[&next], &["Skill"])
+        );
+        // Real first, unserved second — the member a first-wins check would miss.
+        let err = agent_check(&agent(&format!("{next}, {bogus}"), "p"), &grantable).unwrap_err();
+        assert!(err.contains("no server in the manifest serves"), "{err}");
+        assert!(err.contains("next_ready_pr"), "{err}");
+        // The native grants are the harness's own, so no manifest serves them and they must not be
+        // resolved against the set — admitting them and then refusing them is the same defect.
+        assert!(agent_check(&agent(&format!("{next}, Skill, Read"), "p"), &grantable).is_ok());
+    }
+
+    // `/nr` is why the rule was relaxed every time, so the file that motivated it is pinned here
+    // rather than left to the generic shipped-agent sweep: a later edit that drops `pr_context`,
+    // the checkout, its release or the audit lens back out leaves a protocol whose prose promises a
     // read it has no tool to perform, and the sweep would still pass because the remainder is a
     // legal shape again.
+    //
+    // The grant is read from `agents/nr.md` because that is where it now BINDS. It moved out of
+    // `commands/nr.md` with the protocol (#316), and the move is the point: `allowed-tools` is a
+    // pre-approval the harness does not enforce, while an agent's `tools` list is enforced —
+    // measured on 2.1.233, an agent granted `Read` and told in as many words to run a `Bash` call
+    // reported it had no `Bash` to call.
+    //
+    // `human_rule` is the fifth and the only one that writes GitHub state. The agent rules rather
+    // than presenting whatever it can articulate against a PR, so dropping this leaves the same
+    // defect from the other side: prose that promises a send-back with no tool to make one, and a
+    // reader who reaches for `pr-review-report` through a shell instead.
     #[test]
-    fn nr_grants_the_two_reads_the_source_it_audits_and_the_lens() {
-        let Some(text) = repo_root_text("plugins/human-fsm/commands/nr.md") else {
+    fn nr_grants_the_two_reads_the_source_it_audits_the_lens_and_the_send_back() {
+        let Some(text) = repo_root_text("plugins/human-fsm/agents/nr.md") else {
             return; // not checked out (nix build sandbox)
         };
         let grantable = grantable_mcp_tools(
@@ -66144,18 +71863,20 @@ mod marketplace_tests {
         )
         .unwrap();
         assert_eq!(
-            command_check(&text, &grantable),
-            Ok(CommandKind::McpTools {
-                mcp: vec![
-                    plugin_mcp_tool_name("human-fsm", "fsm", "next_ready"),
-                    plugin_mcp_tool_name("human-fsm", "fsm", "pr_context"),
-                    plugin_mcp_tool_name("human-fsm", "fsm", "pr_checkout"),
-                    plugin_mcp_tool_name("human-fsm", "fsm", "clone_release"),
+            agent_check(&text, &grantable),
+            agent_grant(
+                "nr",
+                &[
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "next_ready"),
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "pr_context"),
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "pr_checkout"),
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "clone_release"),
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "human_rule"),
                 ],
-                native: vec!["Skill".to_string(), "Read".to_string()],
-            }),
-            "/nr reads the queue row, the PR behind it, and the SOURCE the audit skill needs — and \
-             releases the checkout it took"
+                &["Skill", "Read"]
+            ),
+            "/nr reads the queue row, the PR behind it, and the SOURCE the audit skill needs, \
+             releases the checkout it took, and sends back what it can articulate against"
         );
     }
 
@@ -66167,7 +71888,7 @@ mod marketplace_tests {
     // read is a legal shape — so it is asserted here, where it has to be argued to change.
     #[test]
     fn ncc_grants_the_flag_queue_the_flag_itself_and_the_pr_its_reason_cites() {
-        let Some(text) = repo_root_text("plugins/human-fsm/commands/ncc.md") else {
+        let Some(text) = repo_root_text("plugins/human-fsm/agents/ncc.md") else {
             return; // not checked out (nix build sandbox)
         };
         let grantable = grantable_mcp_tools(
@@ -66175,27 +71896,37 @@ mod marketplace_tests {
         )
         .unwrap();
         assert_eq!(
-            command_check(&text, &grantable),
-            typed_only(&[
-                &plugin_mcp_tool_name("human-fsm", "fsm", "next_close_candidate"),
-                &plugin_mcp_tool_name("human-fsm", "fsm", "close_candidate_context"),
-                // The instrument that falsifies an "already fixed" claim: the PR the reason names,
-                // read against the path the ISSUE named. raindex#1348 is the near-miss it is for.
-                &plugin_mcp_tool_name("human-fsm", "fsm", "pr_context"),
-            ]),
+            agent_check(&text, &grantable),
+            agent_grant(
+                "ncc",
+                &[
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "next_close_candidate"),
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "close_candidate_context"),
+                    // The instrument that falsifies an "already fixed" claim: the PR the reason
+                    // names, read against the path the ISSUE named. raindex#1348 is the near-miss
+                    // it is for.
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "pr_context"),
+                ],
+                &[]
+            ),
             "/ncc reads the flag queue, the flag it heads, and the PR its reason cites — and takes \
              no audit lens, on purpose"
         );
     }
 
     // `/ndd` is the third sibling (#220), and its grant is pinned for the reason `/nr`'s is: a
-    // later edit that drops the checkout, its release, or the lens back out leaves a command whose
+    // later edit that drops the checkout, its release, or the lens back out leaves a protocol whose
     // prose promises a read it has no tool to perform, and the generic sweep would still pass
     // because the remainder is a legal shape again. The lens rides here where `/ncc` refuses it,
     // because a design question is a claim ABOUT CODE on a PR — `pr:<number>` names its subject.
+    //
+    // `human_rule` is the fifth and the only one that writes GitHub state. Two of this gate's
+    // three findings — a question already answered, a question misrouted — are answers it rules
+    // itself, so dropping it leaves prose that promises a send-back with no tool to make one, and
+    // a reader who reaches for `pr-review-report` through a shell instead.
     #[test]
-    fn ndd_grants_the_queue_the_pr_the_source_and_the_lens() {
-        let Some(text) = repo_root_text("plugins/human-fsm/commands/ndd.md") else {
+    fn ndd_grants_the_queue_the_pr_the_source_the_lens_and_the_send_back() {
+        let Some(text) = repo_root_text("plugins/human-fsm/agents/ndd.md") else {
             return; // not checked out (nix build sandbox)
         };
         let grantable = grantable_mcp_tools(
@@ -66203,18 +71934,53 @@ mod marketplace_tests {
         )
         .unwrap();
         assert_eq!(
-            command_check(&text, &grantable),
-            Ok(CommandKind::McpTools {
-                mcp: vec![
-                    plugin_mcp_tool_name("human-fsm", "fsm", "next_design"),
-                    plugin_mcp_tool_name("human-fsm", "fsm", "pr_context"),
-                    plugin_mcp_tool_name("human-fsm", "fsm", "pr_checkout"),
-                    plugin_mcp_tool_name("human-fsm", "fsm", "clone_release"),
+            agent_check(&text, &grantable),
+            agent_grant(
+                "ndd",
+                &[
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "next_design"),
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "pr_context"),
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "pr_checkout"),
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "clone_release"),
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "human_rule"),
                 ],
-                native: vec!["Skill".to_string(), "Read".to_string()],
-            }),
+                &["Skill", "Read"]
+            ),
             "/ndd reads the design queue, the PR behind its head, and the SOURCE the question \
-             turns on — and releases the checkout it took"
+             turns on, releases the checkout it took, and rules the answers it can articulate"
+        );
+    }
+
+    // `/nm` is the fourth, and it had no pinned grant at all while its protocol lived in a command
+    // — the one of the four the generic sweep was the only thing holding. Its subject is a PR whose
+    // RECORD is wrong, so it takes the same five reads `/ndd` does: the leak row, the PR behind it,
+    // the source the diagnosis turns on, the release of what it took, and the send-back it rules.
+    // Dropping any of them leaves a diagnosis made from the trusted note alone, which is precisely
+    // the unauditable input this queue exists to find.
+    #[test]
+    fn nm_grants_the_leak_row_the_pr_the_source_the_lens_and_the_send_back() {
+        let Some(text) = repo_root_text("plugins/human-fsm/agents/nm.md") else {
+            return; // not checked out (nix build sandbox)
+        };
+        let grantable = grantable_mcp_tools(
+            &read_json("plugins/human-fsm/.claude-plugin/plugin.json").expect("the manifest"),
+        )
+        .unwrap();
+        assert_eq!(
+            agent_check(&text, &grantable),
+            agent_grant(
+                "nm",
+                &[
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "next_leak"),
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "pr_context"),
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "pr_checkout"),
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "clone_release"),
+                    &plugin_mcp_tool_name("human-fsm", "fsm", "human_rule"),
+                ],
+                &["Skill", "Read"]
+            ),
+            "/nm reads the leak row, the PR behind it, and the SOURCE its diagnosis turns on, \
+             releases the checkout it took, and files the send-back it can locate"
         );
     }
 
@@ -66223,9 +71989,14 @@ mod marketplace_tests {
     // `Skill audit` loaded a document whose first rule is "whole-repo snapshot, never a diff". The
     // fix is a declared literal, and three things about it are pinned here: it is IN the invocation,
     // it is the PR one, and the file states the closed vocabulary it comes from.
+    //
+    // Read from `agents/nr.md`, where the invocation now lives (#316). The scope declaration has to
+    // sit in the file that HOLDS the `Skill` grant, because the reader that declares it is the
+    // reader that consumes the findings — which is the same rule `an_agent_may_not_fan_the_read_out`
+    // enforces from the other end.
     #[test]
     fn nr_declares_the_lens_scope_as_a_value_from_the_skills_own_vocabulary() {
-        let Some(text) = repo_root_text("plugins/human-fsm/commands/nr.md") else {
+        let Some(text) = repo_root_text("plugins/human-fsm/agents/nr.md") else {
             return; // not checked out (nix build sandbox)
         };
         // Asserted on the INVOCATION bullet, not on the file. The literal appearing somewhere in a
@@ -66263,8 +72034,8 @@ mod marketplace_tests {
         // spelling gets invented in good faith.
         let Some((_, after)) = text.split_once("**A scope is one of three literals") else {
             panic!(
-                "nr.md states no scope VOCABULARY — a command told to declare a literal, and not \
-                 told which literals exist, is one invented spelling away from free text again"
+                "agents/nr.md states no scope VOCABULARY — a reader told to declare a literal, and \
+                 not told which literals exist, is one invented spelling away from free text again"
             )
         };
         let vocabulary = after.split("\n- ").next().unwrap_or(after);
