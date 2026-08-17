@@ -1027,8 +1027,14 @@
         ]
       },
       "un-vetted": {
-        "count": 77,
+        "count": 76,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.sol.codegen",
+            "number": 138,
+            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/138",
+            "title": "Strip the `script/Build.sol` worked example, leave the library lean"
+          },
           {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 327,
@@ -1208,18 +1214,6 @@
             "number": 315,
             "url": "https://github.com/rainlanguage/rainix/pull/315",
             "title": "ci: currency check sees files regeneration wrote but nothing committed"
-          },
-          {
-            "repo": "rainlanguage/rain.sol.codegen",
-            "number": 105,
-            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/105",
-            "title": "Deduplicate LibHexStringExternal and NonConformingVm construction in the bytesToHex suite"
-          },
-          {
-            "repo": "rainlanguage/rain.sol.codegen",
-            "number": 104,
-            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/104",
-            "title": "Caret pragma on `test/lib/LibCodeGenSlow.sol`"
           },
           {
             "repo": "rainlanguage/rain.sol.codegen",
@@ -6447,7 +6441,7 @@
     }
   ],
   "counts": {
-    "unvetted": 77,
+    "unvetted": 76,
     "blockedOn": 23,
     "ready": 0,
     "needsWork": 110,
@@ -6458,18 +6452,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 2,
     "leaks": 1,
-    "totalProducerPrs": 215,
+    "totalProducerPrs": 214,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 670,
     "designPresentable": 3,
     "designNoQuestion": 0,
-    "openIssues": 880
+    "openIssues": 878
   },
   "ages": {
     "openIssues": {
-      "meanDays": 282.5,
-      "medianDays": 103.7,
-      "oldestDays": 1666.2
+      "meanDays": 283.1,
+      "medianDays": 103.8,
+      "oldestDays": 1666.3
     }
   }
 }
