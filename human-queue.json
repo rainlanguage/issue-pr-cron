@@ -1045,14 +1045,8 @@
         ]
       },
       "un-vetted": {
-        "count": 43,
+        "count": 42,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.sol.codegen",
-            "number": 142,
-            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/142",
-            "title": "Remove only the link at a generated path, never what it resolves to"
-          },
           {
             "repo": "rainlanguage/rain.solmem",
             "number": 121,
@@ -2275,18 +2269,6 @@
       "number": 114,
       "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/114",
       "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix would break soldeer publishing"
-    },
-    {
-      "repo": "rainlanguage/rain.sol.codegen",
-      "number": 83,
-      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/83",
-      "title": "Dead fs_permissions grant: foundry.toml grants read on foundry.toml and nothing reads it"
-    },
-    {
-      "repo": "rainlanguage/rain.sol.codegen",
-      "number": 76,
-      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/76",
-      "title": "The published package is never compiled as published, and ships a file whose import it excludes"
     },
     {
       "repo": "rainlanguage/claude-audit-skills",
@@ -6259,7 +6241,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 43,
+    "unvetted": 42,
     "blockedOn": 23,
     "ready": 3,
     "needsWork": 108,
@@ -6270,17 +6252,17 @@
     "closeCandidateUnvetted": 6,
     "closeCandidateUpheld": 2,
     "leaks": 0,
-    "totalProducerPrs": 184,
+    "totalProducerPrs": 183,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 664,
+    "uncoveredIssues": 662,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 847
+    "openIssues": 844
   },
   "ages": {
     "openIssues": {
-      "meanDays": 293.7,
-      "medianDays": 107.2,
+      "meanDays": 294.8,
+      "medianDays": 109.8,
       "oldestDays": 1666.6
     }
   }
