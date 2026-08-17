@@ -180,6 +180,12 @@
         "title": "chore(deps): bump OpenZeppelin 5.6.1 → 5.7.0 — only the wrapped vault's bytecode moves"
       },
       {
+        "repo": "rainlanguage/issue-pr-cron",
+        "number": 276,
+        "url": "https://github.com/rainlanguage/issue-pr-cron/pull/276",
+        "title": "rework(vetter): resume a dead auditor before redispatching, and name the path taken"
+      },
+      {
         "repo": "rainlanguage/rain.flare",
         "number": 161,
         "url": "https://github.com/rainlanguage/rain.flare/pull/161",
@@ -578,12 +584,6 @@
         "title": "docs(natspec): add NatSpec to interfaces and op libraries"
       },
       {
-        "repo": "rainlanguage/rain.erc4626.words",
-        "number": 212,
-        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/212",
-        "title": "docs(natspec): add @return, rounding, and decimal-precision docs to op libs and SubParser"
-      },
-      {
         "repo": "rainlanguage/rain.vats",
         "number": 323,
         "url": "https://github.com/rainlanguage/rain.vats/pull/323",
@@ -874,6 +874,12 @@
         "title": "test(extern): assert sub-parser honors overridden extern() address"
       },
       {
+        "repo": "rainlanguage/rain.erc4626.words",
+        "number": 212,
+        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/212",
+        "title": "docs(natspec): add @return, rounding, and decimal-precision docs to op libs and SubParser"
+      },
+      {
         "repo": "rainlanguage/rain.flare",
         "number": 125,
         "url": "https://github.com/rainlanguage/rain.flare/pull/125",
@@ -1027,7 +1033,7 @@
         ]
       },
       "un-vetted": {
-        "count": 42,
+        "count": 41,
         "prs": [
           {
             "repo": "rainlanguage/rain.strategies",
@@ -1234,12 +1240,6 @@
             "title": "fix(ci): grant Package Release the token permissions its callee needs"
           },
           {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 276,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/276",
-            "title": "rework(vetter): resume a dead auditor before redispatching, and name the path taken"
-          },
-          {
             "repo": "rainlanguage/rain.erc4626.words",
             "number": 259,
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/259",
@@ -1286,7 +1286,7 @@
     },
     "vetter-verdicts": {
       "ai:design": {
-        "count": 5,
+        "count": 6,
         "prs": [
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -1317,6 +1317,13 @@
             "bucket": "presentable"
           },
           {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 276,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/276",
+            "title": "rework(vetter): resume a dead auditor before redispatching, and name the path taken",
+            "bucket": "presentable"
+          },
+          {
             "repo": "rainlanguage/rain.flare",
             "number": 161,
             "url": "https://github.com/rainlanguage/rain.flare/pull/161",
@@ -1328,12 +1335,12 @@
           "draft": 0,
           "fetchErrors": 0,
           "noQuestion": 0,
-          "presentable": 5,
+          "presentable": 6,
           "unaddressable": 0
         }
       },
       "ai:needs-work": {
-        "count": 108,
+        "count": 107,
         "prs": [
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -1726,12 +1733,6 @@
             "title": "docs(natspec): add NatSpec to interfaces and op libraries"
           },
           {
-            "repo": "rainlanguage/rain.erc4626.words",
-            "number": 212,
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/212",
-            "title": "docs(natspec): add @return, rounding, and decimal-precision docs to op libs and SubParser"
-          },
-          {
             "repo": "rainlanguage/rain.vats",
             "number": 323,
             "url": "https://github.com/rainlanguage/rain.vats/pull/323",
@@ -1982,6 +1983,17 @@
             "number": 3,
             "url": "https://github.com/rainlanguage/rain.subgraph.docker/pull/3",
             "title": "2023 12 23 anvil"
+          }
+        ]
+      },
+      "ai:ready": {
+        "count": 1,
+        "prs": [
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 212,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/212",
+            "title": "docs(natspec): add @return, rounding, and decimal-precision docs to op libs and SubParser"
           }
         ]
       }
@@ -6398,12 +6410,12 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 42,
+    "unvetted": 41,
     "blockedOn": 23,
-    "ready": 0,
-    "needsWork": 108,
+    "ready": 1,
+    "needsWork": 107,
     "relink": 0,
-    "design": 5,
+    "design": 6,
     "blockedInfra": 0,
     "closeCandidateIssues": 6,
     "closeCandidateUnvetted": 6,
@@ -6412,15 +6424,15 @@
     "totalProducerPrs": 180,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 695,
-    "designPresentable": 5,
+    "designPresentable": 6,
     "designNoQuestion": 0,
     "openIssues": 874
   },
   "ages": {
     "openIssues": {
       "meanDays": 285.1,
-      "medianDays": 104.5,
-      "oldestDays": 1667.0
+      "medianDays": 104.6,
+      "oldestDays": 1667.1
     }
   }
 }
