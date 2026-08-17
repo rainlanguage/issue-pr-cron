@@ -330,12 +330,55 @@ mkdir -p "$WORK_DIR"
 export WORK_DIR
 export INSTALL_DIR="$DIR"
 
+# --- the RUN BUDGET the prompt states (#288) ---------------------------------------------------
+# ONE definition — `RUN_ITEM_CAP` in pr-review-report — and it is the same constant the state-loads'
+# `limit` range is computed from, so the budget the vetter is TOLD to spend and the page its own
+# tool surface will hand it cannot disagree. They disagree silently when they can: `unvetted` and
+# `unvetted_close_candidates` REFUSE an out-of-range `limit` rather than clamping it, so a vetter
+# told to spend more items than the page can carry does not error, it just quietly does less.
+#
+# A value that is not a positive integer ABORTS: `{{ITEM_CAP}}` rendering empty leaves the vetter a
+# RUN BUDGET sentence with no number in it, which nothing rejects and every run resolves its own
+# way — the same silent-degradation class as the empty auditor brief below.
+#
+# "Positive" is decided by finding a NONZERO DIGIT, not by excluding the string `0`: `00` is all
+# digits and is not `0`, so an exclusion list lets it through and renders "at most 00 WORK ITEMS",
+# which is the zero budget this guard exists to refuse wearing two characters instead of one.
+ITEM_CAP="$(pr-review-report item-cap 2>/dev/null)"
+case "$ITEM_CAP" in
+  '' | *[!0-9]*)
+    echo "$(date -u +%FT%TZ) review run ABORT: \`pr-review-report item-cap\` gave no usable run budget (got '$ITEM_CAP') — the prompt's {{ITEM_CAP}} would render empty" | _log
+    exit 1
+    ;;
+  *[1-9]*) ;;
+  *)
+    echo "$(date -u +%FT%TZ) review run ABORT: \`pr-review-report item-cap\` gave a ZERO run budget (got '$ITEM_CAP') — a run told to spend no items must not start" | _log
+    exit 1
+    ;;
+esac
+
 # substitute deployment values into the prompt template
 PROMPT="$(sed -e "s#{{ASSIGNEE}}#$PR_ASSIGNEE#g" \
               -e "s#{{OWNER_FLAGS}}#$OWNER_FLAGS#g" \
               -e "s#{{ORGS}}#$ORGS_HUMAN#g" \
               -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
+              -e "s#{{ITEM_CAP}}#$ITEM_CAP#g" \
               "$PROMPT_FILE")"
+
+# --- the NON-INTERACTIVE pragma (claude-config hooks/noninteractive.py) ------------------------
+# Same reason as the producer's: this is `claude --print`, nothing re-wakes it when a backgrounded
+# command finishes (#249), and the two `background-*` PreToolUse hooks would rewrite every long
+# build and every wait into exactly that. Stamped into the CONTEXT, because the hook is handed a
+# `transcript_path` and reads it, and into BOTH the main prompt and the auditor brief so it is
+# present whichever trace a dispatched agent's `transcript_path` names.
+#
+# The vetter builds nothing itself (it is read-only on the filesystem), so the build half of this
+# is the producer's problem -- but a WAIT is not a build, and the poll-loop hook rewrites `sleep`,
+# `until ... do` and `tail -f` for any caller.
+NONINTERACTIVE_PRAGMA="CLAUDE-PRAGMA-NONINTERACTIVE-6b1f9d4e"
+PROMPT="$PROMPT
+
+$NONINTERACTIVE_PRAGMA"
 
 # --- the STANDING BRIEF every dispatched AUDITOR starts with (#257) ----------------------------
 # The vetter's audit lens is deep source reading, and until now every byte of it landed in the ONE
@@ -370,7 +413,8 @@ if ! grep -q '[^[:space:]]' "$DIR/review-auditor-prompt.txt" 2>/dev/null; then
   exit 1
 fi
 AUDITOR_JSON="$(jq -nc --rawfile brief "$DIR/review-auditor-prompt.txt" \
-  '{"pr-auditor":{"description":"Vetter auditor: runs the audit lens over ONE PR and reports findings, recording nothing.","prompt":$brief,"tools":["Read","Glob","Grep","Skill","ToolSearch","mcp__fsm__pr_checkout"]}}')"
+  --arg pragma "$NONINTERACTIVE_PRAGMA" \
+  '{"pr-auditor":{"description":"Vetter auditor: runs the audit lens over ONE PR and reports findings, recording nothing.","prompt":($brief + "\n\n" + $pragma),"tools":["Read","Glob","Grep","Skill","ToolSearch","mcp__fsm__pr_checkout"]}}')"
 if [ -z "$AUDITOR_JSON" ]; then
   echo "$(date -u +%FT%TZ) review run ABORT: could not build the auditor brief from review-auditor-prompt.txt" | _log
   exit 1

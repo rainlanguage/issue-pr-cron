@@ -343,6 +343,22 @@ only `Read` still ran a `Bash` call with no permission denial — so what the
 contract enforces is that the declaration and the command's own prose agree, and
 that no shell line is fenced anywhere in the body.
 
+**Where `Task` was refused, and what #316 changed under it.** The refusal above
+had a stated reason — "a subagent's tool set is not this command's, so a spawned
+agent holding `Bash` is the shell fallback wearing another name" — and that
+reason is about an ANONYMOUS subagent, not about dispatch. It stops being true
+for an agent this plugin SHIPS beside the command: its tool list is a checked-in
+artefact under the same review, and, unlike `allowed-tools`, the harness
+actually enforces it (measured on 2.1.233: an agent given `tools: Read` and told
+in as many words to run `Bash` reported one tool and no `Bash` to call). #316
+ruled the four reading gates into a fresh context for a correctness reason —
+inline execution inherited the conversation, so a contaminated read and an
+independent one produced the same report — and the shape that satisfies it is a
+command granting `Agent` alone that dispatches a shipped agent holding the typed
+grant. `plugins/human-fsm/` ships that shape now; `command_contract` does not
+model it yet, so five `marketplace_tests` fail on it — see the landing note in
+that plugin's README for the exact change owed.
+
 **Why a plugin rather than files with an install step.** The org already
 distributes Claude Code assets this way — `claude-audit-skills`,
 `adversarial-mutation-test` and `rain-org-health` each publish a
@@ -579,6 +595,50 @@ verdict is not "next" at all — the queue's vetted-at-head gate withholds it, a
 `counts.unvetted` says so, because returning a verdict that no longer describes
 the code is worse than returning nothing.
 
+**The whole enumeration is ONE `gh api graphql` (#314).** It used to be a
+fan-out — one `gh search prs`, then a `gh pr view` plus a review-threads query
+per candidate over an 8-worker pool, plus the org-wide archived-repos walk — and
+it measured **41–56s** of dead time before anything reached the human. The
+concurrency was making it worse, not better: 8 concurrent full-field
+`gh pr view` took **19.1s** wall against 3.0s for one, because a burst from one
+token draws the secondary limit and `comments` is a heavy field. A single
+`search(type:ISSUE)` selection set returns every field the gates read, for 4 of
+5000 rate-limit points and 40,200 of the 500,000 node ceiling. Measured on the
+live queue: **20 subprocesses / 54.1s → 1 / 5.0s**, byte-identical `queue`
+output.
+
+What that buys has to be paid for in two places, because a batch answers with
+**windows** where a per-PR call answered with everything:
+
+- **`comments(last:100)` is the tail, not the set.** A PR with more comments
+  after its last `ai:vetter` comment than the window holds would lose its
+  verdict and read as un-vetted — a presentable PR silently dropped out of the
+  human's queue. So the truncation case is named: more comments than returned
+  AND no trusted vetter comment inside the window falls back to the per-PR
+  `gh pr view`. A truncated window that still holds a vetter comment holds the
+  LAST one, so it needs no fetch.
+- **`reviewThreads(first:100)` is the same shape, but only half of it is a
+  hazard.** A non-zero count inside the window is decisive — the PR is the
+  producer's thread work whatever the later pages hold. Only "all resolved so
+  far, with more pages" is unknown, and only a verified zero reaches a human, so
+  that one case falls back to the paginated walk.
+
+And **`mergeable` is computed lazily by GitHub**: the ask is what schedules the
+computation, so a COLD batch ask answers `UNKNOWN` where a per-PR view GitHub
+had already warmed answers `MERGEABLE`. `UNKNOWN` is bucketed as
+not-presentable, so taking a cold answer at face value shortens the human's
+queue. Rows whose bucket actually turns on `mergeable` (green, not already
+approved) are re-asked — twice at most, and never a row a re-ask could not move
+— and a row that still will not settle is left `UNKNOWN`: fail-closed is the
+existing contract for an unconfirmed merge and this does not relax it.
+
+`repository{isArchived}` rides on the same query, so the #206 withholding no
+longer costs the org-wide `archived_repos()` walk on this path (the flag, leak
+and design enumerations still take theirs from it — their hits are not all PRs
+of this shape). The guard is unchanged, including its refusal: an unreadable
+archived flag is `Malformed` and aborts, rather than collapsing to "not
+archived" and putting a frozen row back at the head of the queue.
+
 Three fields are worth their own note:
 
 - **CodeRabbit coverage is a typed verdict, not a check state.** Only a commit
@@ -781,6 +841,14 @@ question from the classifier is the `cc_gate` precedent one lane over: a
 `repo_root_tests` pin requires the enumeration to select through
 `classify_lane`, so the tool's definition and its population cannot be two
 facts.
+
+**A body repair is not a hand-off.** `repair-qa-block` and `weaken-closes`
+rewrite body text and move no state, so the note each posts is a RECEIPT:
+`leak_reason` walks past it to whatever marker stands behind. An unlabelled PR a
+repair touched is left un-vetted, which the vetter's own population — every open
+producer PR, unfiltered by label — reaches. The receipt is built by the single
+writer both repairs share (`write_repaired_body`, from a `BodyRepair` variant),
+so the marker the walk skips and the marker actually posted are one fact.
 
 **A deleted state is two different cases, and only one of them leaks.** A
 deleted `ai:*` label lands its PR in `un-vetted`: the vetter absorbs it and the
@@ -1075,12 +1143,15 @@ than truncate.
 ### Every tool result is bounded, and going over is the tool's error
 
 A state-load is a **page**, not a dump. `unvetted` and
-`unvetted_close_candidates` return at most `limit` rows (default 10, max 25)
-with the whole-queue `counts` alongside and `more` naming what the page left
-behind; the vetter re-calls for the next page, and because each `record_verdict`
-removes its subject from the queue, paging converges without an offset argument.
-The page size is what makes the bound structural — the payload no longer grows
-with the number of open PRs.
+`unvetted_close_candidates` return at most `limit` rows — bounded by
+`STATE_LOAD_PAGE_RANGE`, which is computed from `RUN_ITEM_CAP` and so is the run
+budget itself (#288) — with the whole-queue `counts` alongside and `more` naming
+what the page left behind. The page is an **allowance, not a window**: `more` is
+the NEXT run's work, and the vetter does not re-call for a second page, because
+each `record_verdict` removes its subject from the queue and the next run's
+state-load starts where this one stopped. The page size is what makes the bound
+structural — the payload no longer grows with the number of open PRs, and an
+out-of-range `limit` is REFUSED rather than clamped.
 
 Every result is then checked against **one byte budget, the same for every
 tool** (36,000 bytes), and a result over budget is returned as a **tool error
@@ -1785,6 +1856,60 @@ Three absences, all deliberate:
 The `createdAt` comes from the field list of the coverage computation's existing
 `gh search issues`, so the block is arithmetic on an already-retrieved payload,
 never a per-issue fetch.
+
+### What actually LANDED: `landed-history.jsonl`
+
+The rain-org-health pipeline page charts **tokens per landed item**, and
+`metrics/runs.jsonl` carries only the numerator: a run row records what a run
+COST, never what later merged. This file is the denominator — one line per
+landed unit of pipeline work, append-only beside `human-queue-history.jsonl`:
+
+```json
+{
+  "ts": "2026-08-11T10:03:22Z",
+  "observedAt": "2026-08-11T11:00:04Z",
+  "kind": "pr",
+  "repo": "rainlanguage/rain.flare",
+  "number": 170
+}
+```
+
+`ts` is GitHub's own `mergedAt`/`closedAt` — the true landing time, and what a
+consumer windows on; `observedAt` is when the row was RECORDED — the refresh
+tick for a live append, the run itself for a backfill/heal — so it is never
+earlier than `ts`: an item can leave the view open and merge later, and only the
+run that verified the landing can claim to have observed it. A row is emitted by
+`landed-history-lines`, which diffs the FSM-tracked item sets of two consecutive
+`human-queue.json` snapshots and verifies each VANISHED item's terminal state
+against GitHub:
+
+- **`kind: "pr"`** — a tracked PR that actually merged.
+- **`kind: "issue"`** — a tracked issue closed by **no** merged PR: the upheld
+  close-candidate path. An issue a merged PR closed is that PR's unit of work —
+  one landing, one row, never two.
+- **No row** — everything else. A needs-work send-back, a de-flag, a PR closed
+  unmerged, an archived repo's PR: leaving the queue is not landing.
+
+The tracked population is every subject ref a snapshot lists **except
+`uncoveredIssues`** — the backlog the pipeline has not worked yet, whose
+departures land no pipeline work. The extractor is shape-driven (any object
+carrying `repo` + `number` + a `/pull/`-or-`/issues/` url), because the
+snapshot's key set has changed five times in its git history and the backfill
+replays all of it.
+
+`refresh-human-queue.sh` appends on every changed-snapshot tick (previous = the
+snapshot at HEAD, diffed **before** the tick's own commit moves it) and
+publishes the file alongside the snapshot. `backfill-landed-history.sh` seeded
+it from the snapshot's full git history and is also the HEALER: `--existing`
+skips every `(kind, repo, number)` already recorded, so a rerun re-asks only the
+gaps a live tick's API failure left. The one blindness neither can heal: an item
+that enters and leaves entirely between two snapshots is never observed —
+absence, not a zero.
+
+This feed and [`work-tokens`](#tokens-to-land-work--work-tokens) answer the same
+question at different scopes: `work-tokens` joins one run's spend to the typed
+items that run recorded; this file is the org-wide landed series a dashboard can
+fetch raw and window against `metrics/runs.jsonl` spend.
 
 ### Opening a PR is a transition: `open_pr`
 
@@ -2880,6 +3005,45 @@ uses `{{WORK_DIR}}` / `{{SCRATCH_DIR}}` / `{{INSTALL_DIR}}` / `{{ASSIGNEE}}` /
 `{{OWNER_FLAGS}}` / `{{ORGS}}` placeholders that the runner substitutes at run
 time.
 
+One placeholder is **not** deployment-specific: `{{ITEM_CAP}}`, in both prompts,
+is the per-run work-item cap, and the runners fill it from
+`pr-review-report item-cap` — i.e. from `RUN_ITEM_CAP`, the single constant that
+`STATE_LOAD_PAGE_DEFAULT` and `STATE_LOAD_PAGE_RANGE` are also computed from
+(#288). It is a placeholder rather than a number in the prose because the cap is
+a RISK bound the design intends to move, the prompts state it two dozen times,
+and several of those statements are spelled as English words that a sweep for
+the digit does not find. A run whose budget cannot be resolved to a positive
+integer ABORTS rather than rendering a RUN BUDGET sentence with no number in it.
+
+### Timing the `gh` calls — `PRR_GH_TIMING`
+
+Set `PRR_GH_TIMING` to anything but empty or `0` and every `gh` the binary runs
+is timed. Unset, nothing is emitted and the run is unchanged, so it is safe on
+the shipped binary.
+
+Everything goes to **stderr**, never stdout: on `pr-review-report mcp` stdout is
+the JSON-RPC stream and a line there is a protocol violation.
+
+```
+gh-timing: 1306ms pr view 3 rainlanguage/rain.subgraph.docker
+gh-timing: unvetted: 359 calls, 278980ms in gh
+gh-timing: unvetted: slowest 6052ms search prs
+```
+
+A call line carries the child's wall time and enough argv to attribute it — the
+subcommand words plus the slug, api path or graphql operands, never the `--json`
+field list. It prints AS THE CALL LANDS, so a run that is killed still leaves
+every call it made on the record and loses only the summary.
+
+A summary closes each span and names its slowest three. The span is one MCP TOOL
+CALL, because that is the unit a client waits on and times out; for a CLI run it
+is the subcommand.
+
+Every figure is ONE child process's wall time, so a rate-limit retry shows up as
+a second line and its backoff sleep sits between the two rather than inside
+either. Time the binary spends on anything other than `gh` is the difference
+between the summary total and the run's own duration.
+
 ### The producer's scratch dir
 
 Each producer run gets `$WORK_DIR/scratch/<run-id>`, created before the model
@@ -3228,6 +3392,88 @@ own `modelUsage`/`costUSD` (sonnet-4-6 and opus-4-8 both fit to <0.1% error),
 the three exact fields account for a **median 72%** of a run's spend, range
 55–91% across the 36 model-runs where the rate is solvable. Cache-read alone is
 the term that runs away — the $37.02 run in #97 read 26.4M cached tokens.
+
+### What one `/nr` run spends, by phase — `nr-profile`
+
+`pr-review-report nr-profile <session-transcript.jsonl> [--run N] [--json]`.
+
+[#315](https://github.com/rainlanguage/issue-pr-cron/issues/315) decomposed ONE
+`/nr` run by hand, off a session transcript, and that decomposition is the
+evidence under everything else in the issue — the audit skill at 41% of the
+wall, the independent read the gate exists for at 22% of the output. The same
+issue's finding 3 is that 2 of the 4 runs that day did not follow the protocol
+at all. A hand-read of one transcript is not a series, so the issue orders
+instrumentation FIRST and defers the orientation digest until it has real
+numbers. This is that instrument.
+
+It reads a transcript after the fact rather than being something `/nr` emits
+mid-run, and both halves of that are forced: the command's grant is typed tool
+calls with **no shell at all**, so it can invoke nothing; and a turn's
+`output_tokens` is not knowable to the turn producing it.
+
+**Two cuts, not one.** #315's table uses both without saying so, and they
+disagree by exactly one call in two places.
+
+- **Wall clock is continuous.** The run is in the checkout phase from the
+  instant `pr_checkout` fires, so a phase opens at the first event of the turn
+  issuing its own call.
+- **Output tokens are quantised to a turn.** One turn carries one `usage`
+  record, so the turn that spent 2,871 tokens on the independent read and then
+  fired `pr_checkout` in its last block cannot be split — those tokens are the
+  read's.
+
+The cuts therefore fall one call apart wherever a phase's opening call is a
+TRAILING call on the previous phase's turn, which is what `pr_checkout` (step
+5's first bullet) and `clone_release` (step 6) are, and what `next_ready`,
+`pr_context` and the `Skill` invoke are not. A phase whose opening call never
+fired has no instant to open at, so its boundary falls back to when its first
+turn began and the row is marked `*`; a phase with neither collapses to zero
+rather than borrowing a neighbour's time.
+
+On the run #315 decomposed, every cell reproduces:
+
+| phase                           |   wall | #315 | output | #315   |
+| ------------------------------- | -----: | ---: | -----: | ------ |
+| `setup / ToolSearch`            |  12.1s |   12 |    374 | 374    |
+| `next_ready`                    |  61.3s |   61 |     45 | 45     |
+| `pr_context + independent read` |  43.1s |   43 |  2,954 | 2,954  |
+| `pr_checkout + skill invoke`    |  16.7s |   17 |    496 | 496    |
+| `audit skill`                   | 113.9s |  114 |  7,072 | 7,072  |
+| `final report`                  |  31.9s |   31 |  2,340 | 2,340  |
+| total                           | 278.8s |  278 | 13,281 | 13,281 |
+
+The issue's wall column is hand-rounded and internally inconsistent — its six
+cells round to 279s or truncate to 276s, against its own stated 278s total — so
+the seconds here are the milliseconds the transcript carries. Its **57% of
+output** for the audit skill does not follow from its own table either: 7,072 of
+13,281 is **53.2%**. The 41% of wall does (40.8%).
+
+**Reading `output_tokens` here does not contradict
+[the section above](#live-token-spend--and-the-one-number-that-is-not-knowable).**
+Both hold, of different files. In a `runs/*.jsonl` stream-json trace
+`output_tokens` is a message-START snapshot — 2–5 on a message that went on to
+emit ~1,100 — so the deduped sum is 0.2%–20.6% of the terminal `result.usage`. A
+session transcript is written per COMPLETED content block and its
+`output_tokens` tracks the message: over the 979 main-thread messages of
+`0fd06efc`, reported output against rendered content bytes is a median 3.0 bytes
+per token (p10 1.98, p90 3.91), which a start snapshot cannot produce. A session
+transcript carries no `result` event, so there is no terminal total to check
+against — and no figure from this reader may be compared with one from a run
+trace.
+
+**A run that did not follow the protocol is named as one**, which is what makes
+the series honest rather than larger. Conformance is the five calls steps 1–6
+make (`next_ready`, `pr_context`, `pr_checkout`, `Skill`, `clone_release`), the
+`Skill` being the `audit` one, and no tool outside the command's own grant. On
+the four runs of 2026-08-16 only 06:56 passes; 07:57 skipped `pr_context` and
+the skill and used `Bash` twice, which `/nr` forbids in as many words. The
+reader's peak-context column reproduces #315 finding 2 exactly across all four —
+423,969 / 579,590 / 588,209 / 42,545 — which is the number that says every turn
+re-read a 400–600k ambient context that had nothing to do with the PR.
+
+Finding 2's fix conflicts with `/nr`'s own INLINE ruling and is a human call,
+not a build; finding 1's orientation digest waits on numbers from this reader.
+Both are stated that way in #315 and neither is implemented.
 
 ### Tokens to land work — `work-tokens`
 
@@ -3661,8 +3907,12 @@ merged PR, never a finding that the issue is fixed — establishing that is
 
 Per-subject is a **cost** decision, measured: the uncovered set is 617 issues
 and the read is one GraphQL round trip each (~0.65 s over a 40-issue sample, so
-~6.7 minutes of network per run), against a producer budget of 5 work items.
-Folding it into the backlog buys ~612 answers per run that nothing reads.
+~6.7 minutes of network per run), against a producer budget of a handful of work
+items (`RUN_ITEM_CAP`, which moves). Folding it into the backlog buys an answer
+for all 617 when only the budget's worth is ever read; running it over the
+candidates costs one call each, so the whole cost is the budget. That gap is
+three orders of magnitude at any cap this bound will plausibly take, which is
+why the shape is per-subject rather than a figure to recompute on every raise.
 
 It reads `timelineItems(CROSS_REFERENCED_EVENT)` and **not**
 `closedByPullRequestsReferences(includeClosedPrs: true)`, which is the field

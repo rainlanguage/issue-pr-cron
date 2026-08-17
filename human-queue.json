@@ -2,16 +2,40 @@
   "states": {
     "ai:blocked-on": [
       {
+        "repo": "rainlanguage/rainlang",
+        "number": 554,
+        "url": "https://github.com/rainlanguage/rainlang/pull/554",
+        "title": "Remove submodule-era residue from .soldeerignore"
+      },
+      {
+        "repo": "rainlanguage/rain.math.float",
+        "number": 259,
+        "url": "https://github.com/rainlanguage/rain.math.float/pull/259",
+        "title": "chore: remove submodule-era residue (dead foundry.lock, .gitmodules and root lib/ references)"
+      },
+      {
         "repo": "rainlanguage/rain.factory.deploy",
         "number": 8,
         "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/8",
         "title": "feat: open-salt deterministic clone variant (ICloneableFactoryV4)"
       },
       {
+        "repo": "rainlanguage/raindex",
+        "number": 2831,
+        "url": "https://github.com/rainlanguage/raindex/pull/2831",
+        "title": "chore: bump soldeer rain-math-binary 0.1.1 -> 0.1.3"
+      },
+      {
         "repo": "rainlanguage/rain.dia",
         "number": 66,
         "url": "https://github.com/rainlanguage/rain.dia/pull/66",
         "title": "build(deps): bump rain-math-binary 0.1.1 -> 0.1.3"
+      },
+      {
+        "repo": "rainlanguage/rain.erc4626.words",
+        "number": 261,
+        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/261",
+        "title": "bump rain-math-binary 0.1.1 -> 0.1.3"
       },
       {
         "repo": "rainlanguage/rain.factory",
@@ -116,26 +140,100 @@
         "title": "Add \"remove and withdraw all\" option to order removal (#2024)"
       }
     ],
+    "ai:close-candidate": [
+      {
+        "repo": "rainlanguage/rain.dia",
+        "number": 61,
+        "url": "https://github.com/rainlanguage/rain.dia/pull/61",
+        "title": "fix(dia): revert ZeroDiaPrice on any zero price, not only the (0,0) sentinel"
+      },
+      {
+        "repo": "rainlanguage/rain.dia",
+        "number": 57,
+        "url": "https://github.com/rainlanguage/rain.dia/pull/57",
+        "title": "fix(dia): fail-closed staleness — stale at exact boundary and on zero timestamp"
+      }
+    ],
     "ai:design": [
       {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 408,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/408",
-        "title": "fix: drive RewardsInfo from REWARD_EPOCHS constant, remove hardcoded Jan-2025 text (#340)"
+        "repo": "rainlanguage/adversarial-mutation-test",
+        "number": 22,
+        "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/22",
+        "title": "fail-pattern: abort when it matches the baseline, and ship known-good patterns per harness"
+      },
+      {
+        "repo": "rainlanguage/adversarial-mutation-test",
+        "number": 19,
+        "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/19",
+        "title": "The restore invariant is per-restore, not per-first-probe: scope it to what the probe wrote, and check before restoring"
+      },
+      {
+        "repo": "rainlanguage/rain.merkle",
+        "number": 16,
+        "url": "https://github.com/rainlanguage/rain.merkle/pull/16",
+        "title": "chore(deps): bump rain-math-binary 0.1.1 -> 0.1.3"
+      },
+      {
+        "repo": "S01-Issuer/st0x.deploy",
+        "number": 300,
+        "url": "https://github.com/S01-Issuer/st0x.deploy/pull/300",
+        "title": "chore(deps): bump OpenZeppelin 5.6.1 → 5.7.0 — only the wrapped vault's bytecode moves"
+      },
+      {
+        "repo": "rainlanguage/rain.flare",
+        "number": 161,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/161",
+        "title": "fix: remove ankr public RPC fallback from LibFork — fail loud on unset env"
       }
     ],
     "ai:needs-work": [
       {
-        "repo": "rainlanguage/rain.solmem",
-        "number": 103,
-        "url": "https://github.com/rainlanguage/rain.solmem/pull/103",
-        "title": "Assert the underflow safety property, and close the hole that made it false"
+        "repo": "rainlanguage/adversarial-mutation-test",
+        "number": 26,
+        "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/26",
+        "title": "Scan ledger: a wrapper object that states its own ordering and authority rule"
       },
       {
-        "repo": "rainlanguage/rain.solmem",
-        "number": 101,
-        "url": "https://github.com/rainlanguage/rain.solmem/pull/101",
-        "title": "fix: guard the matrix itemCount unchecked sum and flatten allocation scaling (#62)"
+        "repo": "rainlanguage/rain.deploy",
+        "number": 131,
+        "url": "https://github.com/rainlanguage/rain.deploy/pull/131",
+        "title": "feat(migration-registry): record a migration at the moment it ran, via MigrationRegistryV2"
+      },
+      {
+        "repo": "rainlanguage/rain.tofu.erc20-decimals",
+        "number": 31,
+        "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/31",
+        "title": "chore: remove submodule-era residue from REUSE.toml, .soldeerignore and CLAUDE.md"
+      },
+      {
+        "repo": "S01-Issuer/st0x.deploy",
+        "number": 305,
+        "url": "https://github.com/S01-Issuer/st0x.deploy/pull/305",
+        "title": "Drop snapshot-generate-cmd: rainix owns the release freeze"
+      },
+      {
+        "repo": "rainlanguage/rain.tofu.erc20-decimals",
+        "number": 28,
+        "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/28",
+        "title": "fix(ci): grant Package Release the token permissions its callee needs"
+      },
+      {
+        "repo": "rainlanguage/rainlang",
+        "number": 551,
+        "url": "https://github.com/rainlanguage/rainlang/pull/551",
+        "title": "Bump rain-math-binary 0.1.1 -> 0.1.3"
+      },
+      {
+        "repo": "rainlanguage/rain.flare",
+        "number": 205,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/205",
+        "title": "bump rain-math-binary 0.1.1 -> 0.1.3"
+      },
+      {
+        "repo": "rainlanguage/rain.pyth",
+        "number": 32,
+        "url": "https://github.com/rainlanguage/rain.pyth/pull/32",
+        "title": "deps: bump rain-math-binary 0.1.1 -> 0.1.3"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -145,9 +243,27 @@
       },
       {
         "repo": "cyclofinance/cyclo.site",
+        "number": 435,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/435",
+        "title": "fix(receipts): preserve display precision by truncating the decimal string"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
         "number": 434,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/434",
         "title": "fix(prices): make DataFetcher provider reactive to network switch"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 433,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/433",
+        "title": "fix(component): leaderboard heading reflects the actual row count"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 432,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/432",
+        "title": "fix(components): render generic error copy instead of raw error messages"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -156,28 +272,22 @@
         "title": "fix(component): remove inert min/step attributes from the amount text input"
       },
       {
-        "repo": "rainlanguage/rain.dia",
-        "number": 61,
-        "url": "https://github.com/rainlanguage/rain.dia/pull/61",
-        "title": "fix(dia): revert ZeroDiaPrice on any zero price, not only the (0,0) sentinel"
+        "repo": "cyclofinance/cyclo.site",
+        "number": 429,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/429",
+        "title": "fix(lock): freeze token select, LOCK button and network auto-switch while a tx is in flight"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 428,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/428",
+        "title": "fix(layout): swallow blockNumberStore.refresh rejections in the polling loop"
       },
       {
         "repo": "rainlanguage/rain.math.float",
         "number": 256,
         "url": "https://github.com/rainlanguage/rain.math.float/pull/256",
         "title": "fix(deploy): pin the 0.1.7 soldeer tag's deploy constants"
-      },
-      {
-        "repo": "rainlanguage/rain.dia",
-        "number": 57,
-        "url": "https://github.com/rainlanguage/rain.dia/pull/57",
-        "title": "fix(dia): fail-closed staleness — stale at exact boundary and on zero timestamp"
-      },
-      {
-        "repo": "rainlanguage/rain.sol.codegen",
-        "number": 32,
-        "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/32",
-        "title": "feat(script): BuildScript base — regenerate and cut are separate entrypoints"
       },
       {
         "repo": "rainlanguage/rain.math.float",
@@ -283,6 +393,12 @@
       },
       {
         "repo": "cyclofinance/cyclo.site",
+        "number": 408,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/408",
+        "title": "fix: drive RewardsInfo from REWARD_EPOCHS constant, remove hardcoded Jan-2025 text (#340)"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
         "number": 407,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/407",
         "title": "fix: reactive mappedReceipts and safe readableBalance in ReceiptsTable (#358, #360)"
@@ -292,6 +408,12 @@
         "number": 406,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/406",
         "title": "fix: use FRONTEND_PYTH_MAX_AGE_SECONDS (5 min) for footer Pyth display call (#318)"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 405,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/405",
+        "title": "fix: Input.svelte sanitize external updates and tighten default validator (#328, #330)"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -388,6 +510,12 @@
         "number": 251,
         "url": "https://github.com/rainlanguage/rainix/pull/251",
         "title": "feat(ci): enforce pragma convention ^ lib/abstract, = concrete (closes #250)"
+      },
+      {
+        "repo": "rainlanguage/dotrain",
+        "number": 143,
+        "url": "https://github.com/rainlanguage/dotrain/pull/143",
+        "title": "fix(parser): comment before next binding bleeds into previous content_position"
       },
       {
         "repo": "rainlanguage/rain.flare",
@@ -553,12 +681,6 @@
       },
       {
         "repo": "rainlanguage/rain.flare",
-        "number": 161,
-        "url": "https://github.com/rainlanguage/rain.flare/pull/161",
-        "title": "fix: remove ankr public RPC fallback from LibFork — fail loud on unset env"
-      },
-      {
-        "repo": "rainlanguage/rain.flare",
         "number": 160,
         "url": "https://github.com/rainlanguage/rain.flare/pull/160",
         "title": "test: add scale-band assertions for sFLR, flrETH, and FtsoV2 LTS feeds"
@@ -716,42 +838,6 @@
     ],
     "ai:ready": [
       {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 435,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/435",
-        "title": "fix(receipts): preserve display precision by truncating the decimal string"
-      },
-      {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 433,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/433",
-        "title": "fix(component): leaderboard heading reflects the actual row count"
-      },
-      {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 432,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/432",
-        "title": "fix(components): render generic error copy instead of raw error messages"
-      },
-      {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 429,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/429",
-        "title": "fix(lock): freeze token select, LOCK button and network auto-switch while a tx is in flight"
-      },
-      {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 428,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/428",
-        "title": "fix(layout): swallow blockNumberStore.refresh rejections in the polling loop"
-      },
-      {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 427,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/427",
-        "title": "fix(component): harden ReceiptModal — reactive receipt bindings, per-token balance key, signer/chain gating"
-      },
-      {
         "repo": "rainlanguage/rain.erc4626.words",
         "number": 259,
         "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/259",
@@ -770,22 +856,10 @@
         "title": "feat(deps): bump rainlang to 0.1.8 for NotAnAddress(bytes32) — REQUIRES redeploy at land"
       },
       {
-        "repo": "cyclofinance/cyclo.site",
-        "number": 405,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/405",
-        "title": "fix: Input.svelte sanitize external updates and tighten default validator (#328, #330)"
-      },
-      {
         "repo": "rainlanguage/rain.flare",
         "number": 196,
         "url": "https://github.com/rainlanguage/rain.flare/pull/196",
         "title": "docs+test(flreth): document Dinero naming convention and add reciprocity test"
-      },
-      {
-        "repo": "rainlanguage/dotrain",
-        "number": 143,
-        "url": "https://github.com/rainlanguage/dotrain/pull/143",
-        "title": "fix(parser): comment before next binding bleeds into previous content_position"
       },
       {
         "repo": "rainlanguage/raindex",
@@ -810,8 +884,20 @@
   "lanes": {
     "vet-lifecycle": {
       "ai:blocked-on": {
-        "count": 19,
+        "count": 23,
         "prs": [
+          {
+            "repo": "rainlanguage/rainlang",
+            "number": 554,
+            "url": "https://github.com/rainlanguage/rainlang/pull/554",
+            "title": "Remove submodule-era residue from .soldeerignore"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 259,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/259",
+            "title": "chore: remove submodule-era residue (dead foundry.lock, .gitmodules and root lib/ references)"
+          },
           {
             "repo": "rainlanguage/rain.factory.deploy",
             "number": 8,
@@ -819,10 +905,22 @@
             "title": "feat: open-salt deterministic clone variant (ICloneableFactoryV4)"
           },
           {
+            "repo": "rainlanguage/raindex",
+            "number": 2831,
+            "url": "https://github.com/rainlanguage/raindex/pull/2831",
+            "title": "chore: bump soldeer rain-math-binary 0.1.1 -> 0.1.3"
+          },
+          {
             "repo": "rainlanguage/rain.dia",
             "number": 66,
             "url": "https://github.com/rainlanguage/rain.dia/pull/66",
             "title": "build(deps): bump rain-math-binary 0.1.1 -> 0.1.3"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 261,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/261",
+            "title": "bump rain-math-binary 0.1.1 -> 0.1.3"
           },
           {
             "repo": "rainlanguage/rain.factory",
@@ -929,8 +1027,86 @@
         ]
       },
       "un-vetted": {
-        "count": 97,
+        "count": 42,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 121,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/121",
+            "title": "Read the tail length before writing the output length word"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 120,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/120",
+            "title": "Delete the dead `using ... for` directives, and defuse the import one strands"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 119,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/119",
+            "title": "Matrix endPointer is the end of the pointer array, not an allocation boundary"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 118,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/118",
+            "title": "Ship the cancun/mcopy floor in the package, and bind the README to the code"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 117,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/117",
+            "title": "docs: a changelog that ships in the package"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 115,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/115",
+            "title": "Scope unsafeExtend's extend-is-never-mutated promise to non-overlapping arrays"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 114,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/114",
+            "title": "Run rainix CI on pull_request so fork PRs get checks"
+          },
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 319,
+            "url": "https://github.com/rainlanguage/rainix/pull/319",
+            "title": "ci: run codegen to a fixed point, with a bound, instead of once"
+          },
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 318,
+            "url": "https://github.com/rainlanguage/rainix/pull/318",
+            "title": "ci: one canonical generated-sources dir for all three mechanisms"
+          },
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 316,
+            "url": "https://github.com/rainlanguage/rainix/pull/316",
+            "title": "ci(sol): build the tree .soldeerignore publishes, not the repo tree"
+          },
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 315,
+            "url": "https://github.com/rainlanguage/rainix/pull/315",
+            "title": "ci: currency check sees files regeneration wrote but nothing committed"
+          },
+          {
+            "repo": "rainlanguage/adversarial-mutation-test",
+            "number": 21,
+            "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/21",
+            "title": "mutation-probe: one probe owns one tree, so an orphan blocks a successor instead of racing it"
+          },
+          {
+            "repo": "rainlanguage/adversarial-mutation-test",
+            "number": 20,
+            "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/20",
+            "title": "mutation-probe: probe a narrow selection first, escalate to the whole suite only on apparent survival"
+          },
           {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 295,
@@ -944,262 +1120,10 @@
             "title": "Generate the released-suites aggregate instead of writing it by hand"
           },
           {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 125,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/125",
-            "title": "test: assert every declared artifact path resolves to the contract it names"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 124,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/124",
-            "title": "docs(LibRainDeploy): name the `supportedNetworks` return its NatSpec already documents"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 123,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/123",
-            "title": "test: drop duplicate MockAddressRevertingFactory import"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 122,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/122",
-            "title": "test: cover every answer length the resolved-address read guard refuses"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 121,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/121",
-            "title": "docs: checkCodeHash's rationale counts three entry points, not two"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 120,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/120",
-            "title": "fix(package): stop publishing .audit/, and say what the package actually ships"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 119,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/119",
-            "title": "Refuse a leading zero on a release-version component"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 118,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/118",
-            "title": "docs: `@param` tags for `UnexpectedDeployedAddress`"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 117,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/117",
-            "title": "test: name the real suite keys in two shared-creation-code comments"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 116,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/116",
-            "title": "docs: replace dangling Extrospection reference with the codehash mechanism"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 115,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/115",
-            "title": "docs: use the SPDX identifier for the licence in README"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 114,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/114",
-            "title": "One spelling of the record root, pinned to the writer's"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 113,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/113",
-            "title": "test: move shared test helpers into test/lib"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 112,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/112",
-            "title": "test: assert [rpc_endpoints] and [etherscan] are exactly supportedNetworks()"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 111,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/111",
-            "title": "Suppress unsafe-typecast lint on the range-checked uint160 cast"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 110,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/110",
-            "title": "docs: version is the last publish, not a name for a snapshot that exists"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 109,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/109",
-            "title": "test: name the deployable mocks' mutable storage `sFoo`"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 108,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/108",
-            "title": "test: drive the deployToNetworks dependency loop past index 0"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 107,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/107",
-            "title": "docs: add the soldeer install step to CLAUDE.md's command block"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 106,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/106",
-            "title": "test: assert the empty-derivation early return forks nothing"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 105,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/105",
-            "title": "docs: drop the false \"AddressRegistry is the only concrete\" premise"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 104,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/104",
-            "title": "Correct checkCodeHash's stated justification in LibMigrationRegistry"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 103,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/103",
-            "title": "Seed `suiteNames`'s named return before the loop"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 102,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/102",
-            "title": "fix: `candidateContractName` is `pure`, not `view`"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 101,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/101",
-            "title": "docs: NoDeployCandidates docstring names its real raise site"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 100,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/100",
-            "title": "docs: install section names the rain-sol-codegen dependency"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 99,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/99",
-            "title": "docs: place consumer example verification tests by subject path"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 98,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/98",
-            "title": "docs: name every RegistryDeploySuites inheritor, without a count"
-          },
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 292,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/292",
-            "title": "feat(cap): RUN_ITEM_CAP is the single source of truth for the per-run item cap"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 97,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/97",
-            "title": "test: drive freeze's write path and its append-only guard"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 96,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/96",
-            "title": "freeze: refuse a release tag that does not follow the record"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 94,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/94",
-            "title": "test: drive checkFrozenSnapshotsReleased over a multi-file record"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 93,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/93",
-            "title": "test(build): cover the generator's declaration and the alias-lib emitter"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 92,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/92",
-            "title": "Refuse a post-deploy check that has no reads"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 91,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/91",
-            "title": "Refuse to cut a release while ADDRESS_REGISTRY_ROOT is zero"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 90,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/90",
-            "title": "test: drive run() through a successful broadcast"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 89,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/89",
-            "title": "Anchor the candidate snapshot to source on the broadcast path"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 88,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/88",
-            "title": "ci: daily scheduled sol sweep so chain drift is caught without a push"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 87,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/87",
-            "title": "Deploy dispatch stops restating the suite registry, and can name a released suite"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 86,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/86",
-            "title": "docs(address-registry): state that the compiled root is zero and the registry inert"
-          },
-          {
             "repo": "rainlanguage/raindex",
             "number": 2835,
             "url": "https://github.com/rainlanguage/raindex/pull/2835",
             "title": "Remove submodule-era residue; repair the copilot build fallback"
-          },
-          {
-            "repo": "rainlanguage/rainlang",
-            "number": 554,
-            "url": "https://github.com/rainlanguage/rainlang/pull/554",
-            "title": "Remove submodule-era residue from .soldeerignore"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 312,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/312",
-            "title": "Remove the submodule-era residue: dangling REUSE.toml entries, three dead .soldeerignore lines, and the CLAUDE.md bump runbook calling soldeer pins git submodules"
           },
           {
             "repo": "rainlanguage/rainlang.interface",
@@ -1220,28 +1144,10 @@
             "title": "Remove the dead submodule-era entries from .soldeerignore"
           },
           {
-            "repo": "rainlanguage/rain.tofu.erc20-decimals",
-            "number": 31,
-            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/31",
-            "title": "chore: remove submodule-era residue from REUSE.toml, .soldeerignore and CLAUDE.md"
-          },
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 113,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/113",
-            "title": "Remove submodule-era residue: dead foundry.lock and .gitmodules/lib references"
-          },
-          {
             "repo": "rainlanguage/rain.verify",
             "number": 31,
             "url": "https://github.com/rainlanguage/rain.verify/pull/31",
             "title": "Remove the submodule-era residue from REUSE.toml and CLAUDE.md"
-          },
-          {
-            "repo": "rainlanguage/rain.dia",
-            "number": 68,
-            "url": "https://github.com/rainlanguage/rain.dia/pull/68",
-            "title": "chore(reuse): drop four REUSE.toml paths that do not exist"
           },
           {
             "repo": "rainlanguage/rain.extrospection",
@@ -1254,12 +1160,6 @@
             "number": 23,
             "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/23",
             "title": "chore: remove submodule-era residue — dead foundry.lock, .gitmodules and lib/ references"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 259,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/259",
-            "title": "chore: remove submodule-era residue (dead foundry.lock, .gitmodules and root lib/ references)"
           },
           {
             "repo": "rainlanguage/rain.merkle",
@@ -1286,28 +1186,10 @@
             "title": "Remove the submodule-era residue — dead foundry.lock, .gitmodules and lib/ references"
           },
           {
-            "repo": "rainlanguage/rain.datacontract",
-            "number": 27,
-            "url": "https://github.com/rainlanguage/rain.datacontract/pull/27",
-            "title": "Remove submodule-era residue: dead foundry.lock, .gitmodules and lib/ references"
-          },
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 112,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/112",
-            "title": "Delete LibStackPointer, dead across the whole org"
-          },
-          {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 286,
             "url": "https://github.com/rainlanguage/issue-pr-cron/pull/286",
             "title": "feat(session-tokens): read the interactive corpus with the cron's own accounting"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 308,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/308",
-            "title": "codegen: use LibCodeGen.addressConstantString instead of a local copy"
           },
           {
             "repo": "rainlanguage/rain.verify",
@@ -1322,12 +1204,6 @@
             "title": "codegen: use LibCodeGen.addressConstantString instead of a local copy"
           },
           {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 305,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/305",
-            "title": "Drop snapshot-generate-cmd: rainix owns the release freeze"
-          },
-          {
             "repo": "rainlanguage/rain.factory.deploy",
             "number": 9,
             "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/9",
@@ -1340,64 +1216,10 @@
             "title": "rainix owns the deploy-repo release freeze: rainix-static cut-release"
           },
           {
-            "repo": "rainlanguage/rainix",
-            "number": 299,
-            "url": "https://github.com/rainlanguage/rainix/pull/299",
-            "title": "rainix-static: cap launch-loaded agent context at 4096 bytes (floor-only ratchet)"
-          },
-          {
-            "repo": "rainlanguage/rain.tofu.erc20-decimals",
-            "number": 28,
-            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/28",
-            "title": "fix(ci): grant Package Release the token permissions its callee needs"
-          },
-          {
             "repo": "rainlanguage/rain.flare",
             "number": 206,
             "url": "https://github.com/rainlanguage/rain.flare/pull/206",
             "title": "fix(ci): grant Package Release the token permissions its callee needs"
-          },
-          {
-            "repo": "rainlanguage/raindex",
-            "number": 2831,
-            "url": "https://github.com/rainlanguage/raindex/pull/2831",
-            "title": "chore: bump soldeer rain-math-binary 0.1.1 -> 0.1.3"
-          },
-          {
-            "repo": "rainlanguage/rain.merkle",
-            "number": 16,
-            "url": "https://github.com/rainlanguage/rain.merkle/pull/16",
-            "title": "chore(deps): bump rain-math-binary 0.1.1 -> 0.1.3"
-          },
-          {
-            "repo": "rainlanguage/rain.erc4626.words",
-            "number": 261,
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/261",
-            "title": "bump rain-math-binary 0.1.1 -> 0.1.3"
-          },
-          {
-            "repo": "rainlanguage/rainlang",
-            "number": 551,
-            "url": "https://github.com/rainlanguage/rainlang/pull/551",
-            "title": "Bump rain-math-binary 0.1.1 -> 0.1.3"
-          },
-          {
-            "repo": "rainlanguage/rain.flare",
-            "number": 205,
-            "url": "https://github.com/rainlanguage/rain.flare/pull/205",
-            "title": "bump rain-math-binary 0.1.1 -> 0.1.3"
-          },
-          {
-            "repo": "rainlanguage/rain.pyth",
-            "number": 32,
-            "url": "https://github.com/rainlanguage/rain.pyth/pull/32",
-            "title": "deps: bump rain-math-binary 0.1.1 -> 0.1.3"
-          },
-          {
-            "repo": "rainlanguage/adversarial-mutation-test",
-            "number": 10,
-            "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/10",
-            "title": "mutation-probe: the skill's probe harness as a tested, flake-shipped Rust bin"
           },
           {
             "repo": "rainlanguage/issue-pr-cron",
@@ -1412,52 +1234,10 @@
             "title": "feat(metrics): landed-history.jsonl — the landed-work denominator feed"
           },
           {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 300,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/300",
-            "title": "chore(deps): bump OpenZeppelin 5.6.1 → 5.7.0 — only the wrapped vault's bytecode moves"
-          },
-          {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 276,
             "url": "https://github.com/rainlanguage/issue-pr-cron/pull/276",
             "title": "rework(vetter): resume a dead auditor before redispatching, and name the path taken"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 435,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/435",
-            "title": "fix(receipts): preserve display precision by truncating the decimal string"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 433,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/433",
-            "title": "fix(component): leaderboard heading reflects the actual row count"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 432,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/432",
-            "title": "fix(components): render generic error copy instead of raw error messages"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 429,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/429",
-            "title": "fix(lock): freeze token select, LOCK button and network auto-switch while a tx is in flight"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 428,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/428",
-            "title": "fix(layout): swallow blockNumberStore.refresh rejections in the polling loop"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 427,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/427",
-            "title": "fix(component): harden ReceiptModal — reactive receipt bindings, per-token balance key, signer/chain gating"
           },
           {
             "repo": "rainlanguage/rain.erc4626.words",
@@ -1478,22 +1258,10 @@
             "title": "feat(deps): bump rainlang to 0.1.8 for NotAnAddress(bytes32) — REQUIRES redeploy at land"
           },
           {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 405,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/405",
-            "title": "fix: Input.svelte sanitize external updates and tighten default validator (#328, #330)"
-          },
-          {
             "repo": "rainlanguage/rain.flare",
             "number": 196,
             "url": "https://github.com/rainlanguage/rain.flare/pull/196",
             "title": "docs+test(flreth): document Dinero naming convention and add reciprocity test"
-          },
-          {
-            "repo": "rainlanguage/dotrain",
-            "number": 143,
-            "url": "https://github.com/rainlanguage/dotrain/pull/143",
-            "title": "fix(parser): comment before next binding bleeds into previous content_position"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -1518,13 +1286,41 @@
     },
     "vetter-verdicts": {
       "ai:design": {
-        "count": 1,
+        "count": 5,
         "prs": [
           {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 408,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/408",
-            "title": "fix: drive RewardsInfo from REWARD_EPOCHS constant, remove hardcoded Jan-2025 text (#340)",
+            "repo": "rainlanguage/adversarial-mutation-test",
+            "number": 22,
+            "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/22",
+            "title": "fail-pattern: abort when it matches the baseline, and ship known-good patterns per harness",
+            "bucket": "presentable"
+          },
+          {
+            "repo": "rainlanguage/adversarial-mutation-test",
+            "number": 19,
+            "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/19",
+            "title": "The restore invariant is per-restore, not per-first-probe: scope it to what the probe wrote, and check before restoring",
+            "bucket": "presentable"
+          },
+          {
+            "repo": "rainlanguage/rain.merkle",
+            "number": 16,
+            "url": "https://github.com/rainlanguage/rain.merkle/pull/16",
+            "title": "chore(deps): bump rain-math-binary 0.1.1 -> 0.1.3",
+            "bucket": "presentable"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 300,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/300",
+            "title": "chore(deps): bump OpenZeppelin 5.6.1 → 5.7.0 — only the wrapped vault's bytecode moves",
+            "bucket": "presentable"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 161,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/161",
+            "title": "fix: remove ankr public RPC fallback from LibFork — fail loud on unset env",
             "bucket": "presentable"
           }
         ],
@@ -1532,24 +1328,60 @@
           "draft": 0,
           "fetchErrors": 0,
           "noQuestion": 0,
-          "presentable": 1,
+          "presentable": 5,
           "unaddressable": 0
         }
       },
       "ai:needs-work": {
-        "count": 98,
+        "count": 108,
         "prs": [
           {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 103,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/103",
-            "title": "Assert the underflow safety property, and close the hole that made it false"
+            "repo": "rainlanguage/adversarial-mutation-test",
+            "number": 26,
+            "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/26",
+            "title": "Scan ledger: a wrapper object that states its own ordering and authority rule"
           },
           {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 101,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/101",
-            "title": "fix: guard the matrix itemCount unchecked sum and flatten allocation scaling (#62)"
+            "repo": "rainlanguage/rain.deploy",
+            "number": 131,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/131",
+            "title": "feat(migration-registry): record a migration at the moment it ran, via MigrationRegistryV2"
+          },
+          {
+            "repo": "rainlanguage/rain.tofu.erc20-decimals",
+            "number": 31,
+            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/31",
+            "title": "chore: remove submodule-era residue from REUSE.toml, .soldeerignore and CLAUDE.md"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 305,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/305",
+            "title": "Drop snapshot-generate-cmd: rainix owns the release freeze"
+          },
+          {
+            "repo": "rainlanguage/rain.tofu.erc20-decimals",
+            "number": 28,
+            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/28",
+            "title": "fix(ci): grant Package Release the token permissions its callee needs"
+          },
+          {
+            "repo": "rainlanguage/rainlang",
+            "number": 551,
+            "url": "https://github.com/rainlanguage/rainlang/pull/551",
+            "title": "Bump rain-math-binary 0.1.1 -> 0.1.3"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 205,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/205",
+            "title": "bump rain-math-binary 0.1.1 -> 0.1.3"
+          },
+          {
+            "repo": "rainlanguage/rain.pyth",
+            "number": 32,
+            "url": "https://github.com/rainlanguage/rain.pyth/pull/32",
+            "title": "deps: bump rain-math-binary 0.1.1 -> 0.1.3"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1559,9 +1391,27 @@
           },
           {
             "repo": "cyclofinance/cyclo.site",
+            "number": 435,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/435",
+            "title": "fix(receipts): preserve display precision by truncating the decimal string"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
             "number": 434,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/434",
             "title": "fix(prices): make DataFetcher provider reactive to network switch"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 433,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/433",
+            "title": "fix(component): leaderboard heading reflects the actual row count"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 432,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/432",
+            "title": "fix(components): render generic error copy instead of raw error messages"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1570,28 +1420,22 @@
             "title": "fix(component): remove inert min/step attributes from the amount text input"
           },
           {
-            "repo": "rainlanguage/rain.dia",
-            "number": 61,
-            "url": "https://github.com/rainlanguage/rain.dia/pull/61",
-            "title": "fix(dia): revert ZeroDiaPrice on any zero price, not only the (0,0) sentinel"
+            "repo": "cyclofinance/cyclo.site",
+            "number": 429,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/429",
+            "title": "fix(lock): freeze token select, LOCK button and network auto-switch while a tx is in flight"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 428,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/428",
+            "title": "fix(layout): swallow blockNumberStore.refresh rejections in the polling loop"
           },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 256,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/256",
             "title": "fix(deploy): pin the 0.1.7 soldeer tag's deploy constants"
-          },
-          {
-            "repo": "rainlanguage/rain.dia",
-            "number": 57,
-            "url": "https://github.com/rainlanguage/rain.dia/pull/57",
-            "title": "fix(dia): fail-closed staleness — stale at exact boundary and on zero timestamp"
-          },
-          {
-            "repo": "rainlanguage/rain.sol.codegen",
-            "number": 32,
-            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/32",
-            "title": "feat(script): BuildScript base — regenerate and cut are separate entrypoints"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -1697,6 +1541,12 @@
           },
           {
             "repo": "cyclofinance/cyclo.site",
+            "number": 408,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/408",
+            "title": "fix: drive RewardsInfo from REWARD_EPOCHS constant, remove hardcoded Jan-2025 text (#340)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
             "number": 407,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/407",
             "title": "fix: reactive mappedReceipts and safe readableBalance in ReceiptsTable (#358, #360)"
@@ -1706,6 +1556,12 @@
             "number": 406,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/406",
             "title": "fix: use FRONTEND_PYTH_MAX_AGE_SECONDS (5 min) for footer Pyth display call (#318)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 405,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/405",
+            "title": "fix: Input.svelte sanitize external updates and tighten default validator (#328, #330)"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1802,6 +1658,12 @@
             "number": 251,
             "url": "https://github.com/rainlanguage/rainix/pull/251",
             "title": "feat(ci): enforce pragma convention ^ lib/abstract, = concrete (closes #250)"
+          },
+          {
+            "repo": "rainlanguage/dotrain",
+            "number": 143,
+            "url": "https://github.com/rainlanguage/dotrain/pull/143",
+            "title": "fix(parser): comment before next binding bleeds into previous content_position"
           },
           {
             "repo": "rainlanguage/rain.flare",
@@ -1964,12 +1826,6 @@
             "number": 163,
             "url": "https://github.com/rainlanguage/rain.flare/pull/163",
             "title": "test: add mock unit tests for LibOpSLFRCurrentExchangeRate run() and integrity()"
-          },
-          {
-            "repo": "rainlanguage/rain.flare",
-            "number": 161,
-            "url": "https://github.com/rainlanguage/rain.flare/pull/161",
-            "title": "fix: remove ankr public RPC fallback from LibFork — fail loud on unset env"
           },
           {
             "repo": "rainlanguage/rain.flare",
@@ -2254,6 +2110,30 @@
   ],
   "closeCandidateIssues": [
     {
+      "repo": "rainlanguage/rain.dia",
+      "number": 14,
+      "url": "https://github.com/rainlanguage/rain.dia/issues/14",
+      "title": "[AUDIT-M09] [medium] NatSpec claims revert on zero price but only (0,0) sentinel reverts"
+    },
+    {
+      "repo": "rainlanguage/rain.dia",
+      "number": 10,
+      "url": "https://github.com/rainlanguage/rain.dia/issues/10",
+      "title": "[AUDIT-M05] [medium] Zero-timestamp with non-zero price branch untested"
+    },
+    {
+      "repo": "rainlanguage/rain.dia",
+      "number": 9,
+      "url": "https://github.com/rainlanguage/rain.dia/issues/9",
+      "title": "[AUDIT-M04] [medium] maxAge exact boundary elapsed==staleAfter untested"
+    },
+    {
+      "repo": "rainlanguage/rain.flare",
+      "number": 67,
+      "url": "https://github.com/rainlanguage/rain.flare/issues/67",
+      "title": "[F20] [MEDIUM] Public ankr RPC default in LibFork makes the entire fork test suite depend on an unowned, mutable endpoint that no test or CI step pins"
+    },
+    {
       "repo": "rainlanguage/rain.solver",
       "number": 317,
       "url": "https://github.com/rainlanguage/rain.solver/issues/317",
@@ -2264,16 +2144,48 @@
       "number": 1348,
       "url": "https://github.com/rainlanguage/raindex/issues/1348",
       "title": "Update tests for DeploymentSteps to reflect the new updateFields calls"
-    },
-    {
-      "repo": "rainlanguage/rain.solver",
-      "number": 64,
-      "url": "https://github.com/rainlanguage/rain.solver/issues/64",
-      "title": "bot uses way too much rpc"
     }
   ],
   "closeCandidateUnvetted": [
     {
+      "repo": "rainlanguage/rain.dia",
+      "number": 14,
+      "url": "https://github.com/rainlanguage/rain.dia/issues/14",
+      "title": "[AUDIT-M09] [medium] NatSpec claims revert on zero price but only (0,0) sentinel reverts"
+    },
+    {
+      "repo": "rainlanguage/rain.dia",
+      "number": 10,
+      "url": "https://github.com/rainlanguage/rain.dia/issues/10",
+      "title": "[AUDIT-M05] [medium] Zero-timestamp with non-zero price branch untested"
+    },
+    {
+      "repo": "rainlanguage/rain.dia",
+      "number": 9,
+      "url": "https://github.com/rainlanguage/rain.dia/issues/9",
+      "title": "[AUDIT-M04] [medium] maxAge exact boundary elapsed==staleAfter untested"
+    },
+    {
+      "repo": "rainlanguage/rain.flare",
+      "number": 67,
+      "url": "https://github.com/rainlanguage/rain.flare/issues/67",
+      "title": "[F20] [MEDIUM] Public ankr RPC default in LibFork makes the entire fork test suite depend on an unowned, mutable endpoint that no test or CI step pins"
+    },
+    {
+      "repo": "rainlanguage/rain.dia",
+      "number": 61,
+      "url": "https://github.com/rainlanguage/rain.dia/pull/61",
+      "title": "fix(dia): revert ZeroDiaPrice on any zero price, not only the (0,0) sentinel"
+    },
+    {
+      "repo": "rainlanguage/rain.dia",
+      "number": 57,
+      "url": "https://github.com/rainlanguage/rain.dia/pull/57",
+      "title": "fix(dia): fail-closed staleness — stale at exact boundary and on zero timestamp"
+    }
+  ],
+  "closeCandidateUpheld": [
+    {
       "repo": "rainlanguage/rain.solver",
       "number": 317,
       "url": "https://github.com/rainlanguage/rain.solver/issues/317",
@@ -2284,16 +2196,303 @@
       "number": 1348,
       "url": "https://github.com/rainlanguage/raindex/issues/1348",
       "title": "Update tests for DeploymentSteps to reflect the new updateFields calls"
-    },
-    {
-      "repo": "rainlanguage/rain.solver",
-      "number": 64,
-      "url": "https://github.com/rainlanguage/rain.solver/issues/64",
-      "title": "bot uses way too much rpc"
     }
   ],
-  "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/adversarial-mutation-test",
+      "number": 28,
+      "url": "https://github.com/rainlanguage/adversarial-mutation-test/issues/28",
+      "title": "Schema check pins one rule on `equal to`, a phrase generic enough to pass with the rule deleted"
+    },
+    {
+      "repo": "rainlanguage/adversarial-mutation-test",
+      "number": 27,
+      "url": "https://github.com/rainlanguage/adversarial-mutation-test/issues/27",
+      "title": "Scan record schema does not require `tool`, the field the audit skill's ledger gate identifies a record by"
+    },
+    {
+      "repo": "rainlanguage/raindex.governance",
+      "number": 9,
+      "url": "https://github.com/rainlanguage/raindex.governance/issues/9",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 313,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/313",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.factory.deploy",
+      "number": 13,
+      "url": "https://github.com/rainlanguage/rain.factory.deploy/issues/13",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 133,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/133",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/raindex.interface",
+      "number": 70,
+      "url": "https://github.com/rainlanguage/raindex.interface/issues/70",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.hash",
+      "number": 17,
+      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/17",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.typecast",
+      "number": 16,
+      "url": "https://github.com/rainlanguage/rain.lib.typecast/issues/16",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.verify.interface",
+      "number": 16,
+      "url": "https://github.com/rainlanguage/rain.verify.interface/issues/16",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 136,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/136",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.binmaskflag",
+      "number": 21,
+      "url": "https://github.com/rainlanguage/rain.sol.binmaskflag/issues/21",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.vats.flare",
+      "number": 3,
+      "url": "https://github.com/rainlanguage/rain.vats.flare/issues/3",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.math.saturating",
+      "number": 27,
+      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/27",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.vats",
+      "number": 335,
+      "url": "https://github.com/rainlanguage/rain.vats/issues/335",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.math.fixedpoint",
+      "number": 30,
+      "url": "https://github.com/rainlanguage/rain.math.fixedpoint/issues/30",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.pyth",
+      "number": 35,
+      "url": "https://github.com/rainlanguage/rain.pyth/issues/35",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 53,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/53",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 49,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/49",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 28,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/28",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.string",
+      "number": 31,
+      "url": "https://github.com/rainlanguage/rain.string/issues/31",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.intorastring",
+      "number": 22,
+      "url": "https://github.com/rainlanguage/rain.intorastring/issues/22",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 24,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/24",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rainlang.interface",
+      "number": 124,
+      "url": "https://github.com/rainlanguage/rainlang.interface/issues/124",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 555,
+      "url": "https://github.com/rainlanguage/rainlang/issues/555",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.tofu.erc20-decimals",
+      "number": 32,
+      "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/issues/32",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.math.binary",
+      "number": 35,
+      "url": "https://github.com/rainlanguage/rain.math.binary/issues/35",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.flare",
+      "number": 210,
+      "url": "https://github.com/rainlanguage/rain.flare/issues/210",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.solmem",
+      "number": 122,
+      "url": "https://github.com/rainlanguage/rain.solmem/issues/122",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 2836,
+      "url": "https://github.com/rainlanguage/raindex/issues/2836",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 260,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/260",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 329,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/329",
+      "title": "One label per state: the FSM's most common state has no label, and two PRs are in two states at once"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 328,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/328",
+      "title": "A producer that verifies the rework already landed has no transition to say so, so ai:needs-work lies until the vetter catches up"
+    },
+    {
+      "repo": "rainlanguage/adversarial-mutation-test",
+      "number": 25,
+      "url": "https://github.com/rainlanguage/adversarial-mutation-test/issues/25",
+      "title": "The scan ledger is a bare array with no stated ordering or authority rule, so a stale record is indistinguishable from a current one"
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 317,
+      "url": "https://github.com/rainlanguage/rainix/issues/317",
+      "title": "Six repos' worth of static analysis is being hand-rolled in Solidity because rainix-static has no home for repo-wide lint checks"
+    },
+    {
+      "repo": "rainlanguage/claude-audit-skills",
+      "number": 89,
+      "url": "https://github.com/rainlanguage/claude-audit-skills/issues/89",
+      "title": "A repo with no CLAUDE.md and no AGENTS.md is conforming, and the skill never says so"
+    },
+    {
+      "repo": "rainlanguage/adversarial-mutation-test",
+      "number": 17,
+      "url": "https://github.com/rainlanguage/adversarial-mutation-test/issues/17",
+      "title": "Cap SKILL.md's size in CI, floor-only: it is 40,089 bytes and every campaign that finds a new failure mode wants to add to it"
+    },
+    {
+      "repo": "rainlanguage/adversarial-mutation-test",
+      "number": 15,
+      "url": "https://github.com/rainlanguage/adversarial-mutation-test/issues/15",
+      "title": "A probe can outlive the agent that started it: two orphans ran for two hours and a successor nearly raced them on the same clones"
+    },
+    {
+      "repo": "rainlanguage/adversarial-mutation-test",
+      "number": 13,
+      "url": "https://github.com/rainlanguage/adversarial-mutation-test/issues/13",
+      "title": "fail-pattern silently misattributes killers: abort when it matches the baseline's own output, and ship known-good patterns"
+    },
+    {
+      "repo": "rainlanguage/adversarial-mutation-test",
+      "number": 12,
+      "url": "https://github.com/rainlanguage/adversarial-mutation-test/issues/12",
+      "title": "Probe each mutant against a narrow selection first, escalating to the whole suite only on apparent survival"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 132,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/132",
+      "title": "Host the BuildScript base here: run() and cutRelease() concrete, and move the other deploy repos onto it"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 129,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/129",
+      "title": "Unname every return under src/, and stop the generator emitting named ones"
+    },
+    {
+      "repo": "rainlanguage/claude-audit-skills",
+      "number": 88,
+      "url": "https://github.com/rainlanguage/claude-audit-skills/issues/88",
+      "title": "Named-returns rule reads as neutral; the org preference for unnamed should be stated in it"
+    },
+    {
+      "repo": "rainlanguage/rainlang.interface",
+      "number": 123,
+      "url": "https://github.com/rainlanguage/rainlang.interface/issues/123",
+      "title": "Migrate rain-interpreter-interface to rain-math-binary 0.1.3 and publish — five consumer PRs block on this"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 306,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/306",
+      "title": "design-doctor: clear ai:* labels from closed and merged subjects"
+    },
+    {
+      "repo": "cyclofinance/cyclo.site",
+      "number": 440,
+      "url": "https://github.com/cyclofinance/cyclo.site/issues/440",
+      "title": "ReceiptModal residuals from #427: chain gate reads the store, dead erc1155Address arg, untested input reset"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 305,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/305",
+      "title": "render-component: stub src/generated.ts — the cyclo.site render gap is one module, not the SvelteKit stack"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 304,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/304",
+      "title": "/ndd reports omit the PR url, so the reader has to reconstruct the link"
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 309,
+      "url": "https://github.com/rainlanguage/rainix/issues/309",
+      "title": "Cap the ratio of comment lines to source lines, charging non-doc comments only"
+    },
     {
       "repo": "rainlanguage/issue-pr-cron",
       "number": 291,
@@ -2331,12 +2530,6 @@
       "title": "Remove the submodule-era residue — dangling `.soldeerignore` submodule entries and a template-copied block, plus a `REUSE.toml` path that does not exist"
     },
     {
-      "repo": "rainlanguage/rain.sol.codegen",
-      "number": 35,
-      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/35",
-      "title": "Remove the submodule-era residue — a dead `foundry.lock` pinning a dependency this repo no longer takes"
-    },
-    {
       "repo": "rainlanguage/rain.sol.binmaskflag",
       "number": 20,
       "url": "https://github.com/rainlanguage/rain.sol.binmaskflag/issues/20",
@@ -2365,12 +2558,6 @@
       "number": 29,
       "url": "https://github.com/rainlanguage/rain.math.fixedpoint/issues/29",
       "title": "Remove the submodule-era residue — a dead `foundry.lock` with four submodule pins, plus `.gitmodules`/`lib/` references"
-    },
-    {
-      "repo": "rainlanguage/rain.math.binary",
-      "number": 33,
-      "url": "https://github.com/rainlanguage/rain.math.binary/issues/33",
-      "title": "Remove the submodule-era residue — dead `foundry.lock`, `.gitmodules` and `lib/` references in a repo with no submodules"
     },
     {
       "repo": "rainlanguage/rain.lib.typecast",
@@ -2679,12 +2866,6 @@
       "title": "rainlang is untyped, so whether a word can validate its own operand is an accident of the encoding"
     },
     {
-      "repo": "rainlanguage/adversarial-mutation-test",
-      "number": 9,
-      "url": "https://github.com/rainlanguage/adversarial-mutation-test/issues/9",
-      "title": "the restore rule is scoped to the first probe, but every restore discards uncommitted work — three agents lost edits mid-pass"
-    },
-    {
       "repo": "S01-Issuer/s01.ops",
       "number": 183,
       "url": "https://github.com/S01-Issuer/s01.ops/issues/183",
@@ -2962,27 +3143,9 @@
     },
     {
       "repo": "rainlanguage/rain.solmem",
-      "number": 93,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/93",
-      "title": "[A31] [LOW] .gas-snapshot is a committed generated artifact, stale by three test contracts, with nothing regenerating or diffing it"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 92,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/92",
-      "title": "[A30] [LOW] Twelve dead `using ... for` directives, one of them stranding an import a test depends on"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
       "number": 91,
       "url": "https://github.com/rainlanguage/rain.solmem/issues/91",
       "title": "[A29] [LOW] forge build emits two warnings, and foundry.lock is a dead file contradicting the real forge-std pin"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 90,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/90",
-      "title": "[A28] [LOW] CI triggers on push only, so pull requests from forks get no checks at all"
     },
     {
       "repo": "rainlanguage/rain.solmem",
@@ -2995,18 +3158,6 @@
       "number": 88,
       "url": "https://github.com/rainlanguage/rain.solmem/issues/88",
       "title": "[A26] [MEDIUM] Nothing records that the Protofire-audited commit has drifted 74 commits behind main"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 87,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/87",
-      "title": "[A25] [MEDIUM] Auto-publish can only emit patch bumps and ships no notes, so a memory-corruption fix is indistinguishable from a comment tweak"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 86,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/86",
-      "title": "[A24] [MEDIUM] The cancun/mcopy floor is stripped out of the published package and asserted nowhere"
     },
     {
       "repo": "rainlanguage/rain.solmem",
@@ -3058,12 +3209,6 @@
     },
     {
       "repo": "rainlanguage/rain.solmem",
-      "number": 77,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/77",
-      "title": "[A15] [MEDIUM] Matrix endPointer NatSpec claims it returns the end of the allocated memory; it does not, and writing there corrupts the inner arrays"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
       "number": 76,
       "url": "https://github.com/rainlanguage/rain.solmem/issues/76",
       "title": "[A14] [LOW] unsafeExtend's empty-array and copy-branch self-aliasing combinations are reachable only by chance"
@@ -3094,12 +3239,6 @@
     },
     {
       "repo": "rainlanguage/rain.solmem",
-      "number": 66,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/66",
-      "title": "[A04] [LOW] arrayFrom(a, tail) and arrayFrom(a, b, tail) double-read tail.length, the same defect class already fixed in unsafeExtend by #57"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
       "number": 65,
       "url": "https://github.com/rainlanguage/rain.solmem/issues/65",
       "title": "[A03] [LOW] unsafeExtend inline branch can write Solidity's reserved zero slot at 0x60"
@@ -3115,12 +3254,6 @@
       "number": 287,
       "url": "https://github.com/rainlanguage/rainix/issues/287",
       "title": "Static check: enforce the Protofire audit-record convention (audit/protofire/ + an anchor that resolves)"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 61,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/61",
-      "title": "unsafeExtend NatSpec promises extend is never mutated; self-aliasing (base == extend) mutates its length word"
     },
     {
       "repo": "rainlanguage/issue-pr-cron",
@@ -3480,12 +3613,6 @@
       "repo": "rainlanguage/rain.vats",
       "number": 326,
       "url": "https://github.com/rainlanguage/rain.vats/issues/326",
-      "title": "Migrate to the next-version Soldeer release lifecycle (bump [package].version)"
-    },
-    {
-      "repo": "rainlanguage/rain.sol.codegen",
-      "number": 24,
-      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/24",
       "title": "Migrate to the next-version Soldeer release lifecycle (bump [package].version)"
     },
     {
@@ -5553,6 +5680,12 @@
       "title": "support `+` for exponents like `1.0e+2` to match negative"
     },
     {
+      "repo": "rainlanguage/rain.solver",
+      "number": 64,
+      "url": "https://github.com/rainlanguage/rain.solver/issues/64",
+      "title": "bot uses way too much rpc"
+    },
+    {
       "repo": "rainlanguage/raindex",
       "number": 575,
       "url": "https://github.com/rainlanguage/raindex/issues/575",
@@ -6245,40 +6378,31 @@
       "title": "add generic errors for integrity operand overflow and underflow"
     }
   ],
-  "leaks": [
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 100,
-      "url": "https://github.com/rainlanguage/rain.solmem/pull/100",
-      "title": "fix: guard the unchecked mul(_, 0x20) word scaling at both sites (#54)",
-      "reason": "🤖 ai:producer  Rework of the 2026-08-08 ruling landed at `aa77568`. All 7 items of the rework note, in order:  1. **`LibStackPointer.unsafeList` guarded** — `src/lib/LibStackPointer.sol:148`, multiply hoisted into checked Solidity exactly as the candidate diff. 2. **`LibStackSentinel.consumeSentinelTuples` guarded** — `src/lib/LibStackSentinel.sol:181`, same treatment for `size := mul(n, 0x20)`. 3. **False documentation corrected, not supplemented** — three sites, not two: the NatSpec claim (`src/lib/LibStackSentinel.sol:109-128`), the inline comment beside the scan loop (`src/lib/LibStackSentinel.sol:185-191`), and a third instance of the same universal claim in the library preamble (`src/lib/LibStackSentinel.sol:71-75`) that the note did not name but that says the same untrue thing. All three rewritten to state what the guarded function actually does, including that an out of range `n` is **not** guaranteed to fail loudly while #110 is open. 4. **Both control tests pass, untouched** — the four repro files are byte-identical to `83db85b`, and the fix commit touches no test at all: both `git diff 83db85b..aa77568 -- test/src/lib/LibStackPointer.unsafeListWrap.t.sol test/src/lib/LibStackPointerWrapHarness.sol test/src/lib/LibStackSentinel.tupleSizeWrap.t.sol test/src/lib/LibStackSentinelWrapHarness.sol` and `git diff 064249b..aa77568 -- test/` are empty. 5. **Full suite** — `origin/main` merged in first (it had moved). 334 passed / 6 failed on the merge commit, so the merge masked nothing; **340 passed, 0 failed, 0 skipped (340 total)** with the guard, exit 0. 6. **Second defect filed separately** — #110, reproduced against this branch **with the guard applied**: `sentinelPointer` 64 bytes above `upper`, returns at 11,269 gas, no revert. 7. **Audited source drift stated in the PR body**, up top with a warning heading — Protofire-audited, ~23 downstreams, re-audit conversation and republish cascade visible now rather than at merge.  Mutation evidence, each guard broken individually with the full suite re-run:  | mutant | result | | --- | --- | | `unsafeList` scaling wrapped in `unchecked` | 337 passed, **3 failed** / 340, exit 1 — all 3 `LibStackPointerUnsafeListWrapTest` red tests fire with their original messages | | `consumeSentinelTuples` scaling wrapped in `unchecked` | 337 passed, **3 failed** / 340, exit 1 — all 3 `LibStackSentinelTupleSizeWrapTest` red tests fire with their original messages |  Both controls kept passing under both mutants, which is the expected asymmetry — they do not depend on the guard.  `pre-commit run --all-files` and `forge fmt --check` both clean. **This PR is no longer expected-red.** ",
-      "createdAt": "2026-07-25T21:32:37Z"
-    }
-  ],
+  "leaks": [],
   "counts": {
-    "unvetted": 97,
-    "blockedOn": 19,
+    "unvetted": 42,
+    "blockedOn": 23,
     "ready": 0,
-    "needsWork": 98,
+    "needsWork": 108,
     "relink": 0,
-    "design": 1,
+    "design": 5,
     "blockedInfra": 0,
-    "closeCandidateIssues": 3,
-    "closeCandidateUnvetted": 3,
-    "closeCandidateUpheld": 0,
-    "leaks": 1,
-    "totalProducerPrs": 216,
+    "closeCandidateIssues": 6,
+    "closeCandidateUnvetted": 6,
+    "closeCandidateUpheld": 2,
+    "leaks": 0,
+    "totalProducerPrs": 180,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 654,
-    "designPresentable": 1,
+    "uncoveredIssues": 692,
+    "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 875
+    "openIssues": 871
   },
   "ages": {
     "openIssues": {
-      "meanDays": 283.5,
-      "medianDays": 102.7,
-      "oldestDays": 1665.2
+      "meanDays": 285.7,
+      "medianDays": 104.2,
+      "oldestDays": 1666.7
     }
   }
 }
