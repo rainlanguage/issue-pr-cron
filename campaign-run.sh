@@ -421,6 +421,31 @@ PROMPT="$(sed -e "s#{{WORK_DIR}}#$WORK_DIR#g" \
               -e "s#{{ITEM_CAP}}#$ITEM_CAP#g" \
               "$DIR/campaign-prompt.txt")"
 
+# --- the NON-INTERACTIVE pragma (claude-config hooks/noninteractive.py) ------------------------
+# This run is `claude --print`, so nothing re-wakes it when a backgrounded command finishes
+# (#249: Monitor returns immediately and abandons the wait it was armed for). The two
+# `background-*` PreToolUse hooks rewrite long builds and waits to `run_in_background`, which is
+# right for an interactive session and strands this one -- the only way left to learn a result is
+# to poll, and every probe re-reads the whole context.
+#
+# MEASURED, 20260816T170156Z, worker on S01-Issuer/st0x.deploy#300: `nix develop -c
+# rainix-sol-static` was backgrounded by one hook, the `sleep` waiting on it by the other, and the
+# worker fell back to ~25 `wc -l` probes against a 121k context -- ~$1.60 of that worker's $5.19,
+# on a check that never went green.
+#
+# Stamped into the CONTEXT rather than exported, because the hook is handed a `transcript_path`
+# and reads it; an environment variable would depend on what the subprocess inherited. It goes in
+# BOTH the main prompt and the worker brief: whether a dispatched agent's `transcript_path` names
+# its own trace or its parent's, the pragma is in the one the hook opens either way.
+#
+# APPENDED, not substituted into the prompt file: it is a property of THIS invocation, not of the
+# prompt's text, and the prompt files are collectively capped (`prompt cap` CI, 153919 bytes,
+# currently ~96% used) so a runtime stamp costs none of that headroom.
+NONINTERACTIVE_PRAGMA="CLAUDE-PRAGMA-NONINTERACTIVE-6b1f9d4e"
+PROMPT="$PROMPT
+
+$NONINTERACTIVE_PRAGMA"
+
 # --- the STANDING BRIEF every dispatched worker starts with (#200) -----------------------------
 # A dispatched sub-agent starts with no prompt, so the run's standing rules reach it only if
 # something puts them there. Until now the only channel was the dispatch prompt the main loop
@@ -450,7 +475,8 @@ if ! grep -q '[^[:space:]]' "$DIR/campaign-worker-prompt.txt" 2>/dev/null; then
   exit 1
 fi
 AGENTS_JSON="$(jq -nc --rawfile brief "$DIR/campaign-worker-prompt.txt" \
-  '{"pr-worker":{"description":"Producer worker: does ONE dispatched item end to end and reports its outcome.","prompt":$brief}}')"
+  --arg pragma "$NONINTERACTIVE_PRAGMA" \
+  '{"pr-worker":{"description":"Producer worker: does ONE dispatched item end to end and reports its outcome.","prompt":($brief + "\n\n" + $pragma)}}')"
 if [ -z "$AGENTS_JSON" ]; then
   echo "$(date -u +%FT%TZ) campaign run ABORT: could not build the worker brief from campaign-worker-prompt.txt" | _log
   exit 1
