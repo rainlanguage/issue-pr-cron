@@ -26140,6 +26140,38 @@ const MAX_BASIS_WORDS: usize = 12;
 const GC_MAX_AGE_DEFAULT: u64 = 30;
 const GC_MAX_AGE_RANGE: std::ops::RangeInclusive<u64> = 1..=365;
 
+/// THE PER-RUN WORK-ITEM CAP — the one definition of it, and the only place it is spelled (#288).
+///
+/// An ITEM is one unit of work a run may attempt: for the producer an issue it PRs, a rework it
+/// pushes, a conflict it resolves, a migration it flags; for the vetter a PR it vets or a
+/// close-candidate flag it rules on. It is a RISK CONTROL, not a throughput preference — this
+/// machine is not yet reliable or efficient, and every item a run attempts is an item that can go
+/// WRONG (a bad PR a human unpicks, an unsound flag, a wrong verdict acted on, tokens burnt for
+/// nothing), so the cap bounds how much damage ONE run can do while that is still true. It is
+/// deliberately conservative and explicitly temporary: it RISES on evidence from the run logs that
+/// runs have become reliable and efficient, never because a run finished early with budget to
+/// spare. A number the design intends to move repeatedly is the number that must not be copied.
+///
+/// EVERY OTHER SURFACE DERIVES FROM THIS ONE, on both sides of the boundary:
+///
+/// - IN THIS CRATE: [`STATE_LOAD_PAGE_DEFAULT`] and [`STATE_LOAD_PAGE_RANGE`] are computed from it,
+///   so the page the MCP boundary hands back and the budget the run is told to spend cannot
+///   disagree. The two state-load descriptions and their `limit` schemas are `format!`ed from it,
+///   so the English a model reads off the schema is the number the validator enforces.
+/// - IN THE PROMPTS: `campaign-prompt.txt` and `review-prompt.txt` carry `{{ITEM_CAP}}`, which the
+///   runners substitute from `pr-review-report item-cap` — this constant, printed. A prompt is
+///   natural language read by a model, so a stale restatement is not a parse error but a
+///   CONTRADICTORY instruction each run resolves its own way. The template makes the restatement
+///   unspellable, and `the_prompts_state_no_item_cap_of_their_own` fails the build if one is
+///   written back in — as a digit or as an English word, which a `grep -n` for the digit misses.
+///
+/// NOT everything spelled `3` or `5` nearby is this number. The four `NEXT_*_MAX_ROWS` page caps
+/// bound a HUMAN's inbox and are sized by row STALENESS — each ruling changes the queue, so a page
+/// is stale past its head (see [`NEXT_READY_MAX_ROWS`]). A human is not a cron. Deriving them from
+/// here would enshrine a coincidence as a coupling and move a human's page every time the crons'
+/// risk bound moves, so they stay their own constants at their own value.
+const RUN_ITEM_CAP: usize = 5;
+
 /// How many rows ONE state-load page carries, and the bounds a caller may move it within (#78).
 ///
 /// The vetter judges ONE PR at a time and each `record_verdict` removes that PR from the next
@@ -26148,22 +26180,20 @@ const GC_MAX_AGE_RANGE: std::ops::RangeInclusive<u64> = 1..=365;
 /// STRUCTURAL: at 25 rows a state-load cannot reach [`MCP_MAX_RESULT_BYTES`] even with GitHub's
 /// longest legal titles, so the size of the queue stops being able to break the state-load.
 ///
-/// RUN BUDGET (2026-08-03): a page is now an ALLOWANCE, not a window onto a longer queue. A vetter
-/// run spends at most 5 ITEMS — a PR vetted or a close-candidate flag ruled on, ONE budget shared
-/// across both state-loads. It is a RISK CONTROL, not a throughput preference: the FSM is not yet
-/// reliable or efficient, every item a run attempts is an item that can go wrong (a wrong verdict
-/// a human acts on, a sound flag stripped, tokens burnt for nothing), and 5 bounds how much damage
-/// ONE run can do while that is still true. So a state-load handing back 10 or 25 is handing back
-/// work the run must not do, and the per-tool half of "stop at 5" is a rule the surface enforces
-/// rather than one the prompt merely asserts. The SHARING is necessarily the prompt's to enforce:
-/// each tool call is bounded on its own, and neither can see what the other already spent. The
-/// bound is deliberately conservative and explicitly temporary — raising it is moving THIS number,
-/// gated on evidence from the run logs that runs have become reliable and efficient, never on a
-/// run having finished early with budget to spare. It is the SAME number `campaign-prompt.txt` and
-/// `review-prompt.txt` state in prose: a page smaller than the prompt's cap silently caps the run
-/// lower than the rule says, so the two move together.
-const STATE_LOAD_PAGE_DEFAULT: usize = 5;
-const STATE_LOAD_PAGE_RANGE: std::ops::RangeInclusive<u64> = 1..=5;
+/// RUN BUDGET (2026-08-03): a page is an ALLOWANCE, not a window onto a longer queue. A vetter run
+/// spends at most [`RUN_ITEM_CAP`] ITEMS — a PR vetted or a close-candidate flag ruled on, ONE
+/// budget shared across both state-loads. So a state-load handing back 10 or 25 is handing back
+/// work the run must not do, and the per-tool half of "stop at the cap" is a rule the surface
+/// ENFORCES rather than one the prompt merely asserts. The SHARING is necessarily the prompt's to
+/// enforce: each tool call is bounded on its own, and neither can see what the other already spent.
+///
+/// Both DERIVE from [`RUN_ITEM_CAP`] rather than restating it, because the two directions of
+/// disagreement both fail SILENTLY: a page above the cap hands back work the run must not do, and
+/// a page below it starves a run told to spend more items than it can fetch rows for — these tools
+/// REFUSE an out-of-range `limit` rather than clamping it, so nothing errors and the run just
+/// quietly does less than the rule says (#288).
+const STATE_LOAD_PAGE_DEFAULT: usize = RUN_ITEM_CAP;
+const STATE_LOAD_PAGE_RANGE: std::ops::RangeInclusive<u64> = 1..=RUN_ITEM_CAP as u64;
 
 /// The byte budget ONE tool result must fit in — the contract this server holds itself to, checked
 /// on every result before it is handed back (#78), and sized so that OUR error always arrives before
@@ -34483,12 +34513,12 @@ fn mcp_all_tools() -> Value {
         {
             "name": "unvetted",
             "narrows": "limit",
-            "description": "State-load: ONE PAGE of the open PRs to vet, vet-first order. Per PR: headRefOid, labels, reviewDecision, humanSacred, vettedAtHead, ci, mergeable. `counts` is whole-queue; `more` is how many vet-able PRs this page left behind — the NEXT run's work: a run spends at most 5 ITEMS in total, shared with the flags from unvetted_close_candidates, so never re-call for a second page. `openThreads` lists the PRs withheld because a review thread is unresolved. Human-decided and vetted-at-head PRs are already excluded. A DRAFT is not vetted either, but it is not skipped: this call SENDS IT BACK itself, as ai:needs-work with the work order that the producer confirm the PR is not a draft if it intends to merge something, and `draftNeedsWork` names the PRs that happened to (`sentBack: false` = the write did not land). A draft ALREADY in a modeled ai:* state is left alone instead — the send-back would strip that label, and for ai:close-candidate/ai:design the label IS the human's queue — counted as `skipDraftInState` and inventoried by that state, not here. It also runs the ai:blocked-on clearance check: a flag whose typed deps are all merged/closed is cleared in-place and the PR appears here un-vetted; `blockedOn` lists the PRs still held (open deps named); `blockedOnManualReview` lists the flags the machine cannot judge (no typed refs / unresolvable ref) — those need a human, never a verdict.",
+            "description": format!("State-load: ONE PAGE of the open PRs to vet, vet-first order. Per PR: headRefOid, labels, reviewDecision, humanSacred, vettedAtHead, ci, mergeable. `counts` is whole-queue; `more` is how many vet-able PRs this page left behind — the NEXT run's work: a run spends at most {RUN_ITEM_CAP} ITEMS in total, shared with the flags from unvetted_close_candidates, so never re-call for a second page. `openThreads` lists the PRs withheld because a review thread is unresolved. Human-decided and vetted-at-head PRs are already excluded. A DRAFT is not vetted either, but it is not skipped: this call SENDS IT BACK itself, as ai:needs-work with the work order that the producer confirm the PR is not a draft if it intends to merge something, and `draftNeedsWork` names the PRs that happened to (`sentBack: false` = the write did not land). A draft ALREADY in a modeled ai:* state is left alone instead — the send-back would strip that label, and for ai:close-candidate/ai:design the label IS the human's queue — counted as `skipDraftInState` and inventoried by that state, not here. It also runs the ai:blocked-on clearance check: a flag whose typed deps are all merged/closed is cleared in-place and the PR appears here un-vetted; `blockedOn` lists the PRs still held (open deps named); `blockedOnManualReview` lists the flags the machine cannot judge (no typed refs / unresolvable ref) — those need a human, never a verdict."),
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "include_skipped": {"type": "boolean", "description": "Also list the excluded PRs and why (digest rows: pr, action, unresolvedThreads)."},
-                    "limit": {"type": "integer", "description": "Rows per list, 1-5 (default 5) — a run's whole work budget is 5 items across both state-loads."}
+                    "limit": {"type": "integer", "description": format!("Rows per list, 1-{RUN_ITEM_CAP} (default {RUN_ITEM_CAP}) — a run's whole work budget is {RUN_ITEM_CAP} items across both state-loads.")}
                 }
             }
         },
@@ -34589,12 +34619,12 @@ fn mcp_all_tools() -> Value {
         {
             "name": "unvetted_close_candidates",
             "narrows": "limit",
-            "description": "State-load: ONE PAGE of the producer close-candidate flags on open SUBJECTS — issues AND pull requests (#211; the row's url says which) — to vet. Per subject: flagAt, flagReason (the producer's stated evidence), labels, humanSacred, vettedAtFlag. `counts` is whole-queue; `more` is how many this page left behind — the NEXT run's work: a run spends at most 5 ITEMS in total, shared with the PRs from unvetted, so never re-call for a second page. Already-vetted-at-flag subjects are excluded, as are PRs whose label is the vetter's own `close` verdict (counts.skipVetterClose — the human's queue, not a claim to judge). A subject a human has RULED is not excluded and not skipped: the ruling is a transition whose write only half landed, so this call COMPLETES it — the recorded close executed, or the flag the ruling contradicts retired (counts.completedHumanRuling / humanRulingCompletionFailed).",
+            "description": format!("State-load: ONE PAGE of the producer close-candidate flags on open SUBJECTS — issues AND pull requests (#211; the row's url says which) — to vet. Per subject: flagAt, flagReason (the producer's stated evidence), labels, humanSacred, vettedAtFlag. `counts` is whole-queue; `more` is how many this page left behind — the NEXT run's work: a run spends at most {RUN_ITEM_CAP} ITEMS in total, shared with the PRs from unvetted, so never re-call for a second page. Already-vetted-at-flag subjects are excluded, as are PRs whose label is the vetter's own `close` verdict (counts.skipVetterClose — the human's queue, not a claim to judge). A subject a human has RULED is not excluded and not skipped: the ruling is a transition whose write only half landed, so this call COMPLETES it — the recorded close executed, or the flag the ruling contradicts retired (counts.completedHumanRuling / humanRulingCompletionFailed)."),
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "include_skipped": {"type": "boolean", "description": "Also list the excluded issues and why."},
-                    "limit": {"type": "integer", "description": "Rows per list, 1-5 (default 5) — a run's whole work budget is 5 items across both state-loads."}
+                    "limit": {"type": "integer", "description": format!("Rows per list, 1-{RUN_ITEM_CAP} (default {RUN_ITEM_CAP}) — a run's whole work budget is {RUN_ITEM_CAP} items across both state-loads.")}
                 }
             }
         },
@@ -47572,6 +47602,11 @@ enum Cmd {
         #[arg(long)]
         limit: Option<usize>,
     },
+    /// Print the per-run WORK ITEM cap ([`RUN_ITEM_CAP`]) and nothing else, so a caller can `$(…)`
+    /// it. `campaign-run.sh` and `review-run.sh` substitute it into their prompt templates'
+    /// `{{ITEM_CAP}}`, which is what makes the prose a run reads and the page this binary's MCP
+    /// boundary will hand it the SAME number rather than two that have to be kept in step (#288).
+    ItemCap,
     /// CI gate: every plugin `.claude-plugin/marketplace.json` lists resolves to a real manifest
     /// carrying the SAME version. Exit 2 if a listing is wrong, 3 if the gate cannot be evaluated.
     PluginVersionLockstep {
@@ -51318,8 +51353,11 @@ fn retire_blocked_infra_mode(dry_run: bool) -> i32 {
 //
 // PER-SUBJECT AND NOT FOLDED INTO `uncovered-issues`, which is a cost decision, measured: the
 // uncovered set is 617 issues and the read is one GraphQL round trip each (~0.65s measured over a
-// 40-issue sample), while the producer's run budget is 5 work items. Running it over the backlog
-// buys ~612 answers per run that nothing reads. Running it over the candidates costs five calls.
+// 40-issue sample), while the producer's run budget is [`RUN_ITEM_CAP`] work items. Running it over
+// the backlog buys an answer for all 617 when only the budget's worth is ever read; running it over
+// the candidates costs one call each, so the whole cost is the budget. The gap is three orders of
+// magnitude at any cap this bound will plausibly take, which is why the shape is per-subject rather
+// than a figure that has to be recomputed every time the cap moves.
 //
 // The recency rule is [`landed_after_filed`] — the SAME function `already_fixed_recency_gate`
 // enforces at flag time, so the two ends of a run cannot disagree about what "post-dates" means.
@@ -51968,6 +52006,10 @@ fn main() {
             include_skipped,
             limit,
         } => unvetted_mode(json, include_skipped, limit),
+        Cmd::ItemCap => {
+            println!("{RUN_ITEM_CAP}");
+            0
+        }
         Cmd::PluginVersionLockstep { root } => plugin_version_lockstep_mode(&root),
         Cmd::RequireQaBlock => require_qa_block_mode(),
         Cmd::RepairQaBlock {
@@ -57192,7 +57234,7 @@ mod prompt_section_tests {
     #[test]
     fn the_preamble_is_the_first_paragraph_and_stops_at_the_blank_line() {
         const PROMPT: &str = "\
-RUN BUDGET: at most 5 WORK ITEMS
+RUN BUDGET: at most {{ITEM_CAP}} WORK ITEMS
 FAN OUT BY DEFAULT, and here is why
    \nSHELL SHAPES: a LATER paragraph
 
@@ -57200,7 +57242,8 @@ ONE-SHOT, NOT A LOOP
 ";
         let preamble = producer_preamble(PROMPT);
         assert_eq!(
-            preamble, "RUN BUDGET: at most 5 WORK ITEMS\nFAN OUT BY DEFAULT, and here is why",
+            preamble,
+            "RUN BUDGET: at most {{ITEM_CAP}} WORK ITEMS\nFAN OUT BY DEFAULT, and here is why",
             "a wrapped paragraph is joined back with its own newlines, not flattened"
         );
         // A whitespace-only line ENDS the paragraph — it is blank to a reader, and a separator that
@@ -57220,7 +57263,7 @@ ONE-SHOT, NOT A LOOP
     #[test]
     #[should_panic(expected = "campaign-prompt.txt has no preamble paragraph")]
     fn a_missing_preamble_panics_rather_than_yielding_an_empty_haystack() {
-        producer_preamble("\nRUN BUDGET: at most 5 WORK ITEMS\n");
+        producer_preamble("\nRUN BUDGET: at most {{ITEM_CAP}} WORK ITEMS\n");
     }
 }
 
@@ -57710,11 +57753,16 @@ mod settings_tests {
         };
         let budget = producer_preamble(&prompt);
 
-        // THE CAP'S UNIT. "fan-out for the 3" numerically couples agents to the cap, and the
+        // THE CAP'S UNIT. "fan-out for the <cap>" numerically couples agents to the cap, and the
         // disclaimer beside it contrasted items with EFFORT — never with AGENTS — so the question
         // "may this item take two agents?" had no answer in the text.
+        //
+        // The forbidden string stops at "the" and carries NO number. Spelling the cap into it makes
+        // the assertion permanently true the moment the cap moves — the phrasing it exists to
+        // forbid just gets written with the new number and sails past — which is #288's defect
+        // inside the guard against it.
         assert!(
-            !prompt.contains("Use the Workflow/Task sub-agent fan-out for the 3"),
+            !prompt.contains("Use the Workflow/Task sub-agent fan-out for the"),
             "the cap must not be phrased so that the fan-out is sized by the item count"
         );
         assert!(
@@ -64024,6 +64072,15 @@ mod cli_tests {
     fn require_qa_block_cli() {
         assert_eq!(parse(&["prr", "require-qa-block"]), Cmd::RequireQaBlock);
         assert!(Cli::try_parse_from(["prr", "require-qa-block", "extra"]).is_err());
+    }
+
+    // The runners read this in a `$(…)`, so it takes no arguments and prints one number: a
+    // spelling that accepts any would let a caller ask for a budget other than the one in force,
+    // which is the disagreement the subcommand exists to make impossible.
+    #[test]
+    fn item_cap_cli() {
+        assert_eq!(parse(&["prr", "item-cap"]), Cmd::ItemCap);
+        assert!(Cli::try_parse_from(["prr", "item-cap", "5"]).is_err());
     }
 
     // A CI gate must run locally against any checkout, so its root is an argument with a working
@@ -73691,6 +73748,431 @@ mod vetter_state_load_tests {
             "/work/vet-rain.flare-170"
         );
         assert_eq!(checkout_dir("/work/", "o/r", 1), "/work/vet-r-1");
+    }
+}
+
+/// THE CAP'S PIN (#288) — what keeps [`RUN_ITEM_CAP`] a single source of TRUTH rather than a
+/// single source of SELF-CONSISTENCY.
+///
+/// Derivation alone is not a test. Once every surface is computed from one constant, an expectation
+/// computed from that same constant agrees with it at EVERY value, so it can no longer tell 5 from
+/// 3 and it survives a mutation of the number it exists to pin. So the values here are LITERALS,
+/// deliberately written twice: moving the cap is meant to fail this file loudly and be confirmed
+/// once, which is the opposite of a surface left behind silently.
+#[cfg(test)]
+mod run_item_cap_tests {
+    use super::*;
+
+    /// How many whitespace/hyphen tokens before an `item`-noun the scan looks back over.
+    ///
+    /// ONE is not enough, and the miss is not hypothetical: the run-summary instruction read "how
+    /// many of the 3 budgeted items you spent" and survived a raise of the cap, because the token
+    /// against the noun is the adjective `budgeted` and the quantity sits behind it.
+    const LOOKBACK_TOKENS: usize = 3;
+
+    /// The spellings a cap statement can wear, which is the half a `grep` for the digit never sees.
+    ///
+    /// `one` is deliberately absent. The runners substitute a DIGIT, so `one` is never how the cap
+    /// renders, while "One item may take SEVERAL sub-agents" and "costs the same one item a PR
+    /// does" are ordinary English for a single item — counting them would make the scan cry wolf on
+    /// the two sentences that explain what an item IS.
+    const NUMBER_WORDS: &[&str] = &[
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+        "seven",
+        "eight",
+        "nine",
+        "ten",
+        "eleven",
+        "twelve",
+        "thirteen",
+        "fourteen",
+        "fifteen",
+        "sixteen",
+        "seventeen",
+        "eighteen",
+        "nineteen",
+        "twenty",
+        "thirty",
+        "forty",
+        "fifty",
+        "sixty",
+        "seventy",
+        "eighty",
+        "ninety",
+        "hundred",
+    ];
+
+    /// The prose that may still put a bare quantity against `items`, because it RECORDS a run that
+    /// happened rather than stating the rule in force — those stay true at the value they were
+    /// measured under, and templating them would rewrite history every time the cap moved.
+    ///
+    /// Whole phrases, not bare numbers: an entry has to name the sentence it excuses, so widening
+    /// this list is a visible act rather than a digit quietly gaining a second meaning.
+    const HISTORY_QUOTATIONS: &[&str] = &["did its three items"];
+
+    /// A token with its surrounding punctuation stripped and folded to lowercase, so `(5`, `5,`
+    /// and `FIVE` all compare as the quantity they are. Only the ENDS are trimmed, so
+    /// `{{ITEM_CAP}}` becomes `item_cap` and never collides with the `item` noun itself.
+    fn bare(tok: &str) -> String {
+        tok.trim_matches(|c: char| !c.is_alphanumeric())
+            .to_ascii_lowercase()
+    }
+
+    /// Whether a token is a COUNT — the thing a budget is stated in — rather than a number that
+    /// merely looks like one.
+    ///
+    /// Two exclusions, both drawn from what this repo's prose actually contains. A token opening
+    /// `#` is an issue or PR reference (`#114 — lane items`), and a digit run longer than two is a
+    /// year, an issue number or a queue size (`~617 issues`), never a per-run item cap — this bound
+    /// exists to be small, and a machine trusted with 100 items a run would not need one. Reading
+    /// either as a quantity would make the scan cry wolf on ordinary text, and a guard that cries
+    /// wolf gets its allowlist widened until it no longer guards anything.
+    fn is_quantity(tok: &str) -> bool {
+        if tok.trim_start_matches(['(', '"', '\'']).starts_with('#') {
+            return false;
+        }
+        let t = bare(tok);
+        if t.is_empty() {
+            return false;
+        }
+        if t.chars().all(|c| c.is_ascii_digit()) {
+            // A leading zero is a date or clock field (`2026-08-03`), which the hyphen split hands
+            // over as `08` and `03`. A count is never written that way.
+            return t.len() <= 2 && !(t.len() > 1 && t.starts_with('0'));
+        }
+        NUMBER_WORDS.contains(&t.as_str())
+    }
+
+    /// Every place `text` puts a bare quantity BEFORE the `item`/`items` noun — i.e. every place it
+    /// states a work-item budget in its own words instead of deriving one from `{{ITEM_CAP}}`.
+    ///
+    /// The split treats `-` as a separator so `5-ITEM BUDGET` is caught: the hyphenated form is a
+    /// restatement that a scan for a free-standing digit walks straight past.
+    ///
+    /// LOOKING BACKWARD IS THE RULE, NOT A LIMITATION TO LIFT. English attaches a count to the noun
+    /// that FOLLOWS it, so a window opened after the noun reads the count of the NEXT noun instead:
+    /// the live sentence `{{ITEM_CAP}} items dispatched as thirty agents` would be flagged for the
+    /// `thirty` that belongs to `agents`, and it is the one sentence in the prompt whose whole job
+    /// is to say the cap counts items and NOT agents. A post-noun form (`items per run: 5`) is a
+    /// different construction, and catching it means stopping at the next noun rather than widening
+    /// this window — do not add a forward scan without that. The case below pins it.
+    fn cap_restatements(text: &str) -> Vec<String> {
+        let toks: Vec<&str> = text
+            .split(|c: char| c.is_whitespace() || c == '-')
+            .filter(|t| !t.is_empty())
+            .collect();
+        let mut found = Vec::new();
+        for (i, tok) in toks.iter().enumerate() {
+            let noun = bare(tok);
+            if noun != "item" && noun != "items" {
+                continue;
+            }
+            let start = i.saturating_sub(LOOKBACK_TOKENS);
+            if !toks[start..i].iter().any(|t| is_quantity(t)) {
+                continue;
+            }
+            let window = toks[start..=i].join(" ");
+            if HISTORY_QUOTATIONS
+                .iter()
+                .any(|h| window.to_ascii_lowercase().contains(h))
+            {
+                continue;
+            }
+            found.push(window);
+        }
+        found
+    }
+
+    /// THE GUARD ON THE GUARD. A scanner that quietly stops matching reports "no restatements" on a
+    /// prompt full of them, which is worse than no scanner at all — so its own detection is pinned
+    /// against the exact forms the live prompts used to carry, digits and English words alike, plus
+    /// the shapes it must NOT cry wolf on.
+    #[test]
+    fn the_restatement_scan_catches_every_form_the_prompts_carried() {
+        for stated in [
+            "RUN BUDGET: at most 5 WORK ITEMS per run",
+            "a run that does 5 items well",
+            "five items dispatched as thirty agents is still five items",
+            "THE 5-ITEM BUDGET COUNTS ITEMS AND COUNTS NO AGENTS",
+            "WHATEVER IS LEFT OF THE 5-ITEM RUN BUDGET",
+            "how many of the 3 budgeted items you spent",
+            "each red you work is one of the run's 5 items",
+        ] {
+            assert!(
+                !cap_restatements(stated).is_empty(),
+                "the scan must catch a cap stated in prose: {stated}"
+            );
+        }
+
+        for derived in [
+            "RUN BUDGET: at most {{ITEM_CAP}} WORK ITEMS per run",
+            "THE {{ITEM_CAP}}-ITEM BUDGET COUNTS ITEMS AND COUNTS NO AGENTS",
+            "how many of the {{ITEM_CAP}} budgeted items you spent",
+            "One item may take SEVERAL sub-agents",
+            "a flag ruled on costs the same one item a PR does",
+            "an item is a PR you vet OR a close-candidate flag you rule on",
+            "20260804T114433Z did its three items inline over 414 calls",
+            // A reference and a queue size, both beside the noun and neither a budget.
+            "the lane split (#114 — lane items) is computed per subject",
+            "it is ~617 issues against a {{ITEM_CAP}}-item budget",
+            "the 2026-08-03 run budget items",
+            // THE TWO ABOVE DO NOT REACH THE GUARDS THEY NAME, which a mutation pass is how you
+            // find out: in the live sentence `~617` sits three tokens off the noun (`against a
+            // {{ITEM_CAP}}-item`) so the digit-run rule never judges it, and `#114` is excluded by
+            // that same digit-run rule whether or not the `#` rule exists. Each guard needs a
+            // quantity ADJACENT to the noun and short enough to reach it, or it is pinned by
+            // nothing — both of these survived until they were written.
+            "the uncovered set is 617 items",
+            "the lane split (#51 — lane items) is computed per subject",
+            // THE DIRECTION, PINNED. A count sitting AFTER the noun belongs to the next noun, not
+            // to this one — widening the window forward flags `thirty` here, on the one sentence
+            // that exists to say the cap counts items and not agents.
+            "{{ITEM_CAP}} items dispatched as thirty agents is still {{ITEM_CAP}} items",
+        ] {
+            assert!(
+                cap_restatements(derived).is_empty(),
+                "the scan must not cry wolf on {derived}: {:?}",
+                cap_restatements(derived)
+            );
+        }
+    }
+
+    /// The cap and the two bounds computed from it, as LITERALS. A page above the cap hands back
+    /// work the run must not do; a page below it starves a run told to spend items it cannot fetch
+    /// rows for — and because the state-loads REFUSE an out-of-range `limit` rather than clamping
+    /// it, both directions fail without erroring.
+    #[test]
+    fn the_run_item_cap_and_the_page_bounds_it_computes_are_pinned() {
+        assert_eq!(RUN_ITEM_CAP, 5, "the per-run work-item cap");
+        assert_eq!(
+            STATE_LOAD_PAGE_DEFAULT, 5,
+            "a state-load page IS the run's budget, so it moves only with RUN_ITEM_CAP"
+        );
+        assert_eq!(
+            *STATE_LOAD_PAGE_RANGE.start(),
+            1,
+            "a caller may always narrow"
+        );
+        assert_eq!(
+            *STATE_LOAD_PAGE_RANGE.end(),
+            5,
+            "the ceiling a run spending its whole budget in one state-load asks for"
+        );
+    }
+
+    /// The English a model reads off the schema is the number the validator enforces — the schema
+    /// strings are `format!`ed from the constant, and these literals are what would have caught a
+    /// hand-copied one drifting.
+    #[test]
+    fn both_state_loads_state_the_cap_the_validator_enforces() {
+        let all = mcp_all_tools();
+        for name in ["unvetted", "unvetted_close_candidates"] {
+            let tool = all
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|t| t["name"] == name)
+                .unwrap_or_else(|| panic!("{name} is an advertised tool"));
+
+            let desc = tool["description"].as_str().unwrap();
+            assert!(
+                desc.contains("a run spends at most 5 ITEMS in total"),
+                "{name}'s description states the run budget: {desc}"
+            );
+
+            let limit = tool["inputSchema"]["properties"]["limit"]["description"]
+                .as_str()
+                .unwrap();
+            assert!(
+                limit.contains("Rows per list, 1-5 (default 5)")
+                    && limit.contains("work budget is 5 items"),
+                "{name}'s `limit` states the range AND the budget it is: {limit}"
+            );
+        }
+    }
+
+    /// THE DISTINCTION THIS FIX HAS TO PRESERVE. The four human-inbox reads carry a page cap that
+    /// merely HAPPENS to be a small number too. Theirs is sized by row STALENESS — each ruling
+    /// changes the queue, so a page is stale past its head — and a human is not a cron.
+    ///
+    /// Folding them into `RUN_ITEM_CAP` would couple a human's inbox to the crons' risk bound and
+    /// make the two impossible to move apart. These literals are what fails if someone does: they
+    /// pin the inbox at ITS value, so a "simplification" that derives it from the cap turns red on
+    /// the spot rather than the next time the cap moves.
+    #[test]
+    fn the_human_inbox_page_is_not_the_run_item_cap() {
+        assert_eq!(
+            NEXT_READY_MAX_ROWS, 3,
+            "the human's inbox page, not the cap"
+        );
+        assert_eq!(NEXT_CC_MAX_ROWS, 3);
+        assert_eq!(NEXT_DESIGN_MAX_ROWS, 3);
+        assert_eq!(NEXT_LEAK_MAX_ROWS, 3);
+
+        let all = mcp_all_tools();
+        for name in [
+            "next_ready",
+            "next_close_candidate",
+            "next_design",
+            "next_leak",
+        ] {
+            let tool = all
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|t| t["name"] == name)
+                .unwrap_or_else(|| panic!("{name} is an advertised tool"));
+            let limit = tool["inputSchema"]["properties"]["limit"]["description"]
+                .as_str()
+                .unwrap();
+            assert!(
+                limit.contains("1-3 (default 1)"),
+                "{name} pages a HUMAN's inbox at its own size: {limit}"
+            );
+            assert!(
+                !limit.contains("work budget"),
+                "{name} must not state the crons' run budget: {limit}"
+            );
+        }
+    }
+
+    /// The prompts DERIVE the cap and never say it. A prompt is natural language read by a model,
+    /// so a statement left behind at the old value is not a parse error — it is a second,
+    /// contradictory instruction, and which one a run obeys is decided per run.
+    #[test]
+    fn the_prompts_state_no_item_cap_of_their_own() {
+        for name in ["campaign-prompt.txt", "review-prompt.txt"] {
+            let Some(prompt) = repo_root_text(name) else {
+                continue; // not checked out (nix build sandbox) — enforced by the rs-test gate
+            };
+            assert!(
+                prompt.contains("{{ITEM_CAP}}"),
+                "{name} must take the run budget from the template, not from prose"
+            );
+            let restated = cap_restatements(&prompt);
+            assert!(
+                restated.is_empty(),
+                "{name} states a work-item budget in its own words instead of {{{{ITEM_CAP}}}}, so a \
+                 raise leaves it behind: {restated:?}"
+            );
+        }
+    }
+
+    /// EVERY placeholder a prompt carries is substituted by the runner that launches it.
+    ///
+    /// The failure this catches is silent in the worst way: `sed` leaves an unmatched `{{NAME}}`
+    /// verbatim, so the model is handed the literal braces and reads a rule with a hole where its
+    /// number should be. Nothing errors, and the run resolves it however it happens to. Written
+    /// over the placeholders the prompt ACTUALLY holds rather than a list kept beside them, so a
+    /// new one is inside this test on the day it is added.
+    #[test]
+    fn every_prompt_placeholder_is_substituted_by_its_runner() {
+        for (prompt_name, runner_name) in [
+            ("campaign-prompt.txt", "campaign-run.sh"),
+            ("review-prompt.txt", "review-run.sh"),
+        ] {
+            let (Some(prompt), Some(runner)) =
+                (repo_root_text(prompt_name), repo_root_text(runner_name))
+            else {
+                continue; // not checked out (nix build sandbox) — enforced by the rs-test gate
+            };
+
+            let mut placeholders: Vec<String> = prompt
+                .match_indices("{{")
+                .filter_map(|(i, _)| {
+                    prompt[i + 2..]
+                        .find("}}")
+                        .map(|j| prompt[i + 2..i + 2 + j].to_string())
+                })
+                .filter(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_uppercase() || c == '_'))
+                .collect();
+            placeholders.sort();
+            placeholders.dedup();
+            assert!(
+                !placeholders.is_empty(),
+                "{prompt_name} is a template — a scan finding none has stopped working"
+            );
+
+            for p in placeholders {
+                assert!(
+                    runner.contains(&format!("s#{{{{{p}}}}}#")),
+                    "{prompt_name} carries {{{{{p}}}}} and {runner_name} never substitutes it, so \
+                     the model is handed the literal braces"
+                );
+            }
+        }
+    }
+
+    /// TEST HELPER: run a runner's OWN budget guard against one value, in a shell, and report
+    /// whether it aborted. The `case` block is lifted verbatim out of the script, so what is
+    /// exercised is the guard that ships rather than a copy of it kept here.
+    ///
+    /// Asserting on the guard's TEXT is what let `00` through: a pattern list reads as covering the
+    /// case it names and says nothing whatever about the ones it does not, so `'' | *[!0-9]* | 0`
+    /// looked like "refuses zero" while `00` — all digits, and not the string `0` — sailed past it
+    /// into a rendered budget of nothing.
+    fn budget_guard_rejects(runner: &str, value: &str) -> bool {
+        let after = runner
+            .split_once("case \"$ITEM_CAP\" in")
+            .expect("the budget guard is present")
+            .1;
+        let block = after.split_once("esac").expect("the guard closes").0;
+        // `_log` is the runner's own logger, which the guard pipes its abort line into.
+        let script = format!(
+            "_log() {{ cat >/dev/null; }}\nITEM_CAP='{value}'\ncase \"$ITEM_CAP\" in{block}esac\nexit 0\n"
+        );
+        !std::process::Command::new("sh")
+            .arg("-c")
+            .arg(script)
+            .status()
+            .expect("sh runs")
+            .success()
+    }
+
+    /// A budget that cannot be resolved ABORTS the run instead of reaching the model.
+    ///
+    /// An empty substitution is not a failure the shell notices: it renders "at most  WORK ITEMS
+    /// per run" and hands the model a rule with no bound in it. The read is the one place the
+    /// prompts' number comes from, so the run has nothing to fall back on and must not start.
+    #[test]
+    fn the_runners_abort_rather_than_render_an_empty_run_budget() {
+        for name in ["campaign-run.sh", "review-run.sh"] {
+            let Some(runner) = repo_root_text(name) else {
+                continue; // not checked out (nix build sandbox) — enforced by the rs-test gate
+            };
+            assert!(
+                runner.contains("ITEM_CAP=\"$(pr-review-report item-cap 2>/dev/null)\""),
+                "{name} takes the run budget from the transition function, not from a literal"
+            );
+            // EVERY shape that must not reach the model. `00`/`000` are the ones an exclusion list
+            // misses — all digits, neither of them the string `0`, and both render a ZERO budget,
+            // which is the same instruction as an empty one written with a character in it.
+            for bad in ["", "0", "00", "000", "x", "5x", " 5", "-1", "1.5", "5 5"] {
+                assert!(
+                    budget_guard_rejects(&runner, bad),
+                    "{name} must refuse {bad:?} rather than render it into the RUN BUDGET sentence"
+                );
+            }
+            for good in ["1", "5", "10", "25"] {
+                assert!(
+                    !budget_guard_rejects(&runner, good),
+                    "{name} must accept the positive budget {good:?}"
+                );
+            }
+            let guard = runner
+                .split_once("ITEM_CAP=\"$(")
+                .expect("the read is present")
+                .1;
+            let abort = guard.split_once("esac").expect("the guard closes").0;
+            assert!(
+                abort.contains("ABORT") && abort.contains("exit 1"),
+                "{name}'s budget guard must end the run, not warn and continue: {abort}"
+            );
+        }
     }
 }
 

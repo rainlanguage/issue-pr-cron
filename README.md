@@ -1143,12 +1143,15 @@ than truncate.
 ### Every tool result is bounded, and going over is the tool's error
 
 A state-load is a **page**, not a dump. `unvetted` and
-`unvetted_close_candidates` return at most `limit` rows (default 10, max 25)
-with the whole-queue `counts` alongside and `more` naming what the page left
-behind; the vetter re-calls for the next page, and because each `record_verdict`
-removes its subject from the queue, paging converges without an offset argument.
-The page size is what makes the bound structural — the payload no longer grows
-with the number of open PRs.
+`unvetted_close_candidates` return at most `limit` rows — bounded by
+`STATE_LOAD_PAGE_RANGE`, which is computed from `RUN_ITEM_CAP` and so is the run
+budget itself (#288) — with the whole-queue `counts` alongside and `more` naming
+what the page left behind. The page is an **allowance, not a window**: `more` is
+the NEXT run's work, and the vetter does not re-call for a second page, because
+each `record_verdict` removes its subject from the queue and the next run's
+state-load starts where this one stopped. The page size is what makes the bound
+structural — the payload no longer grows with the number of open PRs, and an
+out-of-range `limit` is REFUSED rather than clamped.
 
 Every result is then checked against **one byte budget, the same for every
 tool** (36,000 bytes), and a result over budget is returned as a **tool error
@@ -2948,6 +2951,16 @@ uses `{{WORK_DIR}}` / `{{SCRATCH_DIR}}` / `{{INSTALL_DIR}}` / `{{ASSIGNEE}}` /
 `{{OWNER_FLAGS}}` / `{{ORGS}}` placeholders that the runner substitutes at run
 time.
 
+One placeholder is **not** deployment-specific: `{{ITEM_CAP}}`, in both prompts,
+is the per-run work-item cap, and the runners fill it from
+`pr-review-report item-cap` — i.e. from `RUN_ITEM_CAP`, the single constant that
+`STATE_LOAD_PAGE_DEFAULT` and `STATE_LOAD_PAGE_RANGE` are also computed from
+(#288). It is a placeholder rather than a number in the prose because the cap is
+a RISK bound the design intends to move, the prompts state it two dozen times,
+and several of those statements are spelled as English words that a sweep for
+the digit does not find. A run whose budget cannot be resolved to a positive
+integer ABORTS rather than rendering a RUN BUDGET sentence with no number in it.
+
 ### Timing the `gh` calls — `PRR_GH_TIMING`
 
 Set `PRR_GH_TIMING` to anything but empty or `0` and every `gh` the binary runs
@@ -3747,8 +3760,12 @@ merged PR, never a finding that the issue is fixed — establishing that is
 
 Per-subject is a **cost** decision, measured: the uncovered set is 617 issues
 and the read is one GraphQL round trip each (~0.65 s over a 40-issue sample, so
-~6.7 minutes of network per run), against a producer budget of 5 work items.
-Folding it into the backlog buys ~612 answers per run that nothing reads.
+~6.7 minutes of network per run), against a producer budget of a handful of work
+items (`RUN_ITEM_CAP`, which moves). Folding it into the backlog buys an answer
+for all 617 when only the budget's worth is ever read; running it over the
+candidates costs one call each, so the whole cost is the budget. That gap is
+three orders of magnitude at any cap this bound will plausibly take, which is
+why the shape is per-subject rather than a figure to recompute on every raise.
 
 It reads `timelineItems(CROSS_REFERENCED_EVENT)` and **not**
 `closedByPullRequestsReferences(includeClosedPrs: true)`, which is the field
