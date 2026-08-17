@@ -193,3 +193,5 @@
 {"ts":"2026-08-10T15:38:08Z","observedAt":"2026-08-12T15:55:00Z","kind":"pr","repo":"rainlanguage/issue-pr-cron","number":271}
 {"ts":"2026-08-10T15:58:15Z","observedAt":"2026-08-12T15:55:00Z","kind":"pr","repo":"rainlanguage/issue-pr-cron","number":272}
 {"ts":"2026-08-12T06:16:17Z","observedAt":"2026-08-12T15:55:00Z","kind":"pr","repo":"rainlanguage/issue-pr-cron","number":274}
+{"ts":"2026-08-17T15:43:08Z","observedAt":"2026-08-17T19:32:19Z","kind":"pr","repo":"rainlanguage/issue-pr-cron","number":279}
+{"ts":"2026-08-17T16:06:52Z","observedAt":"2026-08-17T19:32:19Z","kind":"pr","repo":"rainlanguage/issue-pr-cron","number":333}
