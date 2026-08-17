@@ -838,24 +838,6 @@
     ],
     "ai:ready": [
       {
-        "repo": "rainlanguage/adversarial-mutation-test",
-        "number": 24,
-        "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/24",
-        "title": "Scan record: name the tree the after-campaign counts hold at"
-      },
-      {
-        "repo": "rainlanguage/rain.dia",
-        "number": 68,
-        "url": "https://github.com/rainlanguage/rain.dia/pull/68",
-        "title": "chore(reuse): drop four REUSE.toml paths that do not exist"
-      },
-      {
-        "repo": "rainlanguage/rain.datacontract",
-        "number": 27,
-        "url": "https://github.com/rainlanguage/rain.datacontract/pull/27",
-        "title": "Remove submodule-era residue: dead foundry.lock, .gitmodules and lib/ references"
-      },
-      {
         "repo": "rainlanguage/rain.erc4626.words",
         "number": 259,
         "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/259",
@@ -2002,29 +1984,6 @@
             "title": "2023 12 23 anvil"
           }
         ]
-      },
-      "ai:ready": {
-        "count": 3,
-        "prs": [
-          {
-            "repo": "rainlanguage/adversarial-mutation-test",
-            "number": 24,
-            "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/24",
-            "title": "Scan record: name the tree the after-campaign counts hold at"
-          },
-          {
-            "repo": "rainlanguage/rain.dia",
-            "number": 68,
-            "url": "https://github.com/rainlanguage/rain.dia/pull/68",
-            "title": "chore(reuse): drop four REUSE.toml paths that do not exist"
-          },
-          {
-            "repo": "rainlanguage/rain.datacontract",
-            "number": 27,
-            "url": "https://github.com/rainlanguage/rain.datacontract/pull/27",
-            "title": "Remove submodule-era residue: dead foundry.lock, .gitmodules and lib/ references"
-          }
-        ]
       }
     }
   },
@@ -2241,6 +2200,192 @@
   ],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/adversarial-mutation-test",
+      "number": 28,
+      "url": "https://github.com/rainlanguage/adversarial-mutation-test/issues/28",
+      "title": "Schema check pins one rule on `equal to`, a phrase generic enough to pass with the rule deleted"
+    },
+    {
+      "repo": "rainlanguage/adversarial-mutation-test",
+      "number": 27,
+      "url": "https://github.com/rainlanguage/adversarial-mutation-test/issues/27",
+      "title": "Scan record schema does not require `tool`, the field the audit skill's ledger gate identifies a record by"
+    },
+    {
+      "repo": "rainlanguage/raindex.governance",
+      "number": 9,
+      "url": "https://github.com/rainlanguage/raindex.governance/issues/9",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 313,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/313",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.factory.deploy",
+      "number": 13,
+      "url": "https://github.com/rainlanguage/rain.factory.deploy/issues/13",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 133,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/133",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/raindex.interface",
+      "number": 70,
+      "url": "https://github.com/rainlanguage/raindex.interface/issues/70",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.hash",
+      "number": 17,
+      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/17",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.typecast",
+      "number": 16,
+      "url": "https://github.com/rainlanguage/rain.lib.typecast/issues/16",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.verify.interface",
+      "number": 16,
+      "url": "https://github.com/rainlanguage/rain.verify.interface/issues/16",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 136,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/136",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.binmaskflag",
+      "number": 21,
+      "url": "https://github.com/rainlanguage/rain.sol.binmaskflag/issues/21",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.vats.flare",
+      "number": 3,
+      "url": "https://github.com/rainlanguage/rain.vats.flare/issues/3",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.math.saturating",
+      "number": 27,
+      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/27",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.vats",
+      "number": 335,
+      "url": "https://github.com/rainlanguage/rain.vats/issues/335",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.math.fixedpoint",
+      "number": 30,
+      "url": "https://github.com/rainlanguage/rain.math.fixedpoint/issues/30",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.pyth",
+      "number": 35,
+      "url": "https://github.com/rainlanguage/rain.pyth/issues/35",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 53,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/53",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 49,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/49",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 28,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/28",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.string",
+      "number": 31,
+      "url": "https://github.com/rainlanguage/rain.string/issues/31",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.intorastring",
+      "number": 22,
+      "url": "https://github.com/rainlanguage/rain.intorastring/issues/22",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 24,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/24",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rainlang.interface",
+      "number": 124,
+      "url": "https://github.com/rainlanguage/rainlang.interface/issues/124",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 555,
+      "url": "https://github.com/rainlanguage/rainlang/issues/555",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.tofu.erc20-decimals",
+      "number": 32,
+      "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/issues/32",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.math.binary",
+      "number": 35,
+      "url": "https://github.com/rainlanguage/rain.math.binary/issues/35",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.flare",
+      "number": 210,
+      "url": "https://github.com/rainlanguage/rain.flare/issues/210",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.solmem",
+      "number": 122,
+      "url": "https://github.com/rainlanguage/rain.solmem/issues/122",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 2836,
+      "url": "https://github.com/rainlanguage/raindex/issues/2836",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 260,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/260",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
       "repo": "rainlanguage/issue-pr-cron",
       "number": 329,
       "url": "https://github.com/rainlanguage/issue-pr-cron/issues/329",
@@ -2263,12 +2408,6 @@
       "number": 317,
       "url": "https://github.com/rainlanguage/rainix/issues/317",
       "title": "Six repos' worth of static analysis is being hand-rolled in Solidity because rainix-static has no home for repo-wide lint checks"
-    },
-    {
-      "repo": "rainlanguage/rain.sol.codegen",
-      "number": 114,
-      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/114",
-      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix would break soldeer publishing"
     },
     {
       "repo": "rainlanguage/claude-audit-skills",
@@ -6243,7 +6382,7 @@
   "counts": {
     "unvetted": 42,
     "blockedOn": 23,
-    "ready": 3,
+    "ready": 0,
     "needsWork": 108,
     "relink": 0,
     "design": 5,
@@ -6252,18 +6391,18 @@
     "closeCandidateUnvetted": 6,
     "closeCandidateUpheld": 2,
     "leaks": 0,
-    "totalProducerPrs": 183,
+    "totalProducerPrs": 180,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 662,
+    "uncoveredIssues": 692,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 844
+    "openIssues": 871
   },
   "ages": {
     "openIssues": {
-      "meanDays": 294.8,
-      "medianDays": 109.8,
-      "oldestDays": 1666.6
+      "meanDays": 285.7,
+      "medianDays": 104.2,
+      "oldestDays": 1666.7
     }
   }
 }
