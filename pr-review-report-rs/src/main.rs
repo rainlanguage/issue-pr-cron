@@ -11746,6 +11746,627 @@ fn queue_history_line_mode(path: Option<&str>, ts: &str) -> i32 {
     0
 }
 
+// ---- landed-history: the LANDED units of pipeline work, as an append-only feed ----------------
+//
+// rain-org-health's pipeline page divides run spend (metrics/runs.jsonl) by items LANDED to chart
+// tokens-per-landed-item, and runs.jsonl carries only the numerator: a run row records what a run
+// COST, never what later merged. The denominator is observed here instead — an FSM-tracked item
+// that vanishes between two human-queue.json snapshots is checked against GitHub for how it left,
+// and only an actual landing emits a row. `landed-history.jsonl` is that feed: one line per landed
+// unit, `{"ts","observedAt","kind","repo","number"}`, appended by refresh-human-queue.sh and
+// seeded/healed by backfill-landed-history.sh through this same subcommand.
+//
+// KNOWN LIMIT, shared with every snapshot diff: an item that enters AND leaves the queue entirely
+// between two snapshots is never observed. That is absence, not a zero — and a backfill rerun
+// heals API misses (`--existing` makes it idempotent), never this.
+
+/// Which GitHub subject a tracked ref points at, read from the ref's own `url` — the one field
+/// whose spelling GitHub owns (`/pull/` vs `/issues/`), so classification cannot drift with the
+/// snapshot key a ref happens to sit under.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum LandedKind {
+    Pr,
+    Issue,
+}
+
+impl LandedKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Pr => "pr",
+            Self::Issue => "issue",
+        }
+    }
+
+    fn from_url(url: &str) -> Option<Self> {
+        if url.contains("/pull/") {
+            Some(Self::Pr)
+        } else if url.contains("/issues/") {
+            Some(Self::Issue)
+        } else {
+            None
+        }
+    }
+}
+
+/// One FSM-tracked subject: (kind, "org/repo", number). `Ord` gives every diff a deterministic
+/// emission order.
+type TrackedRef = (LandedKind, String, u64);
+
+/// Every FSM-TRACKED subject ref in a human-queue.json snapshot, whatever key it sits under.
+///
+/// The walk is SHAPE-driven — any object carrying `repo` + `number` + a classifiable `url` is a
+/// ref — because the snapshot's key set has moved five times in the file's git history (`lanes`,
+/// `uncoveredIssues`, `archivedRepoPrs`, `stateDescriptors`, close-candidate splits) and the
+/// backfill replays all of it; an extractor enumerating today's keys would silently read an old
+/// snapshot as empty and emit every item as vanished.
+///
+/// The one exclusion is by PROPERTY, not shape: `uncoveredIssues` is the backlog the pipeline has
+/// not worked yet, so an entry leaving it landed no pipeline work. Everything else a snapshot
+/// lists — states, lanes, leaks, close-candidate inventories, archived-repo PRs — is or was
+/// in-flight work, and inclusion is safe because the terminal-state check is the gate: a tracked
+/// item that leaves without landing emits nothing regardless of which list it left.
+fn tracked_refs(doc: &Value) -> std::collections::BTreeSet<TrackedRef> {
+    fn walk(v: &Value, out: &mut std::collections::BTreeSet<TrackedRef>) {
+        match v {
+            Value::Object(map) => {
+                if let (Some(repo), Some(number), Some(url)) = (
+                    map.get("repo").and_then(Value::as_str),
+                    map.get("number").and_then(Value::as_u64),
+                    map.get("url").and_then(Value::as_str),
+                ) {
+                    // `org/name` is asserted here so every downstream API path split is total.
+                    if repo.contains('/') {
+                        if let Some(kind) = LandedKind::from_url(url) {
+                            out.insert((kind, repo.to_string(), number));
+                        }
+                    }
+                }
+                // Recurse regardless: a row that IS a ref could still nest more (none does today;
+                // the walk not knowing that is what keeps it shape-driven).
+                for v in map.values() {
+                    walk(v, out);
+                }
+            }
+            Value::Array(items) => {
+                for it in items {
+                    walk(it, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = std::collections::BTreeSet::new();
+    if let Some(map) = doc.as_object() {
+        for (k, v) in map {
+            if k == "uncoveredIssues" {
+                continue;
+            }
+            walk(v, &mut out);
+        }
+    }
+    out
+}
+
+/// What ONE vanished item contributes to landed-history: a PR row, an issue row, or nothing.
+///
+/// `None` covers BOTH ways of contributing nothing — leaving without landing (closed unmerged,
+/// delisted while still open) AND an issue a merged PR closed: that unit of landed work is the
+/// PR's own row, and a second row would double-count it.
+#[derive(Debug, PartialEq, Eq)]
+enum LandedRow {
+    Pr { merged_at: String },
+    Issue { closed_at: String },
+    None,
+}
+
+/// PURE: a vanished PR's contribution, from its REST document (`repos/{repo}/pulls/{n}`).
+///
+/// `merged_at` alone decides. An open PR (delisted from the FSM view while alive) and a
+/// closed-unmerged PR both carry `merged_at: null`, and both landed nothing.
+fn pr_landed_row(pull: &Value) -> LandedRow {
+    match pull.get("merged_at").and_then(Value::as_str) {
+        Some(ts) => LandedRow::Pr {
+            merged_at: ts.to_string(),
+        },
+        None => LandedRow::None,
+    }
+}
+
+/// PURE: a vanished issue's contribution, from the [`ISSUE_TERMINAL_QUERY`] response.
+///
+/// A row needs all three: the issue is CLOSED, it has a `closedAt`, and NO merged PR closed it
+/// (`closedByPullRequestsReferences` with `includeClosedPrs` — a merged closer means the unit is
+/// that PR's row). A null issue (transferred or deleted at HTTP 200) contributes nothing: what
+/// cannot be read as landed is not landed.
+fn issue_landed_row(resp: &Value) -> LandedRow {
+    let Some(issue) = resp
+        .pointer("/data/repository/issue")
+        .filter(|i| !i.is_null())
+    else {
+        return LandedRow::None;
+    };
+    if issue.get("state").and_then(Value::as_str) != Some("CLOSED") {
+        return LandedRow::None;
+    }
+    let closed_by_merged_pr = issue
+        .pointer("/closedByPullRequestsReferences/nodes")
+        .and_then(Value::as_array)
+        .is_some_and(|nodes| {
+            nodes
+                .iter()
+                .any(|pr| pr.get("merged").and_then(Value::as_bool) == Some(true))
+        });
+    if closed_by_merged_pr {
+        return LandedRow::None;
+    }
+    match issue.get("closedAt").and_then(Value::as_str) {
+        Some(ts) => LandedRow::Issue {
+            closed_at: ts.to_string(),
+        },
+        None => LandedRow::None,
+    }
+}
+
+/// The issue terminal-state read behind [`issue_landed_row`]. `includeClosedPrs` is what makes the
+/// merged-closer check reach a PR that is itself closed — which a merged PR always is.
+const ISSUE_TERMINAL_QUERY: &str = "query($owner:String!,$name:String!,$number:Int!){\
+  repository(owner:$owner,name:$name){\
+    issue(number:$number){\
+      state closedAt \
+      closedByPullRequestsReferences(first:20, includeClosedPrs:true){nodes{merged}}\
+    }\
+  }\
+}";
+
+/// Fetch + classify one vanished item's contribution. The network half of [`landed_history_rows`],
+/// injected there so the diff/dedup/report logic tests without `gh`.
+fn fetch_landed_row(kind: LandedKind, repo: &str, number: u64) -> Result<LandedRow, GhFailure> {
+    match kind {
+        LandedKind::Pr => {
+            let path = format!("repos/{repo}/pulls/{number}");
+            let doc = gh_retrying(|| gh_api_result(&[&path]))?;
+            Ok(pr_landed_row(&doc))
+        }
+        LandedKind::Issue => {
+            let (owner, name) = repo
+                .split_once('/')
+                .expect("tracked_refs only admits org/name repos");
+            let owner_arg = format!("owner={owner}");
+            let name_arg = format!("name={name}");
+            let number_arg = format!("number={number}");
+            let query_arg = format!("query={ISSUE_TERMINAL_QUERY}");
+            let doc = gh_retrying(|| {
+                gh_api_result(&[
+                    "graphql",
+                    "-f",
+                    &query_arg,
+                    "-f",
+                    &owner_arg,
+                    "-f",
+                    &name_arg,
+                    "-F",
+                    &number_arg,
+                ])
+            })?;
+            Ok(issue_landed_row(&doc))
+        }
+    }
+}
+
+/// PURE over `resolve`: the landed rows one snapshot pair yields, plus the items that could not be
+/// resolved this pass.
+///
+/// Vanished = in `prev`, gone from `current` — iterated in `TrackedRef` order, so output is
+/// deterministic. A key already in `existing` is skipped before `resolve` is ever called: that is
+/// what makes a backfill rerun and a tick replayed after a failed commit idempotent instead of
+/// double-counting. An unresolved item (typed API failure) is reported, not silently dropped and
+/// not a row — the caller decides loudness, and a backfill rerun picks it up because nothing was
+/// recorded for it.
+fn landed_history_rows(
+    prev: &Value,
+    current: &Value,
+    existing: &std::collections::BTreeSet<TrackedRef>,
+    observed_at: &str,
+    mut resolve: impl FnMut(LandedKind, &str, u64) -> Result<LandedRow, GhFailure>,
+) -> (Vec<String>, Vec<String>) {
+    let prev_refs = tracked_refs(prev);
+    let current_refs = tracked_refs(current);
+    let mut rows = Vec::new();
+    let mut unresolved = Vec::new();
+    for vanished in prev_refs.difference(&current_refs) {
+        if existing.contains(vanished) {
+            continue;
+        }
+        let (kind, repo, number) = vanished;
+        let ts = match resolve(*kind, repo, *number) {
+            Ok(LandedRow::Pr { merged_at }) => merged_at,
+            Ok(LandedRow::Issue { closed_at }) => closed_at,
+            Ok(LandedRow::None) => continue,
+            Err(f) => {
+                unresolved.push(format!("{} {repo}#{number}: {f:?}", kind.as_str()));
+                continue;
+            }
+        };
+        let line = serde_json::json!({
+            "ts": ts,
+            "observedAt": observed_at,
+            "kind": kind.as_str(),
+            "repo": repo,
+            "number": number,
+        });
+        rows.push(serde_json::to_string(&line).expect("a landed row is a flat object"));
+    }
+    (rows, unresolved)
+}
+
+/// The (kind, repo, number) keys already recorded in a landed-history.jsonl. An absent file is an
+/// empty history (the first tick ever has one); a malformed line is skipped rather than fatal —
+/// this file is append-only and ours, and refusing to append because one old line is odd would
+/// stop the feed to protect it.
+fn landed_history_existing_keys(path: &str) -> std::collections::BTreeSet<TrackedRef> {
+    let mut keys = std::collections::BTreeSet::new();
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return keys;
+    };
+    for line in content.lines() {
+        let Ok(doc) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let kind = match doc.get("kind").and_then(Value::as_str) {
+            Some("pr") => LandedKind::Pr,
+            Some("issue") => LandedKind::Issue,
+            _ => continue,
+        };
+        if let (Some(repo), Some(number)) = (
+            doc.get("repo").and_then(Value::as_str),
+            doc.get("number").and_then(Value::as_u64),
+        ) {
+            keys.insert((kind, repo.to_string(), number));
+        }
+    }
+    keys
+}
+
+/// `landed-history-lines <prev> <current> --observed-at <iso8601> [--existing <jsonl>]`.
+///
+/// stdout = the landed rows, zero or more JSON lines. Unresolved items go to stderr and turn the
+/// exit into 3 — the rows already resolved are still emitted, because withholding verified
+/// landings over one API failure would trade a healable gap for a permanent under-count. Exit 2 =
+/// an input that could not be read at all.
+fn landed_history_lines_mode(
+    prev_path: &str,
+    current_path: &str,
+    observed_at: &str,
+    existing: Option<&str>,
+) -> i32 {
+    let read_snapshot = |path: &str| -> Result<Value, String> {
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| format!("cannot read snapshot {path}: {e}"))?;
+        serde_json::from_str(&content).map_err(|e| format!("snapshot {path} is not JSON: {e}"))
+    };
+    let (prev, current) = match (read_snapshot(prev_path), read_snapshot(current_path)) {
+        (Ok(p), Ok(c)) => (p, c),
+        (Err(e), _) | (_, Err(e)) => {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    };
+    let existing_keys = existing
+        .map(landed_history_existing_keys)
+        .unwrap_or_default();
+    let (rows, unresolved) = landed_history_rows(
+        &prev,
+        &current,
+        &existing_keys,
+        observed_at,
+        fetch_landed_row,
+    );
+    for row in rows {
+        println!("{row}");
+    }
+    if unresolved.is_empty() {
+        return 0;
+    }
+    for item in &unresolved {
+        eprintln!("unresolved (left the queue, terminal state unreadable this pass): {item}");
+    }
+    3
+}
+
+#[cfg(test)]
+mod landed_history_tests {
+    use super::*;
+
+    fn refs_of(doc: serde_json::Value) -> Vec<(LandedKind, String, u64)> {
+        tracked_refs(&doc).into_iter().collect()
+    }
+
+    #[test]
+    fn tracked_refs_reads_every_shape_the_snapshot_has_ever_had() {
+        // One doc wearing every historical key at once: states (2026-07-12), lanes (07-15),
+        // close-candidate splits (07-29), archivedRepoPrs/ages (08-05), stateDescriptors (08-09).
+        let doc = serde_json::json!({
+            "states": {"ai:ready": [
+                {"repo": "o/a", "number": 1, "url": "https://github.com/o/a/pull/1", "title": "t"}
+            ]},
+            "lanes": {"vet-lifecycle": {"ai:blocked-on": {"count": 1, "prs": [
+                {"repo": "o/b", "number": 2, "url": "https://github.com/o/b/pull/2", "title": "t"}
+            ]}}},
+            "leaks": [
+                {"repo": "o/c", "number": 3, "url": "https://github.com/o/c/pull/3", "reason": "r"}
+            ],
+            "closeCandidateIssues": [
+                {"repo": "o/d", "number": 4, "url": "https://github.com/o/d/issues/4", "title": "t"}
+            ],
+            "archivedRepoPrs": [
+                {"repo": "o/e", "number": 5, "url": "https://github.com/o/e/pull/5", "title": "t"}
+            ],
+            "stateDescriptors": [{"key": "ai:ready", "owner": "human"}],
+            "counts": {"ready": 1},
+            "ages": {"openIssues": {"meanDays": 1.0}}
+        });
+        assert_eq!(
+            refs_of(doc),
+            vec![
+                (LandedKind::Pr, "o/a".to_string(), 1),
+                (LandedKind::Pr, "o/b".to_string(), 2),
+                (LandedKind::Pr, "o/c".to_string(), 3),
+                (LandedKind::Pr, "o/e".to_string(), 5),
+                (LandedKind::Issue, "o/d".to_string(), 4),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_unworked_backlog_is_not_tracked() {
+        // uncoveredIssues is the one population whose departure landed no pipeline work; a same-
+        // shaped ref under any other key IS tracked.
+        let doc = serde_json::json!({
+            "uncoveredIssues": [
+                {"repo": "o/r", "number": 9, "url": "https://github.com/o/r/issues/9", "title": "t"}
+            ],
+            "closeCandidateIssues": [
+                {"repo": "o/r", "number": 10, "url": "https://github.com/o/r/issues/10", "title": "t"}
+            ]
+        });
+        assert_eq!(
+            refs_of(doc),
+            vec![(LandedKind::Issue, "o/r".to_string(), 10)]
+        );
+    }
+
+    #[test]
+    fn a_ref_is_one_tracked_item_however_many_lists_carry_it() {
+        let pr = serde_json::json!(
+            {"repo": "o/r", "number": 7, "url": "https://github.com/o/r/pull/7", "title": "t"});
+        let doc = serde_json::json!({"states": {"ai:ready": [pr]}, "leaks": [pr]});
+        assert_eq!(refs_of(doc), vec![(LandedKind::Pr, "o/r".to_string(), 7)]);
+    }
+
+    #[test]
+    fn an_unclassifiable_ref_is_not_a_subject() {
+        // A url that is neither /pull/ nor /issues/, and a repo without an owner half: neither can
+        // be resolved against the API, so neither may enter the diff.
+        let doc = serde_json::json!({"states": {"x": [
+            {"repo": "o/r", "number": 1, "url": "https://github.com/o/r/commit/abc", "title": "t"},
+            {"repo": "bare", "number": 2, "url": "https://github.com/bare/pull/2", "title": "t"}
+        ]}});
+        assert_eq!(refs_of(doc), vec![]);
+    }
+
+    #[test]
+    fn a_merged_pr_lands_and_carries_githubs_own_timestamp() {
+        let doc = serde_json::json!({"state": "closed", "merged_at": "2026-08-01T00:00:00Z"});
+        assert_eq!(
+            pr_landed_row(&doc),
+            LandedRow::Pr {
+                merged_at: "2026-08-01T00:00:00Z".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn a_pr_that_left_unmerged_lands_nothing_open_or_closed() {
+        // Closed-unmerged and delisted-while-open both read merged_at: null.
+        for state in ["closed", "open"] {
+            let doc = serde_json::json!({"state": state, "merged_at": null});
+            assert_eq!(pr_landed_row(&doc), LandedRow::None);
+        }
+    }
+
+    fn issue_resp(state: &str, closed_at: Option<&str>, merged_flags: &[bool]) -> Value {
+        let nodes: Vec<Value> = merged_flags
+            .iter()
+            .map(|m| serde_json::json!({"merged": m}))
+            .collect();
+        serde_json::json!({"data": {"repository": {"issue": {
+            "state": state,
+            "closedAt": closed_at,
+            "closedByPullRequestsReferences": {"nodes": nodes}
+        }}}})
+    }
+
+    #[test]
+    fn an_issue_closed_by_no_merged_pr_is_the_upheld_close_candidate_landing() {
+        // No closers at all, and an unmerged closing reference (a closed-unmerged PR named it):
+        // both are standalone closes.
+        for flags in [&[][..], &[false][..]] {
+            let resp = issue_resp("CLOSED", Some("2026-08-02T00:00:00Z"), flags);
+            assert_eq!(
+                issue_landed_row(&resp),
+                LandedRow::Issue {
+                    closed_at: "2026-08-02T00:00:00Z".to_string()
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn an_issue_a_merged_pr_closed_is_that_prs_unit_not_a_second_row() {
+        let resp = issue_resp("CLOSED", Some("2026-08-02T00:00:00Z"), &[false, true]);
+        assert_eq!(issue_landed_row(&resp), LandedRow::None);
+    }
+
+    #[test]
+    fn an_issue_that_is_not_readably_closed_lands_nothing() {
+        // Open, closed-without-closedAt, and a null issue (transferred/deleted at HTTP 200).
+        assert_eq!(
+            issue_landed_row(&issue_resp("OPEN", None, &[])),
+            LandedRow::None
+        );
+        // An OPEN issue that still CARRIES a closedAt — a remote API is not obligated to null
+        // the stamp on reopen, and a row here would count a landing that un-happened. This case
+        // is what makes the state check load-bearing rather than redundant with the closedAt
+        // read: a mutation pass showed the suite could not previously tell them apart.
+        assert_eq!(
+            issue_landed_row(&issue_resp("OPEN", Some("2026-08-01T00:00:00Z"), &[])),
+            LandedRow::None
+        );
+        assert_eq!(
+            issue_landed_row(&issue_resp("CLOSED", None, &[])),
+            LandedRow::None
+        );
+        let gone = serde_json::json!({"data": {"repository": {"issue": null}}});
+        assert_eq!(issue_landed_row(&gone), LandedRow::None);
+    }
+
+    /// A prev/current pair with one PR (o/r#1) and one issue (o/r#2) vanished, one PR retained.
+    fn vanished_pair() -> (Value, Value) {
+        let prev = serde_json::json!({"states": {"ai:ready": [
+            {"repo": "o/r", "number": 1, "url": "https://github.com/o/r/pull/1", "title": "t"},
+            {"repo": "o/r", "number": 3, "url": "https://github.com/o/r/pull/3", "title": "t"}
+        ]}, "closeCandidateIssues": [
+            {"repo": "o/r", "number": 2, "url": "https://github.com/o/r/issues/2", "title": "t"}
+        ]});
+        let current = serde_json::json!({"states": {"ai:ready": [
+            {"repo": "o/r", "number": 3, "url": "https://github.com/o/r/pull/3", "title": "t"}
+        ]}});
+        (prev, current)
+    }
+
+    #[test]
+    fn only_vanished_items_resolve_and_only_landed_ones_emit() {
+        let (prev, current) = vanished_pair();
+        let mut asked = Vec::new();
+        let (rows, unresolved) = landed_history_rows(
+            &prev,
+            &current,
+            &Default::default(),
+            "2026-08-12T00:00:00Z",
+            |kind, repo, number| {
+                asked.push((kind, repo.to_string(), number));
+                Ok(match kind {
+                    LandedKind::Pr => LandedRow::Pr {
+                        merged_at: "2026-08-11T10:00:00Z".to_string(),
+                    },
+                    LandedKind::Issue => LandedRow::None,
+                })
+            },
+        );
+        // The retained PR (#3) was never resolved; the vanished-but-unlanded issue emitted nothing.
+        assert_eq!(
+            asked,
+            vec![
+                (LandedKind::Pr, "o/r".to_string(), 1),
+                (LandedKind::Issue, "o/r".to_string(), 2)
+            ]
+        );
+        assert!(unresolved.is_empty());
+        assert_eq!(rows.len(), 1);
+        let row: Value = serde_json::from_str(&rows[0]).unwrap();
+        assert_eq!(
+            row,
+            serde_json::json!({
+                "ts": "2026-08-11T10:00:00Z",
+                "observedAt": "2026-08-12T00:00:00Z",
+                "kind": "pr",
+                "repo": "o/r",
+                "number": 1
+            })
+        );
+    }
+
+    #[test]
+    fn an_already_recorded_item_is_never_re_resolved_or_re_emitted() {
+        // The idempotence that makes backfill reruns and replayed ticks safe: the existing key
+        // short-circuits BEFORE the resolver, so a rerun costs no API call either.
+        let (prev, current) = vanished_pair();
+        let existing = [(LandedKind::Pr, "o/r".to_string(), 1)]
+            .into_iter()
+            .collect();
+        let (rows, unresolved) = landed_history_rows(
+            &prev,
+            &current,
+            &existing,
+            "2026-08-12T00:00:00Z",
+            |kind, _, _| {
+                assert_eq!(
+                    kind,
+                    LandedKind::Issue,
+                    "the recorded PR must not be re-asked"
+                );
+                Ok(LandedRow::None)
+            },
+        );
+        assert!(rows.is_empty());
+        assert!(unresolved.is_empty());
+    }
+
+    #[test]
+    fn an_api_failure_is_reported_and_the_resolved_rows_still_emit() {
+        let (prev, current) = vanished_pair();
+        let (rows, unresolved) = landed_history_rows(
+            &prev,
+            &current,
+            &Default::default(),
+            "2026-08-12T00:00:00Z",
+            |kind, _, _| match kind {
+                LandedKind::Pr => Err(GhFailure::RateLimited { retry_after: None }),
+                LandedKind::Issue => Ok(LandedRow::Issue {
+                    closed_at: "2026-08-10T00:00:00Z".to_string(),
+                }),
+            },
+        );
+        assert_eq!(
+            rows.len(),
+            1,
+            "the issue's verified landing is not held hostage"
+        );
+        assert_eq!(unresolved.len(), 1);
+        assert!(
+            unresolved[0].starts_with("pr o/r#1: "),
+            "the report names the item and its typed failure: {}",
+            unresolved[0]
+        );
+    }
+
+    #[test]
+    fn existing_keys_read_recorded_rows_and_tolerate_the_odd_line() {
+        let dir = std::env::temp_dir().join(format!("landed-history-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("landed-history.jsonl");
+        std::fs::write(
+            &path,
+            "{\"ts\":\"t\",\"observedAt\":\"o\",\"kind\":\"pr\",\"repo\":\"o/r\",\"number\":1}\n\
+             not json\n\
+             {\"ts\":\"t\",\"observedAt\":\"o\",\"kind\":\"issue\",\"repo\":\"o/r\",\"number\":2}\n",
+        )
+        .unwrap();
+        let keys = landed_history_existing_keys(path.to_str().unwrap());
+        assert_eq!(
+            keys.into_iter().collect::<Vec<_>>(),
+            vec![
+                (LandedKind::Pr, "o/r".to_string(), 1),
+                (LandedKind::Issue, "o/r".to_string(), 2)
+            ]
+        );
+        // An absent file is an empty history, never an error — the first tick ever has one.
+        assert!(
+            landed_history_existing_keys(dir.join("absent.jsonl").to_str().unwrap()).is_empty()
+        );
+    }
+}
+
 /// Renders trace events as the human-readable log lines the runners tee into `$LOG`, each line
 /// attributed to the agent that produced it.
 ///
@@ -47197,6 +47818,25 @@ enum Cmd {
         #[arg(long)]
         ts: String,
     },
+    /// Emit landed-history.jsonl rows: FSM-tracked items present in <PREV> and gone from
+    /// <CURRENT>, each verified against GitHub as actually LANDED — a merged PR, or an issue no
+    /// merged PR closed (the upheld close-candidate path; an issue a merged PR closed is that
+    /// PR's unit, not a second row). Items that left without landing emit nothing. Unresolvable
+    /// items go to stderr with exit 3; resolved rows are still emitted.
+    LandedHistoryLines {
+        /// The earlier snapshot (the refresh feeds HEAD's human-queue.json).
+        prev: String,
+        /// The later snapshot.
+        current: String,
+        /// ISO-8601 time of the observing tick, recorded as `observedAt` (`ts` is always
+        /// GitHub's own mergedAt/closedAt).
+        #[arg(long)]
+        observed_at: String,
+        /// Existing landed-history.jsonl; a (kind, repo, number) already recorded is never
+        /// re-emitted, so reruns and replayed ticks cannot double-count. Absent file = empty.
+        #[arg(long)]
+        existing: Option<String>,
+    },
     /// Read a stream-json trace on stdin, write the human-readable run log on stdout.
     DistillTrace,
     /// Force a producer or vetter run and stream it. Fast-forwards the install dir FIRST — the
@@ -51876,6 +52516,12 @@ fn main() {
         ),
         Cmd::TraceOutcome { trace, exit_code } => trace_outcome_mode(&trace, exit_code),
         Cmd::QueueHistoryLine { snapshot, ts } => queue_history_line_mode(snapshot.as_deref(), &ts),
+        Cmd::LandedHistoryLines {
+            prev,
+            current,
+            observed_at,
+            existing,
+        } => landed_history_lines_mode(&prev, &current, &observed_at, existing.as_deref()),
         Cmd::DistillTrace => distill_trace_mode(),
         Cmd::ForceRun {
             role,
@@ -64051,6 +64697,55 @@ mod cli_tests {
                 ts: "2026-07-27T10:00:00Z".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn landed_history_lines_cli() {
+        // The refresh's form: both snapshots as paths, the accumulating file for idempotence.
+        assert_eq!(
+            parse(&[
+                "prr",
+                "landed-history-lines",
+                "/prev.json",
+                "/cur.json",
+                "--observed-at",
+                "2026-08-12T00:00:00Z",
+                "--existing",
+                "/landed-history.jsonl"
+            ]),
+            Cmd::LandedHistoryLines {
+                prev: "/prev.json".to_string(),
+                current: "/cur.json".to_string(),
+                observed_at: "2026-08-12T00:00:00Z".to_string(),
+                existing: Some("/landed-history.jsonl".to_string()),
+            }
+        );
+        // The backfill's first pair has no history yet, so --existing is optional.
+        assert_eq!(
+            parse(&[
+                "prr",
+                "landed-history-lines",
+                "/prev.json",
+                "/cur.json",
+                "--observed-at",
+                "2026-08-12T00:00:00Z"
+            ]),
+            Cmd::LandedHistoryLines {
+                prev: "/prev.json".to_string(),
+                current: "/cur.json".to_string(),
+                observed_at: "2026-08-12T00:00:00Z".to_string(),
+                existing: None,
+            }
+        );
+        // Both snapshots are required: a one-path spelling has no diff to take.
+        assert!(Cli::try_parse_from([
+            "prr",
+            "landed-history-lines",
+            "/prev.json",
+            "--observed-at",
+            "2026-08-12T00:00:00Z"
+        ])
+        .is_err());
     }
 
     #[test]

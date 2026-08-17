@@ -1857,6 +1857,60 @@ The `createdAt` comes from the field list of the coverage computation's existing
 `gh search issues`, so the block is arithmetic on an already-retrieved payload,
 never a per-issue fetch.
 
+### What actually LANDED: `landed-history.jsonl`
+
+The rain-org-health pipeline page charts **tokens per landed item**, and
+`metrics/runs.jsonl` carries only the numerator: a run row records what a run
+COST, never what later merged. This file is the denominator — one line per
+landed unit of pipeline work, append-only beside `human-queue-history.jsonl`:
+
+```json
+{
+  "ts": "2026-08-11T10:03:22Z",
+  "observedAt": "2026-08-11T11:00:04Z",
+  "kind": "pr",
+  "repo": "rainlanguage/rain.flare",
+  "number": 170
+}
+```
+
+`ts` is GitHub's own `mergedAt`/`closedAt` — the true landing time, and what a
+consumer windows on; `observedAt` is when the row was RECORDED — the refresh
+tick for a live append, the run itself for a backfill/heal — so it is never
+earlier than `ts`: an item can leave the view open and merge later, and only the
+run that verified the landing can claim to have observed it. A row is emitted by
+`landed-history-lines`, which diffs the FSM-tracked item sets of two consecutive
+`human-queue.json` snapshots and verifies each VANISHED item's terminal state
+against GitHub:
+
+- **`kind: "pr"`** — a tracked PR that actually merged.
+- **`kind: "issue"`** — a tracked issue closed by **no** merged PR: the upheld
+  close-candidate path. An issue a merged PR closed is that PR's unit of work —
+  one landing, one row, never two.
+- **No row** — everything else. A needs-work send-back, a de-flag, a PR closed
+  unmerged, an archived repo's PR: leaving the queue is not landing.
+
+The tracked population is every subject ref a snapshot lists **except
+`uncoveredIssues`** — the backlog the pipeline has not worked yet, whose
+departures land no pipeline work. The extractor is shape-driven (any object
+carrying `repo` + `number` + a `/pull/`-or-`/issues/` url), because the
+snapshot's key set has changed five times in its git history and the backfill
+replays all of it.
+
+`refresh-human-queue.sh` appends on every changed-snapshot tick (previous = the
+snapshot at HEAD, diffed **before** the tick's own commit moves it) and
+publishes the file alongside the snapshot. `backfill-landed-history.sh` seeded
+it from the snapshot's full git history and is also the HEALER: `--existing`
+skips every `(kind, repo, number)` already recorded, so a rerun re-asks only the
+gaps a live tick's API failure left. The one blindness neither can heal: an item
+that enters and leaves entirely between two snapshots is never observed —
+absence, not a zero.
+
+This feed and [`work-tokens`](#tokens-to-land-work--work-tokens) answer the same
+question at different scopes: `work-tokens` joins one run's spend to the typed
+items that run recorded; this file is the org-wide landed series a dashboard can
+fetch raw and window against `metrics/runs.jsonl` spend.
+
 ### Opening a PR is a transition: `open_pr`
 
 Opening the PR — the one move that **is** a new PR's output — was a

@@ -106,6 +106,10 @@
 # backfill; the dashboard fetches the jsonl at runtime for the Theory-of-Constraints panel:
 !/human-queue-history.jsonl
 !/backfill-human-queue-history.sh
+# Append-only landed-work feed (one row per verified landing) + its seed/heal backfill; the
+# dashboard fetches the jsonl at runtime as the tokens-per-landed-item denominator:
+!/landed-history.jsonl
+!/backfill-landed-history.sh
 # Flake exposing pr-review-report as a package (bin on the cron PATH):
 !/flake.nix
 !/flake.lock
