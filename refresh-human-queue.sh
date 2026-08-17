@@ -124,8 +124,18 @@ snapshot_changed=1
 git -C "$DIR" diff --quiet HEAD -- human-queue.json && snapshot_changed=0
 metrics_changed=1
 git -C "$DIR" diff --quiet HEAD -- metrics/runs.jsonl && metrics_changed=0
-if [ "$snapshot_changed" -eq 0 ] && [ "$metrics_changed" -eq 0 ]; then
-  log "snapshot and run metrics unchanged at $(git -C "$DIR" rev-parse --short HEAD); nothing to publish"
+# The FSM touch ledger rides this tick for the same reason metrics/runs.jsonl does: the actors
+# that append it (transitions inside runs and interactive sessions) never push. It is written in
+# place in the install dir, so publishing is just committing it. `--` with the untracked probe:
+# the file does not exist until the first transition after deploy, and a bare `git diff` on a
+# missing path is quietly clean — `ls-files --others` is what catches the first appearance.
+touches_changed=1
+if git -C "$DIR" diff --quiet HEAD -- fsm-touches.jsonl 2>/dev/null \
+  && [ -z "$(git -C "$DIR" ls-files --others --exclude-standard -- fsm-touches.jsonl)" ]; then
+  touches_changed=0
+fi
+if [ "$snapshot_changed" -eq 0 ] && [ "$metrics_changed" -eq 0 ] && [ "$touches_changed" -eq 0 ]; then
+  log "snapshot, run metrics and touch ledger unchanged at $(git -C "$DIR" rev-parse --short HEAD); nothing to publish"
   exit 0
 fi
 
@@ -173,15 +183,24 @@ if [ "$snapshot_changed" -eq 1 ]; then
 fi
 
 # The commit message names what actually moved: metrics-only ticks keep the `chore(metrics):`
-# prefix the file's hand-committed history already uses.
+# prefix the file's hand-committed history already uses. Touch-ledger movement folds into the
+# metrics arm — both are run-record artifacts — except when it is the ONLY mover, which gets its
+# own line so the history can say which ticks published touches alone.
 if [ "$snapshot_changed" -eq 1 ] && [ "$metrics_changed" -eq 1 ]; then
   msg="chore(dashboard): refresh human-queue.json snapshot + run metrics"
 elif [ "$snapshot_changed" -eq 1 ]; then
   msg="chore(dashboard): refresh human-queue.json snapshot"
-else
+elif [ "$metrics_changed" -eq 1 ]; then
   msg="chore(metrics): publish accrued run metrics"
+else
+  msg="chore(metrics): publish accrued fsm touch records"
 fi
-git_q add human-queue.json human-queue-history.jsonl landed-history.jsonl metrics/runs.jsonl || exit 1
+# The touch ledger is staged only once it EXISTS: `git add` on a pathspec matching nothing is
+# fatal, and the file is born with the first post-deploy transition, not with this script.
+# `landed-history.jsonl` needs no such guard — #277 seeded it, so it is always present.
+touch_ledger_paths=()
+[ -e "$DIR/fsm-touches.jsonl" ] && touch_ledger_paths=(fsm-touches.jsonl)
+git_q add human-queue.json human-queue-history.jsonl landed-history.jsonl metrics/runs.jsonl ${touch_ledger_paths[@]+"${touch_ledger_paths[@]}"} || exit 1
 git_q -c commit.gpgsign=false commit --no-verify -m "$msg" --quiet || exit 1
 mine="$(git -C "$DIR" rev-parse HEAD)"
 

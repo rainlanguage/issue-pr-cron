@@ -282,6 +282,15 @@ TS="$(date -u +%Y%m%dT%H%M%SZ)"
 RUNLOG="$RUNDIR/$TS.jsonl"
 ERRLOG="$RUNDIR/$TS.err"
 
+# --- the FSM touch ledger's actor identity -----------------------------------------------------
+# Every mutating pr-review-report transition this run invokes — MCP or Bash — appends which item
+# it acted on to the touch ledger (fsm-touches.jsonl in the install dir). These two exports are
+# what stamp those records as THIS run's, so `run-metrics` can fold the run's touched set onto its
+# metrics/runs.jsonl row and per-item token attribution has an exact join. Env rather than argv
+# for the reason RUN_LENS_LEDGER is env: the MCP server's argv is fixed by its config file.
+export FSM_TOUCH_ACTOR=producer-run
+export FSM_TOUCH_RUN_ID="$TS"
+
 # --- the run's infra record (#108) -------------------------------------------------------------
 # Where `infra-down` writes and where `run-metrics` / `run-infra` read it back. Named for THIS run's
 # id, so one run's finding can never be read as another's — the staleness bug a fixed path would
