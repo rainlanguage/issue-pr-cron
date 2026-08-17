@@ -140,7 +140,21 @@
         "title": "Add \"remove and withdraw all\" option to order removal (#2024)"
       }
     ],
+    "ai:close-candidate": [
+      {
+        "repo": "rainlanguage/rain.dia",
+        "number": 61,
+        "url": "https://github.com/rainlanguage/rain.dia/pull/61",
+        "title": "fix(dia): revert ZeroDiaPrice on any zero price, not only the (0,0) sentinel"
+      }
+    ],
     "ai:design": [
+      {
+        "repo": "rainlanguage/adversarial-mutation-test",
+        "number": 22,
+        "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/22",
+        "title": "fail-pattern: abort when it matches the baseline, and ship known-good patterns per harness"
+      },
       {
         "repo": "rainlanguage/rain.merkle",
         "number": 16,
@@ -250,12 +264,6 @@
         "number": 429,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/429",
         "title": "fix(lock): freeze token select, LOCK button and network auto-switch while a tx is in flight"
-      },
-      {
-        "repo": "rainlanguage/rain.dia",
-        "number": 61,
-        "url": "https://github.com/rainlanguage/rain.dia/pull/61",
-        "title": "fix(dia): revert ZeroDiaPrice on any zero price, not only the (0,0) sentinel"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -1019,7 +1027,7 @@
         ]
       },
       "un-vetted": {
-        "count": 78,
+        "count": 77,
         "prs": [
           {
             "repo": "rainlanguage/issue-pr-cron",
@@ -1257,12 +1265,6 @@
           },
           {
             "repo": "rainlanguage/adversarial-mutation-test",
-            "number": 22,
-            "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/22",
-            "title": "fail-pattern: abort when it matches the baseline, and ship known-good patterns per harness"
-          },
-          {
-            "repo": "rainlanguage/adversarial-mutation-test",
             "number": 21,
             "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/21",
             "title": "mutation-probe: one probe owns one tree, so an orphan blocks a successor instead of racing it"
@@ -1494,8 +1496,15 @@
     },
     "vetter-verdicts": {
       "ai:design": {
-        "count": 2,
+        "count": 3,
         "prs": [
+          {
+            "repo": "rainlanguage/adversarial-mutation-test",
+            "number": 22,
+            "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/22",
+            "title": "fail-pattern: abort when it matches the baseline, and ship known-good patterns per harness",
+            "bucket": "presentable"
+          },
           {
             "repo": "rainlanguage/rain.merkle",
             "number": 16,
@@ -1515,12 +1524,12 @@
           "draft": 0,
           "fetchErrors": 0,
           "noQuestion": 0,
-          "presentable": 2,
+          "presentable": 3,
           "unaddressable": 0
         }
       },
       "ai:needs-work": {
-        "count": 111,
+        "count": 110,
         "prs": [
           {
             "repo": "rainlanguage/rain.tofu.erc20-decimals",
@@ -1617,12 +1626,6 @@
             "number": 429,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/429",
             "title": "fix(lock): freeze token select, LOCK button and network auto-switch while a tx is in flight"
-          },
-          {
-            "repo": "rainlanguage/rain.dia",
-            "number": 61,
-            "url": "https://github.com/rainlanguage/rain.dia/pull/61",
-            "title": "fix(dia): revert ZeroDiaPrice on any zero price, not only the (0,0) sentinel"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -2315,6 +2318,24 @@
   ],
   "closeCandidateIssues": [
     {
+      "repo": "rainlanguage/rain.dia",
+      "number": 14,
+      "url": "https://github.com/rainlanguage/rain.dia/issues/14",
+      "title": "[AUDIT-M09] [medium] NatSpec claims revert on zero price but only (0,0) sentinel reverts"
+    },
+    {
+      "repo": "rainlanguage/rain.dia",
+      "number": 10,
+      "url": "https://github.com/rainlanguage/rain.dia/issues/10",
+      "title": "[AUDIT-M05] [medium] Zero-timestamp with non-zero price branch untested"
+    },
+    {
+      "repo": "rainlanguage/rain.dia",
+      "number": 9,
+      "url": "https://github.com/rainlanguage/rain.dia/issues/9",
+      "title": "[AUDIT-M04] [medium] maxAge exact boundary elapsed==staleAfter untested"
+    },
+    {
       "repo": "rainlanguage/rain.solver",
       "number": 317,
       "url": "https://github.com/rainlanguage/rain.solver/issues/317",
@@ -2325,16 +2346,36 @@
       "number": 1348,
       "url": "https://github.com/rainlanguage/raindex/issues/1348",
       "title": "Update tests for DeploymentSteps to reflect the new updateFields calls"
-    },
-    {
-      "repo": "rainlanguage/rain.solver",
-      "number": 64,
-      "url": "https://github.com/rainlanguage/rain.solver/issues/64",
-      "title": "bot uses way too much rpc"
     }
   ],
   "closeCandidateUnvetted": [
     {
+      "repo": "rainlanguage/rain.dia",
+      "number": 14,
+      "url": "https://github.com/rainlanguage/rain.dia/issues/14",
+      "title": "[AUDIT-M09] [medium] NatSpec claims revert on zero price but only (0,0) sentinel reverts"
+    },
+    {
+      "repo": "rainlanguage/rain.dia",
+      "number": 10,
+      "url": "https://github.com/rainlanguage/rain.dia/issues/10",
+      "title": "[AUDIT-M05] [medium] Zero-timestamp with non-zero price branch untested"
+    },
+    {
+      "repo": "rainlanguage/rain.dia",
+      "number": 9,
+      "url": "https://github.com/rainlanguage/rain.dia/issues/9",
+      "title": "[AUDIT-M04] [medium] maxAge exact boundary elapsed==staleAfter untested"
+    },
+    {
+      "repo": "rainlanguage/rain.dia",
+      "number": 61,
+      "url": "https://github.com/rainlanguage/rain.dia/pull/61",
+      "title": "fix(dia): revert ZeroDiaPrice on any zero price, not only the (0,0) sentinel"
+    }
+  ],
+  "closeCandidateUpheld": [
+    {
       "repo": "rainlanguage/rain.solver",
       "number": 317,
       "url": "https://github.com/rainlanguage/rain.solver/issues/317",
@@ -2345,15 +2386,8 @@
       "number": 1348,
       "url": "https://github.com/rainlanguage/raindex/issues/1348",
       "title": "Update tests for DeploymentSteps to reflect the new updateFields calls"
-    },
-    {
-      "repo": "rainlanguage/rain.solver",
-      "number": 64,
-      "url": "https://github.com/rainlanguage/rain.solver/issues/64",
-      "title": "bot uses way too much rpc"
     }
   ],
-  "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rainix",
@@ -5704,6 +5738,12 @@
       "title": "support `+` for exponents like `1.0e+2` to match negative"
     },
     {
+      "repo": "rainlanguage/rain.solver",
+      "number": 64,
+      "url": "https://github.com/rainlanguage/rain.solver/issues/64",
+      "title": "bot uses way too much rpc"
+    },
+    {
       "repo": "rainlanguage/raindex",
       "number": 575,
       "url": "https://github.com/rainlanguage/raindex/issues/575",
@@ -6407,28 +6447,28 @@
     }
   ],
   "counts": {
-    "unvetted": 78,
+    "unvetted": 77,
     "blockedOn": 23,
     "ready": 0,
-    "needsWork": 111,
+    "needsWork": 110,
     "relink": 0,
-    "design": 2,
+    "design": 3,
     "blockedInfra": 0,
-    "closeCandidateIssues": 3,
-    "closeCandidateUnvetted": 3,
-    "closeCandidateUpheld": 0,
+    "closeCandidateIssues": 5,
+    "closeCandidateUnvetted": 4,
+    "closeCandidateUpheld": 2,
     "leaks": 1,
     "totalProducerPrs": 215,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 669,
-    "designPresentable": 2,
+    "uncoveredIssues": 670,
+    "designPresentable": 3,
     "designNoQuestion": 0,
     "openIssues": 880
   },
   "ages": {
     "openIssues": {
-      "meanDays": 282.3,
-      "medianDays": 103.6,
+      "meanDays": 282.4,
+      "medianDays": 103.7,
       "oldestDays": 1666.1
     }
   }
