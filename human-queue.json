@@ -1051,20 +1051,8 @@
         ]
       },
       "un-vetted": {
-        "count": 36,
+        "count": 33,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 123,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/123",
-            "title": "Route unsafeExtend's aliased case through the allocating path"
-          },
-          {
-            "repo": "rainlanguage/rain.sol.codegen",
-            "number": 144,
-            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/144",
-            "title": "Restore Rain's licence and copyright as defaults alongside the parameters"
-          },
           {
             "repo": "rainlanguage/rain.strategies",
             "number": 127,
@@ -1100,12 +1088,6 @@
             "number": 118,
             "url": "https://github.com/rainlanguage/rain.solmem/pull/118",
             "title": "Ship the cancun/mcopy floor in the package, and bind the README to the code"
-          },
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 117,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/117",
-            "title": "docs: a changelog that ships in the package"
           },
           {
             "repo": "rainlanguage/rainix",
@@ -3202,6 +3184,12 @@
       "number": 88,
       "url": "https://github.com/rainlanguage/rain.solmem/issues/88",
       "title": "[A26] [MEDIUM] Nothing records that the Protofire-audited commit has drifted 74 commits behind main"
+    },
+    {
+      "repo": "rainlanguage/rain.solmem",
+      "number": 87,
+      "url": "https://github.com/rainlanguage/rain.solmem/issues/87",
+      "title": "[A25] [MEDIUM] Auto-publish can only emit patch bumps and ships no notes, so a memory-corruption fix is indistinguishable from a comment tweak"
     },
     {
       "repo": "rainlanguage/rain.solmem",
@@ -6424,7 +6412,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 36,
+    "unvetted": 33,
     "blockedOn": 24,
     "ready": 3,
     "needsWork": 107,
@@ -6435,16 +6423,16 @@
     "closeCandidateUnvetted": 6,
     "closeCandidateUpheld": 2,
     "leaks": 0,
-    "totalProducerPrs": 180,
+    "totalProducerPrs": 177,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 695,
+    "uncoveredIssues": 696,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 873
+    "openIssues": 872
   },
   "ages": {
     "openIssues": {
-      "meanDays": 285.8,
+      "meanDays": 286.2,
       "medianDays": 105.0,
       "oldestDays": 1667.5
     }

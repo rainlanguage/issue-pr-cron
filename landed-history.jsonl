@@ -196,3 +196,5 @@
 {"ts":"2026-08-17T15:43:08Z","observedAt":"2026-08-17T19:32:19Z","kind":"pr","repo":"rainlanguage/issue-pr-cron","number":279}
 {"ts":"2026-08-17T16:06:52Z","observedAt":"2026-08-17T19:32:19Z","kind":"pr","repo":"rainlanguage/issue-pr-cron","number":333}
 {"ts":"2026-08-18T07:37:12Z","observedAt":"2026-08-18T08:31:28Z","kind":"pr","repo":"rainlanguage/rain.solmem","number":114}
+{"ts":"2026-08-18T09:19:42Z","observedAt":"2026-08-18T09:31:10Z","kind":"pr","repo":"rainlanguage/rain.sol.codegen","number":144}
+{"ts":"2026-08-18T08:37:33Z","observedAt":"2026-08-18T09:31:10Z","kind":"pr","repo":"rainlanguage/rain.solmem","number":123}
