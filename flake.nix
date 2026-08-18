@@ -206,6 +206,19 @@
           ];
         };
 
+        # Seed + heal landed-history.jsonl; same pair-walk the live refresh appends with. Needs gh:
+        # every departure is verified against GitHub, not inferred from the snapshots alone.
+        backfill-landed-history = runner {
+          name = "backfill-landed-history";
+          file = ./backfill-landed-history.sh;
+          runtimeInputs = [
+            pr-review-report
+            pkgs.gh
+            pkgs.git
+            pkgs.coreutils
+          ];
+        };
+
         # Human entry points. These were bash only because a bare script could not assume
         # `gh` was present and had to build the binary itself; both problems are gone, so
         # what remains is a one-line delegation kept for the existing invocation names.
@@ -270,6 +283,7 @@
             refresh-human-queue
             design-doctor
             backfill-human-queue-history
+            backfill-landed-history
             review-queue
             ;
           pr-review-report-sh = pr-review-report-sh;
