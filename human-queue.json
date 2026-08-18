@@ -92,6 +92,12 @@
         "title": "fix(test): correct testEqXEqY exponent assertion for negative coefficients"
       },
       {
+        "repo": "rainlanguage/rain.math.float",
+        "number": 253,
+        "url": "https://github.com/rainlanguage/rain.math.float/pull/253",
+        "title": "refactor(deploy): migrate deploy constants to the per-version snapshot canon"
+      },
+      {
         "repo": "rainlanguage/raindex",
         "number": 2798,
         "url": "https://github.com/rainlanguage/raindex/pull/2798",
@@ -300,12 +306,6 @@
         "number": 256,
         "url": "https://github.com/rainlanguage/rain.math.float/pull/256",
         "title": "fix(deploy): pin the 0.1.7 soldeer tag's deploy constants"
-      },
-      {
-        "repo": "rainlanguage/rain.math.float",
-        "number": 253,
-        "url": "https://github.com/rainlanguage/rain.math.float/pull/253",
-        "title": "refactor(deploy): migrate deploy constants to the per-version snapshot canon"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -890,7 +890,7 @@
   "lanes": {
     "vet-lifecycle": {
       "ai:blocked-on": {
-        "count": 23,
+        "count": 24,
         "prs": [
           {
             "repo": "rainlanguage/rainlang",
@@ -981,6 +981,12 @@
             "number": 255,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/255",
             "title": "fix(test): correct testEqXEqY exponent assertion for negative coefficients"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 253,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/253",
+            "title": "refactor(deploy): migrate deploy constants to the per-version snapshot canon"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -1347,7 +1353,7 @@
         }
       },
       "ai:needs-work": {
-        "count": 106,
+        "count": 105,
         "prs": [
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -1450,12 +1456,6 @@
             "number": 256,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/256",
             "title": "fix(deploy): pin the 0.1.7 soldeer tag's deploy constants"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 253,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/253",
-            "title": "refactor(deploy): migrate deploy constants to the per-version snapshot canon"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -6412,9 +6412,9 @@
   "leaks": [],
   "counts": {
     "unvetted": 41,
-    "blockedOn": 23,
+    "blockedOn": 24,
     "ready": 1,
-    "needsWork": 106,
+    "needsWork": 105,
     "relink": 0,
     "design": 7,
     "blockedInfra": 0,
@@ -6432,8 +6432,8 @@
   "ages": {
     "openIssues": {
       "meanDays": 285.3,
-      "medianDays": 104.7,
-      "oldestDays": 1667.2
+      "medianDays": 104.8,
+      "oldestDays": 1667.3
     }
   }
 }
