@@ -838,18 +838,6 @@
     ],
     "ai:ready": [
       {
-        "repo": "rainlanguage/rain.erc4626.words",
-        "number": 263,
-        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/263",
-        "title": "Remove the submodule-era residue: dead `foundry.lock` annotation in `REUSE.toml`"
-      },
-      {
-        "repo": "rainlanguage/rain.factory.deploy",
-        "number": 11,
-        "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/11",
-        "title": "codegen: use LibCodeGen.addressConstantString instead of a local copy"
-      },
-      {
         "repo": "rainlanguage/rain.factory.deploy",
         "number": 9,
         "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/9",
@@ -1033,8 +1021,158 @@
         ]
       },
       "un-vetted": {
-        "count": 40,
+        "count": 64,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 128,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/128",
+            "title": "Give the test oracles authorities independent of src"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 127,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/127",
+            "title": "Document IExtrospectV1 with full NatSpec"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 126,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/126",
+            "title": "docs: reconcile each audit report's stated scope against its reviewed tree"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 125,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/125",
+            "title": "Add a mutation profile that drops the deploy-constant bytecode pins"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 123,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/123",
+            "title": "Guard fuzz-derived vm.etch against EIP-7702-shaped bytes"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 122,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/122",
+            "title": "Split fork tests out of checkCBORTrimmedBytecodeHash unit tests"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 121,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/121",
+            "title": "Docs: describe the shipped surface, not the removed interfaces"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 120,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/120",
+            "title": "feat: expose the beacon implementation address from LibExtrospectERC1967BeaconProxy"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 119,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/119",
+            "title": "Size beacon return data before copying it"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 117,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/117",
+            "title": "Document the two expected-hash conventions on IExtrospectV1"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 116,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/116",
+            "title": "Document the codeless-implementation verdict of isBeaconImplementationBytecode and pin the counterfactual CREATE2 target"
+          },
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 337,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/337",
+            "title": "docs(qa-guide): §3 routes mutation validation to mutation-probe, not a hand loop"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 115,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/115",
+            "title": "Document and pin the EIP-7702 delegated-account behaviour of the beacon predicates"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 114,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/114",
+            "title": "Document that OZ v5 BeaconProxy carries its beacon in runtime bytecode"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 113,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/113",
+            "title": "Beacon predicates report the beacon's answer to msg.sender, not a property of the beacon"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 112,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/112",
+            "title": "Correct beacon predicate NatSpec on permissive fallbacks"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 111,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/111",
+            "title": "Pin isERC1167Proxy EOF behaviour in NatSpec and tests"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 110,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/110",
+            "title": "Document and pin isERC1167Proxy's bytecode-only verdict"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 109,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/109",
+            "title": "Share the ERC1167 address length and derive the implementation address read offset from it"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 108,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/108",
+            "title": "fix: stop isERC1167Proxy allocating 128 bytes of dead memory"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 107,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/107",
+            "title": "Document that isERC1167Proxy matches only the canonical bytecode"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 106,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/106",
+            "title": "refactor: name the Solidity CBOR metadata constants"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 105,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/105",
+            "title": "Document the codeless-account verdict on both account-taking CBOR checks"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 104,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/104",
+            "title": "Pin the trailing truncated PUSH behaviour of the opcode scans"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 103,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/103",
+            "title": "Correct the tryTrimSolidityCBORMetadata assembly comment"
+          },
           {
             "repo": "rainlanguage/rain.extrospection",
             "number": 102,
@@ -1118,12 +1256,6 @@
             "number": 137,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/137",
             "title": "Point the generated-lib writers at a directory they are handed"
-          },
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 131,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/131",
-            "title": "Keep the in place extend inside the heap"
           },
           {
             "repo": "rainlanguage/rain.extrospection",
@@ -1989,20 +2121,8 @@
         ]
       },
       "ai:ready": {
-        "count": 5,
+        "count": 3,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.erc4626.words",
-            "number": 263,
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/263",
-            "title": "Remove the submodule-era residue: dead `foundry.lock` annotation in `REUSE.toml`"
-          },
-          {
-            "repo": "rainlanguage/rain.factory.deploy",
-            "number": 11,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/11",
-            "title": "codegen: use LibCodeGen.addressConstantString instead of a local copy"
-          },
           {
             "repo": "rainlanguage/rain.factory.deploy",
             "number": 9,
@@ -2238,6 +2358,54 @@
   ],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 124,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/124",
+      "title": "The beacon dirty-bits gate has no test on its reject side, so widening it past 160 bits ships green"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 118,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/118",
+      "title": "checkNoSolidityCBORMetadata fuzz tests etch EIP-7702 designators, and Foundry replays the failure until cache/fuzz is deleted"
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 328,
+      "url": "https://github.com/rainlanguage/rainix/issues/328",
+      "title": "Bump solc to current and enable via_ir: the legacy pipeline is taxing structurally-correct code"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 2837,
+      "url": "https://github.com/rainlanguage/raindex/issues/2837",
+      "title": "A reverting calculate-io eval reverts the whole takeOrders4 batch instead of skipping that order"
+    },
+    {
+      "repo": "rainlanguage/claude-audit-skills",
+      "number": 90,
+      "url": "https://github.com/rainlanguage/claude-audit-skills/issues/90",
+      "title": "Findings whose subject is org policy or shared infrastructure are filed against the audited repo, where they cannot be fixed"
+    },
+    {
+      "repo": "rainlanguage/.github",
+      "number": 4,
+      "url": "https://github.com/rainlanguage/.github/issues/4",
+      "title": "No org-level SECURITY.md, so no rainlanguage repo has a private disclosure channel"
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 327,
+      "url": "https://github.com/rainlanguage/rainix/issues/327",
+      "title": "Nothing fails when a Solidity package public surface changes and the version bumps only a patch"
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 326,
+      "url": "https://github.com/rainlanguage/rainix/issues/326",
+      "title": "rainix-autopublish publishes a Soldeer package without running the repo Solidity tests, so a red main ships an immutable revision"
+    },
+    {
       "repo": "rainlanguage/rain.factory.deploy",
       "number": 14,
       "url": "https://github.com/rainlanguage/rain.factory.deploy/issues/14",
@@ -2251,159 +2419,15 @@
     },
     {
       "repo": "rainlanguage/rain.extrospection",
-      "number": 90,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/90",
-      "title": "LibExtrospectMetamorphic.sol is not in any audit's stated scope, and five scoped files do not exist at the audited commit"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 89,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/89",
-      "title": "IExtrospectV1 carries no @param/@return NatSpec and documents no failure modes"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 88,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/88",
-      "title": "README and CLAUDE.md document an interface surface that no longer exists, and two opcode bitmaps have no consumer"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 87,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/87",
-      "title": "Test oracles restate the source expression instead of an independent authority"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 86,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/86",
-      "title": "The CBOR-metadata fuzz tests admit EIP-7702-shaped input that vm.etch rejects, making the baseline flaky and sticky-red"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 85,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/85",
-      "title": "The fork-test exclusion drops 7 tests to skip 3, leaving four non-fork checkCBORTrimmedBytecodeHash paths unmeasured"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 84,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/84",
-      "title": "ExtrospectConstantsTest's bytecode pins kill every source mutation, so any whole-suite mutation matrix reports false coverage"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
       "number": 83,
       "url": "https://github.com/rainlanguage/rain.extrospection/issues/83",
       "title": "No address-taking metamorphic or opcode scan exists, so no verdict is bound to an account"
     },
     {
       "repo": "rainlanguage/rain.extrospection",
-      "number": 82,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/82",
-      "title": "The beacon predicates never yield the implementation address, so the repo's own metamorphic and EOF checks cannot be composed onto it"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 81,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/81",
-      "title": "IExtrospectV1 carries two mutually incompatible \"expected hash\" conventions with no cross-reference"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 80,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/80",
-      "title": "NatSpec asserts that reading a proxy's beacon is not possible from a runtime contract context, which is false for OpenZeppelin v5 BeaconProxy"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 79,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/79",
-      "title": "An EIP-7702 delegated EOA passes both beacon predicates, and the verdict is revocable by one EOA transaction"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 78,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/78",
-      "title": "isBeaconImplementationBytecode matches keccak256(\"\") against any codeless implementation, including a counterfactual CREATE2 address"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 77,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/77",
-      "title": "A hostile beacon makes the beacon predicates consume the caller's whole gas budget and revert, instead of returning false"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 76,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/76",
-      "title": "isBeaconImplementationBytecode believes a beacon that keys its answer off msg.sender"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 75,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/75",
-      "title": "Any contract with a permissive 32-byte-returning fallback is accepted as a beacon"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
       "number": 74,
       "url": "https://github.com/rainlanguage/rain.extrospection/issues/74",
       "title": "The ripemd160 precompile at 0x03 is accepted as a valid beacon and as an owner match"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 72,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/72",
-      "title": "isERC1167Proxy is the only bytecode-taking entry point with no EOF gate"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 71,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/71",
-      "title": "ERC1167_IMPLEMENTATION_ADDRESS_OFFSET is correct only because two unrelated 20s cancel, and the prefix/suffix lengths are hand-written"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 70,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/70",
-      "title": "isERC1167Proxy allocates 128 bytes of dead memory on every call"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 69,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/69",
-      "title": "isERC1167Proxy accepts a clone whose implementation has no code, and (true, address(0)) is indistinguishable from (false, address(0))"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 68,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/68",
-      "title": "isERC1167Proxy returns (false, address(0)) for working delegating proxies, including EIP-1167 vanity clones"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 67,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/67",
-      "title": "The 53-byte metadata length is an unshared literal repeated across four coupled encodings"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 66,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/66",
-      "title": "The tryTrimSolidityCBORMetadata assembly comment misdescribes its own memory reads"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 65,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/65",
-      "title": "A truncated final PUSH silently ends the reachable scan"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 61,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/61",
-      "title": "checkNoSolidityCBORMetadata reports \"no metadata\" for an address with no code"
     },
     {
       "repo": "rainlanguage/rain.extrospection",
@@ -2682,12 +2706,6 @@
       "title": "Probe each mutant against a narrow selection first, escalating to the whole suite only on apparent survival"
     },
     {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 129,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/129",
-      "title": "Unname every return under src/, and stop the generator emitting named ones"
-    },
-    {
       "repo": "rainlanguage/claude-audit-skills",
       "number": 88,
       "url": "https://github.com/rainlanguage/claude-audit-skills/issues/88",
@@ -2734,12 +2752,6 @@
       "number": 291,
       "url": "https://github.com/rainlanguage/issue-pr-cron/issues/291",
       "title": "token-profile's dispatching benchmark is stale, and stored so it will go stale again"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 64,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/64",
-      "title": "The mutation ledger predates almost the entire current source tree"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -3340,18 +3352,6 @@
       "number": 2817,
       "url": "https://github.com/rainlanguage/raindex/issues/2817",
       "title": "Deploy Order button is not disabled when the deployment config is incomplete/invalid"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 99,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/99",
-      "title": "[A37] [LOW] No security disclosure channel, no versioning policy, and REUSE.toml asserts Rain copyright over the third-party Protofire report"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 87,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/87",
-      "title": "[A25] [MEDIUM] Auto-publish can only emit patch bumps and ships no notes, so a memory-corruption fix is indistinguishable from a comment tweak"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -6325,18 +6325,6 @@
     },
     {
       "repo": "rainlanguage/raindex",
-      "number": 175,
-      "url": "https://github.com/rainlanguage/raindex/issues/175",
-      "title": "factory to create governance wrappers"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 169,
-      "url": "https://github.com/rainlanguage/raindex/issues/169",
-      "title": "if a strat eval reverts in take orders, don't revert the whole take orders, instead skip the order"
-    },
-    {
-      "repo": "rainlanguage/raindex",
       "number": 168,
       "url": "https://github.com/rainlanguage/raindex/issues/168",
       "title": "put counterparty desired amount in context"
@@ -6409,33 +6397,9 @@
     },
     {
       "repo": "rainlanguage/raindex",
-      "number": 134,
-      "url": "https://github.com/rainlanguage/raindex/issues/134",
-      "title": "contract client / cli integration tests"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 110,
-      "url": "https://github.com/rainlanguage/raindex/issues/110",
-      "title": "remove the manual steps for codegen for cynic"
-    },
-    {
-      "repo": "rainlanguage/raindex",
       "number": 102,
       "url": "https://github.com/rainlanguage/raindex/issues/102",
       "title": "subgraph query integration tests"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 91,
-      "url": "https://github.com/rainlanguage/raindex/issues/91",
-      "title": "Curses-style UI for List and Detail commands"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 89,
-      "url": "https://github.com/rainlanguage/raindex/issues/89",
-      "title": "Cynic graphql type generation on CI"
     },
     {
       "repo": "rainlanguage/dotrain",
@@ -6484,9 +6448,9 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 40,
+    "unvetted": 64,
     "blockedOn": 22,
-    "ready": 5,
+    "ready": 3,
     "needsWork": 106,
     "relink": 0,
     "design": 8,
@@ -6495,17 +6459,17 @@
     "closeCandidateUnvetted": 6,
     "closeCandidateUpheld": 2,
     "leaks": 0,
-    "totalProducerPrs": 183,
+    "totalProducerPrs": 205,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 703,
+    "uncoveredIssues": 677,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 885
+    "openIssues": 881
   },
   "ages": {
     "openIssues": {
-      "meanDays": 281.4,
-      "medianDays": 104.3,
+      "meanDays": 276.2,
+      "medianDays": 103.2,
       "oldestDays": 1667.7
     }
   }
