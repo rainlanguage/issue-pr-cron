@@ -190,6 +190,12 @@
         "number": 161,
         "url": "https://github.com/rainlanguage/rain.flare/pull/161",
         "title": "fix: remove ankr public RPC fallback from LibFork — fail loud on unset env"
+      },
+      {
+        "repo": "rainlanguage/rainlang",
+        "number": 537,
+        "url": "https://github.com/rainlanguage/rainlang/pull/537",
+        "title": "test: one contract per file (satisfy rainix single-contract gate)"
       }
     ],
     "ai:needs-work": [
@@ -726,12 +732,6 @@
         "number": 129,
         "url": "https://github.com/rainlanguage/rain.flare/pull/129",
         "title": "Add NatSpec and fix misleading return-param names in interfaces"
-      },
-      {
-        "repo": "rainlanguage/rainlang",
-        "number": 537,
-        "url": "https://github.com/rainlanguage/rainlang/pull/537",
-        "title": "test: one contract per file (satisfy rainix single-contract gate)"
       },
       {
         "repo": "rainlanguage/rainix",
@@ -1286,7 +1286,7 @@
     },
     "vetter-verdicts": {
       "ai:design": {
-        "count": 6,
+        "count": 7,
         "prs": [
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -1329,18 +1329,25 @@
             "url": "https://github.com/rainlanguage/rain.flare/pull/161",
             "title": "fix: remove ankr public RPC fallback from LibFork — fail loud on unset env",
             "bucket": "presentable"
+          },
+          {
+            "repo": "rainlanguage/rainlang",
+            "number": 537,
+            "url": "https://github.com/rainlanguage/rainlang/pull/537",
+            "title": "test: one contract per file (satisfy rainix single-contract gate)",
+            "bucket": "presentable"
           }
         ],
         "breakdown": {
           "draft": 0,
           "fetchErrors": 0,
           "noQuestion": 0,
-          "presentable": 6,
+          "presentable": 7,
           "unaddressable": 0
         }
       },
       "ai:needs-work": {
-        "count": 107,
+        "count": 106,
         "prs": [
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -1875,12 +1882,6 @@
             "number": 129,
             "url": "https://github.com/rainlanguage/rain.flare/pull/129",
             "title": "Add NatSpec and fix misleading return-param names in interfaces"
-          },
-          {
-            "repo": "rainlanguage/rainlang",
-            "number": 537,
-            "url": "https://github.com/rainlanguage/rainlang/pull/537",
-            "title": "test: one contract per file (satisfy rainix single-contract gate)"
           },
           {
             "repo": "rainlanguage/rainix",
@@ -6413,9 +6414,9 @@
     "unvetted": 41,
     "blockedOn": 23,
     "ready": 1,
-    "needsWork": 107,
+    "needsWork": 106,
     "relink": 0,
-    "design": 6,
+    "design": 7,
     "blockedInfra": 0,
     "closeCandidateIssues": 6,
     "closeCandidateUnvetted": 6,
@@ -6424,13 +6425,13 @@
     "totalProducerPrs": 180,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 695,
-    "designPresentable": 6,
+    "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 874
   },
   "ages": {
     "openIssues": {
-      "meanDays": 285.2,
+      "meanDays": 285.3,
       "medianDays": 104.7,
       "oldestDays": 1667.2
     }
