@@ -47,11 +47,28 @@ Every behavior the diff claims to fix or add gets a test that:
 sides of your change has pinned nothing (cyclo.site#398: three deploy-gate
 fixes, 15KB test file untouched, every test green before AND after).
 
-## 3. Mutation-validate the new tests
+## 3. Mutation-validate the new tests — with the bundled tool
 
-For each new test, apply ONE targeted mutation to the line it claims to cover
-(negate the guard, flip the comparison, drop the call), confirm the test fails,
-restore. A test that survives its own mutation is decoration.
+The route is the `adversarial-mutation-test` skill scoped to your change, whose
+probe step authors ONE targeted mutation per behavior (its catalog) into a
+`mutants.toml` and runs the bundled bin:
+
+```sh
+nix run github:rainlanguage/adversarial-mutation-test#mutation-probe -- mutants.toml
+```
+
+`mutation-probe --help` is the manual: file format, verdicts, exit codes. Do
+NOT hand-roll an edit-run-restore loop — the bin ENFORCES what a hand loop can
+only assert. A red, silent or zero-test baseline aborts before any probe; the
+suite's own tally proves it RAN, so a crash or compile error is NO-RUN and
+never a pass; each target must occur EXACTLY once in its file; and every
+restore is verified byte-exact before the next mutant. Two duties stay yours:
+COMMIT before the first probe, and keep targets out of test code — a mutant in
+the oracle co-mutates the expectation and voids the result.
+
+SURVIVED is a real gap: strengthen the test in place or add one, re-probe
+(`--only`) until KILLED, and never edit a test to pass under a mutation. A test
+that survives its own mutation is decoration.
 
 ## 4. Oracle discipline
 
@@ -101,7 +118,9 @@ don't hold.
 
 All four lines are required. A line your change cannot have takes `n/a` **with
 the reason** (a docs-only diff has no mutations to apply); an absent line is not
-an option.
+an option. `Mutations applied` is TRANSCRIBED from the probe's verdicts (§3) —
+the mutant, and the test that KILLED it — never recalled; a mutation nothing
+scored is not evidence.
 
 That is enforced where the PR is opened, not only where it is judged. You open
 PRs with the `open_pr` MCP tool, which reads the body file and REFUSES (exit 3)
