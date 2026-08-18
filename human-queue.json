@@ -219,12 +219,6 @@
       },
       {
         "repo": "rainlanguage/rain.deploy",
-        "number": 131,
-        "url": "https://github.com/rainlanguage/rain.deploy/pull/131",
-        "title": "Record a migration at the moment it ran"
-      },
-      {
-        "repo": "rainlanguage/rain.deploy",
         "number": 126,
         "url": "https://github.com/rainlanguage/rain.deploy/pull/126",
         "title": "Generate the released-suites aggregate instead of writing it by hand"
@@ -1081,19 +1075,55 @@
         ]
       },
       "un-vetted": {
-        "count": 42,
+        "count": 48,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 147,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/147",
+            "title": "Protofire's report under Protofire's copyright, and a private disclosure channel"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 146,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/146",
+            "title": "Name unsafeExtend's arrays and the sentinel tuple size, and point the matrix tests at their subject"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 145,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/145",
+            "title": "Bump forge-std to 1.16.2"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 144,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/144",
+            "title": "Move soldeer release metadata under foundry's [external] section"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 143,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/143",
+            "title": "Float the test/lib pragmas and anchor slither's filter_paths on path components"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 142,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/142",
+            "title": "Relative import paths in test/src/lib"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 141,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/141",
+            "title": "README: publishing is merge-driven, and the version is the next one"
+          },
           {
             "repo": "rainlanguage/rain.solmem",
             "number": 140,
             "url": "https://github.com/rainlanguage/rain.solmem/pull/140",
             "title": "One truncation error for bytes and both array libs"
-          },
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 139,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/139",
-            "title": "Ship a changelog in the package"
           },
           {
             "repo": "rainlanguage/rain.solmem",
@@ -1408,19 +1438,13 @@
         }
       },
       "ai:needs-work": {
-        "count": 108,
+        "count": 107,
         "prs": [
           {
             "repo": "rainlanguage/adversarial-mutation-test",
             "number": 26,
             "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/26",
             "title": "Scan ledger: a wrapper object that states its own ordering and authority rule"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 131,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/131",
-            "title": "Record a migration at the moment it ran"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -2322,6 +2346,240 @@
   ],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 135,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/135",
+      "title": "LibRainDeploySnapshotTest tests race each other over committed src/lib files, and can zero one"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 90,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/90",
+      "title": "LibExtrospectMetamorphic.sol is not in any audit's stated scope, and five scoped files do not exist at the audited commit"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 89,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/89",
+      "title": "IExtrospectV1 carries no @param/@return NatSpec and documents no failure modes"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 88,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/88",
+      "title": "README and CLAUDE.md document an interface surface that no longer exists, and two opcode bitmaps have no consumer"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 87,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/87",
+      "title": "Test oracles restate the source expression instead of an independent authority"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 86,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/86",
+      "title": "The CBOR-metadata fuzz tests admit EIP-7702-shaped input that vm.etch rejects, making the baseline flaky and sticky-red"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 85,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/85",
+      "title": "The fork-test exclusion drops 7 tests to skip 3, leaving four non-fork checkCBORTrimmedBytecodeHash paths unmeasured"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 84,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/84",
+      "title": "ExtrospectConstantsTest's bytecode pins kill every source mutation, so any whole-suite mutation matrix reports false coverage"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 83,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/83",
+      "title": "No address-taking metamorphic or opcode scan exists, so no verdict is bound to an account"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 82,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/82",
+      "title": "The beacon predicates never yield the implementation address, so the repo's own metamorphic and EOF checks cannot be composed onto it"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 81,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/81",
+      "title": "IExtrospectV1 carries two mutually incompatible \"expected hash\" conventions with no cross-reference"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 80,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/80",
+      "title": "NatSpec asserts that reading a proxy's beacon is not possible from a runtime contract context, which is false for OpenZeppelin v5 BeaconProxy"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 79,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/79",
+      "title": "An EIP-7702 delegated EOA passes both beacon predicates, and the verdict is revocable by one EOA transaction"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 78,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/78",
+      "title": "isBeaconImplementationBytecode matches keccak256(\"\") against any codeless implementation, including a counterfactual CREATE2 address"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 77,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/77",
+      "title": "A hostile beacon makes the beacon predicates consume the caller's whole gas budget and revert, instead of returning false"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 76,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/76",
+      "title": "isBeaconImplementationBytecode believes a beacon that keys its answer off msg.sender"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 75,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/75",
+      "title": "Any contract with a permissive 32-byte-returning fallback is accepted as a beacon"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 74,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/74",
+      "title": "The ripemd160 precompile at 0x03 is accepted as a valid beacon and as an owner match"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 73,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/73",
+      "title": "No test pins that the extracted ERC-1167 implementation address is masked clean (surviving mutant M13)"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 72,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/72",
+      "title": "isERC1167Proxy is the only bytecode-taking entry point with no EOF gate"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 71,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/71",
+      "title": "ERC1167_IMPLEMENTATION_ADDRESS_OFFSET is correct only because two unrelated 20s cancel, and the prefix/suffix lengths are hand-written"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 70,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/70",
+      "title": "isERC1167Proxy allocates 128 bytes of dead memory on every call"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 69,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/69",
+      "title": "isERC1167Proxy accepts a clone whose implementation has no code, and (true, address(0)) is indistinguishable from (false, address(0))"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 68,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/68",
+      "title": "isERC1167Proxy returns (false, address(0)) for working delegating proxies, including EIP-1167 vanity clones"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 67,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/67",
+      "title": "The 53-byte metadata length is an unshared literal repeated across four coupled encodings"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 66,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/66",
+      "title": "The tryTrimSolidityCBORMetadata assembly comment misdescribes its own memory reads"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 65,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/65",
+      "title": "A truncated final PUSH silently ends the reachable scan"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 64,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/64",
+      "title": "checkNoSolidityCBORMetadata reverts EOFBytecodeNotSupported instead of answering the question it was asked"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 63,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/63",
+      "title": "tryTrimSolidityCBORMetadata truncates the caller's array through an alias, and IExtrospectV1's signature hides the in-place mutation"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 62,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/62",
+      "title": "checkCBORTrimmedBytecodeHash(account, keccak256(\"\")) accepts any 53-byte all-trailer contract"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 61,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/61",
+      "title": "checkNoSolidityCBORMetadata reports \"no metadata\" for an address with no code"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 60,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/60",
+      "title": "checkNoSolidityCBORMetadata reports \"no metadata\" for every non-canonical Solidity metadata encoding"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 59,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/59",
+      "title": "tryTrimSolidityCBORMetadata constrains only 16 of the 53 trailer bytes, leaving 37 attacker-chosen executable bytes outside checkCBORTrimmedBytecodeHash's identity guarantee"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 58,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/58",
+      "title": "The metamorphic verdict on a safe contract is decided by its CBOR metadata bytes, and both trim/scan orders are wrong in one direction"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 57,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/57",
+      "title": "METAMORPHIC_OPS rejects permanently-immutable factories, and its own per-opcode rationale does not support the property it enforces"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 56,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/56",
+      "title": "HALTING_BITMAP omits every undefined opcode, so the reachable scan keeps scoring bytes the EVM can never execute"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 55,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/55",
+      "title": "checkNotMetamorphic reports an account with no code as NOT metamorphic"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 54,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/54",
+      "title": "EIP-7702 delegated accounts are reported as NOT metamorphic"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 53,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/53",
+      "title": "isEOFBytecode's two-byte magic test misclassifies EOF in both directions: version-less 0xEF00 blobs revert, 0xEF01 delegation designators pass"
+    },
+    {
       "repo": "rainlanguage/rainix",
       "number": 324,
       "url": "https://github.com/rainlanguage/rainix/issues/324",
@@ -2535,12 +2793,6 @@
       "repo": "rainlanguage/rain.flare",
       "number": 210,
       "url": "https://github.com/rainlanguage/rain.flare/issues/210",
-      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 122,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/122",
       "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
     },
     {
@@ -3277,57 +3529,9 @@
     },
     {
       "repo": "rainlanguage/rain.solmem",
-      "number": 99,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/99",
-      "title": "[A37] [LOW] No security disclosure channel, no versioning policy, and REUSE.toml asserts Rain copyright over the third-party Protofire report"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 98,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/98",
-      "title": "[A36] [MEDIUM] The README's release section is fiction, and the semantics of [package].version are undocumented"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 97,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/97",
-      "title": "[A35] [INFO] forge-std pinned at 1.16.1; 1.16.2 is the latest published revision"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 96,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/96",
-      "title": "[A34] [INFO] Two low-risk conventions: test-only libraries carry the concrete `=` pragma, and slither's filter_paths is unanchored"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 95,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/95",
-      "title": "[A33] [LOW] Naming: single-letter parameters on the two most dangerous functions, and two misnamed matrix test contracts"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 94,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/94",
-      "title": "[A32] [LOW] Bare src/ and test/ import paths in all 28 test files"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
       "number": 87,
       "url": "https://github.com/rainlanguage/rain.solmem/issues/87",
       "title": "[A25] [MEDIUM] Auto-publish can only emit patch bumps and ships no notes, so a memory-corruption fix is indistinguishable from a comment tweak"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 78,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/78",
-      "title": "[A16] [MEDIUM] README documents three shell tasks that do not exist, and describes the one that does as `forge build` when it broadcasts a deploy"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 65,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/65",
-      "title": "[A03] [LOW] unsafeExtend inline branch can write Solidity's reserved zero slot at 0x60"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -6460,10 +6664,10 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 42,
+    "unvetted": 48,
     "blockedOn": 24,
     "ready": 7,
-    "needsWork": 108,
+    "needsWork": 107,
     "relink": 0,
     "design": 8,
     "blockedInfra": 0,
@@ -6471,17 +6675,17 @@
     "closeCandidateUnvetted": 6,
     "closeCandidateUpheld": 2,
     "leaks": 0,
-    "totalProducerPrs": 191,
+    "totalProducerPrs": 196,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 685,
+    "uncoveredIssues": 715,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 870
+    "openIssues": 908
   },
   "ages": {
     "openIssues": {
-      "meanDays": 286.7,
-      "medianDays": 105.1,
+      "meanDays": 274.8,
+      "medianDays": 97.8,
       "oldestDays": 1667.6
     }
   }
