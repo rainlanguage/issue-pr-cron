@@ -140,12 +140,6 @@
         "number": 61,
         "url": "https://github.com/rainlanguage/rain.dia/pull/61",
         "title": "fix(dia): revert ZeroDiaPrice on any zero price, not only the (0,0) sentinel"
-      },
-      {
-        "repo": "rainlanguage/rain.dia",
-        "number": 57,
-        "url": "https://github.com/rainlanguage/rain.dia/pull/57",
-        "title": "fix(dia): fail-closed staleness — stale at exact boundary and on zero timestamp"
       }
     ],
     "ai:design": [
@@ -868,12 +862,6 @@
         "title": "perf: eliminate redundant read_dispair calls in try_into_call"
       },
       {
-        "repo": "rainlanguage/rain.erc4626.words",
-        "number": 212,
-        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/212",
-        "title": "docs(natspec): add @return, rounding, and decimal-precision docs to op libs and SubParser"
-      },
-      {
         "repo": "rainlanguage/rain.flare",
         "number": 125,
         "url": "https://github.com/rainlanguage/rain.flare/pull/125",
@@ -1024,10 +1012,22 @@
         "count": 64,
         "prs": [
           {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 128,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/128",
-            "title": "Give the test oracles authorities independent of src"
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 320,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/320",
+            "title": "chore(script): date-prefix MigrateMultisigThreshold and register it in run-script.yaml"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 319,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/319",
+            "title": "Cut CLAUDE.md from 18898 to 1918 bytes to fit the 4096-byte agent-context cap"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 149,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/149",
+            "title": "Collapse the mirror: LibUint256Array/Matrix become cast wrappers over the bytes32 libraries"
           },
           {
             "repo": "rainlanguage/rain.extrospection",
@@ -1244,18 +1244,6 @@
             "number": 91,
             "url": "https://github.com/rainlanguage/rain.extrospection/pull/91",
             "title": "Move soldeer release metadata under foundry's [external] section"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 138,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/138",
-            "title": "Host the BuildScript base: run() and cutRelease() concrete"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 137,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/137",
-            "title": "Point the generated-lib writers at a directory they are handed"
           },
           {
             "repo": "rainlanguage/rain.extrospection",
@@ -2121,7 +2109,7 @@
         ]
       },
       "ai:ready": {
-        "count": 3,
+        "count": 2,
         "prs": [
           {
             "repo": "rainlanguage/rain.factory.deploy",
@@ -2134,12 +2122,6 @@
             "number": 254,
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/254",
             "title": "feat(deps): bump rainlang to 0.1.8 for NotAnAddress(bytes32) — REQUIRES redeploy at land"
-          },
-          {
-            "repo": "rainlanguage/rain.erc4626.words",
-            "number": 212,
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/212",
-            "title": "docs(natspec): add @return, rounding, and decimal-precision docs to op libs and SubParser"
           }
         ]
       }
@@ -2275,12 +2257,6 @@
     },
     {
       "repo": "rainlanguage/rain.dia",
-      "number": 10,
-      "url": "https://github.com/rainlanguage/rain.dia/issues/10",
-      "title": "[AUDIT-M05] [medium] Zero-timestamp with non-zero price branch untested"
-    },
-    {
-      "repo": "rainlanguage/rain.dia",
       "number": 9,
       "url": "https://github.com/rainlanguage/rain.dia/issues/9",
       "title": "[AUDIT-M04] [medium] maxAge exact boundary elapsed==staleAfter untested"
@@ -2290,18 +2266,6 @@
       "number": 67,
       "url": "https://github.com/rainlanguage/rain.flare/issues/67",
       "title": "[F20] [MEDIUM] Public ankr RPC default in LibFork makes the entire fork test suite depend on an unowned, mutable endpoint that no test or CI step pins"
-    },
-    {
-      "repo": "rainlanguage/rain.solver",
-      "number": 317,
-      "url": "https://github.com/rainlanguage/rain.solver/issues/317",
-      "title": "Measure downtime (e.g. tracking time between trades for each network and set a downtime threshold)"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 1348,
-      "url": "https://github.com/rainlanguage/raindex/issues/1348",
-      "title": "Update tests for DeploymentSteps to reflect the new updateFields calls"
     }
   ],
   "closeCandidateUnvetted": [
@@ -2310,12 +2274,6 @@
       "number": 14,
       "url": "https://github.com/rainlanguage/rain.dia/issues/14",
       "title": "[AUDIT-M09] [medium] NatSpec claims revert on zero price but only (0,0) sentinel reverts"
-    },
-    {
-      "repo": "rainlanguage/rain.dia",
-      "number": 10,
-      "url": "https://github.com/rainlanguage/rain.dia/issues/10",
-      "title": "[AUDIT-M05] [medium] Zero-timestamp with non-zero price branch untested"
     },
     {
       "repo": "rainlanguage/rain.dia",
@@ -2334,29 +2292,16 @@
       "number": 61,
       "url": "https://github.com/rainlanguage/rain.dia/pull/61",
       "title": "fix(dia): revert ZeroDiaPrice on any zero price, not only the (0,0) sentinel"
-    },
-    {
-      "repo": "rainlanguage/rain.dia",
-      "number": 57,
-      "url": "https://github.com/rainlanguage/rain.dia/pull/57",
-      "title": "fix(dia): fail-closed staleness — stale at exact boundary and on zero timestamp"
     }
   ],
-  "closeCandidateUpheld": [
-    {
-      "repo": "rainlanguage/rain.solver",
-      "number": 317,
-      "url": "https://github.com/rainlanguage/rain.solver/issues/317",
-      "title": "Measure downtime (e.g. tracking time between trades for each network and set a downtime threshold)"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 1348,
-      "url": "https://github.com/rainlanguage/raindex/issues/1348",
-      "title": "Update tests for DeploymentSteps to reflect the new updateFields calls"
-    }
-  ],
+  "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.math.binary",
+      "number": 37,
+      "url": "https://github.com/rainlanguage/rain.math.binary/issues/37",
+      "title": "foundry.toml compiler settings sit inside [soldeer], so forge ignores every one of them"
+    },
     {
       "repo": "rainlanguage/rain.extrospection",
       "number": 124,
@@ -2625,12 +2570,6 @@
       "repo": "rainlanguage/rain.tofu.erc20-decimals",
       "number": 32,
       "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/issues/32",
-      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
-    },
-    {
-      "repo": "rainlanguage/rain.math.binary",
-      "number": 35,
-      "url": "https://github.com/rainlanguage/rain.math.binary/issues/35",
       "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
     },
     {
@@ -6283,18 +6222,6 @@
     },
     {
       "repo": "rainlanguage/raindex",
-      "number": 210,
-      "url": "https://github.com/rainlanguage/raindex/issues/210",
-      "title": "List filtering"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 209,
-      "url": "https://github.com/rainlanguage/raindex/issues/209",
-      "title": "Nix commands to wrap all prerequisite steps of `cargo tauri dev` and `cargo tauri build`"
-    },
-    {
-      "repo": "rainlanguage/raindex",
       "number": 208,
       "url": "https://github.com/rainlanguage/raindex/issues/208",
       "title": "Link to orderbook in block explorer"
@@ -6450,27 +6377,27 @@
   "counts": {
     "unvetted": 64,
     "blockedOn": 22,
-    "ready": 3,
+    "ready": 2,
     "needsWork": 106,
     "relink": 0,
     "design": 8,
     "blockedInfra": 0,
-    "closeCandidateIssues": 6,
-    "closeCandidateUnvetted": 6,
-    "closeCandidateUpheld": 2,
+    "closeCandidateIssues": 3,
+    "closeCandidateUnvetted": 4,
+    "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 205,
+    "totalProducerPrs": 203,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 677,
+    "uncoveredIssues": 675,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 881
+    "openIssues": 868
   },
   "ages": {
     "openIssues": {
-      "meanDays": 276.2,
-      "medianDays": 103.2,
-      "oldestDays": 1667.7
+      "meanDays": 276.6,
+      "medianDays": 103.3,
+      "oldestDays": 1667.8
     }
   }
 }
