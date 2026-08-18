@@ -221,7 +221,13 @@
         "repo": "rainlanguage/rain.deploy",
         "number": 131,
         "url": "https://github.com/rainlanguage/rain.deploy/pull/131",
-        "title": "feat(migration-registry): record a migration at the moment it ran, via MigrationRegistryV2"
+        "title": "Record a migration at the moment it ran"
+      },
+      {
+        "repo": "rainlanguage/rain.deploy",
+        "number": 126,
+        "url": "https://github.com/rainlanguage/rain.deploy/pull/126",
+        "title": "Generate the released-suites aggregate instead of writing it by hand"
       },
       {
         "repo": "rainlanguage/rain.tofu.erc20-decimals",
@@ -856,10 +862,34 @@
     ],
     "ai:ready": [
       {
+        "repo": "rainlanguage/rain.extrospection",
+        "number": 51,
+        "url": "https://github.com/rainlanguage/rain.extrospection/pull/51",
+        "title": "test: ERC1167 implementation address mask (adversarial mutation batch erc1167)"
+      },
+      {
+        "repo": "rainlanguage/rain.extrospection",
+        "number": 48,
+        "url": "https://github.com/rainlanguage/rain.extrospection/pull/48",
+        "title": "Remove submodule-era residue: dead foundry.lock, .gitmodules and lib/ references"
+      },
+      {
         "repo": "rainlanguage/rain.erc4626.words",
         "number": 263,
         "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/263",
         "title": "Remove the submodule-era residue: dead `foundry.lock` annotation in `REUSE.toml`"
+      },
+      {
+        "repo": "rainlanguage/rain.factory.deploy",
+        "number": 11,
+        "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/11",
+        "title": "codegen: use LibCodeGen.addressConstantString instead of a local copy"
+      },
+      {
+        "repo": "rainlanguage/rain.factory.deploy",
+        "number": 9,
+        "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/9",
+        "title": "Drop snapshot-generate-cmd: rainix owns the release freeze"
       },
       {
         "repo": "rainlanguage/rain.pyth",
@@ -1051,37 +1081,121 @@
         ]
       },
       "un-vetted": {
-        "count": 32,
+        "count": 42,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 140,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/140",
+            "title": "One truncation error for bytes and both array libs"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 139,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/139",
+            "title": "Ship a changelog in the package"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 138,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/138",
+            "title": "Serialise Package Release runs per ref"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 137,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/137",
+            "title": "Record the commits Protofire reviewed in audit/audits.json"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 136,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/136",
+            "title": "Name unsafeExtend's parameters as they are declared, and stop calling bytes32 an integer"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 135,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/135",
+            "title": "NatSpec completeness: library docs, truncate/flatten tags, typos"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 134,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/134",
+            "title": "Test the documented pointer wrap and pin unsafeWriteWord's write extent"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 133,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/133",
+            "title": "Pin the empty-base and both-empty shapes of unsafeExtend"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 132,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/132",
+            "title": "Point the sentinel NatSpec at the errors and the pointer it actually returns"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 131,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/131",
+            "title": "Keep the in place extend inside the heap"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 130,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/130",
+            "title": "README: the library surface that exists, and the error surface"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 129,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/129",
+            "title": "Pin off stride sentinel data and the below lower boundary"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 127,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/127",
+            "title": "Converge the uint256 and bytes32 array suites"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 126,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/126",
+            "title": "Pin itemCount literal counts, aliased sub arrays and flatten source immutability"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 52,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/52",
+            "title": "test: pin ERC-1967 beacon _tryGetAddress success-flag check"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 125,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/125",
+            "title": "Document the safety contract, and stop claiming the allocator is bypassed"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 50,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/50",
+            "title": "test: pin metamorphic scan + Extrospect delegation behaviours"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 124,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/124",
+            "title": "README: the shell tasks that exist, and what rainix-sol-artifacts does"
+          },
           {
             "repo": "rainlanguage/rain.strategies",
             "number": 127,
             "url": "https://github.com/rainlanguage/rain.strategies/pull/127",
             "title": "Serve registry strategy URLs from jsDelivr"
-          },
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 121,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/121",
-            "title": "Read the tail length before writing the output length word"
-          },
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 120,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/120",
-            "title": "Delete the dead `using ... for` directives, and defuse the import one strands"
-          },
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 119,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/119",
-            "title": "Matrix endPointer is the end of the pointer array, not an allocation boundary"
-          },
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 118,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/118",
-            "title": "Ship the cancun/mcopy floor in the package, and bind the README to the code"
           },
           {
             "repo": "rainlanguage/rainix",
@@ -1126,12 +1240,6 @@
             "title": "bootstrap.sh: stand a fresh producer/vetter box up from a tracked script"
           },
           {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 126,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/126",
-            "title": "Generate the released-suites aggregate instead of writing it by hand"
-          },
-          {
             "repo": "rainlanguage/raindex",
             "number": 2835,
             "url": "https://github.com/rainlanguage/raindex/pull/2835",
@@ -1162,12 +1270,6 @@
             "title": "Remove the submodule-era residue from REUSE.toml and CLAUDE.md"
           },
           {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 48,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/48",
-            "title": "Remove submodule-era residue: dead foundry.lock, .gitmodules and lib/ references"
-          },
-          {
             "repo": "rainlanguage/rain.lib.memkv",
             "number": 23,
             "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/23",
@@ -1196,18 +1298,6 @@
             "number": 29,
             "url": "https://github.com/rainlanguage/rain.verify/pull/29",
             "title": "codegen: use LibCodeGen.addressConstantString instead of a local copy"
-          },
-          {
-            "repo": "rainlanguage/rain.factory.deploy",
-            "number": 11,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/11",
-            "title": "codegen: use LibCodeGen.addressConstantString instead of a local copy"
-          },
-          {
-            "repo": "rainlanguage/rain.factory.deploy",
-            "number": 9,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/9",
-            "title": "Drop snapshot-generate-cmd: rainix owns the release freeze"
           },
           {
             "repo": "rainlanguage/rainix",
@@ -1318,7 +1408,7 @@
         }
       },
       "ai:needs-work": {
-        "count": 107,
+        "count": 108,
         "prs": [
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -1330,7 +1420,13 @@
             "repo": "rainlanguage/rain.deploy",
             "number": 131,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/131",
-            "title": "feat(migration-registry): record a migration at the moment it ran, via MigrationRegistryV2"
+            "title": "Record a migration at the moment it ran"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 126,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/126",
+            "title": "Generate the released-suites aggregate instead of writing it by hand"
           },
           {
             "repo": "rainlanguage/rain.tofu.erc20-decimals",
@@ -1965,13 +2061,37 @@
         ]
       },
       "ai:ready": {
-        "count": 3,
+        "count": 7,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 51,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/51",
+            "title": "test: ERC1167 implementation address mask (adversarial mutation batch erc1167)"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 48,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/48",
+            "title": "Remove submodule-era residue: dead foundry.lock, .gitmodules and lib/ references"
+          },
           {
             "repo": "rainlanguage/rain.erc4626.words",
             "number": 263,
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/263",
             "title": "Remove the submodule-era residue: dead `foundry.lock` annotation in `REUSE.toml`"
+          },
+          {
+            "repo": "rainlanguage/rain.factory.deploy",
+            "number": 11,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/11",
+            "title": "codegen: use LibCodeGen.addressConstantString instead of a local copy"
+          },
+          {
+            "repo": "rainlanguage/rain.factory.deploy",
+            "number": 9,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/9",
+            "title": "Drop snapshot-generate-cmd: rainix owns the release freeze"
           },
           {
             "repo": "rainlanguage/rain.erc4626.words",
@@ -2201,6 +2321,36 @@
     }
   ],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 324,
+      "url": "https://github.com/rainlanguage/rainix/issues/324",
+      "title": "rainix-autopublish has no concurrency group: concurrent merges race one version and can wedge a repo's releases"
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 323,
+      "url": "https://github.com/rainlanguage/rainix/issues/323",
+      "title": "gh-release has no notes input, so every autopublish GitHub Release ships an empty body"
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 322,
+      "url": "https://github.com/rainlanguage/rainix/issues/322",
+      "title": "rainix-autopublish runs no test before a Soldeer publish, so a red suite still ships an immutable revision"
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 321,
+      "url": "https://github.com/rainlanguage/rainix/issues/321",
+      "title": "Report audited-source drift from audit/audits.json in rainix-sol"
+    },
+    {
+      "repo": "rainlanguage/rain.solmem",
+      "number": 128,
+      "url": "https://github.com/rainlanguage/rain.solmem/issues/128",
+      "title": "Nothing detects the uint256 and bytes32 mirrors drifting apart again"
+    },
     {
       "repo": "rainlanguage/issue-pr-cron",
       "number": 335,
@@ -3163,69 +3313,9 @@
     },
     {
       "repo": "rainlanguage/rain.solmem",
-      "number": 91,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/91",
-      "title": "[A29] [LOW] forge build emits two warnings, and foundry.lock is a dead file contradicting the real forge-std pin"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 89,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/89",
-      "title": "[A27] [LOW] Release workflow has no concurrency group, so two close merges race one version and can wedge the pipeline"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 88,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/88",
-      "title": "[A26] [MEDIUM] Nothing records that the Protofire-audited commit has drifted 74 commits behind main"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
       "number": 87,
       "url": "https://github.com/rainlanguage/rain.solmem/issues/87",
       "title": "[A25] [MEDIUM] Auto-publish can only emit patch bumps and ships no notes, so a memory-corruption fix is indistinguishable from a comment tweak"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 85,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/85",
-      "title": "[A23] [LOW] One truncation condition, two error types, and the shared error lives in a uint256-named file"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 84,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/84",
-      "title": "[A22] [LOW] unsafeExtend NatSpec names parameters base_/extend_ that do not exist, and LibBytes32Array documents every bytes32 as an integer"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 83,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/83",
-      "title": "[A21] [LOW] LibStackPointer library doc is stale on three counts: a StackPointer type, a uint256 element type, and up/down functions that do not exist"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 82,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/82",
-      "title": "[A20] [MEDIUM] LibStackSentinel NatSpec: MissingSentinel documents an unreachable trigger, the underflow bound is wrong by 32x, and two reverts are undocumented"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 81,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/81",
-      "title": "[A19] [LOW] README misdescribes the library surface: dedup-sort, copy and slicing do not exist, and no error surface is documented"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 80,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/80",
-      "title": "[A18] [LOW] NatSpec completeness sweep: library docs missing or malformed on 6 of 9 libraries, and itemCount/flatten/truncate lack @param/@return"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 79,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/79",
-      "title": "[A17] [MEDIUM] No documented safety contract: the caller's obligations and the meaning of the memory-safe annotation are undocumented, and the README misstates allocator behaviour"
     },
     {
       "repo": "rainlanguage/rain.solmem",
@@ -3235,45 +3325,9 @@
     },
     {
       "repo": "rainlanguage/rain.solmem",
-      "number": 76,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/76",
-      "title": "[A14] [LOW] unsafeExtend's empty-array and copy-branch self-aliasing combinations are reachable only by chance"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 73,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/73",
-      "title": "[A11] [MEDIUM] The uint256 test suite is strictly weaker than the bytes32 one: no LibUint256Array/Matrix allocation tests and three missing free-memory-pointer assertions"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 72,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/72",
-      "title": "[A10] [LOW] Matrix: itemCount has no deterministic tests, aliased inner arrays are untested, and nothing asserts flatten leaves its source unmodified"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 71,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/71",
-      "title": "[A09] [LOW] LibStackSentinel and unsafeList: n == 1, sentinel-valued tuple data, the below-lower boundary and unsafeList at maximum length are all untested"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 70,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/70",
-      "title": "[A08] [LOW] LibPointer: the documented pointer wrap is never exercised, and unsafeWriteWord's write extent is unpinned (both mutation-proven survivors)"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
       "number": 65,
       "url": "https://github.com/rainlanguage/rain.solmem/issues/65",
       "title": "[A03] [LOW] unsafeExtend inline branch can write Solidity's reserved zero slot at 0x60"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 62,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/62",
-      "title": "Matrix itemCount sums unchecked, and flatten mints an array whose declared length exceeds its allocation"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -6406,10 +6460,10 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 32,
+    "unvetted": 42,
     "blockedOn": 24,
-    "ready": 3,
-    "needsWork": 107,
+    "ready": 7,
+    "needsWork": 108,
     "relink": 0,
     "design": 8,
     "blockedInfra": 0,
@@ -6417,16 +6471,16 @@
     "closeCandidateUnvetted": 6,
     "closeCandidateUpheld": 2,
     "leaks": 0,
-    "totalProducerPrs": 176,
+    "totalProducerPrs": 191,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 696,
+    "uncoveredIssues": 685,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 872
+    "openIssues": 870
   },
   "ages": {
     "openIssues": {
-      "meanDays": 286.2,
+      "meanDays": 286.7,
       "medianDays": 105.1,
       "oldestDays": 1667.6
     }
