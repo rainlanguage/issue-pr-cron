@@ -1012,10 +1012,16 @@
         "count": 61,
         "prs": [
           {
-            "repo": "rainlanguage/rainix",
-            "number": 332,
-            "url": "https://github.com/rainlanguage/rainix/pull/332",
-            "title": "Give explorer verification a 10 minute window instead of 25 seconds"
+            "repo": "rainlanguage/rainlang.interface",
+            "number": 126,
+            "url": "https://github.com/rainlanguage/rainlang.interface/pull/126",
+            "title": "Bump rain-math-binary 0.1.3 -> 0.1.4"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 130,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/130",
+            "title": "Bump rain-math-binary 0.1.3 -> 0.1.4"
           },
           {
             "repo": "rainlanguage/rain.dia",
@@ -1340,12 +1346,6 @@
             "number": 29,
             "url": "https://github.com/rainlanguage/rain.verify/pull/29",
             "title": "codegen: use LibCodeGen.addressConstantString instead of a local copy"
-          },
-          {
-            "repo": "rainlanguage/rainix",
-            "number": 302,
-            "url": "https://github.com/rainlanguage/rainix/pull/302",
-            "title": "rainix owns the deploy-repo release freeze: rainix-static cut-release"
           },
           {
             "repo": "rainlanguage/rain.flare",
@@ -2278,30 +2278,6 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 129,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/129",
-      "title": "Bump rain-math-binary 0.1.3 -> 0.1.4"
-    },
-    {
-      "repo": "rainlanguage/rainlang.interface",
-      "number": 125,
-      "url": "https://github.com/rainlanguage/rainlang.interface/issues/125",
-      "title": "Bump rain-math-binary 0.1.3 -> 0.1.4"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 556,
-      "url": "https://github.com/rainlanguage/rainlang/issues/556",
-      "title": "Bump rain-math-binary 0.1.1 -> 0.1.4"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 141,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/141",
-      "title": "package-release.yaml passes an input rainix#302 removes, with a value its new contract forbids"
-    },
     {
       "repo": "rainlanguage/rain.extrospection",
       "number": 124,
@@ -6394,15 +6370,15 @@
     "leaks": 0,
     "totalProducerPrs": 200,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 679,
+    "uncoveredIssues": 675,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 869
+    "openIssues": 865
   },
   "ages": {
     "openIssues": {
-      "meanDays": 276.4,
-      "medianDays": 103.4,
+      "meanDays": 277.7,
+      "medianDays": 104.6,
       "oldestDays": 1667.9
     }
   }
