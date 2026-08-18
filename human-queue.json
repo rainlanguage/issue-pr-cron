@@ -1051,19 +1051,13 @@
         ]
       },
       "un-vetted": {
-        "count": 33,
+        "count": 32,
         "prs": [
           {
             "repo": "rainlanguage/rain.strategies",
             "number": 127,
             "url": "https://github.com/rainlanguage/rain.strategies/pull/127",
             "title": "Serve registry strategy URLs from jsDelivr"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 134,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/134",
-            "title": "Bump rain-sol-codegen 0.1.6 -> 0.1.35 and forge-std 1.16.1 -> 1.16.2"
           },
           {
             "repo": "rainlanguage/rain.solmem",
@@ -6412,7 +6406,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 33,
+    "unvetted": 32,
     "blockedOn": 24,
     "ready": 3,
     "needsWork": 107,
@@ -6423,7 +6417,7 @@
     "closeCandidateUnvetted": 6,
     "closeCandidateUpheld": 2,
     "leaks": 0,
-    "totalProducerPrs": 177,
+    "totalProducerPrs": 176,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 696,
     "designPresentable": 8,
@@ -6433,8 +6427,8 @@
   "ages": {
     "openIssues": {
       "meanDays": 286.2,
-      "medianDays": 105.0,
-      "oldestDays": 1667.5
+      "medianDays": 105.1,
+      "oldestDays": 1667.6
     }
   }
 }
