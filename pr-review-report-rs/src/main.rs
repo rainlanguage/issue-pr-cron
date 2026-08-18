@@ -59768,6 +59768,11 @@ mod settings_tests {
         ) else {
             return; // not checked out (nix build sandbox) — enforced by the rs-test gate
         };
+        // Matched against WHITESPACE-COLLAPSED text: `denofmt` re-wraps this prose on every edit,
+        // so a rule that lands mid-line today spans a line break tomorrow. Asserting on the raw
+        // bytes would make the guide's rules hostage to its column width.
+        let flat = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+        let (guide, prompt) = (flat(&guide), flat(&prompt));
         assert!(
             guide.contains(
                 "nix run github:rainlanguage/adversarial-mutation-test#mutation-probe -- \

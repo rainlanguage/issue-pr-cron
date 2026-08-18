@@ -57,14 +57,14 @@ probe step authors ONE targeted mutation per behavior (its catalog) into a
 nix run github:rainlanguage/adversarial-mutation-test#mutation-probe -- mutants.toml
 ```
 
-`mutation-probe --help` is the manual: file format, verdicts, exit codes. Do
-NOT hand-roll an edit-run-restore loop — the bin ENFORCES what a hand loop can
-only assert. A red, silent or zero-test baseline aborts before any probe; the
-suite's own tally proves it RAN, so a crash or compile error is NO-RUN and
-never a pass; each target must occur EXACTLY once in its file; and every
-restore is verified byte-exact before the next mutant. Two duties stay yours:
-COMMIT before the first probe, and keep targets out of test code — a mutant in
-the oracle co-mutates the expectation and voids the result.
+`mutation-probe --help` is the manual: file format, verdicts, exit codes. Do NOT
+hand-roll an edit-run-restore loop — the bin ENFORCES what a hand loop can only
+assert. A red, silent or zero-test baseline aborts before any probe; the suite's
+own tally proves it RAN, so a crash or compile error is NO-RUN and never a pass;
+each target must occur EXACTLY once in its file; and every restore is verified
+byte-exact before the next mutant. Two duties stay yours: COMMIT before the
+first probe, and keep targets out of test code — a mutant in the oracle
+co-mutates the expectation and voids the result.
 
 SURVIVED is a real gap: strengthen the test in place or add one, re-probe
 (`--only`) until KILLED, and never edit a test to pass under a mutation. A test
