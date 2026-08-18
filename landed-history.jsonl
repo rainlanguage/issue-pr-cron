@@ -240,3 +240,7 @@
 {"ts":"2026-08-18T15:18:29Z","observedAt":"2026-08-18T15:32:19Z","kind":"issue","repo":"rainlanguage/rain.dia","number":10}
 {"ts":"2026-08-18T15:15:16Z","observedAt":"2026-08-18T15:32:19Z","kind":"issue","repo":"rainlanguage/rain.solver","number":317}
 {"ts":"2026-08-18T15:16:34Z","observedAt":"2026-08-18T15:32:19Z","kind":"issue","repo":"rainlanguage/raindex","number":1348}
+{"ts":"2026-08-18T15:36:10Z","observedAt":"2026-08-18T16:31:04Z","kind":"pr","repo":"rainlanguage/rain.extrospection","number":121}
+{"ts":"2026-08-18T15:35:09Z","observedAt":"2026-08-18T16:31:04Z","kind":"pr","repo":"rainlanguage/rain.extrospection","number":122}
+{"ts":"2026-08-18T15:32:59Z","observedAt":"2026-08-18T16:31:04Z","kind":"pr","repo":"rainlanguage/rain.extrospection","number":125}
+{"ts":"2026-08-18T15:58:29Z","observedAt":"2026-08-18T16:31:04Z","kind":"pr","repo":"rainlanguage/rain.solmem","number":149}

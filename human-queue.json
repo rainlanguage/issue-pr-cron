@@ -1009,8 +1009,14 @@
         ]
       },
       "un-vetted": {
-        "count": 64,
+        "count": 60,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.dia",
+            "number": 69,
+            "url": "https://github.com/rainlanguage/rain.dia/pull/69",
+            "title": "fix(dia): stale price boundary fails safe at equality"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 320,
@@ -1024,12 +1030,6 @@
             "title": "Cut CLAUDE.md from 18898 to 1918 bytes to fit the 4096-byte agent-context cap"
           },
           {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 149,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/149",
-            "title": "Collapse the mirror: LibUint256Array/Matrix become cast wrappers over the bytes32 libraries"
-          },
-          {
             "repo": "rainlanguage/rain.extrospection",
             "number": 127,
             "url": "https://github.com/rainlanguage/rain.extrospection/pull/127",
@@ -1037,33 +1037,9 @@
           },
           {
             "repo": "rainlanguage/rain.extrospection",
-            "number": 126,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/126",
-            "title": "docs: reconcile each audit report's stated scope against its reviewed tree"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 125,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/125",
-            "title": "Add a mutation profile that drops the deploy-constant bytecode pins"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
             "number": 123,
             "url": "https://github.com/rainlanguage/rain.extrospection/pull/123",
             "title": "Guard fuzz-derived vm.etch against EIP-7702-shaped bytes"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 122,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/122",
-            "title": "Split fork tests out of checkCBORTrimmedBytecodeHash unit tests"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 121,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/121",
-            "title": "Docs: describe the shipped surface, not the removed interfaces"
           },
           {
             "repo": "rainlanguage/rain.extrospection",
@@ -2297,10 +2273,16 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
-      "repo": "rainlanguage/rain.math.binary",
-      "number": 37,
-      "url": "https://github.com/rainlanguage/rain.math.binary/issues/37",
-      "title": "foundry.toml compiler settings sit inside [soldeer], so forge ignores every one of them"
+      "repo": "rainlanguage/rainix",
+      "number": 329,
+      "url": "https://github.com/rainlanguage/rainix/issues/329",
+      "title": "HyperEVM has an RPC secret but no verify key, so any consumer adding the chain fails at foundry config resolution"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 141,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/141",
+      "title": "package-release.yaml passes an input rainix#302 removes, with a value its new contract forbids"
     },
     {
       "repo": "rainlanguage/rain.extrospection",
@@ -2364,6 +2346,12 @@
     },
     {
       "repo": "rainlanguage/rain.extrospection",
+      "number": 90,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/90",
+      "title": "LibExtrospectMetamorphic.sol is not in any audit's stated scope, and five scoped files do not exist at the audited commit"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
       "number": 83,
       "url": "https://github.com/rainlanguage/rain.extrospection/issues/83",
       "title": "No address-taking metamorphic or opcode scan exists, so no verdict is bound to an account"
@@ -2408,7 +2396,7 @@
       "repo": "rainlanguage/rain.solmem",
       "number": 128,
       "url": "https://github.com/rainlanguage/rain.solmem/issues/128",
-      "title": "Nothing detects the uint256 and bytes32 mirrors drifting apart again"
+      "title": "Nothing detects the uint256 and bytes32 TEST suites drifting apart"
     },
     {
       "repo": "rainlanguage/issue-pr-cron",
@@ -6375,7 +6363,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 64,
+    "unvetted": 60,
     "blockedOn": 22,
     "ready": 2,
     "needsWork": 106,
@@ -6386,17 +6374,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 203,
+    "totalProducerPrs": 199,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 675,
+    "uncoveredIssues": 677,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 868
+    "openIssues": 866
   },
   "ages": {
     "openIssues": {
-      "meanDays": 276.6,
-      "medianDays": 103.3,
+      "meanDays": 277.2,
+      "medianDays": 103.9,
       "oldestDays": 1667.8
     }
   }
