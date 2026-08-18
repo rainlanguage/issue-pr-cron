@@ -2274,9 +2274,9 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rainix",
-      "number": 329,
-      "url": "https://github.com/rainlanguage/rainix/issues/329",
-      "title": "HyperEVM has an RPC secret but no verify key, so any consumer adding the chain fails at foundry config resolution"
+      "number": 331,
+      "url": "https://github.com/rainlanguage/rainix/issues/331",
+      "title": "Deploy verification has no retries, so it fails on explorers that have not indexed the fresh contract"
     },
     {
       "repo": "rainlanguage/rain.deploy",
@@ -6383,7 +6383,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 277.2,
+      "meanDays": 277.3,
       "medianDays": 103.9,
       "oldestDays": 1667.8
     }
