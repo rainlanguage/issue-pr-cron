@@ -1054,6 +1054,18 @@
         "count": 36,
         "prs": [
           {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 123,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/123",
+            "title": "Route unsafeExtend's aliased case through the allocating path"
+          },
+          {
+            "repo": "rainlanguage/rain.sol.codegen",
+            "number": 144,
+            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/144",
+            "title": "Restore Rain's licence and copyright as defaults alongside the parameters"
+          },
+          {
             "repo": "rainlanguage/rain.strategies",
             "number": 127,
             "url": "https://github.com/rainlanguage/rain.strategies/pull/127",
@@ -1094,18 +1106,6 @@
             "number": 117,
             "url": "https://github.com/rainlanguage/rain.solmem/pull/117",
             "title": "docs: a changelog that ships in the package"
-          },
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 115,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/115",
-            "title": "Scope unsafeExtend's extend-is-never-mutated promise to non-overlapping arrays"
-          },
-          {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 114,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/114",
-            "title": "Run rainix CI on pull_request so fork PRs get checks"
           },
           {
             "repo": "rainlanguage/rainix",
@@ -6440,13 +6440,13 @@
     "uncoveredIssues": 695,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 874
+    "openIssues": 873
   },
   "ages": {
     "openIssues": {
-      "meanDays": 285.5,
+      "meanDays": 285.8,
       "medianDays": 105.0,
-      "oldestDays": 1667.4
+      "oldestDays": 1667.5
     }
   }
 }
