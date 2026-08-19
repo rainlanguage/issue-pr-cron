@@ -1009,13 +1009,31 @@
         ]
       },
       "un-vetted": {
-        "count": 27,
+        "count": 30,
         "prs": [
           {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 133,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/133",
-            "title": "Bump [external.package] version to 0.1.7 to un-red the release lane"
+            "repo": "rainlanguage/rain.datacontract",
+            "number": 42,
+            "url": "https://github.com/rainlanguage/rain.datacontract/pull/42",
+            "title": "Record the 2026-08-19 adversarial mutation test scan"
+          },
+          {
+            "repo": "rainlanguage/rain.datacontract",
+            "number": 31,
+            "url": "https://github.com/rainlanguage/rain.datacontract/pull/31",
+            "title": "test: LibDataContract.contractCreationCode mutation coverage"
+          },
+          {
+            "repo": "rainlanguage/rain.datacontract",
+            "number": 30,
+            "url": "https://github.com/rainlanguage/rain.datacontract/pull/30",
+            "title": "test: readSlice mutation coverage"
+          },
+          {
+            "repo": "rainlanguage/rain.datacontract",
+            "number": 29,
+            "url": "https://github.com/rainlanguage/rain.datacontract/pull/29",
+            "title": "test: LibDataContract.read mutation coverage"
           },
           {
             "repo": "rainlanguage/rainlang",
@@ -2075,6 +2093,78 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/adversarial-mutation-test",
+      "number": 30,
+      "url": "https://github.com/rainlanguage/adversarial-mutation-test/issues/30",
+      "title": "Repeated --only flags silently drop all but one selection"
+    },
+    {
+      "repo": "rainlanguage/adversarial-mutation-test",
+      "number": 29,
+      "url": "https://github.com/rainlanguage/adversarial-mutation-test/issues/29",
+      "title": "Forge FAIL lines with nested ']' silently defeat kill attribution via the natural fail-pattern"
+    },
+    {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 41,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/41",
+      "title": "testSameReads pins a strict gas ordering that no spec guarantees across compiler versions"
+    },
+    {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 40,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/40",
+      "title": "readSlice NatSpec has no @return tag"
+    },
+    {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 39,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/39",
+      "title": "Zero-length slice starting past the data end reverts — intended?"
+    },
+    {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 38,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/38",
+      "title": "read()/readSlice() silently return shifted garbage for non-container code-bearing addresses"
+    },
+    {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 37,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/37",
+      "title": "ReadError NatSpec describes only the zero-code case but fires for out-of-range slices too"
+    },
+    {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 36,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/36",
+      "title": "README/NatSpec promise <=24KB but the guard accepts 65534 bytes; suite deploys EIP-170-impossible contracts"
+    },
+    {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 35,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/35",
+      "title": "DataTooLarge NatSpec misstates the bound: length 65535 fits uint16 but reverts"
+    },
+    {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 34,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/34",
+      "title": "DataTooLarge is declared inside the library while ReadError/WriteError live in src/error"
+    },
+    {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 33,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/33",
+      "title": "ZOLTU_PROXY_ADDRESS is declared and re-exported but used by nothing"
+    },
+    {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 32,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/32",
+      "title": "Documented `write` path does not exist: WriteError and DataContractMemoryContainer are dead exported surface"
+    },
+    {
       "repo": "rainlanguage/rain.extrospection",
       "number": 132,
       "url": "https://github.com/rainlanguage/rain.extrospection/issues/132",
@@ -2151,12 +2241,6 @@
       "number": 83,
       "url": "https://github.com/rainlanguage/rain.extrospection/issues/83",
       "title": "No address-taking metamorphic or opcode scan exists, so no verdict is bound to an account"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 76,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/76",
-      "title": "isBeaconImplementationBytecode believes a beacon that keys its answer off msg.sender"
     },
     {
       "repo": "rainlanguage/rain.extrospection",
@@ -2703,12 +2787,6 @@
       "number": 29,
       "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/issues/29",
       "title": "Split deploy half out of rain.tofu.erc20-decimals (rainix#296)"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 46,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/46",
-      "title": "Split deploy half out of rain.extrospection (rainix#296)"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -6171,7 +6249,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 27,
+    "unvetted": 30,
     "blockedOn": 22,
     "ready": 2,
     "needsWork": 106,
@@ -6182,17 +6260,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 166,
+    "totalProducerPrs": 169,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 678,
+    "uncoveredIssues": 688,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 833
+    "openIssues": 843
   },
   "ages": {
     "openIssues": {
-      "meanDays": 289.0,
-      "medianDays": 107.1,
+      "meanDays": 285.6,
+      "medianDays": 107.0,
       "oldestDays": 1668.6
     }
   }
