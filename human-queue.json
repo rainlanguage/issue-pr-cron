@@ -1009,8 +1009,14 @@
         ]
       },
       "un-vetted": {
-        "count": 56,
+        "count": 55,
         "prs": [
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 177,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/177",
+            "title": "fix(scan): audit graph draws immediate dependencies, not the soldeer closure"
+          },
           {
             "repo": "rainlanguage/rainlang",
             "number": 557,
@@ -1048,22 +1054,10 @@
             "title": "Size beacon return data before copying it"
           },
           {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 117,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/117",
-            "title": "Document the two expected-hash conventions on IExtrospectV1"
-          },
-          {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 337,
             "url": "https://github.com/rainlanguage/issue-pr-cron/pull/337",
             "title": "docs(qa-guide): §3 routes mutation validation to mutation-probe, not a hand loop"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 115,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/115",
-            "title": "Document and pin the EIP-7702 delegated-account behaviour of the beacon predicates"
           },
           {
             "repo": "rainlanguage/rain.extrospection",
@@ -6327,7 +6321,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 56,
+    "unvetted": 55,
     "blockedOn": 22,
     "ready": 2,
     "needsWork": 106,
@@ -6338,17 +6332,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 195,
+    "totalProducerPrs": 194,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 675,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 858
+    "openIssues": 856
   },
   "ages": {
     "openIssues": {
-      "meanDays": 280.3,
-      "medianDays": 105.8,
+      "meanDays": 281.0,
+      "medianDays": 105.9,
       "oldestDays": 1668.3
     }
   }
