@@ -1009,13 +1009,13 @@
         ]
       },
       "un-vetted": {
-        "count": 55,
+        "count": 48,
         "prs": [
           {
-            "repo": "rainlanguage/rain-org-health",
-            "number": 177,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/177",
-            "title": "fix(scan): audit graph draws immediate dependencies, not the soldeer closure"
+            "repo": "rainlanguage/rain.extrospection.deploy",
+            "number": 1,
+            "url": "https://github.com/rainlanguage/rain.extrospection.deploy/pull/1",
+            "title": "Migrate to rain-deploy 0.1.7"
           },
           {
             "repo": "rainlanguage/rainlang",
@@ -1061,36 +1061,6 @@
           },
           {
             "repo": "rainlanguage/rain.extrospection",
-            "number": 114,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/114",
-            "title": "Document that OZ v5 BeaconProxy carries its beacon in runtime bytecode"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 113,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/113",
-            "title": "Beacon predicates report the beacon's answer to msg.sender, not a property of the beacon"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 112,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/112",
-            "title": "Correct beacon predicate NatSpec on permissive fallbacks"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 111,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/111",
-            "title": "Pin isERC1167Proxy EOF behaviour in NatSpec and tests"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 110,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/110",
-            "title": "Document and pin isERC1167Proxy's bytecode-only verdict"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
             "number": 109,
             "url": "https://github.com/rainlanguage/rain.extrospection/pull/109",
             "title": "Share the ERC1167 address length and derive the implementation address read offset from it"
@@ -1100,18 +1070,6 @@
             "number": 108,
             "url": "https://github.com/rainlanguage/rain.extrospection/pull/108",
             "title": "fix: stop isERC1167Proxy allocating 128 bytes of dead memory"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 107,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/107",
-            "title": "Document that isERC1167Proxy matches only the canonical bytecode"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 106,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/106",
-            "title": "refactor: name the Solidity CBOR metadata constants"
           },
           {
             "repo": "rainlanguage/rain.extrospection",
@@ -2313,6 +2271,12 @@
       "number": 83,
       "url": "https://github.com/rainlanguage/rain.extrospection/issues/83",
       "title": "No address-taking metamorphic or opcode scan exists, so no verdict is bound to an account"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 76,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/76",
+      "title": "isBeaconImplementationBytecode believes a beacon that keys its answer off msg.sender"
     },
     {
       "repo": "rainlanguage/rain.extrospection",
@@ -6321,7 +6285,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 55,
+    "unvetted": 48,
     "blockedOn": 22,
     "ready": 2,
     "needsWork": 106,
@@ -6332,18 +6296,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 194,
+    "totalProducerPrs": 187,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 675,
+    "uncoveredIssues": 676,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 856
+    "openIssues": 850
   },
   "ages": {
     "openIssues": {
-      "meanDays": 281.0,
+      "meanDays": 283.0,
       "medianDays": 105.9,
-      "oldestDays": 1668.3
+      "oldestDays": 1668.4
     }
   }
 }
