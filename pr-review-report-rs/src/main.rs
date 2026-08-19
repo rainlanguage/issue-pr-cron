@@ -59749,6 +59749,89 @@ mod settings_tests {
         );
     }
 
+    /// QA-GUIDE §3 routes mutation validation to the BUNDLED TOOL, and no longer teaches a hand
+    /// loop. Step 4 below has always said to INVOKE the `adversarial-mutation-test` skill rather
+    /// than hand-copy its rules, but §3 read as a complete self-contained recipe — "apply ONE
+    /// targeted mutation … confirm the test fails, restore" — so it won for anyone reading the
+    /// guide alone, and those readers wrote their own harness every run. What a hand loop cannot
+    /// claim is exactly what `mutation-probe` enforces: a green non-empty baseline, proof from the
+    /// suite's own tally that it RAN, an exactly-once target, and a byte-exact restore.
+    ///
+    /// Asserted both ways round, like the send-back rules below: the recipe must be GONE as an
+    /// instruction AND the tool present as the route, because a rule merely deleted is a rule the
+    /// next edit reinvents.
+    #[test]
+    fn the_qa_guide_routes_mutation_validation_to_the_bundled_probe() {
+        let (Some(guide), Some(prompt)) = (
+            repo_root_text("QA-GUIDE.md"),
+            repo_root_text("campaign-prompt.txt"),
+        ) else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        // Matched against WHITESPACE-COLLAPSED text: `denofmt` re-wraps this prose on every edit,
+        // so a rule that lands mid-line today spans a line break tomorrow. Asserting on the raw
+        // bytes would make the guide's rules hostage to its column width.
+        let flat = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+        let (guide, prompt) = (flat(&guide), flat(&prompt));
+        assert!(
+            guide.contains(
+                "nix run github:rainlanguage/adversarial-mutation-test#mutation-probe -- \
+                 mutants.toml"
+            ),
+            "§3 must hand the reader the runnable probe command, not a method to re-implement"
+        );
+        assert!(
+            guide.contains("`mutation-probe --help` is the manual"),
+            "the file format, verdicts and exit codes must route to the tool's own manual rather \
+             than to a snapshot of them here, which is what goes stale"
+        );
+        // The integrity properties are WHY the tool is the route rather than a preference, so the
+        // guide carries them: a hand loop can assert every one of these and prove none.
+        for property in [
+            "A red, silent or zero-test baseline aborts before any probe",
+            "is NO-RUN and",
+            "must occur EXACTLY once in its file",
+            "verified byte-exact before the next mutant",
+        ] {
+            assert!(
+                guide.contains(property),
+                "§3 must say what the bin enforces that a hand loop cannot: {property:?}"
+            );
+        }
+        // The recipe itself, gone from BOTH files. Each of these is a step an agent hand-rolled
+        // because a mandatory document spelled it out.
+        for taught in [
+            "apply ONE targeted mutation to the line it claims to cover",
+            "confirm the test fails",
+            "break the covered line",
+        ] {
+            assert!(
+                !guide.contains(taught) && !prompt.contains(taught),
+                "the hand-rolled loop is still taught: {taught:?}"
+            );
+        }
+        assert!(
+            guide.contains("hand-roll an edit-run-restore loop"),
+            "the guide must FORBID the hand loop, not merely omit it"
+        );
+        // §8's evidence line is where a hand-rolled matrix gets written up as prose, so it names
+        // where the line's content comes from.
+        assert!(
+            guide.contains("TRANSCRIBED from the probe's verdicts"),
+            "§8's `Mutations applied` line must be transcribed from the probe's own verdicts"
+        );
+        // The producer's route into §3 stays the SKILL, which is how a skill upgrade reaches a run
+        // without an edit here; the red-PR step points at the same probe rather than a loop.
+        assert!(
+            prompt.contains("INVOKE THE ACTUAL SKILL"),
+            "step 4 must keep routing the producer to the skill itself"
+        );
+        assert!(
+            prompt.contains("`mutation-probe` pass, never a hand loop"),
+            "the red-PR test fix must point at the probe, not restate the loop it replaced"
+        );
+    }
+
     /// #290, the PROMPT half. `state-load` exists so a run opens on a typed answer "rather than on
     /// a blob it re-slices with `jq`" — and every producer run opened by taking `--json` (95,370
     /// bytes), redirecting it to a scratch file and paying three main-thread `jq` calls, the first
