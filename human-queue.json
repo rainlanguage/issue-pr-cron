@@ -1009,8 +1009,14 @@
         ]
       },
       "un-vetted": {
-        "count": 28,
+        "count": 29,
         "prs": [
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 336,
+            "url": "https://github.com/rainlanguage/rainix/pull/336",
+            "title": "Version intent from next-v git tags; foundry.toml carries no release metadata"
+          },
           {
             "repo": "rainlanguage/rain.extrospection",
             "number": 142,
@@ -6099,7 +6105,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 28,
+    "unvetted": 29,
     "blockedOn": 22,
     "ready": 2,
     "needsWork": 106,
@@ -6110,16 +6116,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 167,
+    "totalProducerPrs": 168,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 665,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 822
+    "openIssues": 823
   },
   "ages": {
     "openIssues": {
-      "meanDays": 291.4,
+      "meanDays": 291.1,
       "medianDays": 112.0,
       "oldestDays": 1668.8
     }
