@@ -1009,19 +1009,19 @@
         ]
       },
       "un-vetted": {
-        "count": 61,
+        "count": 56,
         "prs": [
           {
-            "repo": "rainlanguage/rainlang.interface",
-            "number": 126,
-            "url": "https://github.com/rainlanguage/rainlang.interface/pull/126",
-            "title": "Bump rain-math-binary 0.1.3 -> 0.1.4"
+            "repo": "rainlanguage/rainlang",
+            "number": 557,
+            "url": "https://github.com/rainlanguage/rainlang/pull/557",
+            "title": "Migrate soldeer dep rain-interpreter-interface 0.1.0 -> rainlang-interface 0.2.3"
           },
           {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 130,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/130",
-            "title": "Bump rain-math-binary 0.1.3 -> 0.1.4"
+            "repo": "rainlanguage/raindex.interface",
+            "number": 71,
+            "url": "https://github.com/rainlanguage/raindex.interface/pull/71",
+            "title": "Migrate rain-interpreter-interface 0.1.0 -> rainlang-interface 0.2.3"
           },
           {
             "repo": "rainlanguage/rain.dia",
@@ -1043,24 +1043,6 @@
           },
           {
             "repo": "rainlanguage/rain.extrospection",
-            "number": 127,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/127",
-            "title": "Document IExtrospectV1 with full NatSpec"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 123,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/123",
-            "title": "Guard fuzz-derived vm.etch against EIP-7702-shaped bytes"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 120,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/120",
-            "title": "feat: expose the beacon implementation address from LibExtrospectERC1967BeaconProxy"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
             "number": 119,
             "url": "https://github.com/rainlanguage/rain.extrospection/pull/119",
             "title": "Size beacon return data before copying it"
@@ -1070,12 +1052,6 @@
             "number": 117,
             "url": "https://github.com/rainlanguage/rain.extrospection/pull/117",
             "title": "Document the two expected-hash conventions on IExtrospectV1"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 116,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/116",
-            "title": "Document the codeless-implementation verdict of isBeaconImplementationBytecode and pin the counterfactual CREATE2 target"
           },
           {
             "repo": "rainlanguage/issue-pr-cron",
@@ -1292,12 +1268,6 @@
             "number": 2835,
             "url": "https://github.com/rainlanguage/raindex/pull/2835",
             "title": "Remove submodule-era residue; repair the copilot build fallback"
-          },
-          {
-            "repo": "rainlanguage/rainlang.interface",
-            "number": 122,
-            "url": "https://github.com/rainlanguage/rainlang.interface/pull/122",
-            "title": "Remove the submodule-era residue: dead foundry.lock, .gitmodules and lib/ references"
           },
           {
             "repo": "rainlanguage/rain-org-health",
@@ -6357,7 +6327,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 61,
+    "unvetted": 56,
     "blockedOn": 22,
     "ready": 2,
     "needsWork": 106,
@@ -6368,17 +6338,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 200,
+    "totalProducerPrs": 195,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 675,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 865
+    "openIssues": 858
   },
   "ages": {
     "openIssues": {
-      "meanDays": 278.0,
-      "medianDays": 104.9,
+      "meanDays": 280.3,
+      "medianDays": 105.8,
       "oldestDays": 1668.3
     }
   }
