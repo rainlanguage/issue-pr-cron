@@ -1009,25 +1009,19 @@
         ]
       },
       "un-vetted": {
-        "count": 48,
+        "count": 41,
         "prs": [
           {
             "repo": "rainlanguage/rain.extrospection.deploy",
             "number": 1,
             "url": "https://github.com/rainlanguage/rain.extrospection.deploy/pull/1",
-            "title": "Migrate to rain-deploy 0.1.7"
+            "title": "Adopt the rain-deploy 0.1.7 standard"
           },
           {
             "repo": "rainlanguage/rainlang",
             "number": 557,
             "url": "https://github.com/rainlanguage/rainlang/pull/557",
             "title": "Migrate soldeer dep rain-interpreter-interface 0.1.0 -> rainlang-interface 0.2.3"
-          },
-          {
-            "repo": "rainlanguage/raindex.interface",
-            "number": 71,
-            "url": "https://github.com/rainlanguage/raindex.interface/pull/71",
-            "title": "Migrate rain-interpreter-interface 0.1.0 -> rainlang-interface 0.2.3"
           },
           {
             "repo": "rainlanguage/rain.dia",
@@ -1130,42 +1124,6 @@
             "number": 96,
             "url": "https://github.com/rainlanguage/rain.extrospection/pull/96",
             "title": "Document and pin the empty-bytecode metamorphic verdict"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 95,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/95",
-            "title": "Describe how the reachable scan treats data regions"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 94,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/94",
-            "title": "docs: isEOFBytecode NatSpec states the two-byte magic test it actually performs"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 93,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/93",
-            "title": "test(deploy): prove the pinned deploy record reproduces by execution"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 92,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/92",
-            "title": "Describe HALTING_BITMAP membership accurately and cover the unassigned opcodes"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 91,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/91",
-            "title": "Move soldeer release metadata under foundry's [external] section"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 50,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/50",
-            "title": "test: pin metamorphic scan + Extrospect delegation behaviours"
           },
           {
             "repo": "rainlanguage/rain.strategies",
@@ -6285,7 +6243,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 48,
+    "unvetted": 41,
     "blockedOn": 22,
     "ready": 2,
     "needsWork": 106,
@@ -6296,17 +6254,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 187,
+    "totalProducerPrs": 180,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 676,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 850
+    "openIssues": 845
   },
   "ages": {
     "openIssues": {
-      "meanDays": 283.0,
-      "medianDays": 105.9,
+      "meanDays": 284.7,
+      "medianDays": 106.0,
       "oldestDays": 1668.4
     }
   }
