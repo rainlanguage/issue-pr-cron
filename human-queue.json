@@ -1009,13 +1009,145 @@
         ]
       },
       "un-vetted": {
-        "count": 29,
+        "count": 51,
         "prs": [
           {
-            "repo": "rainlanguage/rainix",
+            "repo": "rainlanguage/rainlang.interface",
+            "number": 128,
+            "url": "https://github.com/rainlanguage/rainlang.interface/pull/128",
+            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
+          },
+          {
+            "repo": "rainlanguage/rainlang",
+            "number": 559,
+            "url": "https://github.com/rainlanguage/rainlang/pull/559",
+            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
+          },
+          {
+            "repo": "rainlanguage/raindex.interface",
+            "number": 72,
+            "url": "https://github.com/rainlanguage/raindex.interface/pull/72",
+            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
+          },
+          {
+            "repo": "rainlanguage/rain.verify.interface",
+            "number": 17,
+            "url": "https://github.com/rainlanguage/rain.verify.interface/pull/17",
+            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
+          },
+          {
+            "repo": "rainlanguage/rain.vats",
             "number": 336,
-            "url": "https://github.com/rainlanguage/rainix/pull/336",
-            "title": "Version intent from next-v git tags; foundry.toml carries no release metadata"
+            "url": "https://github.com/rainlanguage/rain.vats/pull/336",
+            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
+          },
+          {
+            "repo": "rainlanguage/rain.tofu.erc20-decimals",
+            "number": 33,
+            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/33",
+            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 33,
+            "url": "https://github.com/rainlanguage/rain.string/pull/33",
+            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
+          },
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 152,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/152",
+            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 261,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/261",
+            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 137,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/137",
+            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
+          },
+          {
+            "repo": "rainlanguage/rain.sol.codegen",
+            "number": 145,
+            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/145",
+            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 143,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/143",
+            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
+          },
+          {
+            "repo": "rainlanguage/rain.pyth",
+            "number": 36,
+            "url": "https://github.com/rainlanguage/rain.pyth/pull/36",
+            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 211,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/211",
+            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 54,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/54",
+            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.typecast",
+            "number": 17,
+            "url": "https://github.com/rainlanguage/rain.lib.typecast/pull/17",
+            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
+          },
+          {
+            "repo": "rainlanguage/rain.sol.binmaskflag",
+            "number": 22,
+            "url": "https://github.com/rainlanguage/rain.sol.binmaskflag/pull/22",
+            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 25,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/25",
+            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 18,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/18",
+            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
+          },
+          {
+            "repo": "rainlanguage/rain.intorastring",
+            "number": 23,
+            "url": "https://github.com/rainlanguage/rain.intorastring/pull/23",
+            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.saturating",
+            "number": 28,
+            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/28",
+            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.fixedpoint",
+            "number": 31,
+            "url": "https://github.com/rainlanguage/rain.math.fixedpoint/pull/31",
+            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.binary",
+            "number": 39,
+            "url": "https://github.com/rainlanguage/rain.math.binary/pull/39",
+            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
           },
           {
             "repo": "rainlanguage/rain.extrospection",
@@ -6105,7 +6237,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 29,
+    "unvetted": 51,
     "blockedOn": 22,
     "ready": 2,
     "needsWork": 106,
@@ -6116,18 +6248,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 168,
+    "totalProducerPrs": 190,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 665,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 823
+    "openIssues": 822
   },
   "ages": {
     "openIssues": {
-      "meanDays": 291.1,
-      "medianDays": 112.0,
-      "oldestDays": 1668.8
+      "meanDays": 291.5,
+      "medianDays": 112.1,
+      "oldestDays": 1668.9
     }
   }
 }
