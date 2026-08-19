@@ -1009,7 +1009,7 @@
         ]
       },
       "un-vetted": {
-        "count": 38,
+        "count": 34,
         "prs": [
           {
             "repo": "rainlanguage/rainlang",
@@ -1058,30 +1058,6 @@
             "number": 108,
             "url": "https://github.com/rainlanguage/rain.extrospection/pull/108",
             "title": "fix: stop isERC1167Proxy allocating 128 bytes of dead memory"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 104,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/104",
-            "title": "Pin the trailing truncated PUSH behaviour of the opcode scans"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 102,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/102",
-            "title": "Document the EOFBytecodeNotSupported revert on every function that can throw it"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 101,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/101",
-            "title": "Document tryTrimSolidityCBORMetadata's in-place trim on IExtrospectV1"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 100,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/100",
-            "title": "Document the 16 constrained CBOR trailer bytes and pin the partition in tests"
           },
           {
             "repo": "rainlanguage/rain.extrospection",
@@ -6237,7 +6213,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 38,
+    "unvetted": 34,
     "blockedOn": 22,
     "ready": 2,
     "needsWork": 106,
@@ -6248,17 +6224,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 177,
+    "totalProducerPrs": 173,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 678,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 845
+    "openIssues": 841
   },
   "ages": {
     "openIssues": {
-      "meanDays": 284.7,
-      "medianDays": 106.1,
+      "meanDays": 286.1,
+      "medianDays": 106.9,
       "oldestDays": 1668.5
     }
   }
