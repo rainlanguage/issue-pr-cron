@@ -1009,19 +1009,13 @@
         ]
       },
       "un-vetted": {
-        "count": 29,
+        "count": 28,
         "prs": [
           {
             "repo": "rainlanguage/rain.extrospection",
             "number": 142,
             "url": "https://github.com/rainlanguage/rain.extrospection/pull/142",
             "title": "IExtrospectV2: the address-taking verdict surface, for a new deploy"
-          },
-          {
-            "repo": "rainlanguage/rainix",
-            "number": 334,
-            "url": "https://github.com/rainlanguage/rainix/pull/334",
-            "title": "rainix-autopublish: derive the soldeer publish version from the registry; never push back to the consumer branch"
           },
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -6105,7 +6099,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 29,
+    "unvetted": 28,
     "blockedOn": 22,
     "ready": 2,
     "needsWork": 106,
@@ -6116,17 +6110,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 168,
+    "totalProducerPrs": 167,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 665,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 823
+    "openIssues": 822
   },
   "ages": {
     "openIssues": {
-      "meanDays": 291.0,
-      "medianDays": 111.9,
+      "meanDays": 291.4,
+      "medianDays": 112.0,
       "oldestDays": 1668.8
     }
   }
