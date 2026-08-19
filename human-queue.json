@@ -1009,31 +1009,25 @@
         ]
       },
       "un-vetted": {
-        "count": 30,
+        "count": 29,
         "prs": [
           {
             "repo": "rainlanguage/rain.extrospection",
-            "number": 138,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/138",
-            "title": "Fail closed on any 0xEF lead byte in the metamorphic scan"
+            "number": 142,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/142",
+            "title": "IExtrospectV2: the address-taking verdict surface, for a new deploy"
+          },
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 334,
+            "url": "https://github.com/rainlanguage/rainix/pull/334",
+            "title": "rainix-autopublish: derive the soldeer publish version from the registry; never push back to the consumer branch"
           },
           {
             "repo": "rainlanguage/adversarial-mutation-test",
             "number": 32,
             "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/32",
             "title": "Warn loudly on KILLED mutants with no captured killer; document forge's nested-']' fail-pattern trap"
-          },
-          {
-            "repo": "rainlanguage/adversarial-mutation-test",
-            "number": 31,
-            "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/31",
-            "title": "Probe the union of repeated --only flags instead of silently keeping one"
-          },
-          {
-            "repo": "rainlanguage/rain.datacontract",
-            "number": 47,
-            "url": "https://github.com/rainlanguage/rain.datacontract/pull/47",
-            "title": "Remove unused ZOLTU_PROXY_ADDRESS constant and dead test import"
           },
           {
             "repo": "rainlanguage/rainlang",
@@ -2093,12 +2087,6 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 139,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/139",
-      "title": "IExtrospectV2: address-taking verdict surface, for a new deploy"
-    },
-    {
       "repo": "rainlanguage/rainix",
       "number": 328,
       "url": "https://github.com/rainlanguage/rainix/issues/328",
@@ -2145,12 +2133,6 @@
       "number": 325,
       "url": "https://github.com/rainlanguage/rainix/issues/325",
       "title": "rainix-sol-artifacts is a deploy with a build name: rename it, or guard the registry write and the broadcast"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 83,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/83",
-      "title": "No address-taking metamorphic or opcode scan exists, so no verdict is bound to an account"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -6123,7 +6105,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 30,
+    "unvetted": 29,
     "blockedOn": 22,
     "ready": 2,
     "needsWork": 106,
@@ -6134,17 +6116,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 169,
+    "totalProducerPrs": 168,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 667,
+    "uncoveredIssues": 665,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 826
+    "openIssues": 823
   },
   "ages": {
     "openIssues": {
-      "meanDays": 289.9,
-      "medianDays": 108.3,
+      "meanDays": 291.0,
+      "medianDays": 111.8,
       "oldestDays": 1668.7
     }
   }
