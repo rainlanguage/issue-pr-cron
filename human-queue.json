@@ -1009,8 +1009,14 @@
         ]
       },
       "un-vetted": {
-        "count": 34,
+        "count": 27,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 133,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/133",
+            "title": "Bump [external.package] version to 0.1.7 to un-red the release lane"
+          },
           {
             "repo": "rainlanguage/rainlang",
             "number": 557,
@@ -1030,58 +1036,10 @@
             "title": "chore(script): date-prefix MigrateMultisigThreshold and register it in run-script.yaml"
           },
           {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 319,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/319",
-            "title": "Cut CLAUDE.md from 18898 to 1918 bytes to fit the 4096-byte agent-context cap"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 119,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/119",
-            "title": "Size beacon return data before copying it"
-          },
-          {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 337,
             "url": "https://github.com/rainlanguage/issue-pr-cron/pull/337",
             "title": "docs(qa-guide): §3 routes mutation validation to mutation-probe, not a hand loop"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 109,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/109",
-            "title": "Share the ERC1167 address length and derive the implementation address read offset from it"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 108,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/108",
-            "title": "fix: stop isERC1167Proxy allocating 128 bytes of dead memory"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 99,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/99",
-            "title": "62: pin the empty-trimmed-bytecode boundary of checkCBORTrimmedBytecodeHash"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 98,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/98",
-            "title": "Say what checkNoSolidityCBORMetadata actually detects (#60)"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 97,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/97",
-            "title": "METAMORPHIC_OPS: describe the mask by membership, pin the CREATE/CREATE2 over-reject"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 96,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/96",
-            "title": "Document and pin the empty-bytecode metamorphic verdict"
           },
           {
             "repo": "rainlanguage/rain.strategies",
@@ -6213,7 +6171,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 34,
+    "unvetted": 27,
     "blockedOn": 22,
     "ready": 2,
     "needsWork": 106,
@@ -6224,17 +6182,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 173,
+    "totalProducerPrs": 166,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 678,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 841
+    "openIssues": 833
   },
   "ages": {
     "openIssues": {
-      "meanDays": 286.2,
-      "medianDays": 106.9,
+      "meanDays": 289.0,
+      "medianDays": 107.1,
       "oldestDays": 1668.6
     }
   }
