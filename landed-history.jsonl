@@ -284,3 +284,7 @@
 {"ts":"2026-08-19T10:53:34Z","observedAt":"2026-08-19T11:31:30Z","kind":"pr","repo":"rainlanguage/rain.extrospection","number":109}
 {"ts":"2026-08-19T10:43:39Z","observedAt":"2026-08-19T11:31:30Z","kind":"pr","repo":"rainlanguage/rain.extrospection","number":119}
 {"ts":"2026-08-19T11:45:21Z","observedAt":"2026-08-19T12:31:45Z","kind":"pr","repo":"rainlanguage/rain.extrospection","number":133}
+{"ts":"2026-08-19T12:38:04Z","observedAt":"2026-08-19T13:33:18Z","kind":"pr","repo":"rainlanguage/rain.datacontract","number":29}
+{"ts":"2026-08-19T12:39:53Z","observedAt":"2026-08-19T13:33:18Z","kind":"pr","repo":"rainlanguage/rain.datacontract","number":30}
+{"ts":"2026-08-19T12:44:03Z","observedAt":"2026-08-19T13:33:18Z","kind":"pr","repo":"rainlanguage/rain.datacontract","number":31}
+{"ts":"2026-08-19T12:45:15Z","observedAt":"2026-08-19T13:33:18Z","kind":"pr","repo":"rainlanguage/rain.datacontract","number":42}

@@ -1012,28 +1012,28 @@
         "count": 30,
         "prs": [
           {
-            "repo": "rainlanguage/rain.datacontract",
-            "number": 42,
-            "url": "https://github.com/rainlanguage/rain.datacontract/pull/42",
-            "title": "Record the 2026-08-19 adversarial mutation test scan"
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 138,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/138",
+            "title": "Fail closed on any 0xEF lead byte in the metamorphic scan"
           },
           {
-            "repo": "rainlanguage/rain.datacontract",
+            "repo": "rainlanguage/adversarial-mutation-test",
+            "number": 32,
+            "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/32",
+            "title": "Warn loudly on KILLED mutants with no captured killer; document forge's nested-']' fail-pattern trap"
+          },
+          {
+            "repo": "rainlanguage/adversarial-mutation-test",
             "number": 31,
-            "url": "https://github.com/rainlanguage/rain.datacontract/pull/31",
-            "title": "test: LibDataContract.contractCreationCode mutation coverage"
+            "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/31",
+            "title": "Probe the union of repeated --only flags instead of silently keeping one"
           },
           {
             "repo": "rainlanguage/rain.datacontract",
-            "number": 30,
-            "url": "https://github.com/rainlanguage/rain.datacontract/pull/30",
-            "title": "test: readSlice mutation coverage"
-          },
-          {
-            "repo": "rainlanguage/rain.datacontract",
-            "number": 29,
-            "url": "https://github.com/rainlanguage/rain.datacontract/pull/29",
-            "title": "test: LibDataContract.read mutation coverage"
+            "number": 47,
+            "url": "https://github.com/rainlanguage/rain.datacontract/pull/47",
+            "title": "Remove unused ZOLTU_PROXY_ADDRESS constant and dead test import"
           },
           {
             "repo": "rainlanguage/rainlang",
@@ -2093,94 +2093,10 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
-      "repo": "rainlanguage/adversarial-mutation-test",
-      "number": 30,
-      "url": "https://github.com/rainlanguage/adversarial-mutation-test/issues/30",
-      "title": "Repeated --only flags silently drop all but one selection"
-    },
-    {
-      "repo": "rainlanguage/adversarial-mutation-test",
-      "number": 29,
-      "url": "https://github.com/rainlanguage/adversarial-mutation-test/issues/29",
-      "title": "Forge FAIL lines with nested ']' silently defeat kill attribution via the natural fail-pattern"
-    },
-    {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 41,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/41",
-      "title": "testSameReads pins a strict gas ordering that no spec guarantees across compiler versions"
-    },
-    {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 40,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/40",
-      "title": "readSlice NatSpec has no @return tag"
-    },
-    {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 39,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/39",
-      "title": "Zero-length slice starting past the data end reverts — intended?"
-    },
-    {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 38,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/38",
-      "title": "read()/readSlice() silently return shifted garbage for non-container code-bearing addresses"
-    },
-    {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 37,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/37",
-      "title": "ReadError NatSpec describes only the zero-code case but fires for out-of-range slices too"
-    },
-    {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 36,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/36",
-      "title": "README/NatSpec promise <=24KB but the guard accepts 65534 bytes; suite deploys EIP-170-impossible contracts"
-    },
-    {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 35,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/35",
-      "title": "DataTooLarge NatSpec misstates the bound: length 65535 fits uint16 but reverts"
-    },
-    {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 34,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/34",
-      "title": "DataTooLarge is declared inside the library while ReadError/WriteError live in src/error"
-    },
-    {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 33,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/33",
-      "title": "ZOLTU_PROXY_ADDRESS is declared and re-exported but used by nothing"
-    },
-    {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 32,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/32",
-      "title": "Documented `write` path does not exist: WriteError and DataContractMemoryContainer are dead exported surface"
-    },
-    {
       "repo": "rainlanguage/rain.extrospection",
-      "number": 132,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/132",
-      "title": "Account-taking absence checks reject codeless accounts (ruling E+D on #55)"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 124,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/124",
-      "title": "The beacon dirty-bits gate has no test on its reject side, so widening it past 160 bits ships green"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 118,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/118",
-      "title": "checkNoSolidityCBORMetadata fuzz tests etch EIP-7702 designators, and Foundry replays the failure until cache/fuzz is deleted"
+      "number": 139,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/139",
+      "title": "IExtrospectV2: address-taking verdict surface, for a new deploy"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -2232,33 +2148,9 @@
     },
     {
       "repo": "rainlanguage/rain.extrospection",
-      "number": 90,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/90",
-      "title": "LibExtrospectMetamorphic.sol is not in any audit's stated scope, and five scoped files do not exist at the audited commit"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
       "number": 83,
       "url": "https://github.com/rainlanguage/rain.extrospection/issues/83",
       "title": "No address-taking metamorphic or opcode scan exists, so no verdict is bound to an account"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 74,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/74",
-      "title": "The ripemd160 precompile at 0x03 is accepted as a valid beacon and as an owner match"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 61,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/61",
-      "title": "checkNoSolidityCBORMetadata reports \"no metadata\" for an address with no code"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 54,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/54",
-      "title": "EIP-7702 delegated accounts are reported as NOT metamorphic"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -2408,12 +2300,6 @@
       "repo": "rainlanguage/rain.factory",
       "number": 53,
       "url": "https://github.com/rainlanguage/rain.factory/issues/53",
-      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
-    },
-    {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 28,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/28",
       "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
     },
     {
@@ -3551,12 +3437,6 @@
       "title": "Migrate to the next-version Soldeer release lifecycle (bump [package].version)"
     },
     {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 24,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/24",
-      "title": "Migrate to the next-version Soldeer release lifecycle (bump [package].version)"
-    },
-    {
       "repo": "rainlanguage/rain.strategies",
       "number": 121,
       "url": "https://github.com/rainlanguage/rain.strategies/issues/121",
@@ -4283,9 +4163,9 @@
       "title": "discussion: rainix-managed npm deps via buildNpmPackage"
     },
     {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 23,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/23",
+      "repo": "rainlanguage/rainlang",
+      "number": 558,
+      "url": "https://github.com/rainlanguage/rainlang/issues/558",
       "title": "scan rain interpreter bytecode for ops present/reachable"
     },
     {
@@ -6213,12 +6093,6 @@
       "number": 63,
       "url": "https://github.com/rainlanguage/rain-svelte-components/issues/63",
       "title": "Bump Rainlang and the extension for the parser"
-    },
-    {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 1,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/1",
-      "title": "https://eips.ethereum.org/EIPS/eip-3540"
     }
   ],
   "archivedRepoPrs": [
@@ -6262,16 +6136,16 @@
     "leaks": 0,
     "totalProducerPrs": 169,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 688,
+    "uncoveredIssues": 667,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 843
+    "openIssues": 826
   },
   "ages": {
     "openIssues": {
-      "meanDays": 285.6,
-      "medianDays": 107.0,
-      "oldestDays": 1668.6
+      "meanDays": 289.9,
+      "medianDays": 108.3,
+      "oldestDays": 1668.7
     }
   }
 }
