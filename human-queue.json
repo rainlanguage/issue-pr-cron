@@ -1009,14 +1009,8 @@
         ]
       },
       "un-vetted": {
-        "count": 41,
+        "count": 38,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.extrospection.deploy",
-            "number": 1,
-            "url": "https://github.com/rainlanguage/rain.extrospection.deploy/pull/1",
-            "title": "Adopt the rain-deploy 0.1.7 standard"
-          },
           {
             "repo": "rainlanguage/rainlang",
             "number": 557,
@@ -1067,21 +1061,9 @@
           },
           {
             "repo": "rainlanguage/rain.extrospection",
-            "number": 105,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/105",
-            "title": "Document the codeless-account verdict on both account-taking CBOR checks"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
             "number": 104,
             "url": "https://github.com/rainlanguage/rain.extrospection/pull/104",
             "title": "Pin the trailing truncated PUSH behaviour of the opcode scans"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 103,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/103",
-            "title": "Correct the tryTrimSolidityCBORMetadata assembly comment"
           },
           {
             "repo": "rainlanguage/rain.extrospection",
@@ -2160,6 +2142,12 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rain.extrospection",
+      "number": 132,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/132",
+      "title": "Account-taking absence checks reject codeless accounts (ruling E+D on #55)"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
       "number": 124,
       "url": "https://github.com/rainlanguage/rain.extrospection/issues/124",
       "title": "The beacon dirty-bits gate has no test on its reject side, so widening it past 160 bits ships green"
@@ -2241,6 +2229,12 @@
       "number": 74,
       "url": "https://github.com/rainlanguage/rain.extrospection/issues/74",
       "title": "The ripemd160 precompile at 0x03 is accepted as a valid beacon and as an owner match"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 61,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/61",
+      "title": "checkNoSolidityCBORMetadata reports \"no metadata\" for an address with no code"
     },
     {
       "repo": "rainlanguage/rain.extrospection",
@@ -6243,7 +6237,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 41,
+    "unvetted": 38,
     "blockedOn": 22,
     "ready": 2,
     "needsWork": 106,
@@ -6254,9 +6248,9 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 180,
+    "totalProducerPrs": 177,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 676,
+    "uncoveredIssues": 678,
     "designPresentable": 8,
     "designNoQuestion": 0,
     "openIssues": 845
@@ -6264,8 +6258,8 @@
   "ages": {
     "openIssues": {
       "meanDays": 284.7,
-      "medianDays": 106.0,
-      "oldestDays": 1668.4
+      "medianDays": 106.1,
+      "oldestDays": 1668.5
     }
   }
 }
