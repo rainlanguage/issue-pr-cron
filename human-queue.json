@@ -1009,7 +1009,7 @@
         ]
       },
       "un-vetted": {
-        "count": 51,
+        "count": 50,
         "prs": [
           {
             "repo": "rainlanguage/rainlang.interface",
@@ -1093,12 +1093,6 @@
             "repo": "rainlanguage/rain.flare",
             "number": 211,
             "url": "https://github.com/rainlanguage/rain.flare/pull/211",
-            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
-          },
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 54,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/54",
             "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
           },
           {
@@ -6237,7 +6231,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 51,
+    "unvetted": 50,
     "blockedOn": 22,
     "ready": 2,
     "needsWork": 106,
@@ -6248,7 +6242,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 190,
+    "totalProducerPrs": 189,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 665,
     "designPresentable": 8,
@@ -6257,7 +6251,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 291.5,
+      "meanDays": 291.6,
       "medianDays": 112.1,
       "oldestDays": 1668.9
     }
