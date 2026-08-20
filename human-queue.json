@@ -38,12 +38,6 @@
         "title": "bump rain-math-binary 0.1.1 -> 0.1.3"
       },
       {
-        "repo": "rainlanguage/rain.factory",
-        "number": 51,
-        "url": "https://github.com/rainlanguage/rain.factory/pull/51",
-        "title": "feat: ICloneableFactoryV4 — open-salt deterministic clone interface"
-      },
-      {
         "repo": "cyclofinance/cyclo.sol",
         "number": 56,
         "url": "https://github.com/cyclofinance/cyclo.sol/pull/56",
@@ -820,12 +814,6 @@
     ],
     "ai:ready": [
       {
-        "repo": "rainlanguage/rain.factory.deploy",
-        "number": 9,
-        "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/9",
-        "title": "Drop snapshot-generate-cmd: rainix owns the release freeze"
-      },
-      {
         "repo": "rainlanguage/rain.pyth",
         "number": 28,
         "url": "https://github.com/rainlanguage/rain.pyth/pull/28",
@@ -860,7 +848,7 @@
   "lanes": {
     "vet-lifecycle": {
       "ai:blocked-on": {
-        "count": 20,
+        "count": 19,
         "prs": [
           {
             "repo": "rainlanguage/rainlang",
@@ -897,12 +885,6 @@
             "number": 261,
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/261",
             "title": "bump rain-math-binary 0.1.1 -> 0.1.3"
-          },
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 51,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/51",
-            "title": "feat: ICloneableFactoryV4 — open-salt deterministic clone interface"
           },
           {
             "repo": "cyclofinance/cyclo.sol",
@@ -988,10 +970,16 @@
         "count": 49,
         "prs": [
           {
-            "repo": "rainlanguage/rain-org-health",
-            "number": 178,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/178",
-            "title": "Resolve package names from the release workflow; unresolvable renders unknown (rainix#335)"
+            "repo": "rainlanguage/rain.factory.deploy",
+            "number": 18,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/18",
+            "title": "Migrate to the BuildScript rolling-candidate deploy model"
+          },
+          {
+            "repo": "rainlanguage/rain.factory.deploy",
+            "number": 17,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/17",
+            "title": "Fix foundry.toml [package] warning (rename to [external.package])"
           },
           {
             "repo": "rainlanguage/rainlang.interface",
@@ -1202,12 +1190,6 @@
             "number": 2835,
             "url": "https://github.com/rainlanguage/raindex/pull/2835",
             "title": "Remove submodule-era residue; repair the copilot build fallback"
-          },
-          {
-            "repo": "rainlanguage/rain-org-health",
-            "number": 174,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/174",
-            "title": "roh-scan: a real CLI, a consumers mode, and the stale-foundry-lock signal it found"
           },
           {
             "repo": "rainlanguage/rain.flare",
@@ -1995,14 +1977,8 @@
         ]
       },
       "ai:ready": {
-        "count": 2,
+        "count": 1,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.factory.deploy",
-            "number": 9,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/9",
-            "title": "Drop snapshot-generate-cmd: rainix owns the release freeze"
-          },
           {
             "repo": "rainlanguage/rain.erc4626.words",
             "number": 254,
@@ -2183,6 +2159,12 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain.factory",
+      "number": 57,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/57",
+      "title": "Extract the ICloneableFactoryV4 salt-derivation math into a reusable library here (not trapped in the deploy concrete)"
+    },
+    {
       "repo": "rainlanguage/claude-audit-skills",
       "number": 91,
       "url": "https://github.com/rainlanguage/claude-audit-skills/issues/91",
@@ -2235,12 +2217,6 @@
       "number": 326,
       "url": "https://github.com/rainlanguage/rainix/issues/326",
       "title": "rainix-autopublish publishes a Soldeer package without running the repo Solidity tests, so a red main ships an immutable revision"
-    },
-    {
-      "repo": "rainlanguage/rain.factory.deploy",
-      "number": 14,
-      "url": "https://github.com/rainlanguage/rain.factory.deploy/issues/14",
-      "title": "Move script/BuildPointers.sol onto rain.deploy's BuildScript, as script/Build.sol"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -2321,12 +2297,6 @@
       "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
     },
     {
-      "repo": "rainlanguage/rain.factory.deploy",
-      "number": 13,
-      "url": "https://github.com/rainlanguage/rain.factory.deploy/issues/13",
-      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
-    },
-    {
       "repo": "rainlanguage/raindex.interface",
       "number": 70,
       "url": "https://github.com/rainlanguage/raindex.interface/issues/70",
@@ -2390,12 +2360,6 @@
       "repo": "rainlanguage/rain.pyth",
       "number": 35,
       "url": "https://github.com/rainlanguage/rain.pyth/issues/35",
-      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 53,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/53",
       "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
     },
     {
@@ -2631,12 +2595,6 @@
       "number": 12,
       "url": "https://github.com/rainlanguage/rain.factory.deploy/issues/12",
       "title": "Remove the submodule-era residue — dangling `REUSE.toml`/`.soldeerignore` entries for `foundry.lock`, `.gitmodules` and `audit/`"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 52,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/52",
-      "title": "Remove the submodule-era residue — `REUSE.toml` and `.soldeerignore` still name `foundry.lock` and `.gitmodules`, neither of which exists"
     },
     {
       "repo": "rainlanguage/raindex.interface",
@@ -3173,12 +3131,6 @@
       "title": "Dependency-graph tooling over-counts: a declared edge is not what a consumer actually resolves"
     },
     {
-      "repo": "rainlanguage/rain.factory",
-      "number": 46,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/46",
-      "title": "Split rain.factory into library (rain.factory) + deploy (rain.factory.deploy)"
-    },
-    {
       "repo": "rainlanguage/rain-org-health",
       "number": 122,
       "url": "https://github.com/rainlanguage/rain-org-health/issues/122",
@@ -3383,12 +3335,6 @@
       "title": "Adopt per-release deploy snapshots (src/generated/<tag>/) via the shared LibSnapshot"
     },
     {
-      "repo": "rainlanguage/rain.factory",
-      "number": 45,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/45",
-      "title": "Convert BuildPointers to the shared LibSnapshot — and gain the missing immutability guard"
-    },
-    {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 251,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/251",
@@ -3518,12 +3464,6 @@
       "repo": "rainlanguage/rain.flare",
       "number": 200,
       "url": "https://github.com/rainlanguage/rain.flare/issues/200",
-      "title": "Migrate to the next-version Soldeer release lifecycle (bump [package].version)"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 39,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/39",
       "title": "Migrate to the next-version Soldeer release lifecycle (bump [package].version)"
     },
     {
@@ -6220,8 +6160,8 @@
   "leaks": [],
   "counts": {
     "unvetted": 49,
-    "blockedOn": 20,
-    "ready": 2,
+    "blockedOn": 19,
+    "ready": 1,
     "needsWork": 106,
     "relink": 0,
     "design": 8,
@@ -6230,17 +6170,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 186,
+    "totalProducerPrs": 184,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 668,
+    "uncoveredIssues": 662,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 824
+    "openIssues": 819
   },
   "ages": {
     "openIssues": {
-      "meanDays": 291.6,
-      "medianDays": 111.5,
+      "meanDays": 293.3,
+      "medianDays": 113.0,
       "oldestDays": 1669.7
     }
   }
