@@ -2201,10 +2201,10 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
-      "repo": "rainlanguage/rainix",
-      "number": 338,
-      "url": "https://github.com/rainlanguage/rainix/issues/338",
-      "title": "rainix-tag-release: make deploy releases push-free (works under branch protection)"
+      "repo": "rainlanguage/rain.math.float",
+      "number": 262,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/262",
+      "title": "Split rain.math.float into a library half and a new rain.math.float.deploy"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -5982,12 +5982,6 @@
     },
     {
       "repo": "rainlanguage/raindex",
-      "number": 301,
-      "url": "https://github.com/rainlanguage/raindex/issues/301",
-      "title": "Support Legacy & abritarary Ledger Derviation Paths"
-    },
-    {
-      "repo": "rainlanguage/raindex",
       "number": 299,
       "url": "https://github.com/rainlanguage/raindex/issues/299",
       "title": "Hovering orders table column changes width on mac os"
@@ -6250,16 +6244,16 @@
     "leaks": 0,
     "totalProducerPrs": 187,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 668,
+    "uncoveredIssues": 667,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 824
+    "openIssues": 823
   },
   "ages": {
     "openIssues": {
-      "meanDays": 292.5,
+      "meanDays": 291.8,
       "medianDays": 112.7,
-      "oldestDays": 1669.5
+      "oldestDays": 1669.6
     }
   }
 }
