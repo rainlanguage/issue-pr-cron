@@ -958,10 +958,10 @@
         "count": 50,
         "prs": [
           {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 147,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/147",
-            "title": "Exclude slither's naming-convention detector"
+            "repo": "rainlanguage/rainix",
+            "number": 343,
+            "url": "https://github.com/rainlanguage/rainix/pull/343",
+            "title": "fix(tag-release): determinism check that never removes the frozen record"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -2152,12 +2152,6 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
-    {
-      "repo": "rainlanguage/rainix",
-      "number": 341,
-      "url": "https://github.com/rainlanguage/rainix/issues/341",
-      "title": "rainix-tag-release's determinism check rm's the frozen snapshot dir its generated released-suites lib imports, so no such repo can release"
-    },
     {
       "repo": "rainlanguage/rain.math.float.deploy",
       "number": 1,
@@ -6112,15 +6106,15 @@
     "leaks": 0,
     "totalProducerPrs": 184,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 653,
+    "uncoveredIssues": 652,
     "designPresentable": 8,
     "designNoQuestion": 0,
     "openIssues": 810
   },
   "ages": {
     "openIssues": {
-      "meanDays": 295.6,
-      "medianDays": 113.3,
+      "meanDays": 295.7,
+      "medianDays": 113.4,
       "oldestDays": 1670.0
     }
   }
