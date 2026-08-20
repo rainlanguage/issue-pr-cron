@@ -14,12 +14,6 @@
         "title": "chore: remove submodule-era residue (dead foundry.lock, .gitmodules and root lib/ references)"
       },
       {
-        "repo": "rainlanguage/rain.factory.deploy",
-        "number": 8,
-        "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/8",
-        "title": "feat: open-salt deterministic clone variant (ICloneableFactoryV4)"
-      },
-      {
         "repo": "rainlanguage/raindex",
         "number": 2831,
         "url": "https://github.com/rainlanguage/raindex/pull/2831",
@@ -848,7 +842,7 @@
   "lanes": {
     "vet-lifecycle": {
       "ai:blocked-on": {
-        "count": 19,
+        "count": 18,
         "prs": [
           {
             "repo": "rainlanguage/rainlang",
@@ -861,12 +855,6 @@
             "number": 259,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/259",
             "title": "chore: remove submodule-era residue (dead foundry.lock, .gitmodules and root lib/ references)"
-          },
-          {
-            "repo": "rainlanguage/rain.factory.deploy",
-            "number": 8,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/8",
-            "title": "feat: open-salt deterministic clone variant (ICloneableFactoryV4)"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -967,20 +955,8 @@
         ]
       },
       "un-vetted": {
-        "count": 49,
+        "count": 47,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 59,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/59",
-            "title": "LibICloneableFactoryV4: the whole factory logic as a unit-tested library"
-          },
-          {
-            "repo": "rainlanguage/rain.factory.deploy",
-            "number": 18,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/18",
-            "title": "Migrate to the BuildScript rolling-candidate deploy model"
-          },
           {
             "repo": "rainlanguage/rainlang.interface",
             "number": 128,
@@ -2159,6 +2135,24 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain.math.float.deploy",
+      "number": 1,
+      "url": "https://github.com/rainlanguage/rain.math.float.deploy/issues/1",
+      "title": "Land the rain.math.float.deploy split: fix npm publish, green CI, library-strip, Soldeer tag"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 138,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/138",
+      "title": "Default branch CI fully red since 2026-07-15: skip-gated fork tests, unwired fork RPC env, rs-static, Package Release"
+    },
+    {
+      "repo": "rainlanguage/rain.factory.deploy",
+      "number": 20,
+      "url": "https://github.com/rainlanguage/rain.factory.deploy/issues/20",
+      "title": "Rebuild the open-salt ICloneableFactoryV4 clone variant on main (both derivations tagged, consuming rain.factory#57 lib)"
+    },
+    {
       "repo": "rainlanguage/claude-audit-skills",
       "number": 91,
       "url": "https://github.com/rainlanguage/claude-audit-skills/issues/91",
@@ -2583,12 +2577,6 @@
       "number": 307,
       "url": "https://github.com/rainlanguage/rainix/issues/307",
       "title": "Remove the submodule-era residue — a dangling `.gitmodules` annotation and a `forge install` prelude in the repo that bans submodules"
-    },
-    {
-      "repo": "rainlanguage/rain.factory.deploy",
-      "number": 12,
-      "url": "https://github.com/rainlanguage/rain.factory.deploy/issues/12",
-      "title": "Remove the submodule-era residue — dangling `REUSE.toml`/`.soldeerignore` entries for `foundry.lock`, `.gitmodules` and `audit/`"
     },
     {
       "repo": "rainlanguage/raindex.interface",
@@ -4463,12 +4451,6 @@
       "title": "eip 712"
     },
     {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 88,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/88",
-      "title": "deterministic deployments"
-    },
-    {
       "repo": "rainlanguage/raindex",
       "number": 2410,
       "url": "https://github.com/rainlanguage/raindex/issues/2410",
@@ -4809,12 +4791,6 @@
       "number": 1965,
       "url": "https://github.com/rainlanguage/raindex/issues/1965",
       "title": "Tauri app does not display error if settings text is not valid"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 75,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/75",
-      "title": "Add transaction metadata, like hash, block number, timestamp to subgraph."
     },
     {
       "repo": "rainlanguage/rain.wasm",
@@ -6153,8 +6129,8 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 49,
-    "blockedOn": 19,
+    "unvetted": 47,
+    "blockedOn": 18,
     "ready": 1,
     "needsWork": 106,
     "relink": 0,
@@ -6164,16 +6140,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 184,
+    "totalProducerPrs": 181,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 661,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 817
+    "openIssues": 816
   },
   "ages": {
     "openIssues": {
-      "meanDays": 294.0,
+      "meanDays": 293.7,
       "medianDays": 113.1,
       "oldestDays": 1669.8
     }

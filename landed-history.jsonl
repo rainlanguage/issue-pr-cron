@@ -304,3 +304,5 @@
 {"ts":"2026-08-20T13:50:52Z","observedAt":"2026-08-20T14:31:58Z","kind":"pr","repo":"rainlanguage/rain-org-health","number":178}
 {"ts":"2026-08-20T14:04:15Z","observedAt":"2026-08-20T14:31:58Z","kind":"pr","repo":"rainlanguage/rain.factory","number":51}
 {"ts":"2026-08-20T14:39:17Z","observedAt":"2026-08-20T15:31:53Z","kind":"pr","repo":"rainlanguage/rain.factory.deploy","number":17}
+{"ts":"2026-08-20T15:31:47Z","observedAt":"2026-08-20T16:31:44Z","kind":"pr","repo":"rainlanguage/rain.factory","number":59}
+{"ts":"2026-08-20T15:38:52Z","observedAt":"2026-08-20T16:31:44Z","kind":"pr","repo":"rainlanguage/rain.factory.deploy","number":18}
