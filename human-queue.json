@@ -955,8 +955,44 @@
         ]
       },
       "un-vetted": {
-        "count": 47,
+        "count": 52,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.factory.deploy",
+            "number": 24,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/24",
+            "title": "Cut release 0.1.9: version bump + frozen snapshot in lockstep"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 143,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/143",
+            "title": "Remove submodule-era residue: dead foundry.lock, its annotations, and recursive-submodule checkouts"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 142,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/142",
+            "title": "Support OaSchema as an additional CBOR map key in RainMetaDocumentV1Item"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 141,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/141",
+            "title": "Remove MetaBoard.hash() and roll deploy pins to the new candidate address"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 263,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/263",
+            "title": "blocked-by: rain.math.float.deploy Soldeer publish — strip deploy + Rust/npm surface (library-only)"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 139,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/139",
+            "title": "Bump rain-deploy to 0.1.7"
+          },
           {
             "repo": "rainlanguage/rainlang.interface",
             "number": 128,
@@ -1009,12 +1045,6 @@
             "repo": "rainlanguage/rain.math.float",
             "number": 261,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/261",
-            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 137,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/137",
             "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
           },
           {
@@ -2135,22 +2165,16 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 144,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/144",
+      "title": "MetaBoard concrete purely in terms of lib fns"
+    },
+    {
       "repo": "rainlanguage/rain.math.float.deploy",
       "number": 1,
       "url": "https://github.com/rainlanguage/rain.math.float.deploy/issues/1",
       "title": "Land the rain.math.float.deploy split: fix npm publish, green CI, library-strip, Soldeer tag"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 138,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/138",
-      "title": "Default branch CI fully red since 2026-07-15: skip-gated fork tests, unwired fork RPC env, rs-static, Package Release"
-    },
-    {
-      "repo": "rainlanguage/rain.factory.deploy",
-      "number": 20,
-      "url": "https://github.com/rainlanguage/rain.factory.deploy/issues/20",
-      "title": "Rebuild the open-salt ICloneableFactoryV4 clone variant on main (both derivations tagged, consuming rain.factory#57 lib)"
     },
     {
       "repo": "rainlanguage/claude-audit-skills",
@@ -2541,12 +2565,6 @@
       "number": 34,
       "url": "https://github.com/rainlanguage/rain.pyth/issues/34",
       "title": "Remove the submodule-era residue — the manual deploy workflow still runs inside `./lib/rain.interpreter`, which does not exist"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 135,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/135",
-      "title": "Remove the submodule-era residue — dead `foundry.lock`, and three workflows still checking out submodules recursively"
     },
     {
       "repo": "rainlanguage/rain.math.saturating",
@@ -3263,12 +3281,6 @@
       "title": "Adopt per-release deploy snapshots (src/generated/<tag>/) via the shared LibSnapshot"
     },
     {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 132,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/132",
-      "title": "Adopt per-release deploy snapshots (src/generated/<tag>/) via the shared LibSnapshot"
-    },
-    {
       "repo": "rainlanguage/rain.tofu.erc20-decimals",
       "number": 26,
       "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/issues/26",
@@ -3507,12 +3519,6 @@
       "number": 420,
       "url": "https://github.com/cyclofinance/cyclo.site/issues/420",
       "title": "sanitizeHref lets protocol-relative URLs (//host) through as relative — open-redirect vector"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 131,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/131",
-      "title": "Extend RainMetaDocumentV1Item to use OaSchema as a CBOR map key (the #98 additional consideration)"
     },
     {
       "repo": "S01-Issuer/st0x.deploy",
@@ -4001,12 +4007,6 @@
       "title": "Ubuntu CI jobs hang for the full 6-hour timeout window"
     },
     {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 111,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/111",
-      "title": "Publish all crates: rain-metadata-bindings + rain-metaboard-subgraph"
-    },
-    {
       "repo": "rainlanguage/rainix",
       "number": 162,
       "url": "https://github.com/rainlanguage/rainix/issues/162",
@@ -4197,12 +4197,6 @@
       "number": 364,
       "url": "https://github.com/cyclofinance/cyclo.site/issues/364",
       "title": "Remove rewards UI/queries/constants now that the rFLR rewards program is finished"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 106,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/106",
-      "title": "Remove MetaBoard.hash() — no longer needed"
     },
     {
       "repo": "rainlanguage/flow",
@@ -6129,7 +6123,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 47,
+    "unvetted": 52,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 106,
@@ -6140,17 +6134,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 181,
+    "totalProducerPrs": 186,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 661,
+    "uncoveredIssues": 655,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 816
+    "openIssues": 813
   },
   "ages": {
     "openIssues": {
-      "meanDays": 293.7,
-      "medianDays": 113.1,
+      "meanDays": 294.6,
+      "medianDays": 113.2,
       "oldestDays": 1669.8
     }
   }
