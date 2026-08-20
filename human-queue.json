@@ -955,8 +955,26 @@
         ]
       },
       "un-vetted": {
-        "count": 47,
+        "count": 50,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 147,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/147",
+            "title": "Exclude slither's naming-convention detector"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 146,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/146",
+            "title": "Slim to the library half; deploy half moves to rain.metadata.deploy"
+          },
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 342,
+            "url": "https://github.com/rainlanguage/rainix/pull/342",
+            "title": "feat(rpc-preflight): model sepolia, reject endpoints that throttle under load"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 263,
@@ -2136,9 +2154,9 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rainix",
-      "number": 340,
-      "url": "https://github.com/rainlanguage/rainix/issues/340",
-      "title": "RPC wiring: RPC_URL_SEPOLIA_FORK unconsumed, ETH_RPC_URL bound to the empty legacy Sepolia secret, ethereum falling back to a free endpoint that 408s"
+      "number": 341,
+      "url": "https://github.com/rainlanguage/rainix/issues/341",
+      "title": "rainix-tag-release's determinism check rm's the frozen snapshot dir its generated released-suites lib imports, so no such repo can release"
     },
     {
       "repo": "rainlanguage/rain.math.float.deploy",
@@ -2667,12 +2685,6 @@
       "number": 257,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/257",
       "title": "Split deploy half out of rain.math.float (rainix#296)"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 134,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/134",
-      "title": "Split deploy half out of rain.metadata (rainix#296)"
     },
     {
       "repo": "rainlanguage/rain.flare",
@@ -6087,7 +6099,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 47,
+    "unvetted": 50,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 106,
@@ -6098,18 +6110,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 181,
+    "totalProducerPrs": 184,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 654,
+    "uncoveredIssues": 653,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 809
+    "openIssues": 810
   },
   "ages": {
     "openIssues": {
-      "meanDays": 296.0,
+      "meanDays": 295.6,
       "medianDays": 113.3,
-      "oldestDays": 1669.9
+      "oldestDays": 1670.0
     }
   }
 }
