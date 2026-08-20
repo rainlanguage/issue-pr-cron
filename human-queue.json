@@ -44,12 +44,6 @@
         "title": "feat: ICloneableFactoryV4 — open-salt deterministic clone interface"
       },
       {
-        "repo": "rainlanguage/rain.factory.deploy",
-        "number": 5,
-        "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/5",
-        "title": "Migrate to the rolling-candidate snapshot model"
-      },
-      {
         "repo": "cyclofinance/cyclo.sol",
         "number": 56,
         "url": "https://github.com/cyclofinance/cyclo.sol/pull/56",
@@ -866,7 +860,7 @@
   "lanes": {
     "vet-lifecycle": {
       "ai:blocked-on": {
-        "count": 21,
+        "count": 20,
         "prs": [
           {
             "repo": "rainlanguage/rainlang",
@@ -909,12 +903,6 @@
             "number": 51,
             "url": "https://github.com/rainlanguage/rain.factory/pull/51",
             "title": "feat: ICloneableFactoryV4 — open-salt deterministic clone interface"
-          },
-          {
-            "repo": "rainlanguage/rain.factory.deploy",
-            "number": 5,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/5",
-            "title": "Migrate to the rolling-candidate snapshot model"
           },
           {
             "repo": "cyclofinance/cyclo.sol",
@@ -6232,7 +6220,7 @@
   "leaks": [],
   "counts": {
     "unvetted": 49,
-    "blockedOn": 21,
+    "blockedOn": 20,
     "ready": 2,
     "needsWork": 106,
     "relink": 0,
@@ -6242,7 +6230,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 187,
+    "totalProducerPrs": 186,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 668,
     "designPresentable": 8,
@@ -6253,7 +6241,7 @@
     "openIssues": {
       "meanDays": 291.6,
       "medianDays": 111.5,
-      "oldestDays": 1669.6
+      "oldestDays": 1669.7
     }
   }
 }
