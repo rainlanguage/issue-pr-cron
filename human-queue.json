@@ -45,12 +45,6 @@
       },
       {
         "repo": "rainlanguage/rain.factory.deploy",
-        "number": 6,
-        "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/6",
-        "title": "Restore the Protofire reports as inherited audit records (reverses #1)"
-      },
-      {
-        "repo": "rainlanguage/rain.factory.deploy",
         "number": 5,
         "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/5",
         "title": "Migrate to the rolling-candidate snapshot model"
@@ -872,7 +866,7 @@
   "lanes": {
     "vet-lifecycle": {
       "ai:blocked-on": {
-        "count": 22,
+        "count": 21,
         "prs": [
           {
             "repo": "rainlanguage/rainlang",
@@ -915,12 +909,6 @@
             "number": 51,
             "url": "https://github.com/rainlanguage/rain.factory/pull/51",
             "title": "feat: ICloneableFactoryV4 — open-salt deterministic clone interface"
-          },
-          {
-            "repo": "rainlanguage/rain.factory.deploy",
-            "number": 6,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/6",
-            "title": "Restore the Protofire reports as inherited audit records (reverses #1)"
           },
           {
             "repo": "rainlanguage/rain.factory.deploy",
@@ -1009,31 +997,13 @@
         ]
       },
       "un-vetted": {
-        "count": 52,
+        "count": 49,
         "prs": [
           {
-            "repo": "rainlanguage/rain.factory",
-            "number": 55,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/55",
-            "title": "Strip release-process narration from per-repo docs"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 144,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/144",
-            "title": "Strip release-process narration from per-repo docs"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection.deploy",
-            "number": 3,
-            "url": "https://github.com/rainlanguage/rain.extrospection.deploy/pull/3",
-            "title": "Strip release-process narration from per-repo docs"
-          },
-          {
-            "repo": "rainlanguage/rain.factory.deploy",
-            "number": 15,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/15",
-            "title": "Strip release-process narration from per-repo docs"
+            "repo": "rainlanguage/rain-org-health",
+            "number": 178,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/178",
+            "title": "Resolve package names from the release workflow; unresolvable renders unknown (rainix#335)"
           },
           {
             "repo": "rainlanguage/rainlang.interface",
@@ -6261,8 +6231,8 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 52,
-    "blockedOn": 22,
+    "unvetted": 49,
+    "blockedOn": 21,
     "ready": 2,
     "needsWork": 106,
     "relink": 0,
@@ -6272,7 +6242,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 191,
+    "totalProducerPrs": 187,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 668,
     "designPresentable": 8,
@@ -6281,8 +6251,8 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 291.5,
-      "medianDays": 111.4,
+      "meanDays": 291.6,
+      "medianDays": 111.5,
       "oldestDays": 1669.6
     }
   }
