@@ -307,3 +307,8 @@
 {"ts":"2026-08-20T15:31:47Z","observedAt":"2026-08-20T16:31:44Z","kind":"pr","repo":"rainlanguage/rain.factory","number":59}
 {"ts":"2026-08-20T15:38:52Z","observedAt":"2026-08-20T16:31:44Z","kind":"pr","repo":"rainlanguage/rain.factory.deploy","number":18}
 {"ts":"2026-08-20T17:02:24Z","observedAt":"2026-08-20T17:31:10Z","kind":"pr","repo":"rainlanguage/rain.metadata","number":137}
+{"ts":"2026-08-20T17:43:29Z","observedAt":"2026-08-20T18:31:34Z","kind":"pr","repo":"rainlanguage/rain.factory.deploy","number":24}
+{"ts":"2026-08-20T17:48:25Z","observedAt":"2026-08-20T18:31:34Z","kind":"pr","repo":"rainlanguage/rain.metadata","number":139}
+{"ts":"2026-08-20T17:38:26Z","observedAt":"2026-08-20T18:31:34Z","kind":"pr","repo":"rainlanguage/rain.metadata","number":141}
+{"ts":"2026-08-20T17:39:09Z","observedAt":"2026-08-20T18:31:34Z","kind":"pr","repo":"rainlanguage/rain.metadata","number":142}
+{"ts":"2026-08-20T17:58:00Z","observedAt":"2026-08-20T18:31:34Z","kind":"pr","repo":"rainlanguage/rain.metadata","number":143}

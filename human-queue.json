@@ -955,43 +955,19 @@
         ]
       },
       "un-vetted": {
-        "count": 52,
+        "count": 48,
         "prs": [
           {
-            "repo": "rainlanguage/rain.factory.deploy",
-            "number": 24,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/24",
-            "title": "Cut release 0.1.9: version bump + frozen snapshot in lockstep"
-          },
-          {
             "repo": "rainlanguage/rain.metadata",
-            "number": 143,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/143",
-            "title": "Remove submodule-era residue: dead foundry.lock, its annotations, and recursive-submodule checkouts"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 142,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/142",
-            "title": "Support OaSchema as an additional CBOR map key in RainMetaDocumentV1Item"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 141,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/141",
-            "title": "Remove MetaBoard.hash() and roll deploy pins to the new candidate address"
+            "number": 145,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/145",
+            "title": "MetaBoard concrete purely in terms of lib fns (#144)"
           },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 263,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/263",
             "title": "blocked-by: rain.math.float.deploy Soldeer publish — strip deploy + Rust/npm surface (library-only)"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 139,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/139",
-            "title": "Bump rain-deploy to 0.1.7"
           },
           {
             "repo": "rainlanguage/rainlang.interface",
@@ -2165,12 +2141,6 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 144,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/144",
-      "title": "MetaBoard concrete purely in terms of lib fns"
-    },
-    {
       "repo": "rainlanguage/rain.math.float.deploy",
       "number": 1,
       "url": "https://github.com/rainlanguage/rain.math.float.deploy/issues/1",
@@ -2330,12 +2300,6 @@
       "repo": "rainlanguage/rain.verify.interface",
       "number": 16,
       "url": "https://github.com/rainlanguage/rain.verify.interface/issues/16",
-      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 136,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/136",
       "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
     },
     {
@@ -6123,7 +6087,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 52,
+    "unvetted": 48,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 106,
@@ -6134,18 +6098,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 186,
+    "totalProducerPrs": 182,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 655,
+    "uncoveredIssues": 653,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 813
+    "openIssues": 809
   },
   "ages": {
     "openIssues": {
-      "meanDays": 294.6,
-      "medianDays": 113.2,
-      "oldestDays": 1669.8
+      "meanDays": 295.9,
+      "medianDays": 113.3,
+      "oldestDays": 1669.9
     }
   }
 }
