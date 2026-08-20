@@ -1009,8 +1009,32 @@
         ]
       },
       "un-vetted": {
-        "count": 48,
+        "count": 52,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 55,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/55",
+            "title": "Strip release-process narration from per-repo docs"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 144,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/144",
+            "title": "Strip release-process narration from per-repo docs"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection.deploy",
+            "number": 3,
+            "url": "https://github.com/rainlanguage/rain.extrospection.deploy/pull/3",
+            "title": "Strip release-process narration from per-repo docs"
+          },
+          {
+            "repo": "rainlanguage/rain.factory.deploy",
+            "number": 15,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/15",
+            "title": "Strip release-process narration from per-repo docs"
+          },
           {
             "repo": "rainlanguage/rainlang.interface",
             "number": 128,
@@ -2200,6 +2224,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/claude-audit-skills",
+      "number": 91,
+      "url": "https://github.com/rainlanguage/claude-audit-skills/issues/91",
+      "title": "Flag release-process docs restated in per-repo docs (second source of truth vs the shared reusable)"
+    },
     {
       "repo": "rainlanguage/rain.math.float",
       "number": 262,
@@ -6231,7 +6261,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 48,
+    "unvetted": 52,
     "blockedOn": 22,
     "ready": 2,
     "needsWork": 106,
@@ -6242,17 +6272,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 187,
+    "totalProducerPrs": 191,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 667,
+    "uncoveredIssues": 668,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 823
+    "openIssues": 824
   },
   "ages": {
     "openIssues": {
-      "meanDays": 291.8,
-      "medianDays": 112.7,
+      "meanDays": 291.5,
+      "medianDays": 111.4,
       "oldestDays": 1669.6
     }
   }
