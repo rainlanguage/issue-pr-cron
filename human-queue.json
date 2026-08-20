@@ -970,16 +970,16 @@
         "count": 49,
         "prs": [
           {
+            "repo": "rainlanguage/rain.factory",
+            "number": 59,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/59",
+            "title": "LibICloneableFactoryV4: the whole factory logic as a unit-tested library"
+          },
+          {
             "repo": "rainlanguage/rain.factory.deploy",
             "number": 18,
             "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/18",
             "title": "Migrate to the BuildScript rolling-candidate deploy model"
-          },
-          {
-            "repo": "rainlanguage/rain.factory.deploy",
-            "number": 17,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/17",
-            "title": "Fix foundry.toml [package] warning (rename to [external.package])"
           },
           {
             "repo": "rainlanguage/rainlang.interface",
@@ -2158,12 +2158,6 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 57,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/57",
-      "title": "Extract the ICloneableFactoryV4 salt-derivation math into a reusable library here (not trapped in the deploy concrete)"
-    },
     {
       "repo": "rainlanguage/claude-audit-skills",
       "number": 91,
@@ -6172,16 +6166,16 @@
     "leaks": 0,
     "totalProducerPrs": 184,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 662,
+    "uncoveredIssues": 661,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 819
+    "openIssues": 817
   },
   "ages": {
     "openIssues": {
-      "meanDays": 293.3,
-      "medianDays": 113.0,
-      "oldestDays": 1669.7
+      "meanDays": 294.0,
+      "medianDays": 113.1,
+      "oldestDays": 1669.8
     }
   }
 }
