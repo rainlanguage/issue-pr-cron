@@ -955,13 +955,67 @@
         ]
       },
       "un-vetted": {
-        "count": 56,
+        "count": 65,
         "prs": [
           {
             "repo": "rainlanguage/rain.lib.typecast",
-            "number": 26,
-            "url": "https://github.com/rainlanguage/rain.lib.typecast/pull/26",
-            "title": "docs(LibCast): name the dirty-address hazard on asAddressesArray and pin its containment"
+            "number": 27,
+            "url": "https://github.com/rainlanguage/rain.lib.typecast/pull/27",
+            "title": "chore: remove the submodule-era residue — dead foundry.lock, .gitmodules//lib references, and a slither filter pointed at lib/forge-std"
+          },
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 338,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/338",
+            "title": "Delete the \"load-bearing\" filler"
+          },
+          {
+            "repo": "rainlanguage/rain.sol.codegen",
+            "number": 146,
+            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/146",
+            "title": "Delete the \"load-bearing\" filler"
+          },
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 179,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/179",
+            "title": "Delete the \"load-bearing\" filler"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 264,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/264",
+            "title": "Delete the \"load-bearing\" filler"
+          },
+          {
+            "repo": "rainlanguage/rainlang.interface",
+            "number": 129,
+            "url": "https://github.com/rainlanguage/rainlang.interface/pull/129",
+            "title": "Delete the \"load-bearing\" filler"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 144,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/144",
+            "title": "Delete the \"load-bearing\" filler"
+          },
+          {
+            "repo": "rainlanguage/rain.devops",
+            "number": 56,
+            "url": "https://github.com/rainlanguage/rain.devops/pull/56",
+            "title": "Delete the \"load-bearing\" filler"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 146,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/146",
+            "title": "Delete the \"load-bearing\" filler"
+          },
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 348,
+            "url": "https://github.com/rainlanguage/rainix/pull/348",
+            "title": "Delete the \"load-bearing\" filler"
           },
           {
             "repo": "rainlanguage/rain.metadata.deploy",
@@ -2189,6 +2243,12 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 149,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/149",
+      "title": "Split subgraph on deployment facts, not wholesale: manifest as a template in the lib repo, networks.json in the deploy repo"
+    },
+    {
       "repo": "rainlanguage/rainix",
       "number": 344,
       "url": "https://github.com/rainlanguage/rainix/issues/344",
@@ -2342,12 +2402,6 @@
       "repo": "rainlanguage/rain.lib.hash",
       "number": 17,
       "url": "https://github.com/rainlanguage/rain.lib.hash/issues/17",
-      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.typecast",
-      "number": 16,
-      "url": "https://github.com/rainlanguage/rain.lib.typecast/issues/16",
       "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
     },
     {
@@ -2595,12 +2649,6 @@
       "number": 29,
       "url": "https://github.com/rainlanguage/rain.math.fixedpoint/issues/29",
       "title": "Remove the submodule-era residue — a dead `foundry.lock` with four submodule pins, plus `.gitmodules`/`lib/` references"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.typecast",
-      "number": 15,
-      "url": "https://github.com/rainlanguage/rain.lib.typecast/issues/15",
-      "title": "Remove the submodule-era residue — dead `foundry.lock`, `.gitmodules`/`lib/` references, and a slither filter pointed at `lib/forge-std`"
     },
     {
       "repo": "rainlanguage/rain.lib.hash",
@@ -6129,7 +6177,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 56,
+    "unvetted": 65,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 106,
@@ -6140,17 +6188,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 190,
+    "totalProducerPrs": 199,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 652,
+    "uncoveredIssues": 651,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 811
+    "openIssues": 810
   },
   "ages": {
     "openIssues": {
-      "meanDays": 296.0,
-      "medianDays": 114.1,
+      "meanDays": 296.5,
+      "medianDays": 114.2,
       "oldestDays": 1670.8
     }
   }
