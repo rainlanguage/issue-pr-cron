@@ -958,6 +958,12 @@
         "count": 56,
         "prs": [
           {
+            "repo": "rainlanguage/rain.lib.typecast",
+            "number": 26,
+            "url": "https://github.com/rainlanguage/rain.lib.typecast/pull/26",
+            "title": "docs(LibCast): name the dirty-address hazard on asAddressesArray and pin its containment"
+          },
+          {
             "repo": "rainlanguage/rain.metadata.deploy",
             "number": 5,
             "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/5",
@@ -974,12 +980,6 @@
             "number": 4,
             "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/4",
             "title": "Move the MetaBoard subgraph here and wire it to the deploy record"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.typecast",
-            "number": 18,
-            "url": "https://github.com/rainlanguage/rain.lib.typecast/pull/18",
-            "title": "test(LibCast): observe the intermediate and pin the in-place contract"
           },
           {
             "repo": "rainlanguage/rain.math.float.deploy",
@@ -2188,24 +2188,6 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
-    {
-      "repo": "rainlanguage/rain.lib.typecast",
-      "number": 22,
-      "url": "https://github.com/rainlanguage/rain.lib.typecast/issues/22",
-      "title": "LibConvert NatSpec says the toX convention implies consumption of the source, but unsafeTo16BitBytes does not consume its source"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.typecast",
-      "number": 21,
-      "url": "https://github.com/rainlanguage/rain.lib.typecast/issues/21",
-      "title": "LibConvert.unsafeTo16BitBytes sizes its allocation with an unchecked multiply, so a forged length truncates silently instead of reverting"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.typecast",
-      "number": 20,
-      "url": "https://github.com/rainlanguage/rain.lib.typecast/issues/20",
-      "title": "LibCast.asAddressesArray yields an address[] whose elements keep their upper 96 bits, which assembly consumers read raw"
-    },
     {
       "repo": "rainlanguage/rainix",
       "number": 344,
@@ -6160,16 +6142,16 @@
     "leaks": 0,
     "totalProducerPrs": 190,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 655,
+    "uncoveredIssues": 652,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 813
+    "openIssues": 811
   },
   "ages": {
     "openIssues": {
-      "meanDays": 295.3,
-      "medianDays": 114.0,
-      "oldestDays": 1670.7
+      "meanDays": 296.0,
+      "medianDays": 114.1,
+      "oldestDays": 1670.8
     }
   }
 }
