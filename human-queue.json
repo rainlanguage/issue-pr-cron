@@ -943,19 +943,13 @@
         ]
       },
       "un-vetted": {
-        "count": 56,
+        "count": 54,
         "prs": [
           {
-            "repo": "rainlanguage/rain.tofu.erc20-decimals",
-            "number": 37,
-            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/37",
-            "title": "Split residue: slither filters three packages that are gone, and two comments carry migration history"
-          },
-          {
-            "repo": "rainlanguage/rain.tofu.erc20-decimals.deploy",
-            "number": 2,
-            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals.deploy/pull/2",
-            "title": "The pinned fork block must predate the singleton's deployment, not follow the tip"
+            "repo": "rainlanguage/rain.metadata.deploy",
+            "number": 6,
+            "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/6",
+            "title": "Cut release 0.1.0: freeze src/generated/0_1_0/ in lockstep with the version"
           },
           {
             "repo": "rainlanguage/rain.math.float.deploy",
@@ -998,12 +992,6 @@
             "number": 264,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/264",
             "title": "Delete the \"load-bearing\" filler"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata.deploy",
-            "number": 5,
-            "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/5",
-            "title": "Report superseded Goldsky subgraph deploys"
           },
           {
             "repo": "rainlanguage/rain.metadata.deploy",
@@ -6117,7 +6105,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 56,
+    "unvetted": 54,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 104,
@@ -6128,17 +6116,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 188,
+    "totalProducerPrs": 186,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 654,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 810
+    "openIssues": 809
   },
   "ages": {
     "openIssues": {
-      "meanDays": 296.6,
-      "medianDays": 114.3,
+      "meanDays": 296.8,
+      "medianDays": 114.4,
       "oldestDays": 1671.0
     }
   }

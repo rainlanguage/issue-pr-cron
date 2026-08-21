@@ -344,3 +344,6 @@
 {"ts":"2026-08-21T18:44:36Z","observedAt":"2026-08-21T19:32:32Z","kind":"pr","repo":"rainlanguage/rainlang.interface","number":129}
 {"ts":"2026-08-21T20:30:44Z","observedAt":"2026-08-21T20:33:39Z","kind":"pr","repo":"rainlanguage/rain.math.float.deploy","number":5}
 {"ts":"2026-08-21T20:04:15Z","observedAt":"2026-08-21T20:33:39Z","kind":"pr","repo":"rainlanguage/rain.metadata","number":148}
+{"ts":"2026-08-21T20:54:11Z","observedAt":"2026-08-21T21:32:46Z","kind":"pr","repo":"rainlanguage/rain.metadata.deploy","number":5}
+{"ts":"2026-08-21T20:54:19Z","observedAt":"2026-08-21T21:32:46Z","kind":"pr","repo":"rainlanguage/rain.tofu.erc20-decimals","number":37}
+{"ts":"2026-08-21T20:55:20Z","observedAt":"2026-08-21T21:32:46Z","kind":"pr","repo":"rainlanguage/rain.tofu.erc20-decimals.deploy","number":2}
