@@ -43,7 +43,7 @@ impl Drop for TempDir {
     }
 }
 
-/// The five load-bearing events of the live vetter run `review-runs/20260728T053610Z.jsonl`:
+/// The five events of the live vetter run `review-runs/20260728T053610Z.jsonl` these tests read:
 /// opening text, first tool call, its result, first verdict, the verdict's result. Every timestamp
 /// is the real one, so the numbers these tests assert are the numbers that run actually produced.
 fn events() -> Vec<String> {

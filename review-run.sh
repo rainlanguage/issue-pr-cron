@@ -77,8 +77,8 @@ RUNDIR="$DIR/review-runs"
 #
 #   CRON_DIR=<install-dir> nix run git+file://<install-dir>#review-run -- --force
 #
-# The bare `--` is LOAD-BEARING: `nix run` parses everything up to it as its own flags and exits
-# with `unrecognised flag '--force'` otherwise, so the runner never starts. Everything after it is
+# Without the bare `--`, `nix run` parses `--force` as its own flag and exits with
+# `unrecognised flag '--force'`, so the runner never starts. Everything after the `--` is
 # handed to the packaged script as argv, verified against nix 2.18.1 through the `git+file:` form
 # the crontab uses.
 #

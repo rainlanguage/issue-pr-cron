@@ -88,8 +88,8 @@ RUNDIR="$DIR/runs"
 #
 #   CRON_DIR=<install-dir> nix run git+file://<install-dir>#campaign-run -- --force
 #
-# The bare `--` is LOAD-BEARING: `nix run` parses everything up to it as its own flags and exits
-# with `unrecognised flag '--force'` otherwise, so the runner never starts. Everything after it is
+# Without the bare `--`, `nix run` parses `--force` as its own flag and exits with
+# `unrecognised flag '--force'`, so the runner never starts. Everything after the `--` is
 # handed to the packaged script as argv, verified against nix 2.18.1 through the `git+file:` form
 # the crontab uses.
 #
@@ -342,8 +342,8 @@ fi
 # refused — and refused by a message that lists the directory as allowed, which is precisely what
 # sent the producer hunting for a legal path that did not exist. The `--allowedTools` grant below
 # is what makes the redirect work; it covers BOTH `--add-dir` roots, for the reason given there,
-# and this dir is inside one of them. Its `//` prefix is load-bearing: `Edit(/abs/**)` is silently
-# inert; only `Edit(//abs/**)` matches an absolute path.
+# and this dir is inside one of them. Note the `//` prefix: `Edit(/abs/**)` is silently inert;
+# only `Edit(//abs/**)` matches an absolute path.
 #
 # PER-RUN, NOT PERSISTENT: nothing accumulates, and no run can read another run's half-written
 # state and mistake it for its own. Nothing is lost by deleting it — every tool call and its full
