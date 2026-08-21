@@ -943,14 +943,8 @@
         ]
       },
       "un-vetted": {
-        "count": 54,
+        "count": 53,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.metadata.deploy",
-            "number": 6,
-            "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/6",
-            "title": "Cut release 0.1.0: freeze src/generated/0_1_0/ in lockstep with the version"
-          },
           {
             "repo": "rainlanguage/rain.math.float.deploy",
             "number": 6,
@@ -6105,7 +6099,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 54,
+    "unvetted": 53,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 104,
@@ -6116,7 +6110,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 186,
+    "totalProducerPrs": 185,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 654,
     "designPresentable": 8,
@@ -6125,9 +6119,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 296.8,
+      "meanDays": 296.9,
       "medianDays": 114.4,
-      "oldestDays": 1671.0
+      "oldestDays": 1671.1
     }
   }
 }
