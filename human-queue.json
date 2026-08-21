@@ -946,16 +946,22 @@
         "count": 56,
         "prs": [
           {
+            "repo": "rainlanguage/rain.tofu.erc20-decimals",
+            "number": 37,
+            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/37",
+            "title": "Split residue: slither filters three packages that are gone, and two comments carry migration history"
+          },
+          {
+            "repo": "rainlanguage/rain.tofu.erc20-decimals.deploy",
+            "number": 2,
+            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals.deploy/pull/2",
+            "title": "The pinned fork block must predate the singleton's deployment, not follow the tip"
+          },
+          {
             "repo": "rainlanguage/rain.math.float.deploy",
             "number": 6,
             "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/6",
             "title": "style(docs): deno fmt CLAUDE.md and README.md"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float.deploy",
-            "number": 5,
-            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/5",
-            "title": "fix(ci): declare ethereum and hyperevm rpc endpoints"
           },
           {
             "repo": "rainlanguage/rain.math.float.deploy",
@@ -998,12 +1004,6 @@
             "number": 5,
             "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/5",
             "title": "Report superseded Goldsky subgraph deploys"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 148,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/148",
-            "title": "Keep the subgraph source; make the manifest a template and send the deployment record away"
           },
           {
             "repo": "rainlanguage/rain.metadata.deploy",
@@ -2164,6 +2164,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 354,
+      "url": "https://github.com/rainlanguage/rainix/issues/354",
+      "title": "`subgraph-deploy` versions a deploy by the consumer repo commit, so a split-out subgraph source collides with itself"
+    },
     {
       "repo": "rainlanguage/rain.math.float.deploy",
       "number": 4,
@@ -6124,16 +6130,16 @@
     "leaks": 0,
     "totalProducerPrs": 188,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 653,
+    "uncoveredIssues": 654,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 809
+    "openIssues": 810
   },
   "ages": {
     "openIssues": {
-      "meanDays": 296.9,
+      "meanDays": 296.6,
       "medianDays": 114.3,
-      "oldestDays": 1670.9
+      "oldestDays": 1671.0
     }
   }
 }
