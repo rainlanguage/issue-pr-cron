@@ -943,8 +943,50 @@
         ]
       },
       "un-vetted": {
-        "count": 58,
+        "count": 65,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float.deploy",
+            "number": 3,
+            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/3",
+            "title": "fix(test): drop vm.skip from the tagged deploy constants check"
+          },
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 352,
+            "url": "https://github.com/rainlanguage/rainix/pull/352",
+            "title": "ci: bump RAINIX_SHA to c4cf22d so yq reaches the sol lane"
+          },
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 351,
+            "url": "https://github.com/rainlanguage/rainix/pull/351",
+            "title": "docs(append-only): state the rule, not the incident that produced it"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 268,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/268",
+            "title": "chore(agent-context): cut CLAUDE.md under the 4096-byte cap"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 267,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/267",
+            "title": "fix(ci): rename the codegen script to script/Build.sol"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 266,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/266",
+            "title": "fix(deploy): pin the 0.1.7 soldeer tag's deploy constants"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 265,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/265",
+            "title": "fix(test): drop vm.skip from the tagged deploy constants check"
+          },
           {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 338,
@@ -2176,6 +2218,30 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.math.float.deploy",
+      "number": 4,
+      "url": "https://github.com/rainlanguage/rain.math.float.deploy/issues/4",
+      "title": "npm publish returns E404 on @rainlanguage/float: the token cannot write that package"
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 353,
+      "url": "https://github.com/rainlanguage/rainix/issues/353",
+      "title": "rainix-autopublish pushes the version bump before publishing, so a failed publish permanently advances the version"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 269,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/269",
+      "title": "DecimalFloat was never deployed at its currently pinned address: 5 red testProdDeployment* tests need an on-chain deploy, not a code change"
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 349,
+      "url": "https://github.com/rainlanguage/rainix/issues/349",
+      "title": "`subgraph-deploy` runs `npm ci` in the same environment as `GOLDSKY_TOKEN`, so a consumer cannot withhold it"
+    },
     {
       "repo": "rainlanguage/rain.metadata",
       "number": 149,
@@ -6099,7 +6165,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 58,
+    "unvetted": 65,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 104,
@@ -6110,18 +6176,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 190,
+    "totalProducerPrs": 197,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 649,
+    "uncoveredIssues": 653,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 805
+    "openIssues": 809
   },
   "ages": {
     "openIssues": {
-      "meanDays": 298.3,
+      "meanDays": 296.8,
       "medianDays": 114.3,
-      "oldestDays": 1670.8
+      "oldestDays": 1670.9
     }
   }
 }
