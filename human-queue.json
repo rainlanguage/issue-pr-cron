@@ -955,8 +955,44 @@
         ]
       },
       "un-vetted": {
-        "count": 54,
+        "count": 60,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.metadata.deploy",
+            "number": 5,
+            "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/5",
+            "title": "Report superseded Goldsky subgraph deploys"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.typecast",
+            "number": 23,
+            "url": "https://github.com/rainlanguage/rain.lib.typecast/pull/23",
+            "title": "chore(audit): record the adversarial mutation test scan"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.typecast",
+            "number": 19,
+            "url": "https://github.com/rainlanguage/rain.lib.typecast/pull/19",
+            "title": "test(LibConvert): pin aliasing, source lifetime and the write bounds"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 148,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/148",
+            "title": "Slim the subgraph out; it moves to rain.metadata.deploy"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata.deploy",
+            "number": 4,
+            "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/4",
+            "title": "Move the MetaBoard subgraph here and wire it to the deploy record"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.typecast",
+            "number": 18,
+            "url": "https://github.com/rainlanguage/rain.lib.typecast/pull/18",
+            "title": "test(LibCast): observe the intermediate and pin the in-place contract"
+          },
           {
             "repo": "rainlanguage/rain.math.float.deploy",
             "number": 2,
@@ -2177,10 +2213,22 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
-      "repo": "rainlanguage/rain.metadata.deploy",
-      "number": 2,
-      "url": "https://github.com/rainlanguage/rain.metadata.deploy/issues/2",
-      "title": "Move the MetaBoard subgraph here: networks.json is a deploy record and belongs with the deploy records"
+      "repo": "rainlanguage/rain.lib.typecast",
+      "number": 22,
+      "url": "https://github.com/rainlanguage/rain.lib.typecast/issues/22",
+      "title": "LibConvert NatSpec says the toX convention implies consumption of the source, but unsafeTo16BitBytes does not consume its source"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.typecast",
+      "number": 21,
+      "url": "https://github.com/rainlanguage/rain.lib.typecast/issues/21",
+      "title": "LibConvert.unsafeTo16BitBytes sizes its allocation with an unchecked multiply, so a forged length truncates silently instead of reverting"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.typecast",
+      "number": 20,
+      "url": "https://github.com/rainlanguage/rain.lib.typecast/issues/20",
+      "title": "LibCast.asAddressesArray yields an address[] whose elements keep their upper 96 bits, which assembly consumers read raw"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -4157,12 +4205,6 @@
       "title": "headless chromium does not capture fully-rendered SPA output"
     },
     {
-      "repo": "rainlanguage/rain.metadata.deploy",
-      "number": 3,
-      "url": "https://github.com/rainlanguage/rain.metadata.deploy/issues/3",
-      "title": "Tooling to identify and reap unused deployed subgraphs on Goldsky"
-    },
-    {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 138,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/138",
@@ -4995,6 +5037,12 @@
       "number": 1533,
       "url": "https://github.com/rainlanguage/raindex/issues/1533",
       "title": "Move any value-handling logic out of components into files that can be fuzz-tested"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 1525,
+      "url": "https://github.com/rainlanguage/raindex/issues/1525",
+      "title": "Failing to get token info from Ethereum mainnet for valid tokens"
     },
     {
       "repo": "rainlanguage/raindex",
@@ -6123,7 +6171,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 54,
+    "unvetted": 60,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 106,
@@ -6134,16 +6182,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 188,
+    "totalProducerPrs": 194,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 653,
+    "uncoveredIssues": 655,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 810
+    "openIssues": 815
   },
   "ages": {
     "openIssues": {
-      "meanDays": 295.4,
+      "meanDays": 294.3,
       "medianDays": 113.7,
       "oldestDays": 1670.4
     }
