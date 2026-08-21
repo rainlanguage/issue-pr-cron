@@ -943,25 +943,25 @@
         ]
       },
       "un-vetted": {
-        "count": 65,
+        "count": 56,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float.deploy",
+            "number": 6,
+            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/6",
+            "title": "style(docs): deno fmt CLAUDE.md and README.md"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float.deploy",
+            "number": 5,
+            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/5",
+            "title": "fix(ci): declare ethereum and hyperevm rpc endpoints"
+          },
           {
             "repo": "rainlanguage/rain.math.float.deploy",
             "number": 3,
             "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/3",
             "title": "fix(test): drop vm.skip from the tagged deploy constants check"
-          },
-          {
-            "repo": "rainlanguage/rainix",
-            "number": 352,
-            "url": "https://github.com/rainlanguage/rainix/pull/352",
-            "title": "ci: bump RAINIX_SHA to c4cf22d so yq reaches the sol lane"
-          },
-          {
-            "repo": "rainlanguage/rainix",
-            "number": 351,
-            "url": "https://github.com/rainlanguage/rainix/pull/351",
-            "title": "docs(append-only): state the rule, not the incident that produced it"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -988,57 +988,9 @@
             "title": "fix(test): drop vm.skip from the tagged deploy constants check"
           },
           {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 338,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/338",
-            "title": "Delete the \"load-bearing\" filler"
-          },
-          {
-            "repo": "rainlanguage/rain.sol.codegen",
-            "number": 146,
-            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/146",
-            "title": "Delete the \"load-bearing\" filler"
-          },
-          {
-            "repo": "rainlanguage/rain-org-health",
-            "number": 179,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/179",
-            "title": "Delete the \"load-bearing\" filler"
-          },
-          {
             "repo": "rainlanguage/rain.math.float",
             "number": 264,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/264",
-            "title": "Delete the \"load-bearing\" filler"
-          },
-          {
-            "repo": "rainlanguage/rainlang.interface",
-            "number": 129,
-            "url": "https://github.com/rainlanguage/rainlang.interface/pull/129",
-            "title": "Delete the \"load-bearing\" filler"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 144,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/144",
-            "title": "Delete the \"load-bearing\" filler"
-          },
-          {
-            "repo": "rainlanguage/rain.devops",
-            "number": 56,
-            "url": "https://github.com/rainlanguage/rain.devops/pull/56",
-            "title": "Delete the \"load-bearing\" filler"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 146,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/146",
-            "title": "Delete the \"load-bearing\" filler"
-          },
-          {
-            "repo": "rainlanguage/rainix",
-            "number": 348,
-            "url": "https://github.com/rainlanguage/rainix/pull/348",
             "title": "Delete the \"load-bearing\" filler"
           },
           {
@@ -1058,12 +1010,6 @@
             "number": 4,
             "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/4",
             "title": "Take the subgraph's deployment record and wire it to the deploy records"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float.deploy",
-            "number": 2,
-            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/2",
-            "title": "ci: drop snapshot-generate-cmd from package-release [BLOCKED on rainix#343 — do not merge]"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -6165,7 +6111,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 65,
+    "unvetted": 56,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 104,
@@ -6176,7 +6122,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 197,
+    "totalProducerPrs": 188,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 653,
     "designPresentable": 8,
@@ -6185,7 +6131,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 296.8,
+      "meanDays": 296.9,
       "medianDays": 114.3,
       "oldestDays": 1670.9
     }
