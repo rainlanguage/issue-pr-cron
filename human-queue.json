@@ -176,22 +176,10 @@
         "title": "Scan ledger: a wrapper object that states its own ordering and authority rule"
       },
       {
-        "repo": "rainlanguage/rain.tofu.erc20-decimals",
-        "number": 31,
-        "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/31",
-        "title": "chore: remove submodule-era residue from REUSE.toml, .soldeerignore and CLAUDE.md"
-      },
-      {
         "repo": "S01-Issuer/st0x.deploy",
         "number": 305,
         "url": "https://github.com/S01-Issuer/st0x.deploy/pull/305",
         "title": "Drop snapshot-generate-cmd: rainix owns the release freeze"
-      },
-      {
-        "repo": "rainlanguage/rain.tofu.erc20-decimals",
-        "number": 28,
-        "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/28",
-        "title": "fix(ci): grant Package Release the token permissions its callee needs"
       },
       {
         "repo": "rainlanguage/rainlang",
@@ -955,14 +943,8 @@
         ]
       },
       "un-vetted": {
-        "count": 65,
+        "count": 58,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.lib.typecast",
-            "number": 27,
-            "url": "https://github.com/rainlanguage/rain.lib.typecast/pull/27",
-            "title": "chore: remove the submodule-era residue — dead foundry.lock, .gitmodules//lib references, and a slither filter pointed at lib/forge-std"
-          },
           {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 338,
@@ -1027,49 +1009,19 @@
             "repo": "rainlanguage/rain.metadata",
             "number": 148,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/148",
-            "title": "Slim the subgraph out; it moves to rain.metadata.deploy"
+            "title": "Keep the subgraph source; make the manifest a template and send the deployment record away"
           },
           {
             "repo": "rainlanguage/rain.metadata.deploy",
             "number": 4,
             "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/4",
-            "title": "Move the MetaBoard subgraph here and wire it to the deploy record"
+            "title": "Take the subgraph's deployment record and wire it to the deploy records"
           },
           {
             "repo": "rainlanguage/rain.math.float.deploy",
             "number": 2,
             "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/2",
             "title": "ci: drop snapshot-generate-cmd from package-release [BLOCKED on rainix#343 — do not merge]"
-          },
-          {
-            "repo": "rainlanguage/rain.tofu.erc20-decimals",
-            "number": 35,
-            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/35",
-            "title": "fix(test): point fork tests at SEPOLIA_RPC_URL, not the retired ETH_RPC_URL"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection.deploy",
-            "number": 4,
-            "url": "https://github.com/rainlanguage/rain.extrospection.deploy/pull/4",
-            "title": "ci: drop snapshot-generate-cmd from package-release"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 145,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/145",
-            "title": "ci: drop snapshot-generate-cmd from package-release"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata.deploy",
-            "number": 1,
-            "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/1",
-            "title": "ci: drop snapshot-generate-cmd from package-release"
-          },
-          {
-            "repo": "rainlanguage/rain.factory.deploy",
-            "number": 25,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/25",
-            "title": "ci: drop snapshot-generate-cmd from package-release"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -1105,12 +1057,6 @@
             "repo": "rainlanguage/rain.vats",
             "number": 336,
             "url": "https://github.com/rainlanguage/rain.vats/pull/336",
-            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
-          },
-          {
-            "repo": "rainlanguage/rain.tofu.erc20-decimals",
-            "number": 33,
-            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/33",
             "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
           },
           {
@@ -1420,7 +1366,7 @@
         }
       },
       "ai:needs-work": {
-        "count": 106,
+        "count": 104,
         "prs": [
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -1429,22 +1375,10 @@
             "title": "Scan ledger: a wrapper object that states its own ordering and authority rule"
           },
           {
-            "repo": "rainlanguage/rain.tofu.erc20-decimals",
-            "number": 31,
-            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/31",
-            "title": "chore: remove submodule-era residue from REUSE.toml, .soldeerignore and CLAUDE.md"
-          },
-          {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 305,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/305",
             "title": "Drop snapshot-generate-cmd: rainix owns the release freeze"
-          },
-          {
-            "repo": "rainlanguage/rain.tofu.erc20-decimals",
-            "number": 28,
-            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/28",
-            "title": "fix(ci): grant Package Release the token permissions its callee needs"
           },
           {
             "repo": "rainlanguage/rainlang",
@@ -2477,12 +2411,6 @@
       "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
     },
     {
-      "repo": "rainlanguage/rain.tofu.erc20-decimals",
-      "number": 32,
-      "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/issues/32",
-      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
-    },
-    {
       "repo": "rainlanguage/rain.flare",
       "number": 210,
       "url": "https://github.com/rainlanguage/rain.flare/issues/210",
@@ -3338,12 +3266,6 @@
       "repo": "cyclofinance/cyclo.sol",
       "number": 55,
       "url": "https://github.com/cyclofinance/cyclo.sol/issues/55",
-      "title": "Adopt per-release deploy snapshots (src/generated/<tag>/) via the shared LibSnapshot"
-    },
-    {
-      "repo": "rainlanguage/rain.tofu.erc20-decimals",
-      "number": 26,
-      "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/issues/26",
       "title": "Adopt per-release deploy snapshots (src/generated/<tag>/) via the shared LibSnapshot"
     },
     {
@@ -6177,10 +6099,10 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 65,
+    "unvetted": 58,
     "blockedOn": 18,
     "ready": 1,
-    "needsWork": 106,
+    "needsWork": 104,
     "relink": 0,
     "design": 8,
     "blockedInfra": 0,
@@ -6188,17 +6110,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 199,
+    "totalProducerPrs": 190,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 651,
+    "uncoveredIssues": 649,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 810
+    "openIssues": 805
   },
   "ages": {
     "openIssues": {
-      "meanDays": 296.5,
-      "medianDays": 114.2,
+      "meanDays": 298.3,
+      "medianDays": 114.3,
       "oldestDays": 1670.8
     }
   }
