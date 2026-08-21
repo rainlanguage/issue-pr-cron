@@ -958,6 +958,12 @@
         "count": 60,
         "prs": [
           {
+            "repo": "rainlanguage/rainix",
+            "number": 347,
+            "url": "https://github.com/rainlanguage/rainix/pull/347",
+            "title": "ci: bump RAINIX_SHA to 833e8a7 so #343's checks actually run"
+          },
+          {
             "repo": "rainlanguage/rain.metadata.deploy",
             "number": 5,
             "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/5",
@@ -1028,12 +1034,6 @@
             "number": 25,
             "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/25",
             "title": "ci: drop snapshot-generate-cmd from package-release"
-          },
-          {
-            "repo": "rainlanguage/rainix",
-            "number": 343,
-            "url": "https://github.com/rainlanguage/rainix/pull/343",
-            "title": "fix(tag-release): determinism check that never removes the frozen record"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -6187,13 +6187,13 @@
     "uncoveredIssues": 655,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 815
+    "openIssues": 813
   },
   "ages": {
     "openIssues": {
-      "meanDays": 294.3,
-      "medianDays": 113.7,
-      "oldestDays": 1670.4
+      "meanDays": 295.0,
+      "medianDays": 113.8,
+      "oldestDays": 1670.5
     }
   }
 }
