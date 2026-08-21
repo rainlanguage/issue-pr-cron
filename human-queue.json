@@ -955,31 +955,13 @@
         ]
       },
       "un-vetted": {
-        "count": 60,
+        "count": 56,
         "prs": [
-          {
-            "repo": "rainlanguage/rainix",
-            "number": 347,
-            "url": "https://github.com/rainlanguage/rainix/pull/347",
-            "title": "ci: bump RAINIX_SHA to 833e8a7 so #343's checks actually run"
-          },
           {
             "repo": "rainlanguage/rain.metadata.deploy",
             "number": 5,
             "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/5",
             "title": "Report superseded Goldsky subgraph deploys"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.typecast",
-            "number": 23,
-            "url": "https://github.com/rainlanguage/rain.lib.typecast/pull/23",
-            "title": "chore(audit): record the adversarial mutation test scan"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.typecast",
-            "number": 19,
-            "url": "https://github.com/rainlanguage/rain.lib.typecast/pull/19",
-            "title": "test(LibConvert): pin aliasing, source lifetime and the write bounds"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -1111,12 +1093,6 @@
             "repo": "rainlanguage/rain.flare",
             "number": 211,
             "url": "https://github.com/rainlanguage/rain.flare/pull/211",
-            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.typecast",
-            "number": 17,
-            "url": "https://github.com/rainlanguage/rain.lib.typecast/pull/17",
             "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
           },
           {
@@ -6171,7 +6147,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 60,
+    "unvetted": 56,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 106,
@@ -6182,7 +6158,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 194,
+    "totalProducerPrs": 190,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 655,
     "designPresentable": 8,
@@ -6191,7 +6167,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 295.2,
+      "meanDays": 295.3,
       "medianDays": 114.0,
       "oldestDays": 1670.7
     }
