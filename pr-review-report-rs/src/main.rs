@@ -8587,7 +8587,7 @@ fn pr_refs_in(text: &str) -> Vec<String> {
 /// two facts are refused by two different gates with two different repairs. Folding the scope into
 /// this predicate would report "the skill was never invoked" to a vetter that invoked it.
 ///
-/// WHO made the call is likewise not a condition, and since #257 it is load-bearing that it is not.
+/// WHO made the call is likewise not a condition, and since #257 it cannot become one.
 /// The harness writes a DISPATCHED sub-agent's tool calls into the same stream-json trace as the
 /// main loop's, distinguished only by a `parent_tool_use_id` and a `subagent_type` this predicate
 /// never reads, so an `audit` invocation made inside the vetter's `pr-auditor` credits its PR
@@ -12961,8 +12961,8 @@ mod landed_history_tests {
         );
         // An OPEN issue that still CARRIES a closedAt — a remote API is not obligated to null
         // the stamp on reopen, and a row here would count a landing that un-happened. This case
-        // is what makes the state check load-bearing rather than redundant with the closedAt
-        // read: a mutation pass showed the suite could not previously tell them apart.
+        // is what separates the state check from the closedAt read: a mutation pass showed the
+        // suite could not previously tell them apart.
         assert_eq!(
             issue_landed_row(&issue_resp("OPEN", Some("2026-08-01T00:00:00Z"), &[])),
             LandedRow::None
@@ -16085,11 +16085,12 @@ enum RecordGate {
 
 /// PURE: run every guard, in ORDER, and say what the write may do.
 ///
-/// The order is load-bearing, which is why it lives in a function a test can drive rather than in
-/// the sequence of a side-effecting body. A human-decided PR is refused as human-decided even when
-/// its coverage claim is also wrong: that PR is not the vetter's to record however well it accounted
-/// for the diff, and "fix your anchors" would be an instruction to do work that is about to be
-/// refused anyway. Same for a PR with no head sha — there is no verdict to write, covered or not.
+/// The order changes which refusal a PR gets, which is why it lives in a function a test can drive
+/// rather than in the sequence of a side-effecting body. A human-decided PR is refused as
+/// human-decided even when its coverage claim is also wrong: that PR is not the vetter's to record
+/// however well it accounted for the diff, and "fix your anchors" would be an instruction to do
+/// work that is about to be refused anyway. Same for a PR with no head sha — there is no verdict
+/// to write, covered or not.
 ///
 /// The lens gate (#151) sits UNDER the four reads-that-failed above it and OVER everything below.
 /// Under, because each of those is a fact about whether there is a verdict to write at all, and being
@@ -16762,7 +16763,7 @@ fn human_close_ruled(detail: &Value) -> bool {
 ///   label write and its label clear — or where a label was applied by hand outside every
 ///   transition.
 ///
-/// The label half is asked ONLY of a live flag, and that is load-bearing twice over. A ruling
+/// The label half is asked ONLY of a live flag, and widening that would break two things. A ruling
 /// label with no producer claim beneath it is already [`CcGate::NoFlag`], whose #179 clearance
 /// consumes it — so widening here would take work off a transition that already does it. And on a
 /// PR the un-flagged label is [`CcGate::VetterClose`], a verdict in force that nothing here may
@@ -22416,9 +22417,9 @@ fn human_queue_doc(
     cc_upheld_n: usize,
     backlog: &[SubjectRef],
     // Every open issue in the org scope (#165), or None when the coverage read FAILED. The
-    // distinction is load-bearing and is why this is not a plain slice: an empty population and an
-    // unreadable one both have no ages, but an empty one honestly has `counts.openIssues: 0` while
-    // an unreadable one must emit no count at all rather than claim the org has no open issues
+    // distinction is why this is not a plain slice: an empty population and an unreadable one both
+    // have no ages, but an empty one honestly has `counts.openIssues: 0` while an unreadable one
+    // must emit no count at all rather than claim the org has no open issues
     // (#199 typed the gh failure precisely so it could not read as an empty answer).
     open: Option<&[OpenIssue]>,
     leaks: &[Leak],
@@ -24176,10 +24177,10 @@ fn clone_row_rank(hold: Option<&str>) -> u8 {
 /// Every work clone under every configured root: the whole box as COUNTS, plus the rows that name a
 /// decision. Read-only: the answer to "what is on this box and who owns it".
 ///
-/// The counts are the load-bearing half and they are never truncated, which is what lets the rows
-/// be. `include` chooses which rows are offered to the budget — the held ones by default, because
-/// the question this tool is called for is why something is still here (`campaign-prompt.txt`'s gc
-/// step names it for exactly that) and a releasable clone is the answer to no question. `"all"`
+/// The counts are never truncated, which is what lets the rows be. `include` chooses which rows are
+/// offered to the budget — the held ones by default, because the question this tool is called for
+/// is why something is still here (`campaign-prompt.txt`'s gc step names it for exactly that) and a
+/// releasable clone is the answer to no question. `"all"`
 /// offers every row, still ordered so that the ones the budget drops are the boring ones.
 fn clone_list_exec(roots: &[String], include_all: bool) -> Result<Value, String> {
     let mut rows = Vec::new();
@@ -25520,10 +25521,11 @@ fn skipped_digest(row: &Value) -> Value {
 /// the vetter vets ONE PR at a time and each verdict removes its PR from the next call's page, so a
 /// page walks the queue without an offset argument.
 ///
-/// `openThreads` is UNCONDITIONAL and is the reason `include_skipped` is no longer load-bearing: the
-/// PRs withheld for unresolved threads are the only skipped rows carrying per-row information the
-/// vetter can act on (a PR left the queue with no verdict, and `unresolvedThreads` says why). Making
-/// it depend on an optional argument is exactly how that accounting went missing.
+/// `openThreads` is UNCONDITIONAL and is the reason `include_skipped` no longer withholds anything
+/// the vetter needs: the PRs withheld for unresolved threads are the only skipped rows carrying
+/// per-row information the vetter can act on (a PR left the queue with no verdict, and
+/// `unresolvedThreads` says why). Making it depend on an optional argument is exactly how that
+/// accounting went missing.
 ///
 /// `draftNeedsWork` is unconditional for a stronger version of that reason: those rows are PRs this
 /// state-load WROTE to. Everything else here reports; that one acts, and an act reported only under
@@ -28222,10 +28224,11 @@ mod next_ready_tests {
 
     // ── the CodeRabbit discriminator ──────────────────────────────────────────────────────────
     //
-    // THE load-bearing field. While the org's plan quota is exhausted most PRs carry a CodeRabbit
-    // status whose STATE is `success` and behind which nothing was reviewed. A tool that reported
-    // the state would say "CodeRabbit passed" on a PR CodeRabbit never opened — and then the
-    // 0-unresolved-threads beside it reads as a clean review instead of an empty one.
+    // The DESCRIPTION is the field that separates them. While the org's plan quota is exhausted
+    // most PRs carry a CodeRabbit status whose STATE is `success` and behind which nothing was
+    // reviewed. A tool that reported the state would say "CodeRabbit passed" on a PR CodeRabbit
+    // never opened — and then the 0-unresolved-threads beside it reads as a clean review instead
+    // of an empty one.
     #[test]
     fn rate_limited_and_queued_are_green_checks_with_no_review_behind_them() {
         // The ONE state that is coverage — and note the STATE is identical in all three cases.
@@ -29728,9 +29731,9 @@ fn search_issue_ref(hit: &Value) -> Option<(String, u64)> {
 /// PURE: the argv of ONE HALF of the search behind both close-candidate inboxes — `noun` is
 /// `"issues"` or `"prs"`, because `gh search issues` scopes to `type:issue` and `gh search prs` to
 /// `type:pr`, so covering the whole flagged population (#211: a flag can sit on either subject
-/// type) takes the same query spelled once per noun. Every qualifier is load-bearing and each is
-/// wrong in its own direction: without `--state open` a closed subject's leftover flag joins the
-/// queue, without the label the queue is the whole backlog, and the `--json` set is exactly what
+/// type) takes the same query spelled once per noun. Every qualifier is wrong in its own direction
+/// when dropped: without `--state open` a closed subject's leftover flag joins the queue, without
+/// the label the queue is the whole backlog, and the `--json` set is exactly what
 /// [`search_issue_ref`] needs to ADDRESS a hit — a field dropped here makes every row
 /// unaddressable at once.
 ///
@@ -33268,9 +33271,9 @@ enum DesignHit {
 
 /// PURE: classify one search hit.
 ///
-/// The ORDER is load-bearing. The ref parse comes first because a hit nobody can address cannot
-/// honestly be listed as a draft — the ref is the thing a reader would act on, and without it
-/// every later label is a claim about a subject that was never identified.
+/// The ref parse comes first because a hit nobody can address cannot honestly be listed as a
+/// draft — the ref is the thing a reader would act on, and without it every later label is a claim
+/// about a subject that was never identified.
 fn nd_hit_class(hit: &Value) -> DesignHit {
     let addressed = hit.get("number").and_then(|n| n.as_u64()).and_then(|num| {
         hit.get("url")
@@ -44666,7 +44669,7 @@ fn journal_report_mode(journal: &str, runs_path: Option<&str>, json: bool) -> i3
             println!(
                 "  DELETE THE INLINE REASONING, NOT THE RULE, and leave the entry id in its place: \
                  the incident stays readable here at zero per-turn cost, and the next run's \
-                 behaviour is what says whether the reasoning was load-bearing."
+                 behaviour is what says whether the reasoning was doing anything."
             );
         }
         None => println!(
@@ -45006,10 +45009,10 @@ enum AliasTarget {
 /// One entry of the harness's vite `resolve.alias` ARRAY.
 ///
 /// An array and not an object because vite tries array entries IN ORDER and takes the first whose
-/// `find` matches as a prefix. That makes order load-bearing: `$lib` placed ahead of
-/// `$lib/balancesStore` swallows it, and the component then imports the real store, which cannot
-/// load. [`render_alias_order_is_specific_before_general`] holds the order as a property of this
-/// table rather than as a comment nobody re-checks.
+/// `find` matches as a prefix. `$lib` placed ahead of `$lib/balancesStore` swallows it, and the
+/// component then imports the real store, which cannot load.
+/// [`render_alias_order_is_specific_before_general`] holds the order as a property of this table
+/// rather than as a comment nobody re-checks.
 struct RenderAlias {
     find: &'static str,
     /// Match the specifier EXACTLY (emitted as an anchored regex) rather than as a prefix.
@@ -45569,8 +45572,8 @@ export default defineConfig({
   },
   plugins: [svelte({ preprocess: vitePreprocess() })],
   resolve: {
-    // ORDER IS LOAD-BEARING: vite takes the FIRST entry whose `find` matches, so every specific
-    // stub precedes the general `$lib` fall-through. Generated from RENDER_ALIASES.
+    // vite takes the FIRST entry whose `find` matches, so every specific stub precedes the
+    // general `$lib` fall-through. Generated from RENDER_ALIASES.
     alias: __ALIASES__,
   },
 });
@@ -52363,11 +52366,11 @@ mod await_tests {
     }
 
     /// CONFORMANCE: every field `AWAIT_DETAIL_FIELDS` fetches is one `await_state` cannot answer
-    /// without. Asserted by REMOVAL from an otherwise-settled document, so a field that stopped
-    /// being load-bearing — or one that quietly started being read without being fetched — turns
+    /// without. Asserted by REMOVAL from an otherwise-settled document, so a field `await_state`
+    /// stopped reading — or one that quietly started being read without being fetched — turns
     /// this red instead of costing a poll per call forever.
     #[test]
-    fn every_awaited_field_is_load_bearing_and_its_absence_is_unreadable() {
+    fn every_awaited_field_is_read_and_its_absence_is_unreadable() {
         let fields: Vec<&str> = AWAIT_DETAIL_FIELDS.split(',').collect();
         assert_eq!(fields, vec!["headRefOid", "statusCheckRollup"]);
         assert_eq!(
@@ -55496,7 +55499,7 @@ deleted file mode 100644
     /// A reason argues about CURRENT MAIN as well as about the landing, so a symbol the cited change
     /// never touched is ORDINARY. `raindex#1060` is the live case: the cited PR removed the guard,
     /// and the file that carries the behaviour today was renamed after it. Both halves are true and
-    /// both are load-bearing — which is exactly why the absent list is REPORTED and never gated on.
+    /// both are true — which is exactly why the absent list is REPORTED and never gated on.
     #[test]
     fn a_sound_reason_may_name_symbols_the_cited_change_never_touched() {
         let diff = "\
@@ -57244,8 +57247,8 @@ mod startup_split_tests {
         }
     }
 
-    /// The live vetter run `review-runs/20260728T053610Z.jsonl`, reduced to its five load-bearing
-    /// events. Every number asserted below was measured off that real trace.
+    /// The live vetter run `review-runs/20260728T053610Z.jsonl`, reduced to the five events the
+    /// assertions below read. Every number asserted below was measured off that real trace.
     fn vetter_20260728t053610z() -> String {
         [
             text_at("2026-07-28T05:36:13.214Z"), // run's first timestamped event
@@ -57826,7 +57829,7 @@ mod skip_row_tests {
         assert_eq!(
             classify_outcome("", 10, false, &[], &InfraRecord::default()),
             TraceOutcome::Error,
-            "without the skip fact, the same row reads as an error — the flag is load-bearing"
+            "without the skip fact, the same row reads as an error"
         );
         assert_eq!(TraceOutcome::Skipped.as_str(), "skipped");
     }
@@ -59346,7 +59349,7 @@ mod repo_root_tests {
 /// `is_sibling`. Taking whole LINES rather than a byte window means a clause re-wrapped across
 /// lines still resolves, while a phrase moved OUT of the item stops counting.
 ///
-/// PANICS when nothing matches `is_start`, and that is load-bearing: an absent section returned
+/// PANICS when nothing matches `is_start`, rather than returning `""`: an absent section returned
 /// as `""` would make every NEGATIVE `contains` assertion against it pass vacuously — the
 /// pass-by-not-running shape [`repo_root_text`] exists to kill one level up.
 #[cfg(test)]
@@ -63719,8 +63722,8 @@ mod lens_gate_tests {
             lens_ledger_rows(&json!({"stage": STAGE_LENS, "pr": PR, "scope": "  "}).to_string()),
             vec![(PR.to_string(), None)]
         );
-        // The STAGE filter is load-bearing, and this is the input that shows it: a row that carries a
-        // `pr` but is not a lens row must not be credited. The pipeline is full of per-run jsonl files
+        // This is the input the STAGE filter is for: a row that carries a `pr` but is not a lens
+        // row must not be credited. The pipeline is full of per-run jsonl files
         // whose rows are keyed by `pr` — `review-verdicts.jsonl` most of all — so a misconfigured
         // `RUN_LENS_LEDGER` pointed at one would otherwise let every already-recorded verdict credit
         // ITSELF as the invocation that licensed it.
@@ -63921,7 +63924,7 @@ mod lens_gate_tests {
     }
 
     /// The two lens gates PARTITION the evidence, and that is what makes the order between them inert
-    /// while the order of everything else is load-bearing.
+    /// while the order of everything else changes which refusal a vetter reads.
     ///
     /// Every state is refused by exactly one of them, or by neither. A mutant that routes `NoSource`
     /// or `NotInvoked` into the scope gate, or either #155 state into the #151 gate, changes which
@@ -66657,7 +66660,7 @@ mod cli_tests {
     }
 
     /// Ordering. Everything above `unfinished` in `classify_trace` is a worse story, and the
-    /// quota case is load-bearing beyond the word: the runners advance model fallback on
+    /// quota case costs more than a wrong word: the runners advance model fallback on
     /// `session-limit` alone, so an unfinished run reaching that branch would burn a model.
     #[test]
     fn worse_outcomes_outrank_unfinished() {
@@ -70750,9 +70753,9 @@ mod state_descriptor_tests {
             }
         }
 
-        // The fold is LOAD-BEARING, not decorative, and the assertion for that has to be an
-        // ORDERING rather than a count. The live key accumulates its own samples from the rename
-        // onward, so "the new key has no committed samples at all" was only true until the first
+        // The assertion that the fold does something has to be an ORDERING rather than a count.
+        // The live key accumulates its own samples from the rename onward, so "the new key has no
+        // committed samples at all" was only true until the first
         // post-rename rollup landed — a premise that expires on a clock, and did. What does not
         // expire is WHERE each spelling sits on the timeline: every folded spelling was measured,
         // and measured strictly before the new name's first sample, so the span in front of that
@@ -77122,8 +77125,8 @@ mod mcp_tests {
         );
     }
 
-    // #78, the load-bearing one: an over-budget result is THIS SERVER's error. On 2026-07-27 the
-    // server handed back 63,742 bytes, the harness refused it, and the vetter improvised a fallback
+    // #78: an over-budget result is THIS SERVER's error. On 2026-07-27 the server handed back
+    // 63,742 bytes, the harness refused it, and the vetter improvised a fallback
     // that silently dropped the open-threads accounting. A tool that cannot answer within budget
     // must SAY SO, so the caller's only available next move is a narrower call.
     #[test]
@@ -79541,7 +79544,7 @@ mod pr_checkout_tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    // The refspec is load-bearing in two independent ways; both are asserted rather than implied.
+    // The refspec does two independent things; both are asserted rather than implied.
     #[test]
     fn the_refspec_names_the_pull_ref_and_an_explicit_remote_destination() {
         let r = pr_head_refspec(47);
@@ -81501,7 +81504,7 @@ mod repair_qa_block_tests {
 
     // ---- property 2: validate what it writes, with the GATE's predicate --------------------
 
-    /// The separator is load-bearing, not cosmetic: `qa_heading` only ever looks at LINE STARTS, so
+    /// The separator is not cosmetic: `qa_heading` only ever looks at LINE STARTS, so
     /// a block appended straight onto a body with no trailing newline is a block the PR-open gate
     /// cannot see at all. Asserted against the REAL gate, not against the planner's own opinion.
     #[test]
@@ -81726,8 +81729,7 @@ mod weaken_closes_tests {
     use super::*;
 
     /// A section-8-complete evidence block whose CATEGORY line legitimately writes about the very
-    /// keywords this tool rewrites — the shape that makes "leave the `## QA` block alone" load
-    /// bearing rather than decorative.
+    /// keywords this tool rewrites — the shape that a tool rewriting the `## QA` block would corrupt.
     const QA: &str = "## QA\n\
          - Discriminating tests: t_split - fails on base (ran on the base checkout)\n\
          - Mutations applied: vault.sol:12 flip -> t_split\n\
@@ -83657,7 +83659,7 @@ mod observation_run_tests {
     }
 
     /// Only `assistant` events issue tool calls. Two shapes have to be refused, and the second is
-    /// the one that makes the guard load-bearing rather than decorative:
+    /// the one the guard exists for:
     ///
     /// - a `user` event carries the RESULT of a call, and its text routinely quotes the command;
     /// - an event of ANY other type carrying a `tool_use` block would be counted twice over — once
@@ -84149,9 +84151,9 @@ mod observation_recommendation_tests {
         }
     }
 
-    /// The argv a human is trusting, exactly. `git+file://` is what makes the fast-forward
-    /// load-bearing — the runner is built from the install dir's own git HEAD, not its worktree —
-    /// so the dir in the URL and the dir that was pulled have to be the same one.
+    /// The argv a human is trusting, exactly. `git+file://` is what the fast-forward is for — the
+    /// runner is built from the install dir's own git HEAD, not its worktree — so the dir in the
+    /// URL and the dir that was pulled have to be the same one.
     #[test]
     fn the_plan_pulls_the_dir_it_then_builds_the_runner_from() {
         let p = force_run_plan(RunnerRole::Producer, "/home/gildlab/issue-pr-cron");

@@ -793,15 +793,15 @@ that keeps moving and the oldest flag's reason describes the least of what is
 there now. Newest-first — the other candidate — optimises the cost of each check
 by never reaching the flags that have decayed most.
 
-**What it withholds is as load-bearing as what it returns.** A flag the vetter
-has not judged is `counts.unvetted`, not a row: a flag the vetter would REJECT
-never reaches a human at all, because the reject strips the label, so presenting
-one early spends judgement on the vetter's turn. And `strandedFlags` names two
-states that park an issue with nothing consuming them — a label with no producer
-comment behind it, and a `reject` whose label is live anyway. Both sat invisible
-until this tool counted them, and counting is all it does: **the vetter's
-state-load is what CLEARS them** (#179), so a flag still listed here is a
-clearance that has not run yet or could not write. See
+**It withholds as deliberately as it returns.** A flag the vetter has not judged
+is `counts.unvetted`, not a row: a flag the vetter would REJECT never reaches a
+human at all, because the reject strips the label, so presenting one early
+spends judgement on the vetter's turn. And `strandedFlags` names two states that
+park an issue with nothing consuming them — a label with no producer comment
+behind it, and a `reject` whose label is live anyway. Both sat invisible until
+this tool counted them, and counting is all it does: **the vetter's state-load
+is what CLEARS them** (#179), so a flag still listed here is a clearance that
+has not run yet or could not write. See
 [the stranded-flag clearance](#the-stranded-flag-clearance).
 
 `archivedRepoFlags` is the third withheld list and the only one naming a state
@@ -3680,9 +3680,9 @@ CRON_DIR=<install-dir> nix run git+file://<install-dir>#campaign-run -- --force
 CRON_DIR=<install-dir> nix run git+file://<install-dir>#review-run    -- --force
 ```
 
-The bare `--` is **load-bearing**: `nix run` parses everything before it as its
-own flags and exits with `unrecognised flag '--force'` otherwise, so the runner
-never starts. Everything after it arrives as the packaged script's argv.
+Without the bare `--`, `nix run` parses `--force` as its own flag and exits with
+`unrecognised flag '--force'`, so the runner never starts. Everything after the
+`--` arrives as the packaged script's argv.
 
 It is an **argument** rather than a variable so that it belongs to one
 invocation and cannot be left switched on. `CRON_FORCE` in `cron.env` (or in the
