@@ -955,25 +955,49 @@
         ]
       },
       "un-vetted": {
-        "count": 50,
+        "count": 54,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float.deploy",
+            "number": 2,
+            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/2",
+            "title": "ci: drop snapshot-generate-cmd from package-release [BLOCKED on rainix#343 — do not merge]"
+          },
+          {
+            "repo": "rainlanguage/rain.tofu.erc20-decimals",
+            "number": 35,
+            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/35",
+            "title": "fix(test): point fork tests at SEPOLIA_RPC_URL, not the retired ETH_RPC_URL"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection.deploy",
+            "number": 4,
+            "url": "https://github.com/rainlanguage/rain.extrospection.deploy/pull/4",
+            "title": "ci: drop snapshot-generate-cmd from package-release"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 145,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/145",
+            "title": "ci: drop snapshot-generate-cmd from package-release"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata.deploy",
+            "number": 1,
+            "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/1",
+            "title": "ci: drop snapshot-generate-cmd from package-release"
+          },
+          {
+            "repo": "rainlanguage/rain.factory.deploy",
+            "number": 25,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/25",
+            "title": "ci: drop snapshot-generate-cmd from package-release"
+          },
           {
             "repo": "rainlanguage/rainix",
             "number": 343,
             "url": "https://github.com/rainlanguage/rainix/pull/343",
             "title": "fix(tag-release): determinism check that never removes the frozen record"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 146,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/146",
-            "title": "Slim to the library half; deploy half moves to rain.metadata.deploy"
-          },
-          {
-            "repo": "rainlanguage/rainix",
-            "number": 342,
-            "url": "https://github.com/rainlanguage/rainix/pull/342",
-            "title": "feat(rpc-preflight): model sepolia, reject endpoints that throttle under load"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -2152,6 +2176,18 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.metadata.deploy",
+      "number": 2,
+      "url": "https://github.com/rainlanguage/rain.metadata.deploy/issues/2",
+      "title": "Move the MetaBoard subgraph here: networks.json is a deploy record and belongs with the deploy records"
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 344,
+      "url": "https://github.com/rainlanguage/rainix/issues/344",
+      "title": "Five deploy repos must drop snapshot-generate-cmd before/with #343, and RAINIX_SHA must be bumped after"
+    },
     {
       "repo": "rainlanguage/rain.math.float.deploy",
       "number": 1,
@@ -4121,9 +4157,9 @@
       "title": "headless chromium does not capture fully-rendered SPA output"
     },
     {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 107,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/107",
+      "repo": "rainlanguage/rain.metadata.deploy",
+      "number": 3,
+      "url": "https://github.com/rainlanguage/rain.metadata.deploy/issues/3",
       "title": "Tooling to identify and reap unused deployed subgraphs on Goldsky"
     },
     {
@@ -4959,12 +4995,6 @@
       "number": 1533,
       "url": "https://github.com/rainlanguage/raindex/issues/1533",
       "title": "Move any value-handling logic out of components into files that can be fuzz-tested"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 1525,
-      "url": "https://github.com/rainlanguage/raindex/issues/1525",
-      "title": "Failing to get token info from Ethereum mainnet for valid tokens"
     },
     {
       "repo": "rainlanguage/raindex",
@@ -6093,7 +6123,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 50,
+    "unvetted": 54,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 106,
@@ -6104,18 +6134,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 184,
+    "totalProducerPrs": 188,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 652,
+    "uncoveredIssues": 653,
     "designPresentable": 8,
     "designNoQuestion": 0,
     "openIssues": 810
   },
   "ages": {
     "openIssues": {
-      "meanDays": 296.0,
+      "meanDays": 295.4,
       "medianDays": 113.7,
-      "oldestDays": 1670.3
+      "oldestDays": 1670.4
     }
   }
 }
