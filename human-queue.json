@@ -931,8 +931,20 @@
         ]
       },
       "un-vetted": {
-        "count": 57,
+        "count": 59,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 224,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/224",
+            "title": "AMT coverage: g5-interpretercallermeta-v1"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 321,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/321",
+            "title": "Bump rain-sol-codegen to 0.1.36 (rain-deploy 0.1.7, forge-std 1.16.2)"
+          },
           {
             "repo": "rainlanguage/rain.metadata",
             "number": 202,
@@ -2146,6 +2158,114 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 226,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/226",
+      "title": "OrderBuilderStateV1::extract_from_meta recurses unboundedly on nested RainMetaDocumentV1 payloads"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 225,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/225",
+      "title": "Method.expressions lacks length(min=1) though methods are defined as receiving 'at least one expression'"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 223,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/223",
+      "title": "KnownSubgraphs polygon NPE2 endpoint name is 'npe2-mati' — possible typo vs deliberate 30-char hosted-service truncation, unverifiable since the hosted service sunset"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 222,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/222",
+      "title": "schema_check introspection query caps type nesting at 4 ofType levels; deeper wrapper types silently render as Unknown and report false mismatches"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 221,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/221",
+      "title": "InterpreterCallerMeta: context_columns cap length(max = u8::MAX) rejects 256 columns — off-by-one if the intent is u8-addressable column indices"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 220,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/220",
+      "title": "InterpreterCallerMeta: documented 'at least one expression' intent is unenforced — Method.expressions may be empty while inputs requires min 1"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 219,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/219",
+      "title": "Dotrain source subject is derived two ways: generate emits under keccak(cbor item map) while DotrainSourceV1::hash and the subject field docs say keccak(content)"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 218,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/218",
+      "title": "KnownMagic::try_from accepts the document-prefix magic as an item-level magic; items claiming it decode but every consumer rejects them"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 217,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/217",
+      "title": "cbor_decode accepts binary data without the rain document magic prefix; spec says such data MUST be discarded"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 216,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/216",
+      "title": "RainMetaDocumentV1Item decode hard-errors on unknown map keys, defeating the spec's forward-compatible key extension mechanism"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 215,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/215",
+      "title": "fetch_by_subject returns an arbitrary, unverified meta when multiple metas share a subject"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 214,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/214",
+      "title": "OpMeta validation silently discards nested BitInteger/Output errors (merge_all misused)"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 213,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/213",
+      "title": "process_deployer_query reports corrupt subgraph payloads as NoRecordFound, indistinguishable from absence"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 211,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/211",
+      "title": "AuthoringMetaV2::fetch_for_contract panic-indexes metas[0] and decoded[0], relying on other crates' non-empty guarantees"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 210,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/210",
+      "title": "AuthoringMetaV2::fetch_for_contract trusts subgraph meta bytes without checking them against the describedByMetaV1 hash"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 206,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/206",
+      "title": "MetaV1 entity id collides across metaboards: the indexer implied by IDescribedByMetaV1 can lose retrieval-by-hash"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 205,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/205",
+      "title": "contracts()/committedPath coupling to crates/bindings has no cross-lane oracle: dropped or retargeted binding artifacts go silently stale"
+    },
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 322,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/322",
+      "title": "build-artifact + rainix-sol test red on main: live-chain grant/pin drift"
+    },
     {
       "repo": "rainlanguage/rain.metadata",
       "number": 204,
@@ -6429,7 +6549,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 57,
+    "unvetted": 59,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6440,18 +6560,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 187,
+    "totalProducerPrs": 189,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 709,
+    "uncoveredIssues": 727,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 863
+    "openIssues": 881
   },
   "ages": {
     "openIssues": {
-      "meanDays": 279.2,
-      "medianDays": 107.5,
-      "oldestDays": 1672.0
+      "meanDays": 273.5,
+      "medianDays": 101.3,
+      "oldestDays": 1672.1
     }
   }
 }
