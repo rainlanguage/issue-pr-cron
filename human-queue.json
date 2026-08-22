@@ -943,25 +943,13 @@
         ]
       },
       "un-vetted": {
-        "count": 53,
+        "count": 48,
         "prs": [
           {
             "repo": "rainlanguage/rain.metadata.deploy",
             "number": 7,
             "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/7",
             "title": "ci: run metaboard-subgraph-report on dispatch"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float.deploy",
-            "number": 6,
-            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/6",
-            "title": "style(docs): deno fmt CLAUDE.md and README.md"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float.deploy",
-            "number": 3,
-            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/3",
-            "title": "fix(test): drop vm.skip from the tagged deploy constants check"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -980,24 +968,6 @@
             "number": 266,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/266",
             "title": "fix(deploy): pin the 0.1.7 soldeer tag's deploy constants"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 265,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/265",
-            "title": "fix(test): drop vm.skip from the tagged deploy constants check"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 264,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/264",
-            "title": "Delete the \"load-bearing\" filler"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 263,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/263",
-            "title": "Strip deploy + Rust/npm surface: the library half is Solidity only"
           },
           {
             "repo": "rainlanguage/rainlang.interface",
@@ -6117,7 +6087,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 53,
+    "unvetted": 48,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 104,
@@ -6128,7 +6098,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 185,
+    "totalProducerPrs": 180,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 657,
     "designPresentable": 8,
@@ -6137,8 +6107,8 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 296.8,
-      "medianDays": 115.1,
+      "meanDays": 296.9,
+      "medianDays": 115.2,
       "oldestDays": 1671.8
     }
   }
