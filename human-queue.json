@@ -943,19 +943,13 @@
         ]
       },
       "un-vetted": {
-        "count": 54,
+        "count": 53,
         "prs": [
           {
             "repo": "rainlanguage/rain.metadata.deploy",
             "number": 7,
             "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/7",
             "title": "ci: run metaboard-subgraph-report on dispatch"
-          },
-          {
-            "repo": "rainlanguage/raindex",
-            "number": 2838,
-            "url": "https://github.com/rainlanguage/raindex/pull/2838",
-            "title": "Migrate release machinery to rain-deploy 0.1.7 tag-driven releases"
           },
           {
             "repo": "rainlanguage/rain.math.float.deploy",
@@ -6123,7 +6117,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 54,
+    "unvetted": 53,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 104,
@@ -6134,7 +6128,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 186,
+    "totalProducerPrs": 185,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 657,
     "designPresentable": 8,
@@ -6143,9 +6137,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 296.7,
+      "meanDays": 296.8,
       "medianDays": 115.0,
-      "oldestDays": 1671.6
+      "oldestDays": 1671.7
     }
   }
 }
