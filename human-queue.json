@@ -182,12 +182,6 @@
         "title": "Drop snapshot-generate-cmd: rainix owns the release freeze"
       },
       {
-        "repo": "rainlanguage/rainlang",
-        "number": 551,
-        "url": "https://github.com/rainlanguage/rainlang/pull/551",
-        "title": "Bump rain-math-binary 0.1.1 -> 0.1.3"
-      },
-      {
         "repo": "rainlanguage/rain.flare",
         "number": 205,
         "url": "https://github.com/rainlanguage/rain.flare/pull/205",
@@ -937,8 +931,38 @@
         ]
       },
       "un-vetted": {
-        "count": 47,
+        "count": 51,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float.deploy",
+            "number": 13,
+            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/13",
+            "title": "Bump rain-datacontract 0.1.0 -> 0.1.3 (and rain-solmem 0.1.26 it pins)"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 152,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/152",
+            "title": "AMT coverage: g7-libdescribedbymeta-emitf"
+          },
+          {
+            "repo": "rainlanguage/rainlang.interface",
+            "number": 131,
+            "url": "https://github.com/rainlanguage/rainlang.interface/pull/131",
+            "title": "chore(deps): bump rain-lib-typecast 0.1.0 -> 0.1.4, rain-sol-codegen 0.1.0 -> 0.1.36"
+          },
+          {
+            "repo": "rainlanguage/rain.math.fixedpoint",
+            "number": 32,
+            "url": "https://github.com/rainlanguage/rain.math.fixedpoint/pull/32",
+            "title": "Bump rain-math-saturating 0.1.1 -> 0.1.2"
+          },
+          {
+            "repo": "rainlanguage/rain.intorastring",
+            "number": 24,
+            "url": "https://github.com/rainlanguage/rain.intorastring/pull/24",
+            "title": "Bump rain-solmem to 0.1.26"
+          },
           {
             "repo": "rainlanguage/rain.extrospection.deploy",
             "number": 5,
@@ -1070,12 +1094,6 @@
             "number": 32,
             "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/32",
             "title": "Warn loudly on KILLED mutants with no captured killer; document forge's nested-']' fail-pattern trap"
-          },
-          {
-            "repo": "rainlanguage/rainlang",
-            "number": 557,
-            "url": "https://github.com/rainlanguage/rainlang/pull/557",
-            "title": "Migrate soldeer dep rain-interpreter-interface 0.1.0 -> rainlang-interface 0.2.3"
           },
           {
             "repo": "rainlanguage/rain.dia",
@@ -1294,7 +1312,7 @@
         }
       },
       "ai:needs-work": {
-        "count": 103,
+        "count": 102,
         "prs": [
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -1307,12 +1325,6 @@
             "number": 305,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/305",
             "title": "Drop snapshot-generate-cmd: rainix owns the release freeze"
-          },
-          {
-            "repo": "rainlanguage/rainlang",
-            "number": 551,
-            "url": "https://github.com/rainlanguage/rainlang/pull/551",
-            "title": "Bump rain-math-binary 0.1.1 -> 0.1.3"
           },
           {
             "repo": "rainlanguage/rain.flare",
@@ -2098,6 +2110,162 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 175,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/175",
+      "title": "implements_i_described_by_meta_v1 reports transport/decode errors as 'does not implement', erasing rain-erc's documented 'answer unknown' distinction"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 174,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/174",
+      "title": "KnownMeta::AuthoringMetaV2 normalize/validate accepts arbitrary bytes through the pure-bytes passthrough arm"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 173,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/173",
+      "title": "BitIntegerRange/OperandArgRange/Output validation drops all sub-validation errors (ValidationErrors::merge_all misuse)"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 172,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/172",
+      "title": "delete_dotrain / set_dotrain(keep_old=false) remove shared meta bytes still referenced by other dotrain uris"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 171,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/171",
+      "title": "OpMeta Input allows contradictory computed/constant shapes (computation without bits, parameters with bits)"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 170,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/170",
+      "title": "Store::set_deployer validates nothing despite 'skips if the given hash is invalid', and can break the meta-cache CAS invariant"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 169,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/169",
+      "title": "Store::update caches subgraph bytes under the requested hash without the keccak gate update_with enforces"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 168,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/168",
+      "title": "AuthoringMetaV2 words bypass the v1 word grammar: no validation on abi_decode or TryFrom"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 167,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/167",
+      "title": "Method.expressions permits an empty array despite 'at least one expression' docs"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 166,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/166",
+      "title": "SolidityAbiItem deserializer silently drops unknown and kind-mismatched fields, so accepted bytes can re-serialize to a different abi"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 165,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/165",
+      "title": "OpMeta and InterpreterCallerMeta TryFrom<RainMetaDocumentV1Item> accept items of any magic"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 164,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/164",
+      "title": "Validate impls leak the per-index annotation string on every validation failure via Box::leak"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 163,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/163",
+      "title": "Store::search_deployer maps tx_hash to constructor meta hash, so tx-hash lookups return None and search_deployer_check is permanently poisoned"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 162,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/162",
+      "title": "DotrainSourceV1/OrderBuilderStateV1 TryFrom<RainMetaDocumentV1Item> read raw payload, ignoring content_encoding"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 161,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/161",
+      "title": "Store::update/search_deployer panic on an empty subgraph list instead of returning None (futures::select_ok empty-iterator panic)"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 160,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/160",
+      "title": "map_item_error_input rejects indexed on error inputs with the fn-io error message"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 159,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/159",
+      "title": "fetch_by_subject inspects only the first meta/item: a DotrainSourceV1 elsewhere under the subject yields Err instead of being found"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 158,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/158",
+      "title": "DotrainSourceV1::hash() (raw utf8 keccak) diverges from the metaboard emit subject (cbor document keccak)"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 157,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/157",
+      "title": "fetch_for_contract only considers metas[0] and the first cbor document: a valid authoring meta later in the list is unreachable"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 156,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/156",
+      "title": "fetch_for_contract accepts a Vec of RPC urls but only ever uses the first: no failover"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 155,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/155",
+      "title": "RainString accepts non-ASCII Unicode whitespace despite 'printable ASCII chars and whitespace' contract"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 154,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/154",
+      "title": "fetch_for_contract reports transient RPC/transport failures during the erc165 probe as HasNoWords"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 153,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/153",
+      "title": "SolidityAbiMeta validation is vacuous: Validate derives carry no rules, so the TryFrom validate gate and per-index annotation can never reject"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 561,
+      "url": "https://github.com/rainlanguage/rainlang/issues/561",
+      "title": "rainix-sol/test red on main: 5 prod fork tests assert deployments that lag main"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 151,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/151",
+      "title": "subgraph.yaml mapping.entities omits Transaction, which handleMetaV1_2 writes on every event"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 150,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/150",
+      "title": "LibMeta fuzz tests assert non-meta behaviour over inputs that CAN be rain meta; a seed emitting the magic prefix turns the suite red on unmutated code"
+    },
     {
       "repo": "rainlanguage/raindex",
       "number": 2840,
@@ -6081,10 +6249,10 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 47,
+    "unvetted": 51,
     "blockedOn": 18,
     "ready": 1,
-    "needsWork": 103,
+    "needsWork": 102,
     "relink": 0,
     "design": 8,
     "blockedInfra": 0,
@@ -6092,18 +6260,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 178,
+    "totalProducerPrs": 181,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 659,
+    "uncoveredIssues": 685,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 813
+    "openIssues": 839
   },
   "ages": {
     "openIssues": {
-      "meanDays": 296.2,
-      "medianDays": 115.2,
-      "oldestDays": 1671.8
+      "meanDays": 287.1,
+      "medianDays": 109.4,
+      "oldestDays": 1671.9
     }
   }
 }
