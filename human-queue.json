@@ -946,16 +946,22 @@
         "count": 55,
         "prs": [
           {
+            "repo": "rainlanguage/rain.metadata.deploy",
+            "number": 7,
+            "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/7",
+            "title": "ci: run metaboard-subgraph-report on dispatch"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 150,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/150",
+            "title": "Toggle big blocks from an admin-gated manual workflow"
+          },
+          {
             "repo": "rainlanguage/raindex",
             "number": 2838,
             "url": "https://github.com/rainlanguage/raindex/pull/2838",
             "title": "Migrate release machinery to rain-deploy 0.1.7 tag-driven releases"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float.deploy",
-            "number": 9,
-            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/9",
-            "title": "Migrate deploy records to src/generated/"
           },
           {
             "repo": "rainlanguage/rain.math.float.deploy",
@@ -998,12 +1004,6 @@
             "number": 264,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/264",
             "title": "Delete the \"load-bearing\" filler"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata.deploy",
-            "number": 4,
-            "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/4",
-            "title": "Take the subgraph's deployment record and wire it to the deploy records"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -2158,6 +2158,18 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.erc4626.words",
+      "number": 264,
+      "url": "https://github.com/rainlanguage/rain.erc4626.words/issues/264",
+      "title": "script/Deploy.sol emits meta to the v1 MetaBoard; the org deployed a successor board on 2026-08-21"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float.deploy",
+      "number": 10,
+      "url": "https://github.com/rainlanguage/rain.math.float.deploy/issues/10",
+      "title": "Deploy-suite tests etch only the candidate log tables, so a future table move wedges CI red on a live released suite"
+    },
     {
       "repo": "rainlanguage/rainix",
       "number": 355,
@@ -6130,15 +6142,15 @@
     "leaks": 0,
     "totalProducerPrs": 187,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 655,
+    "uncoveredIssues": 657,
     "designPresentable": 8,
     "designNoQuestion": 0,
     "openIssues": 811
   },
   "ages": {
     "openIssues": {
-      "meanDays": 296.6,
-      "medianDays": 114.9,
+      "meanDays": 296.7,
+      "medianDays": 115.0,
       "oldestDays": 1671.6
     }
   }
