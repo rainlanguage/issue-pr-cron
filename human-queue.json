@@ -2160,15 +2160,33 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rain.metadata",
-      "number": 226,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/226",
-      "title": "OrderBuilderStateV1::extract_from_meta recurses unboundedly on nested RainMetaDocumentV1 payloads"
+      "number": 230,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/230",
+      "title": "subgraph: compiled matchstick binary tests/.bin/metaboard.wasm is committed; matchstick cache invalidation is mtime-based"
     },
     {
       "repo": "rainlanguage/rain.metadata",
-      "number": 225,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/225",
-      "title": "Method.expressions lacks length(min=1) though methods are defined as receiving 'at least one expression'"
+      "number": 229,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/229",
+      "title": "subgraph: matchstick suite never observes nextMetaId or any multi-event path"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 228,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/228",
+      "title": "subgraph: manifest entities list omits Transaction, which the mapping writes"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 227,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/227",
+      "title": "subgraph: MetaV1 id is the bare per-board counter — collision across datasources, lexicographic ordering, relation keyed off address field"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 226,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/226",
+      "title": "OrderBuilderStateV1::extract_from_meta recurses unboundedly on nested RainMetaDocumentV1 payloads"
     },
     {
       "repo": "rainlanguage/rain.metadata",
@@ -2202,18 +2220,6 @@
     },
     {
       "repo": "rainlanguage/rain.metadata",
-      "number": 218,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/218",
-      "title": "KnownMagic::try_from accepts the document-prefix magic as an item-level magic; items claiming it decode but every consumer rejects them"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 217,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/217",
-      "title": "cbor_decode accepts binary data without the rain document magic prefix; spec says such data MUST be discarded"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
       "number": 216,
       "url": "https://github.com/rainlanguage/rain.metadata/issues/216",
       "title": "RainMetaDocumentV1Item decode hard-errors on unknown map keys, defeating the spec's forward-compatible key extension mechanism"
@@ -2223,12 +2229,6 @@
       "number": 215,
       "url": "https://github.com/rainlanguage/rain.metadata/issues/215",
       "title": "fetch_by_subject returns an arbitrary, unverified meta when multiple metas share a subject"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 214,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/214",
-      "title": "OpMeta validation silently discards nested BitInteger/Output errors (merge_all misused)"
     },
     {
       "repo": "rainlanguage/rain.metadata",
@@ -2307,12 +2307,6 @@
       "number": 196,
       "url": "https://github.com/rainlanguage/rain.metadata/issues/196",
       "title": "InterpreterCallerMeta.desc doc comment is a copy-paste of abi_name's (\"Name of the caller...\"), plus 'feild' typos"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 195,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/195",
-      "title": "Method.expressions accepts an empty vec although the docs say listed methods receive at least one expression"
     },
     {
       "repo": "rainlanguage/rain.metadata",
@@ -2751,12 +2745,6 @@
       "number": 332,
       "url": "https://github.com/rainlanguage/issue-pr-cron/issues/332",
       "title": "work-tokens derives landings from swept traces, so per-LANDED-item divides two different populations — read landed-history.jsonl instead"
-    },
-    {
-      "repo": "rainlanguage/adversarial-mutation-test",
-      "number": 28,
-      "url": "https://github.com/rainlanguage/adversarial-mutation-test/issues/28",
-      "title": "Schema check pins one rule on `equal to`, a phrase generic enough to pass with the rule deleted"
     },
     {
       "repo": "rainlanguage/adversarial-mutation-test",
@@ -6562,15 +6550,15 @@
     "leaks": 0,
     "totalProducerPrs": 189,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 727,
+    "uncoveredIssues": 725,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 881
+    "openIssues": 879
   },
   "ages": {
     "openIssues": {
-      "meanDays": 273.5,
-      "medianDays": 101.3,
+      "meanDays": 274.2,
+      "medianDays": 101.4,
       "oldestDays": 1672.1
     }
   }
