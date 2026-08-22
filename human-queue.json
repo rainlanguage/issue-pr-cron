@@ -943,8 +943,26 @@
         ]
       },
       "un-vetted": {
-        "count": 53,
+        "count": 56,
         "prs": [
+          {
+            "repo": "rainlanguage/raindex",
+            "number": 2838,
+            "url": "https://github.com/rainlanguage/raindex/pull/2838",
+            "title": "Migrate release machinery to rain-deploy 0.1.7 tag-driven releases"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 149,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/149",
+            "title": "Run CreditHyperCore from an admin-gated manual workflow"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float.deploy",
+            "number": 9,
+            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/9",
+            "title": "Migrate deploy records to src/generated/"
+          },
           {
             "repo": "rainlanguage/rain.math.float.deploy",
             "number": 6,
@@ -6105,7 +6123,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 53,
+    "unvetted": 56,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 104,
@@ -6116,7 +6134,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 185,
+    "totalProducerPrs": 188,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 655,
     "designPresentable": 8,
@@ -6125,8 +6143,8 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 296.5,
-      "medianDays": 114.8,
+      "meanDays": 296.6,
+      "medianDays": 114.9,
       "oldestDays": 1671.5
     }
   }
