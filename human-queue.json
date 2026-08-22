@@ -943,19 +943,13 @@
         ]
       },
       "un-vetted": {
-        "count": 55,
+        "count": 54,
         "prs": [
           {
             "repo": "rainlanguage/rain.metadata.deploy",
             "number": 7,
             "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/7",
             "title": "ci: run metaboard-subgraph-report on dispatch"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 150,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/150",
-            "title": "Toggle big blocks from an admin-gated manual workflow"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -1009,7 +1003,7 @@
             "repo": "rainlanguage/rain.math.float",
             "number": 263,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/263",
-            "title": "blocked-by: rain.math.float.deploy Soldeer publish — strip deploy + Rust/npm surface (library-only)"
+            "title": "Strip deploy + Rust/npm surface: the library half is Solidity only"
           },
           {
             "repo": "rainlanguage/rainlang.interface",
@@ -6129,7 +6123,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 55,
+    "unvetted": 54,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 104,
@@ -6140,7 +6134,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 187,
+    "totalProducerPrs": 186,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 657,
     "designPresentable": 8,
