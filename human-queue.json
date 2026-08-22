@@ -248,12 +248,6 @@
         "title": "fix(layout): swallow blockNumberStore.refresh rejections in the polling loop"
       },
       {
-        "repo": "rainlanguage/rain.math.float",
-        "number": 256,
-        "url": "https://github.com/rainlanguage/rain.math.float/pull/256",
-        "title": "fix(deploy): pin the 0.1.7 soldeer tag's deploy constants"
-      },
-      {
         "repo": "rainlanguage/rain.erc4626.words",
         "number": 259,
         "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/259",
@@ -943,31 +937,25 @@
         ]
       },
       "un-vetted": {
-        "count": 48,
+        "count": 47,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.extrospection.deploy",
+            "number": 5,
+            "url": "https://github.com/rainlanguage/rain.extrospection.deploy/pull/5",
+            "title": "Bump rain-solmem to 0.1.26 via rain-extrospection 0.1.13"
+          },
+          {
+            "repo": "rainlanguage/raindex",
+            "number": 2839,
+            "url": "https://github.com/rainlanguage/raindex/pull/2839",
+            "title": "Bump rain-solmem 0.1.3 -> 0.1.26"
+          },
           {
             "repo": "rainlanguage/rain.metadata.deploy",
             "number": 7,
             "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/7",
             "title": "ci: run metaboard-subgraph-report on dispatch"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 268,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/268",
-            "title": "chore(agent-context): cut CLAUDE.md under the 4096-byte cap"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 267,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/267",
-            "title": "fix(ci): rename the codegen script to script/Build.sol"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 266,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/266",
-            "title": "fix(deploy): pin the 0.1.7 soldeer tag's deploy constants"
           },
           {
             "repo": "rainlanguage/rainlang.interface",
@@ -1306,7 +1294,7 @@
         }
       },
       "ai:needs-work": {
-        "count": 104,
+        "count": 103,
         "prs": [
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -1385,12 +1373,6 @@
             "number": 428,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/428",
             "title": "fix(layout): swallow blockNumberStore.refresh rejections in the polling loop"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 256,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/256",
-            "title": "fix(deploy): pin the 0.1.7 soldeer tag's deploy constants"
           },
           {
             "repo": "rainlanguage/rain.erc4626.words",
@@ -2116,6 +2098,18 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 2840,
+      "url": "https://github.com/rainlanguage/raindex/issues/2840",
+      "title": "rainix-sol/static (slither) is red on main; #2838 merged over it"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 271,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/271",
+      "title": "Packed sub reverts ExponentUnderflow near EXPONENT_MIN where the unpacked reference path succeeds"
+    },
     {
       "repo": "rainlanguage/rain.erc4626.words",
       "number": 264,
@@ -6087,10 +6081,10 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 48,
+    "unvetted": 47,
     "blockedOn": 18,
     "ready": 1,
-    "needsWork": 104,
+    "needsWork": 103,
     "relink": 0,
     "design": 8,
     "blockedInfra": 0,
@@ -6098,16 +6092,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 180,
+    "totalProducerPrs": 178,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 657,
+    "uncoveredIssues": 659,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 811
+    "openIssues": 813
   },
   "ages": {
     "openIssues": {
-      "meanDays": 296.9,
+      "meanDays": 296.2,
       "medianDays": 115.2,
       "oldestDays": 1671.8
     }
