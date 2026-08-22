@@ -2148,6 +2148,12 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rainix",
+      "number": 355,
+      "url": "https://github.com/rainlanguage/rainix/issues/355",
+      "title": "rainix-static: assert every published Soldeer version still has its frozen src/generated record"
+    },
+    {
+      "repo": "rainlanguage/rainix",
       "number": 354,
       "url": "https://github.com/rainlanguage/rainix/issues/354",
       "title": "`subgraph-deploy` versions a deploy by the consumer repo commit, so a split-out subgraph source collides with itself"
@@ -6112,16 +6118,16 @@
     "leaks": 0,
     "totalProducerPrs": 185,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 654,
+    "uncoveredIssues": 655,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 809
+    "openIssues": 811
   },
   "ages": {
     "openIssues": {
-      "meanDays": 297.2,
+      "meanDays": 296.5,
       "medianDays": 114.8,
-      "oldestDays": 1671.4
+      "oldestDays": 1671.5
     }
   }
 }
