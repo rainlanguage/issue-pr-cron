@@ -931,8 +931,14 @@
         ]
       },
       "un-vetted": {
-        "count": 62,
+        "count": 63,
         "prs": [
+          {
+            "repo": "rainlanguage/rainlang",
+            "number": 564,
+            "url": "https://github.com/rainlanguage/rainlang/pull/564",
+            "title": "Expose the deploy reusable's legacy and verify inputs"
+          },
           {
             "repo": "rainlanguage/raindex",
             "number": 2842,
@@ -6633,7 +6639,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 62,
+    "unvetted": 63,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6644,7 +6650,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 192,
+    "totalProducerPrs": 193,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 738,
     "designPresentable": 8,
@@ -6653,9 +6659,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 270.8,
-      "medianDays": 96.3,
-      "oldestDays": 1672.7
+      "meanDays": 270.9,
+      "medianDays": 96.4,
+      "oldestDays": 1672.8
     }
   }
 }
