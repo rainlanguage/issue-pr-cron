@@ -931,8 +931,14 @@
         ]
       },
       "un-vetted": {
-        "count": 59,
+        "count": 60,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 237,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/237",
+            "title": "Round-2 adversarial-mutation-test coverage: query, magic CLI, validators, CopyArtifacts"
+          },
           {
             "repo": "rainlanguage/rain.metadata",
             "number": 224,
@@ -2158,6 +2164,42 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 236,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/236",
+      "title": "RainTitle validator message claims 'alphanumeric ASCII letters and spaces' but the regex accepts all printable ASCII and rejects edge spaces"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 235,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/235",
+      "title": "REGEX_RAIN_SYMBOL accepts trailing and consecutive hyphens despite documented kebab-case contract"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 234,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/234",
+      "title": "process_meta_query reports corrupt payloads, bad hex and GraphQL errors all as NoRecordFound, indistinguishable from absence"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 233,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/233",
+      "title": "str_to_bytes32 accepts embedded NULs that bytes32_to_str silently truncates: round trip loses data and distinct inputs collide"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 232,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/232",
+      "title": "Store::merge treats deployer_hash_map opposite to the other three maps: unconditional overwrite vs skip-if-present"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 231,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/231",
+      "title": "CLI solc artifact prints null with exit 0 when the requested component is missing from the artifact"
+    },
     {
       "repo": "rainlanguage/rain.metadata",
       "number": 230,
@@ -6537,7 +6579,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 59,
+    "unvetted": 60,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6548,18 +6590,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 189,
+    "totalProducerPrs": 190,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 725,
+    "uncoveredIssues": 731,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 879
+    "openIssues": 885
   },
   "ages": {
     "openIssues": {
-      "meanDays": 274.2,
-      "medianDays": 101.5,
-      "oldestDays": 1672.1
+      "meanDays": 272.4,
+      "medianDays": 101.3,
+      "oldestDays": 1672.2
     }
   }
 }
