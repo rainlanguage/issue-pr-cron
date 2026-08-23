@@ -931,8 +931,14 @@
         ]
       },
       "un-vetted": {
-        "count": 64,
+        "count": 65,
         "prs": [
+          {
+            "repo": "rainlanguage/raindex",
+            "number": 2843,
+            "url": "https://github.com/rainlanguage/raindex/pull/2843",
+            "title": "Take the MetaBoard dep from rain-metadata-deploy, not the split-away pin"
+          },
           {
             "repo": "rainlanguage/rainlang",
             "number": 563,
@@ -6627,7 +6633,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 64,
+    "unvetted": 65,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6638,7 +6644,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 194,
+    "totalProducerPrs": 195,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 735,
     "designPresentable": 8,
@@ -6647,9 +6653,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 271.4,
+      "meanDays": 271.5,
       "medianDays": 101.0,
-      "oldestDays": 1672.4
+      "oldestDays": 1672.5
     }
   }
 }
