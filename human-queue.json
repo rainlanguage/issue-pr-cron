@@ -2208,12 +2208,6 @@
     },
     {
       "repo": "rainlanguage/rain.metadata",
-      "number": 220,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/220",
-      "title": "InterpreterCallerMeta: documented 'at least one expression' intent is unenforced — Method.expressions may be empty while inputs requires min 1"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
       "number": 219,
       "url": "https://github.com/rainlanguage/rain.metadata/issues/219",
       "title": "Dotrain source subject is derived two ways: generate emits under keccak(cbor item map) while DotrainSourceV1::hash and the subject field docs say keccak(content)"
@@ -2745,6 +2739,12 @@
       "number": 332,
       "url": "https://github.com/rainlanguage/issue-pr-cron/issues/332",
       "title": "work-tokens derives landings from swept traces, so per-LANDED-item divides two different populations — read landed-history.jsonl instead"
+    },
+    {
+      "repo": "rainlanguage/adversarial-mutation-test",
+      "number": 28,
+      "url": "https://github.com/rainlanguage/adversarial-mutation-test/issues/28",
+      "title": "Schema check pins one rule on `equal to`, a phrase generic enough to pass with the rule deleted"
     },
     {
       "repo": "rainlanguage/adversarial-mutation-test",
@@ -6558,7 +6558,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 274.2,
-      "medianDays": 101.4,
+      "medianDays": 101.5,
       "oldestDays": 1672.1
     }
   }
