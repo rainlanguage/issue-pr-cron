@@ -931,19 +931,13 @@
         ]
       },
       "un-vetted": {
-        "count": 65,
+        "count": 63,
         "prs": [
           {
             "repo": "rainlanguage/raindex",
             "number": 2843,
             "url": "https://github.com/rainlanguage/raindex/pull/2843",
             "title": "Take the MetaBoard dep from rain-metadata-deploy, not the split-away pin"
-          },
-          {
-            "repo": "rainlanguage/rainlang",
-            "number": 563,
-            "url": "https://github.com/rainlanguage/rainlang/pull/563",
-            "title": "Migrate to the tag-driven release standard, in-repo"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -998,12 +992,6 @@
             "number": 193,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/193",
             "title": "AMT coverage: g3-graphql-query-processing"
-          },
-          {
-            "repo": "rainlanguage/rainlang",
-            "number": 562,
-            "url": "https://github.com/rainlanguage/rainlang/pull/562",
-            "title": "Bump [package].version to 0.1.9 for the solmem-chain release"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -6651,7 +6639,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 65,
+    "unvetted": 63,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6662,7 +6650,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 195,
+    "totalProducerPrs": 193,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 738,
     "designPresentable": 8,
@@ -6671,9 +6659,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 270.6,
-      "medianDays": 96.1,
-      "oldestDays": 1672.5
+      "meanDays": 270.7,
+      "medianDays": 96.2,
+      "oldestDays": 1672.6
     }
   }
 }
