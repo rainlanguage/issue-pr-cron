@@ -2195,6 +2195,24 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rainix",
+      "number": 359,
+      "url": "https://github.com/rainlanguage/rainix/issues/359",
+      "title": "Cap the comment-to-source line ratio in rainix-static, floor-only like agent-context-cap"
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 358,
+      "url": "https://github.com/rainlanguage/rainix/issues/358",
+      "title": "autopublish's crates lane pushes to a protected main: deleting a dead deploy key moves the failure, not fixes it"
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 357,
+      "url": "https://github.com/rainlanguage/rainix/issues/357",
+      "title": "copy-artifacts is untracked-blind while release-guard is not: a new generated file passes every PR and kills the tag"
+    },
+    {
       "repo": "rainlanguage/rain.deploy",
       "number": 153,
       "url": "https://github.com/rainlanguage/rain.deploy/issues/153",
@@ -6646,15 +6664,15 @@
     "leaks": 0,
     "totalProducerPrs": 195,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 735,
+    "uncoveredIssues": 738,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 889
+    "openIssues": 892
   },
   "ages": {
     "openIssues": {
-      "meanDays": 271.5,
-      "medianDays": 101.0,
+      "meanDays": 270.6,
+      "medianDays": 96.1,
       "oldestDays": 1672.5
     }
   }
