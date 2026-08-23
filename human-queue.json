@@ -931,8 +931,32 @@
         ]
       },
       "un-vetted": {
-        "count": 60,
+        "count": 64,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.metadata.deploy",
+            "number": 8,
+            "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/8",
+            "title": "Resolve the merge-conflict markers committed in .gitignore"
+          },
+          {
+            "repo": "rainlanguage/raindex",
+            "number": 2841,
+            "url": "https://github.com/rainlanguage/raindex/pull/2841",
+            "title": "Cut release 0.1.14: freeze candidate pins, target the standard seven networks"
+          },
+          {
+            "repo": "rainlanguage/rain.verify",
+            "number": 32,
+            "url": "https://github.com/rainlanguage/rain.verify/pull/32",
+            "title": "Bump rain-sol-codegen 0.1.0 -> 0.1.36 (companion: forge-std 1.16.2, rain-deploy 0.1.7)"
+          },
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 356,
+            "url": "https://github.com/rainlanguage/rainix/pull/356",
+            "title": "Publish npm via OIDC trusted publishing instead of NPM_PUBLISH_PRIVATE_TOKEN"
+          },
           {
             "repo": "rainlanguage/rain.metadata",
             "number": 237,
@@ -2164,6 +2188,30 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 153,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/153",
+      "title": "Stale comments claim 'this repo has released none' in three repos that now have frozen records"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection.deploy",
+      "number": 6,
+      "url": "https://github.com/rainlanguage/rain.extrospection.deploy/issues/6",
+      "title": "No PR-time currency check: generated drift is caught only at tag time, after the deploy"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 152,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/152",
+      "title": "No PR-time currency check: generated drift is caught only at tag time, after the deploy"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 151,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/151",
+      "title": "supportedNetworks() vs foundry.toml consistency test is not shipped, so no consumer has it"
+    },
     {
       "repo": "rainlanguage/rain.metadata",
       "number": 236,
@@ -6579,7 +6627,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 60,
+    "unvetted": 64,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6590,18 +6638,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 190,
+    "totalProducerPrs": 194,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 731,
+    "uncoveredIssues": 735,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 885
+    "openIssues": 889
   },
   "ages": {
     "openIssues": {
-      "meanDays": 272.6,
-      "medianDays": 101.4,
-      "oldestDays": 1672.3
+      "meanDays": 271.4,
+      "medianDays": 100.9,
+      "oldestDays": 1672.4
     }
   }
 }
