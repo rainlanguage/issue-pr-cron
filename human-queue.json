@@ -934,16 +934,16 @@
         "count": 64,
         "prs": [
           {
-            "repo": "rainlanguage/rain.metadata.deploy",
-            "number": 8,
-            "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/8",
-            "title": "Resolve the merge-conflict markers committed in .gitignore"
+            "repo": "rainlanguage/rainlang",
+            "number": 563,
+            "url": "https://github.com/rainlanguage/rainlang/pull/563",
+            "title": "Migrate to the tag-driven release standard, in-repo"
           },
           {
             "repo": "rainlanguage/raindex",
-            "number": 2841,
-            "url": "https://github.com/rainlanguage/raindex/pull/2841",
-            "title": "Cut release 0.1.14: freeze candidate pins, target the standard seven networks"
+            "number": 2842,
+            "url": "https://github.com/rainlanguage/raindex/pull/2842",
+            "title": "Float the suites declaration's pragma, as every other abstract here does"
           },
           {
             "repo": "rainlanguage/rain.verify",
@@ -6648,7 +6648,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 271.4,
-      "medianDays": 100.9,
+      "medianDays": 101.0,
       "oldestDays": 1672.4
     }
   }
