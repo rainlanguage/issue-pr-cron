@@ -931,8 +931,44 @@
         ]
       },
       "un-vetted": {
-        "count": 62,
+        "count": 68,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 35,
+            "url": "https://github.com/rainlanguage/rain.string/pull/35",
+            "title": "Pin every LibParseCMask constant to its ASCII semantics"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 78,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/78",
+            "title": "AMT coverage: g2-libicloneablefactoryv4-predi"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 77,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/77",
+            "title": "AMT coverage: g3-libicloneablefactoryv4-clone"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 76,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/76",
+            "title": "AMT coverage: g4-icloneablefactoryv3-newclone"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 75,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/75",
+            "title": "AMT coverage: g1-libicloneablefactoryv4-effec"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 34,
+            "url": "https://github.com/rainlanguage/rain.string/pull/34",
+            "title": "Add mutation-driven boundary tests for LibParseDecimal.unsafeDecimalStringToInt"
+          },
           {
             "repo": "rainlanguage/raindex",
             "number": 2842,
@@ -2176,6 +2212,90 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 74,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/74",
+      "title": "CloneDeploymentFailed's \"the exact clone asked for is already at the address\" is false on the namespaced derivation, which leaves data out"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 73,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/73",
+      "title": "checkImplementationCode admits an EIP-7702 delegated EOA, whose code the account holder can repoint or revoke after clones exist"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 72,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/72",
+      "title": "cloneAndInitialize reverts with empty revert data, not InitializationFailed, when the clone's initialize returns nothing"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 71,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/71",
+      "title": "Library NatSpec claims a delegating concrete cannot misroute the msg.sender namespacing, but effectiveSalt + cloneAndInitialize compose to a factory that does"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 70,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/70",
+      "title": "Boundary-value coverage of the salt derivations is fuzz-seed luck: max-salt mutants survive the whole suite"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 69,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/69",
+      "title": "ICloneableV2's normative NatSpec points implementers at the superseded ICloneableFactoryV2, and ICloneableV1 names a non-existent ICloneFactoryV1"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 68,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/68",
+      "title": "testCheckImplementationCodeEtched fails on unmutated source when the fuzzer draws 0xEF-prefixed code"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 67,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/67",
+      "title": "TestCloneable, the only worked ICloneableV2 fixture, violates the interface's once-only initialize MUST that ICloneableFactoryV4's open-salt safety argument rests on"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 66,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/66",
+      "title": "ICloneableFactoryV3 NatSpec conditions cross-chain clone-address identity on the factory address alone, which ICloneableFactoryV4 states is not sufficient"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 65,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/65",
+      "title": "NewClone is declared by three published interfaces under two signatures; ICloneableFactoryV1 and V2 share one topic0"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 64,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/64",
+      "title": "testCheckImplementationCodeEtched fails on unmutated main: vm.etch rejects fuzzed 0xEF-leading code"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 63,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/63",
+      "title": "ICloneableFactoryV3 cross-network determinism claim omits the implementation address, contradicting ICloneableFactoryV4"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 62,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/62",
+      "title": "predictDeterministicAddressOpenSalt NatSpec claims non-zero code implies initialized state, but the clone has code before initialize runs"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 61,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/61",
+      "title": "InitializationFailed is not raised when the implementation does not implement ICloneableV2.initialize — caller gets bare 0x"
+    },
     {
       "repo": "rainlanguage/rainix",
       "number": 359,
@@ -6633,7 +6753,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 62,
+    "unvetted": 68,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6644,18 +6764,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 192,
+    "totalProducerPrs": 198,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 738,
+    "uncoveredIssues": 752,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 892
+    "openIssues": 906
   },
   "ages": {
     "openIssues": {
-      "meanDays": 271.5,
-      "medianDays": 97.0,
-      "oldestDays": 1673.4
+      "meanDays": 267.4,
+      "medianDays": 89.2,
+      "oldestDays": 1673.5
     }
   }
 }
