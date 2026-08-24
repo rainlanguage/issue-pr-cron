@@ -931,19 +931,13 @@
         ]
       },
       "un-vetted": {
-        "count": 70,
+        "count": 69,
         "prs": [
           {
             "repo": "rainlanguage/rain.factory",
             "number": 80,
             "url": "https://github.com/rainlanguage/rain.factory/pull/80",
             "title": "test: fixtures out of the src mirror, and one conforming ICloneableV2"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 62,
-            "url": "https://github.com/rainlanguage/rain.string/pull/62",
-            "title": "Reject zero start pointer before the negative sign check in signed decimal parse"
           },
           {
             "repo": "rainlanguage/rain.string",
@@ -6831,7 +6825,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 70,
+    "unvetted": 69,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6842,17 +6836,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 200,
+    "totalProducerPrs": 199,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 763,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 921
+    "openIssues": 920
   },
   "ages": {
     "openIssues": {
-      "meanDays": 263.3,
-      "medianDays": 85.2,
+      "meanDays": 263.6,
+      "medianDays": 85.3,
       "oldestDays": 1673.8
     }
   }
