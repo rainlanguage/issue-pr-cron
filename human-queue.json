@@ -934,34 +934,34 @@
         "count": 69,
         "prs": [
           {
+            "repo": "rainlanguage/rain.string",
+            "number": 67,
+            "url": "https://github.com/rainlanguage/rain.string/pull/67",
+            "title": "Document the bytes4 selector contract on unsafeDecimalStringToSignedInt"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 66,
+            "url": "https://github.com/rainlanguage/rain.string/pull/66",
+            "title": "Correct 2-arg conformStringToMask docs on kept characters"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 65,
+            "url": "https://github.com/rainlanguage/rain.string/pull/65",
+            "title": "Reword stale boundLiteral comment in LibParseDecimal"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 64,
+            "url": "https://github.com/rainlanguage/rain.string/pull/64",
+            "title": "Document bare-selector contract for ParseEmptyDecimalString/ParseDecimalOverflow"
+          },
+          {
             "repo": "rainlanguage/rain.factory",
             "number": 80,
             "url": "https://github.com/rainlanguage/rain.factory/pull/80",
             "title": "test: fixtures out of the src mirror, and one conforming ICloneableV2"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 61,
-            "url": "https://github.com/rainlanguage/rain.string/pull/61",
-            "title": "Widen corruptSingleChar complement to uint256 so high-byte corruption is reachable"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 60,
-            "url": "https://github.com/rainlanguage/rain.string/pull/60",
-            "title": "Return zero beside the selector on signed overflow paths"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 59,
-            "url": "https://github.com/rainlanguage/rain.string/pull/59",
-            "title": "Document corruptSingleChar keeping already-invalid chars"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 58,
-            "url": "https://github.com/rainlanguage/rain.string/pull/58",
-            "title": "charFromMask: seed participates in every draw, including the first"
           },
           {
             "repo": "rainlanguage/rain.factory",
@@ -2262,39 +2262,15 @@
     },
     {
       "repo": "rainlanguage/rain.string",
-      "number": 51,
-      "url": "https://github.com/rainlanguage/rain.string/issues/51",
-      "title": "2-arg conformStringToMask comment says restrict to ASCII range, but kept characters may be >= 0x80"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
       "number": 47,
       "url": "https://github.com/rainlanguage/rain.string/issues/47",
       "title": "CMASK_LITERAL_HEX_DISPATCH safety argument: premise misstates the prefilter and the required comparison style is unstated"
     },
     {
       "repo": "rainlanguage/rain.string",
-      "number": 45,
-      "url": "https://github.com/rainlanguage/rain.string/issues/45",
-      "title": "Stale comment references boundLiteral, which does not exist in this repo"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
       "number": 44,
       "url": "https://github.com/rainlanguage/rain.string/issues/44",
       "title": "Invalid characters: silent success with a garbage value inside the last-77-digit window, ParseDecimalOverflow beyond it"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 43,
-      "url": "https://github.com/rainlanguage/rain.string/issues/43",
-      "title": "ParseEmptyDecimalString/ParseDecimalOverflow declare a position parameter nothing ever produces"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 40,
-      "url": "https://github.com/rainlanguage/rain.string/issues/40",
-      "title": "unsafeDecimalStringToSignedInt @return doc describes a 0/1 boolean that does not exist"
     },
     {
       "repo": "rainlanguage/rain.factory",
@@ -6838,14 +6814,14 @@
     "leaks": 0,
     "totalProducerPrs": 199,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 763,
+    "uncoveredIssues": 759,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 920
+    "openIssues": 916
   },
   "ages": {
     "openIssues": {
-      "meanDays": 263.6,
+      "meanDays": 264.8,
       "medianDays": 85.3,
       "oldestDays": 1673.8
     }
