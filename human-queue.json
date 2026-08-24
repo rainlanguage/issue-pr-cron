@@ -931,31 +931,13 @@
         ]
       },
       "un-vetted": {
-        "count": 69,
+        "count": 66,
         "prs": [
           {
             "repo": "rainlanguage/rain.string",
-            "number": 67,
-            "url": "https://github.com/rainlanguage/rain.string/pull/67",
-            "title": "Document the bytes4 selector contract on unsafeDecimalStringToSignedInt"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 66,
-            "url": "https://github.com/rainlanguage/rain.string/pull/66",
-            "title": "Correct 2-arg conformStringToMask docs on kept characters"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 65,
-            "url": "https://github.com/rainlanguage/rain.string/pull/65",
-            "title": "Reword stale boundLiteral comment in LibParseDecimal"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 64,
-            "url": "https://github.com/rainlanguage/rain.string/pull/64",
-            "title": "Document bare-selector contract for ParseEmptyDecimalString/ParseDecimalOverflow"
+            "number": 68,
+            "url": "https://github.com/rainlanguage/rain.string/pull/68",
+            "title": "Document the positional shape of invalid bytes in decimal parsing"
           },
           {
             "repo": "rainlanguage/rain.factory",
@@ -2261,18 +2243,6 @@
       "title": "Redundant first guard in conformStringToMask: both arms subsumed by the reachable-chars guard"
     },
     {
-      "repo": "rainlanguage/rain.string",
-      "number": 47,
-      "url": "https://github.com/rainlanguage/rain.string/issues/47",
-      "title": "CMASK_LITERAL_HEX_DISPATCH safety argument: premise misstates the prefilter and the required comparison style is unstated"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 44,
-      "url": "https://github.com/rainlanguage/rain.string/issues/44",
-      "title": "Invalid characters: silent success with a garbage value inside the last-77-digit window, ParseDecimalOverflow beyond it"
-    },
-    {
       "repo": "rainlanguage/rain.factory",
       "number": 79,
       "url": "https://github.com/rainlanguage/rain.factory/issues/79",
@@ -3345,12 +3315,6 @@
       "number": 298,
       "url": "https://github.com/rainlanguage/rainix/issues/298",
       "title": "CLAUDE.md defaults to empty: tool the repetition instead of documenting it"
-    },
-    {
-      "repo": "rainlanguage/rainix",
-      "number": 297,
-      "url": "https://github.com/rainlanguage/rainix/issues/297",
-      "title": "autopublish callers rely on a permissive repo setting: no caller declares permissions"
     },
     {
       "repo": "rainlanguage/rain.verify.interface",
@@ -6801,7 +6765,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 69,
+    "unvetted": 66,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6812,18 +6776,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 199,
+    "totalProducerPrs": 196,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 759,
+    "uncoveredIssues": 756,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 916
+    "openIssues": 910
   },
   "ages": {
     "openIssues": {
-      "meanDays": 264.8,
-      "medianDays": 85.3,
-      "oldestDays": 1673.8
+      "meanDays": 266.6,
+      "medianDays": 88.9,
+      "oldestDays": 1673.9
     }
   }
 }
