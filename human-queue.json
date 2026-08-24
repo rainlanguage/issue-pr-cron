@@ -931,8 +931,26 @@
         ]
       },
       "un-vetted": {
-        "count": 68,
+        "count": 71,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 54,
+            "url": "https://github.com/rainlanguage/rain.string/pull/54",
+            "title": "Record the 2026-08-24 whole-repo adversarial mutation-test scan"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 37,
+            "url": "https://github.com/rainlanguage/rain.string/pull/37",
+            "title": "Mutation-driven test coverage for LibConformString"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 36,
+            "url": "https://github.com/rainlanguage/rain.string/pull/36",
+            "title": "Add edge case tests for unsafeDecimalStringToSignedInt error paths and overflow boundaries"
+          },
           {
             "repo": "rainlanguage/rain.string",
             "number": 35,
@@ -2213,6 +2231,108 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain.string",
+      "number": 53,
+      "url": "https://github.com/rainlanguage/rain.string/issues/53",
+      "title": "Redundant first guard in conformStringToMask: both arms subsumed by the reachable-chars guard"
+    },
+    {
+      "repo": "rainlanguage/rain.string",
+      "number": 52,
+      "url": "https://github.com/rainlanguage/rain.string/issues/52",
+      "title": "charFromMask ignores the seed whenever mask bit 0 is set, and generally biases to the lowest reachable bit"
+    },
+    {
+      "repo": "rainlanguage/rain.string",
+      "number": 51,
+      "url": "https://github.com/rainlanguage/rain.string/issues/51",
+      "title": "2-arg conformStringToMask comment says restrict to ASCII range, but kept characters may be >= 0x80"
+    },
+    {
+      "repo": "rainlanguage/rain.string",
+      "number": 50,
+      "url": "https://github.com/rainlanguage/rain.string/issues/50",
+      "title": "corruptSingleChar leaves an already-invalid character unchanged though its doc says the character is replaced"
+    },
+    {
+      "repo": "rainlanguage/rain.string",
+      "number": 49,
+      "url": "https://github.com/rainlanguage/rain.string/issues/49",
+      "title": "corruptSingleChar can never produce a corruption byte >= 0x80"
+    },
+    {
+      "repo": "rainlanguage/rain.string",
+      "number": 48,
+      "url": "https://github.com/rainlanguage/rain.string/issues/48",
+      "title": "CMASK_ prefix on constants that are byte values, not character masks"
+    },
+    {
+      "repo": "rainlanguage/rain.string",
+      "number": 47,
+      "url": "https://github.com/rainlanguage/rain.string/issues/47",
+      "title": "CMASK_LITERAL_HEX_DISPATCH safety argument: premise misstates the prefilter and the required comparison style is unstated"
+    },
+    {
+      "repo": "rainlanguage/rain.string",
+      "number": 46,
+      "url": "https://github.com/rainlanguage/rain.string/issues/46",
+      "title": "uint128 CMASK constants vs uint256 mask consumers: complement and range docs claim byte-domain semantics the masks cannot have"
+    },
+    {
+      "repo": "rainlanguage/rain.string",
+      "number": 45,
+      "url": "https://github.com/rainlanguage/rain.string/issues/45",
+      "title": "Stale comment references boundLiteral, which does not exist in this repo"
+    },
+    {
+      "repo": "rainlanguage/rain.string",
+      "number": 44,
+      "url": "https://github.com/rainlanguage/rain.string/issues/44",
+      "title": "Invalid characters: silent success with a garbage value inside the last-77-digit window, ParseDecimalOverflow beyond it"
+    },
+    {
+      "repo": "rainlanguage/rain.string",
+      "number": 43,
+      "url": "https://github.com/rainlanguage/rain.string/issues/43",
+      "title": "ParseEmptyDecimalString/ParseDecimalOverflow declare a position parameter nothing ever produces"
+    },
+    {
+      "repo": "rainlanguage/rain.string",
+      "number": 42,
+      "url": "https://github.com/rainlanguage/rain.string/issues/42",
+      "title": "Negative-sign check runs before the zero-start-pointer guard: 0x2D at memory address 0 bypasses ZeroStringStartPointer"
+    },
+    {
+      "repo": "rainlanguage/rain.string",
+      "number": 41,
+      "url": "https://github.com/rainlanguage/rain.string/issues/41",
+      "title": "Signed overflow paths return a wrapped garbage value beside the error selector; the inner-error path returns 0"
+    },
+    {
+      "repo": "rainlanguage/rain.string",
+      "number": 40,
+      "url": "https://github.com/rainlanguage/rain.string/issues/40",
+      "title": "unsafeDecimalStringToSignedInt @return doc describes a 0/1 boolean that does not exist"
+    },
+    {
+      "repo": "rainlanguage/rain.string",
+      "number": 39,
+      "url": "https://github.com/rainlanguage/rain.string/issues/39",
+      "title": "skipMask NatSpec says it DOES NOT check cursor range, but the loop checks lt(cursor, end) every iteration"
+    },
+    {
+      "repo": "rainlanguage/rain.string",
+      "number": 38,
+      "url": "https://github.com/rainlanguage/rain.string/issues/38",
+      "title": "LibParseChar reads memory unconditionally under non-short-circuit Yul and(): out-of-allocation reads despite memory-safe, OOG for far-past-end cursors"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 79,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/79",
+      "title": "NewClone's V3 NatSpec calls the clone address a pure function of (implementation, sender, salt), which is false on the open-salt derivation"
+    },
+    {
       "repo": "rainlanguage/rain.factory",
       "number": 74,
       "url": "https://github.com/rainlanguage/rain.factory/issues/74",
@@ -2223,12 +2343,6 @@
       "number": 73,
       "url": "https://github.com/rainlanguage/rain.factory/issues/73",
       "title": "checkImplementationCode admits an EIP-7702 delegated EOA, whose code the account holder can repoint or revoke after clones exist"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 72,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/72",
-      "title": "cloneAndInitialize reverts with empty revert data, not InitializationFailed, when the clone's initialize returns nothing"
     },
     {
       "repo": "rainlanguage/rain.factory",
@@ -2250,21 +2364,9 @@
     },
     {
       "repo": "rainlanguage/rain.factory",
-      "number": 68,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/68",
-      "title": "testCheckImplementationCodeEtched fails on unmutated source when the fuzzer draws 0xEF-prefixed code"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
       "number": 67,
       "url": "https://github.com/rainlanguage/rain.factory/issues/67",
       "title": "TestCloneable, the only worked ICloneableV2 fixture, violates the interface's once-only initialize MUST that ICloneableFactoryV4's open-salt safety argument rests on"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 66,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/66",
-      "title": "ICloneableFactoryV3 NatSpec conditions cross-chain clone-address identity on the factory address alone, which ICloneableFactoryV4 states is not sufficient"
     },
     {
       "repo": "rainlanguage/rain.factory",
@@ -6753,7 +6855,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 68,
+    "unvetted": 71,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6764,17 +6866,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 198,
+    "totalProducerPrs": 201,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 752,
+    "uncoveredIssues": 766,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 906
+    "openIssues": 920
   },
   "ages": {
     "openIssues": {
-      "meanDays": 267.4,
-      "medianDays": 89.2,
+      "meanDays": 263.3,
+      "medianDays": 85.0,
       "oldestDays": 1673.5
     }
   }
