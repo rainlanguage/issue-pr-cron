@@ -931,31 +931,61 @@
         ]
       },
       "un-vetted": {
-        "count": 71,
+        "count": 73,
         "prs": [
           {
-            "repo": "rainlanguage/rain.string",
-            "number": 54,
-            "url": "https://github.com/rainlanguage/rain.string/pull/54",
-            "title": "Record the 2026-08-24 whole-repo adversarial mutation-test scan"
+            "repo": "rainlanguage/rain.factory",
+            "number": 80,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/80",
+            "title": "test: fixtures out of the src mirror, and one conforming ICloneableV2"
           },
           {
             "repo": "rainlanguage/rain.string",
-            "number": 37,
-            "url": "https://github.com/rainlanguage/rain.string/pull/37",
-            "title": "Mutation-driven test coverage for LibConformString"
+            "number": 63,
+            "url": "https://github.com/rainlanguage/rain.string/pull/63",
+            "title": "Condition LibParseChar loads on cursor range so memory-safe holds"
           },
           {
             "repo": "rainlanguage/rain.string",
-            "number": 36,
-            "url": "https://github.com/rainlanguage/rain.string/pull/36",
-            "title": "Add edge case tests for unsafeDecimalStringToSignedInt error paths and overflow boundaries"
+            "number": 62,
+            "url": "https://github.com/rainlanguage/rain.string/pull/62",
+            "title": "Reject zero start pointer before the negative sign check in signed decimal parse"
           },
           {
             "repo": "rainlanguage/rain.string",
-            "number": 35,
-            "url": "https://github.com/rainlanguage/rain.string/pull/35",
-            "title": "Pin every LibParseCMask constant to its ASCII semantics"
+            "number": 61,
+            "url": "https://github.com/rainlanguage/rain.string/pull/61",
+            "title": "Widen corruptSingleChar complement to uint256 so high-byte corruption is reachable"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 60,
+            "url": "https://github.com/rainlanguage/rain.string/pull/60",
+            "title": "Return zero beside the selector on signed overflow paths"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 59,
+            "url": "https://github.com/rainlanguage/rain.string/pull/59",
+            "title": "Document corruptSingleChar keeping already-invalid chars"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 58,
+            "url": "https://github.com/rainlanguage/rain.string/pull/58",
+            "title": "Narrow charFromMask NatSpec to its deterministic probe-from-zero behavior"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 57,
+            "url": "https://github.com/rainlanguage/rain.string/pull/57",
+            "title": "Document the 7-bit ASCII domain of the CMASK constants"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 56,
+            "url": "https://github.com/rainlanguage/rain.string/pull/56",
+            "title": "Document byte-value hazard on CMASK_COMMENT_END_SEQUENCE_END and CMASK_LITERAL_HEX_DISPATCH_START"
           },
           {
             "repo": "rainlanguage/rain.factory",
@@ -980,12 +1010,6 @@
             "number": 75,
             "url": "https://github.com/rainlanguage/rain.factory/pull/75",
             "title": "AMT coverage: g1-libicloneablefactoryv4-effec"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 34,
-            "url": "https://github.com/rainlanguage/rain.string/pull/34",
-            "title": "Add mutation-driven boundary tests for LibParseDecimal.unsafeDecimalStringToInt"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -1129,12 +1153,6 @@
             "repo": "rainlanguage/rain.vats",
             "number": 336,
             "url": "https://github.com/rainlanguage/rain.vats/pull/336",
-            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 33,
-            "url": "https://github.com/rainlanguage/rain.string/pull/33",
             "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
           },
           {
@@ -1310,12 +1328,6 @@
             "number": 18,
             "url": "https://github.com/rainlanguage/rain.merkle/pull/18",
             "title": "Remove submodule-era residue: dead REUSE.toml annotations and dead lib/rain.interpreter workflow steps"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 30,
-            "url": "https://github.com/rainlanguage/rain.string/pull/30",
-            "title": "chore: remove submodule-era residue — dead foundry.lock, .gitmodules and lib/ references"
           },
           {
             "repo": "rainlanguage/rain.intorastring",
@@ -2238,45 +2250,15 @@
     },
     {
       "repo": "rainlanguage/rain.string",
-      "number": 52,
-      "url": "https://github.com/rainlanguage/rain.string/issues/52",
-      "title": "charFromMask ignores the seed whenever mask bit 0 is set, and generally biases to the lowest reachable bit"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
       "number": 51,
       "url": "https://github.com/rainlanguage/rain.string/issues/51",
       "title": "2-arg conformStringToMask comment says restrict to ASCII range, but kept characters may be >= 0x80"
     },
     {
       "repo": "rainlanguage/rain.string",
-      "number": 50,
-      "url": "https://github.com/rainlanguage/rain.string/issues/50",
-      "title": "corruptSingleChar leaves an already-invalid character unchanged though its doc says the character is replaced"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 49,
-      "url": "https://github.com/rainlanguage/rain.string/issues/49",
-      "title": "corruptSingleChar can never produce a corruption byte >= 0x80"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 48,
-      "url": "https://github.com/rainlanguage/rain.string/issues/48",
-      "title": "CMASK_ prefix on constants that are byte values, not character masks"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
       "number": 47,
       "url": "https://github.com/rainlanguage/rain.string/issues/47",
       "title": "CMASK_LITERAL_HEX_DISPATCH safety argument: premise misstates the prefilter and the required comparison style is unstated"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 46,
-      "url": "https://github.com/rainlanguage/rain.string/issues/46",
-      "title": "uint128 CMASK constants vs uint256 mask consumers: complement and range docs claim byte-domain semantics the masks cannot have"
     },
     {
       "repo": "rainlanguage/rain.string",
@@ -2298,33 +2280,9 @@
     },
     {
       "repo": "rainlanguage/rain.string",
-      "number": 42,
-      "url": "https://github.com/rainlanguage/rain.string/issues/42",
-      "title": "Negative-sign check runs before the zero-start-pointer guard: 0x2D at memory address 0 bypasses ZeroStringStartPointer"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 41,
-      "url": "https://github.com/rainlanguage/rain.string/issues/41",
-      "title": "Signed overflow paths return a wrapped garbage value beside the error selector; the inner-error path returns 0"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
       "number": 40,
       "url": "https://github.com/rainlanguage/rain.string/issues/40",
       "title": "unsafeDecimalStringToSignedInt @return doc describes a 0/1 boolean that does not exist"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 39,
-      "url": "https://github.com/rainlanguage/rain.string/issues/39",
-      "title": "skipMask NatSpec says it DOES NOT check cursor range, but the loop checks lt(cursor, end) every iteration"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 38,
-      "url": "https://github.com/rainlanguage/rain.string/issues/38",
-      "title": "LibParseChar reads memory unconditionally under non-short-circuit Yul and(): out-of-allocation reads despite memory-safe, OOG for far-past-end cursors"
     },
     {
       "repo": "rainlanguage/rain.factory",
@@ -6855,7 +6813,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 71,
+    "unvetted": 73,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6866,16 +6824,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 201,
+    "totalProducerPrs": 203,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 766,
+    "uncoveredIssues": 757,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 920
+    "openIssues": 919
   },
   "ages": {
     "openIssues": {
-      "meanDays": 263.4,
+      "meanDays": 263.7,
       "medianDays": 85.1,
       "oldestDays": 1673.6
     }
