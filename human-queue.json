@@ -931,19 +931,13 @@
         ]
       },
       "un-vetted": {
-        "count": 73,
+        "count": 71,
         "prs": [
           {
             "repo": "rainlanguage/rain.factory",
             "number": 80,
             "url": "https://github.com/rainlanguage/rain.factory/pull/80",
             "title": "test: fixtures out of the src mirror, and one conforming ICloneableV2"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 63,
-            "url": "https://github.com/rainlanguage/rain.string/pull/63",
-            "title": "Condition LibParseChar loads on cursor range so memory-safe holds"
           },
           {
             "repo": "rainlanguage/rain.string",
@@ -980,12 +974,6 @@
             "number": 57,
             "url": "https://github.com/rainlanguage/rain.string/pull/57",
             "title": "Document the 7-bit ASCII domain of the CMASK constants"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 56,
-            "url": "https://github.com/rainlanguage/rain.string/pull/56",
-            "title": "Document byte-value hazard on CMASK_COMMENT_END_SEQUENCE_END and CMASK_LITERAL_HEX_DISPATCH_START"
           },
           {
             "repo": "rainlanguage/rain.factory",
@@ -6813,7 +6801,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 73,
+    "unvetted": 71,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6824,18 +6812,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 203,
+    "totalProducerPrs": 201,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 757,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 919
+    "openIssues": 916
   },
   "ages": {
     "openIssues": {
-      "meanDays": 263.7,
-      "medianDays": 85.1,
-      "oldestDays": 1673.6
+      "meanDays": 264.7,
+      "medianDays": 85.2,
+      "oldestDays": 1673.7
     }
   }
 }
