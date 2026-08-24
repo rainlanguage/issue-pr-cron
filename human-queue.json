@@ -931,7 +931,7 @@
         ]
       },
       "un-vetted": {
-        "count": 71,
+        "count": 70,
         "prs": [
           {
             "repo": "rainlanguage/rain.factory",
@@ -967,13 +967,7 @@
             "repo": "rainlanguage/rain.string",
             "number": 58,
             "url": "https://github.com/rainlanguage/rain.string/pull/58",
-            "title": "Narrow charFromMask NatSpec to its deterministic probe-from-zero behavior"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 57,
-            "url": "https://github.com/rainlanguage/rain.string/pull/57",
-            "title": "Widen CMASK_* masks to uint256 and complement CMASK_NOT_IDENTIFIER_TAIL over the full byte domain"
+            "title": "charFromMask: seed participates in every draw, including the first"
           },
           {
             "repo": "rainlanguage/rain.factory",
@@ -2230,6 +2224,42 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.math.fixedpoint",
+      "number": 33,
+      "url": "https://github.com/rainlanguage/rain.math.fixedpoint/issues/33",
+      "title": "Dead CMask imports in LibFixedPointDecimalStrings"
+    },
+    {
+      "repo": "rainlanguage/adversarial-mutation-test",
+      "number": 33,
+      "url": "https://github.com/rainlanguage/adversarial-mutation-test/issues/33",
+      "title": "Documented fail-pattern example cannot match forge fuzz FAIL lines: killer names silently dropped when counterexamples embed ] in args"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 567,
+      "url": "https://github.com/rainlanguage/rainlang/issues/567",
+      "title": "Pragma keyword fuzz tests draw their random char via charFromMask on complement masks, so every run tests exactly NUL"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 272,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/272",
+      "title": "Coefficient and exponent signs use skip-many for an optional-single dash: multi-dash input is rejected only by accidental arithmetic wrap, with a misleading overflow selector"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 566,
+      "url": "https://github.com/rainlanguage/rainlang/issues/566",
+      "title": "Sub-parseable literal scans complement uint128 masks: high bytes halt the scan, contradicting the UTF-8 comment, and the semantics silently flip when rain.string widens to uint256"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 565,
+      "url": "https://github.com/rainlanguage/rainlang/issues/565",
+      "title": "RHS literal branch has no yang guard: adjacent literals parse without whitespace between them"
+    },
     {
       "repo": "rainlanguage/rain.string",
       "number": 53,
@@ -6801,7 +6831,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 71,
+    "unvetted": 70,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6812,18 +6842,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 201,
+    "totalProducerPrs": 200,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 757,
+    "uncoveredIssues": 763,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 916
+    "openIssues": 921
   },
   "ages": {
     "openIssues": {
-      "meanDays": 264.7,
+      "meanDays": 263.3,
       "medianDays": 85.2,
-      "oldestDays": 1673.7
+      "oldestDays": 1673.8
     }
   }
 }
