@@ -973,7 +973,7 @@
             "repo": "rainlanguage/rain.string",
             "number": 57,
             "url": "https://github.com/rainlanguage/rain.string/pull/57",
-            "title": "Document the 7-bit ASCII domain of the CMASK constants"
+            "title": "Widen CMASK_* masks to uint256 and complement CMASK_NOT_IDENTIFIER_TAIL over the full byte domain"
           },
           {
             "repo": "rainlanguage/rain.factory",
