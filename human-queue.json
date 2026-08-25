@@ -931,7 +931,7 @@
         ]
       },
       "un-vetted": {
-        "count": 56,
+        "count": 55,
         "prs": [
           {
             "repo": "rainlanguage/raindex",
@@ -1010,12 +1010,6 @@
             "number": 197,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/197",
             "title": "AMT coverage: g6-cli-plumbing-output-enco"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 193,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/193",
-            "title": "AMT coverage: g3-graphql-query-processing"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -6819,7 +6813,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 56,
+    "unvetted": 55,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6830,7 +6824,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 186,
+    "totalProducerPrs": 185,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 775,
     "designPresentable": 8,
@@ -6840,7 +6834,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 262.2,
-      "medianDays": 83.4,
+      "medianDays": 83.5,
       "oldestDays": 1674.7
     }
   }
