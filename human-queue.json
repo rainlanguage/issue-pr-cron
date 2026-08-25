@@ -934,10 +934,10 @@
         "count": 66,
         "prs": [
           {
-            "repo": "rainlanguage/rain.string",
-            "number": 101,
-            "url": "https://github.com/rainlanguage/rain.string/pull/101",
-            "title": "audit: append run stamp + scope (0.35.0)"
+            "repo": "rainlanguage/rainlang",
+            "number": 568,
+            "url": "https://github.com/rainlanguage/rainlang/pull/568",
+            "title": "Cut release 0.1.9: freeze candidate pins as src/generated/0_1_9/"
           },
           {
             "repo": "rainlanguage/rain.factory",
@@ -2373,12 +2373,6 @@
       "number": 72,
       "url": "https://github.com/rainlanguage/rain.string/issues/72",
       "title": "[AUD-002] [MEDIUM] Publish workflow races the test workflow on push to main: a red merge still publishes to soldeer"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 71,
-      "url": "https://github.com/rainlanguage/rain.string/issues/71",
-      "title": "[AUD-001] [MEDIUM] README Publish section documents a retired release process; the stale text ships inside every published soldeer zip"
     },
     {
       "repo": "rainlanguage/rain.math.fixedpoint",
@@ -6952,16 +6946,16 @@
     "leaks": 0,
     "totalProducerPrs": 196,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 785,
+    "uncoveredIssues": 784,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 938
+    "openIssues": 937
   },
   "ages": {
     "openIssues": {
-      "meanDays": 259.1,
-      "medianDays": 79.8,
-      "oldestDays": 1674.3
+      "meanDays": 259.4,
+      "medianDays": 79.9,
+      "oldestDays": 1674.4
     }
   }
 }
