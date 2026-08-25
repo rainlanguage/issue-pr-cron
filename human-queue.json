@@ -931,8 +931,20 @@
         ]
       },
       "un-vetted": {
-        "count": 59,
+        "count": 61,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.tofu.erc20-decimals",
+            "number": 38,
+            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/38",
+            "title": "ci: grant actions: read for the autopublish commit-CI gate"
+          },
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 362,
+            "url": "https://github.com/rainlanguage/rainix/pull/362",
+            "title": "Gate autopublish on the pushed commit's own CI (rainix-static ci-gate)"
+          },
           {
             "repo": "rainlanguage/raindex",
             "number": 2846,
@@ -2883,12 +2895,6 @@
       "number": 327,
       "url": "https://github.com/rainlanguage/rainix/issues/327",
       "title": "Nothing fails when a Solidity package public surface changes and the version bumps only a patch"
-    },
-    {
-      "repo": "rainlanguage/rainix",
-      "number": 326,
-      "url": "https://github.com/rainlanguage/rainix/issues/326",
-      "title": "rainix-autopublish publishes a Soldeer package without running the repo Solidity tests, so a red main ships an immutable revision"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -6735,7 +6741,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 59,
+    "unvetted": 61,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6746,9 +6752,9 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 189,
+    "totalProducerPrs": 191,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 758,
+    "uncoveredIssues": 757,
     "designPresentable": 8,
     "designNoQuestion": 0,
     "openIssues": 911
