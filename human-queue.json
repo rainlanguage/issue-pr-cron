@@ -931,8 +931,110 @@
         ]
       },
       "un-vetted": {
-        "count": 79,
+        "count": 92,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 278,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/278",
+            "title": "Give the crate a document level cbor decoder for the spec's MUST-discard rule"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 277,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/277",
+            "title": "fix: op meta v1 documents are arrays of opcodes"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 276,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/276",
+            "title": "reject duplicate cbor map keys on meta item decode"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 275,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/275",
+            "title": "Cap ContextColumn.cells at u8::MAX, matching context_columns"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 274,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/274",
+            "title": "fix: drop unknown-magic items in cbor_decode instead of failing the document"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 273,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/273",
+            "title": "Retire KnownSubgraphs and the subgraph subcommand: every endpoint is on the decommissioned hosted service"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 272,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/272",
+            "title": "fix: emit generic metas as a rain meta document, not a bare cbor map"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 271,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/271",
+            "title": "propagate the IDescribedByMetaV1 probe error out of implements_i_described_by_meta_v1"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 270,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/270",
+            "title": "fix: correct InterpreterCallerMeta.desc doc comment and 'feild' typos"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 269,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/269",
+            "title": "fix: drop unreachable sub-conditions from the cbor_decode corrupt-meta guard"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 268,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/268",
+            "title": "Add KnownMagic::WebDataV1 for the spec's 0xff5dcce9b571ba42"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 267,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/267",
+            "title": "Drop cbor items missing mandatory keys 0/1 instead of failing the whole document"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 266,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/266",
+            "title": "schema ls: list only the metas schema show can produce"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 265,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/265",
+            "title": "Fail CynicClient::query on a non-2xx HTTP status"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 264,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/264",
+            "title": "Make CynicClientError::Empty reachable for missing-data responses"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 263,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/263",
+            "title": "fix(cli): gate authoring-meta-v2 normalize on an abi decode"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 262,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/262",
+            "title": "Split the empty-result error into by-hash and by-subject variants"
+          },
           {
             "repo": "rainlanguage/rain.metadata",
             "number": 261,
@@ -1081,25 +1183,7 @@
             "repo": "rainlanguage/rain.datacontract",
             "number": 96,
             "url": "https://github.com/rainlanguage/rain.datacontract/pull/96",
-            "title": "Mask readSlice uint16 params where they enter assembly"
-          },
-          {
-            "repo": "rainlanguage/rain.datacontract",
-            "number": 95,
-            "url": "https://github.com/rainlanguage/rain.datacontract/pull/95",
-            "title": "test: pin deployment-context independence of data contract creation code"
-          },
-          {
-            "repo": "rainlanguage/rain.datacontract",
-            "number": 87,
-            "url": "https://github.com/rainlanguage/rain.datacontract/pull/87",
-            "title": "Move LibDataContract test into mirror tree test/src/lib/"
-          },
-          {
-            "repo": "rainlanguage/rain.datacontract",
-            "number": 81,
-            "url": "https://github.com/rainlanguage/rain.datacontract/pull/81",
-            "title": "Remove unused console2 import from LibDataContract.t.sol"
+            "title": "readSlice takes uint256 start/length; masks are explicit domain truncation"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -1201,12 +1285,6 @@
             "repo": "rainlanguage/rain.solmem",
             "number": 152,
             "url": "https://github.com/rainlanguage/rain.solmem/pull/152",
-            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
-          },
-          {
-            "repo": "rainlanguage/rain.sol.codegen",
-            "number": 145,
-            "url": "https://github.com/rainlanguage/rain.sol.codegen/pull/145",
             "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
           },
           {
@@ -2232,12 +2310,6 @@
   ],
   "closeCandidateIssues": [
     {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 184,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/184",
-      "title": "LibMeta fuzz oracles asserted raw fuzz data is never rain meta; counterexample 0xff0a89c674ee7874 falsifies three tests on unmutated code"
-    },
-    {
       "repo": "rainlanguage/rain.dia",
       "number": 14,
       "url": "https://github.com/rainlanguage/rain.dia/issues/14",
@@ -2610,12 +2682,6 @@
     },
     {
       "repo": "rainlanguage/rain.metadata",
-      "number": 203,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/203",
-      "title": "cbor_decode accepts input without the rain meta document prefix; spec says tooling MUST discard data not beginning with the magic number"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
       "number": 201,
       "url": "https://github.com/rainlanguage/rain.metadata/issues/201",
       "title": "get_authoring_meta stops at the first AuthoringMetaV1 map on failure and collapses all failure modes into None"
@@ -2634,39 +2700,9 @@
     },
     {
       "repo": "rainlanguage/rain.metadata",
-      "number": 198,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/198",
-      "title": "Expression.context_columns capped at 255 while ContextColumn.cells is unbounded — u8 addressing suggests 256 and a matching cells cap"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 196,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/196",
-      "title": "InterpreterCallerMeta.desc doc comment is a copy-paste of abi_name's (\"Name of the caller...\"), plus 'feild' typos"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
       "number": 194,
       "url": "https://github.com/rainlanguage/rain.metadata/issues/194",
       "title": "InterpreterCallerMeta::try_from(RainMetaDocumentV1Item) ignores the item's magic, accepting a mismatched intent signal"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 192,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/192",
-      "title": "generate_emit_meta_calldata emits meta bytes without the rain-meta-document-v1 magic prefix the metadata-v1 spec requires"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 191,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/191",
-      "title": "RainMetaDocumentV1Item decode accepts duplicate cbor map keys with last-wins instead of treating the map as invalid"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 190,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/190",
-      "title": "cbor_decode corrupt-meta guard carries unreachable sub-conditions (eof offset equality, track/metas length) — equivalent-mutant evidence"
     },
     {
       "repo": "rainlanguage/rain.metadata",
@@ -2682,63 +2718,9 @@
     },
     {
       "repo": "rainlanguage/rain.metadata",
-      "number": 187,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/187",
-      "title": "KnownMagic is missing Web data v1 (0xff5dcce9b571ba42) listed in the metadata-v1 spec magic number table"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 186,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/186",
-      "title": "cbor_decode rejects entire documents containing unknown-magic items; spec expects unsupported metas to be droppable/ignorable"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
       "number": 184,
       "url": "https://github.com/rainlanguage/rain.metadata/issues/184",
       "title": "LibMeta fuzz oracles asserted raw fuzz data is never rain meta; counterexample 0xff0a89c674ee7874 falsifies three tests on unmutated code"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 182,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/182",
-      "title": "CynicClient::query ignores HTTP status: non-2xx responses are decoded blindly and surface as decode errors"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 181,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/181",
-      "title": "schema ls advertises 13 metas but schema show supports only 4 of them"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 180,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/180",
-      "title": "KnownSubgraphs endpoints all target the decommissioned Graph hosted service (301 to error document)"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 179,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/179",
-      "title": "Empty-result error Display labels a subject query value as a metahash"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 178,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/178",
-      "title": "CynicClientError::Empty is unreachable from CynicClient::query: missing/null data surfaces as a Request decode error"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 175,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/175",
-      "title": "implements_i_described_by_meta_v1 reports transport/decode errors as 'does not implement', erasing rain-erc's documented 'answer unknown' distinction"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 174,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/174",
-      "title": "KnownMeta::AuthoringMetaV2 normalize/validate accepts arbitrary bytes through the pure-bytes passthrough arm"
     },
     {
       "repo": "rainlanguage/rainlang",
@@ -6717,28 +6699,28 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 79,
+    "unvetted": 92,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
     "relink": 0,
     "design": 8,
     "blockedInfra": 0,
-    "closeCandidateIssues": 4,
+    "closeCandidateIssues": 3,
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 209,
+    "totalProducerPrs": 222,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 734,
+    "uncoveredIssues": 719,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 915
+    "openIssues": 912
   },
   "ages": {
     "openIssues": {
-      "meanDays": 266.0,
-      "medianDays": 86.3,
+      "meanDays": 266.9,
+      "medianDays": 89.0,
       "oldestDays": 1674.8
     }
   }
