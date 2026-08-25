@@ -931,20 +931,8 @@
         ]
       },
       "un-vetted": {
-        "count": 61,
+        "count": 56,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.tofu.erc20-decimals",
-            "number": 38,
-            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/pull/38",
-            "title": "ci: grant actions: read for the autopublish commit-CI gate"
-          },
-          {
-            "repo": "rainlanguage/rainix",
-            "number": 362,
-            "url": "https://github.com/rainlanguage/rainix/pull/362",
-            "title": "Gate autopublish on the pushed commit's own CI (rainix-static ci-gate)"
-          },
           {
             "repo": "rainlanguage/raindex",
             "number": 2846,
@@ -1028,24 +1016,6 @@
             "number": 193,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/193",
             "title": "AMT coverage: g3-graphql-query-processing"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 185,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/185",
-            "title": "AMT coverage: g2-knownmeta-normalize-norm"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 183,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/183",
-            "title": "AMT coverage: g4-dotrainsourcev1-hash-fet"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 152,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/152",
-            "title": "AMT coverage: g7-libdescribedbymeta-emitf"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -3465,12 +3435,6 @@
       "number": 33,
       "url": "https://github.com/rainlanguage/rain.pyth/issues/33",
       "title": "Split deploy half out of rain.pyth (rainix#296)"
-    },
-    {
-      "repo": "rainlanguage/rain.tofu.erc20-decimals",
-      "number": 29,
-      "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals/issues/29",
-      "title": "Split deploy half out of rain.tofu.erc20-decimals (rainix#296)"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -6855,7 +6819,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 61,
+    "unvetted": 56,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6866,18 +6830,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 191,
+    "totalProducerPrs": 186,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 776,
+    "uncoveredIssues": 775,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 930
+    "openIssues": 928
   },
   "ages": {
     "openIssues": {
-      "meanDays": 261.6,
-      "medianDays": 82.5,
-      "oldestDays": 1674.6
+      "meanDays": 262.2,
+      "medianDays": 83.4,
+      "oldestDays": 1674.7
     }
   }
 }

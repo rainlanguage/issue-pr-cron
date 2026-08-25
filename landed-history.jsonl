@@ -411,3 +411,8 @@
 {"ts":"2026-08-25T09:57:07Z","observedAt":"2026-08-25T10:32:35Z","kind":"pr","repo":"rainlanguage/rain.verify","number":32}
 {"ts":"2026-08-25T09:55:14Z","observedAt":"2026-08-25T10:32:35Z","kind":"pr","repo":"rainlanguage/rainix","number":356}
 {"ts":"2026-08-25T09:54:44Z","observedAt":"2026-08-25T10:32:35Z","kind":"pr","repo":"rainlanguage/rainlang.interface","number":131}
+{"ts":"2026-08-25T12:52:27Z","observedAt":"2026-08-25T13:32:17Z","kind":"pr","repo":"rainlanguage/rain.metadata","number":152}
+{"ts":"2026-08-25T12:53:02Z","observedAt":"2026-08-25T13:32:17Z","kind":"pr","repo":"rainlanguage/rain.metadata","number":183}
+{"ts":"2026-08-25T12:53:26Z","observedAt":"2026-08-25T13:32:17Z","kind":"pr","repo":"rainlanguage/rain.metadata","number":185}
+{"ts":"2026-08-25T13:06:23Z","observedAt":"2026-08-25T13:32:17Z","kind":"pr","repo":"rainlanguage/rain.tofu.erc20-decimals","number":38}
+{"ts":"2026-08-25T13:03:57Z","observedAt":"2026-08-25T13:32:17Z","kind":"pr","repo":"rainlanguage/rainix","number":362}
