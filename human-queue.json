@@ -2370,12 +2370,6 @@
   ],
   "closeCandidateIssues": [
     {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 228,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/228",
-      "title": "subgraph: manifest entities list omits Transaction, which the mapping writes"
-    },
-    {
       "repo": "rainlanguage/rain.dia",
       "number": 14,
       "url": "https://github.com/rainlanguage/rain.dia/issues/14",
@@ -6640,7 +6634,7 @@
     "relink": 0,
     "design": 8,
     "blockedInfra": 0,
-    "closeCandidateIssues": 4,
+    "closeCandidateIssues": 3,
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
@@ -6654,8 +6648,8 @@
   "ages": {
     "openIssues": {
       "meanDays": 269.1,
-      "medianDays": 91.2,
-      "oldestDays": 1674.9
+      "medianDays": 91.3,
+      "oldestDays": 1675.0
     }
   }
 }
