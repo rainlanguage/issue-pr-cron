@@ -931,13 +931,139 @@
         ]
       },
       "un-vetted": {
-        "count": 66,
+        "count": 87,
         "prs": [
           {
-            "repo": "rainlanguage/rainlang",
-            "number": 568,
-            "url": "https://github.com/rainlanguage/rainlang/pull/568",
-            "title": "Cut release 0.1.9: freeze candidate pins as src/generated/0_1_9/"
+            "repo": "rainlanguage/rain.string",
+            "number": 126,
+            "url": "https://github.com/rainlanguage/rain.string/pull/126",
+            "title": "Add signed slow-reference differential fuzz"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 125,
+            "url": "https://github.com/rainlanguage/rain.string/pull/125",
+            "title": "Widen signed empty fuzz domain to full uint256"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 124,
+            "url": "https://github.com/rainlanguage/rain.string/pull/124",
+            "title": "Wire leadingZeros into the very-large overflow fuzz input"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 123,
+            "url": "https://github.com/rainlanguage/rain.string/pull/123",
+            "title": "Delete obsolete foundry#6572 workaround contract in LibParseCMask.sol"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 122,
+            "url": "https://github.com/rainlanguage/rain.string/pull/122",
+            "title": "Document LibParseCharSlow's oracle role"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 121,
+            "url": "https://github.com/rainlanguage/rain.string/pull/121",
+            "title": "Annotate all forge-lint warned sites in tests"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 120,
+            "url": "https://github.com/rainlanguage/rain.string/pull/120",
+            "title": "Document lone negative sign mapping to ParseEmptyDecimalString"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 119,
+            "url": "https://github.com/rainlanguage/rain.string/pull/119",
+            "title": "Extract shared zeros-string test helper"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 118,
+            "url": "https://github.com/rainlanguage/rain.string/pull/118",
+            "title": "Drop dead deployments ignore entries and stale deploy-scripts comment"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 117,
+            "url": "https://github.com/rainlanguage/rain.string/pull/117",
+            "title": "Bump forge-std to 1.16.2 and openzeppelin-contracts to 5.7.0"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 116,
+            "url": "https://github.com/rainlanguage/rain.string/pull/116",
+            "title": "Add @param str NatSpec to the four conform wrappers"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 115,
+            "url": "https://github.com/rainlanguage/rain.string/pull/115",
+            "title": "Fix @dev subject name in LibParseDecimal.unsafeDecimalStringToInt test NatSpec"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 114,
+            "url": "https://github.com/rainlanguage/rain.string/pull/114",
+            "title": "Use relative paths for first-party imports in the test tree"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 113,
+            "url": "https://github.com/rainlanguage/rain.string/pull/113",
+            "title": "Delete stale unenforced .gas-snapshot"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 112,
+            "url": "https://github.com/rainlanguage/rain.string/pull/112",
+            "title": "Widen EmptyStringMask doc to cover both throw sites"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 111,
+            "url": "https://github.com/rainlanguage/rain.string/pull/111",
+            "title": "Document the three cmask alias constants"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 110,
+            "url": "https://github.com/rainlanguage/rain.string/pull/110",
+            "title": "Fix inverted CMask header claim about CMASK_NOT_IDENTIFIER_TAIL"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 109,
+            "url": "https://github.com/rainlanguage/rain.string/pull/109",
+            "title": "Fix conformStringToMask NatSpec: rejection sampling, not linear probing"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 108,
+            "url": "https://github.com/rainlanguage/rain.string/pull/108",
+            "title": "Document ZeroStringStartPointer revert in both parse functions' NatSpec"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 107,
+            "url": "https://github.com/rainlanguage/rain.string/pull/107",
+            "title": "Widen ParseDecimalOverflow doc to both conversions"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 106,
+            "url": "https://github.com/rainlanguage/rain.string/pull/106",
+            "title": "Fix skipMask test contract @notice to describe skipMask"
+          },
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 105,
+            "url": "https://github.com/rainlanguage/rain.string/pull/105",
+            "title": "Bump LibConformString pragma to ^0.8.25"
           },
           {
             "repo": "rainlanguage/rain.factory",
@@ -2201,40 +2327,16 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
-      "repo": "rainlanguage/rain.string",
-      "number": 100,
-      "url": "https://github.com/rainlanguage/rain.string/issues/100",
-      "title": "[AUD-030] [INFO] .gitignore carries a stale deploy-scripts comment in a pure library repo"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 99,
-      "url": "https://github.com/rainlanguage/rain.string/issues/99",
-      "title": "[AUD-029] [INFO] Signed conversion has no slow-reference differential fuzz (unsigned has LibParseDecimalSlow)"
+      "repo": "rainlanguage/adversarial-mutation-test",
+      "number": 35,
+      "url": "https://github.com/rainlanguage/adversarial-mutation-test/issues/35",
+      "title": "Optimizer-pruned mutants read as SURVIVED: the probe cannot tell a live mutant from one solc deleted"
     },
     {
       "repo": "rainlanguage/rain.string",
       "number": 98,
       "url": "https://github.com/rainlanguage/rain.string/issues/98",
       "title": "[AUD-028] [INFO] Mutation-scan ledger staleness anchors track the retired v* tag namespace"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 97,
-      "url": "https://github.com/rainlanguage/rain.string/issues/97",
-      "title": "[AUD-027] [INFO] LibParseCharSlow carries zero NatSpec while sibling LibParseDecimalSlow documents its oracle role"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 96,
-      "url": "https://github.com/rainlanguage/rain.string/issues/96",
-      "title": "[AUD-026] [INFO] Lone dash mapping to ParseEmptyDecimalString is undocumented"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 95,
-      "url": "https://github.com/rainlanguage/rain.string/issues/95",
-      "title": "[AUD-025] [INFO] conform wrapper functions lack @param str"
     },
     {
       "repo": "rainlanguage/rain.string",
@@ -2250,30 +2352,6 @@
     },
     {
       "repo": "rainlanguage/rain.string",
-      "number": 92,
-      "url": "https://github.com/rainlanguage/rain.string/issues/92",
-      "title": "[AUD-022] [INFO] Test contract @dev names nonexistent TestLibParseDecimal library"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 91,
-      "url": "https://github.com/rainlanguage/rain.string/issues/91",
-      "title": "[AUD-021] [INFO] Dependency pins behind registry: forge-std 1.16.1 to 1.16.2, openzeppelin-contracts 5.6.1 to 5.7.0 (prompts, not mandates)"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 90,
-      "url": "https://github.com/rainlanguage/rain.string/issues/90",
-      "title": "[AUD-020] [INFO] Empty LibParseCMask workaround contract: review whether foundry#6572 still requires it"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 89,
-      "url": "https://github.com/rainlanguage/rain.string/issues/89",
-      "title": "[AUD-019] [INFO] EmptyStringMask doc omits the charFromMask production site"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
       "number": 88,
       "url": "https://github.com/rainlanguage/rain.string/issues/88",
       "title": "[AUD-018] [LOW] Unsigned (0,0) guard ordering is unpinned: swapping empty-check and zero-pointer revert survives the suite"
@@ -2286,87 +2364,9 @@
     },
     {
       "repo": "rainlanguage/rain.string",
-      "number": 86,
-      "url": "https://github.com/rainlanguage/rain.string/issues/86",
-      "title": "[AUD-016] [LOW] The build-a-string-of-zero-bytes loop is hand-rolled 14 times across the decimal test files"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 85,
-      "url": "https://github.com/rainlanguage/rain.string/issues/85",
-      "title": "[AUD-015] [LOW] Bare src/ import paths across the test tree break compilation under soldeer/submodule consumption"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 84,
-      "url": "https://github.com/rainlanguage/rain.string/issues/84",
-      "title": "[AUD-014] [LOW] CMASK_RHS_WORD_HEAD, CMASK_LHS_STACK_TAIL, CMASK_RHS_WORD_TAIL carry no NatSpec of their own"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 83,
-      "url": "https://github.com/rainlanguage/rain.string/issues/83",
-      "title": "[AUD-013] [LOW] ParseDecimalOverflow doc claims uint256-only, but the signed conversion returns it for the int256 range"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 82,
-      "url": "https://github.com/rainlanguage/rain.string/issues/82",
-      "title": "[AUD-012] [LOW] CMask file-header sentence inverts the NOT_IDENTIFIER_TAIL claim (whose complement includes bytes 0x80-0xFF)"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 81,
-      "url": "https://github.com/rainlanguage/rain.string/issues/81",
-      "title": "[AUD-011] [LOW] testUnsafeStrToSignedIntEmpty bounds its fuzz domain to uint16 on a premise the guard hoist made stale"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 80,
-      "url": "https://github.com/rainlanguage/rain.string/issues/80",
-      "title": "[AUD-010] [LOW] testUnsafeDecimalStrToIntOverflowVeryLarge builds its leadingZeros fuzz input and never uses it"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 79,
-      "url": "https://github.com/rainlanguage/rain.string/issues/79",
-      "title": "[AUD-009] [LOW] forge build emits 20 forge-lint warnings at HEAD, all in test files"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
       "number": 78,
       "url": "https://github.com/rainlanguage/rain.string/issues/78",
       "title": "[AUD-008] [LOW] ASCII-domain invariant written as two unlinked type(uint128).max literals with no shared constant or linking test"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 77,
-      "url": "https://github.com/rainlanguage/rain.string/issues/77",
-      "title": "[AUD-007] [LOW] .gas-snapshot is a checked-in generated artifact with no stale-detection, currently listing three deleted tests"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 76,
-      "url": "https://github.com/rainlanguage/rain.string/issues/76",
-      "title": "[AUD-006] [LOW] skipMask test contract @notice describes isMask (copy-paste from sibling file)"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 75,
-      "url": "https://github.com/rainlanguage/rain.string/issues/75",
-      "title": "[AUD-005] [LOW] ZeroStringStartPointer revert path absent from both parse functions' NatSpec failure contract"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 74,
-      "url": "https://github.com/rainlanguage/rain.string/issues/74",
-      "title": "[AUD-004] [LOW] conformStringToMask NatSpec claims simple linear probing; the implementation is keccak rejection sampling"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 73,
-      "url": "https://github.com/rainlanguage/rain.string/issues/73",
-      "title": "[AUD-003] [LOW] LibConformString pragma ^0.8.18 advertises an unsatisfiable compiler range (imports require ^0.8.25)"
     },
     {
       "repo": "rainlanguage/rain.string",
@@ -6933,7 +6933,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 66,
+    "unvetted": 87,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6944,17 +6944,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 196,
+    "totalProducerPrs": 217,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 784,
+    "uncoveredIssues": 763,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 937
+    "openIssues": 938
   },
   "ages": {
     "openIssues": {
-      "meanDays": 259.5,
-      "medianDays": 79.9,
+      "meanDays": 259.3,
+      "medianDays": 80.0,
       "oldestDays": 1674.5
     }
   }
