@@ -931,139 +931,19 @@
         ]
       },
       "un-vetted": {
-        "count": 87,
+        "count": 59,
         "prs": [
           {
-            "repo": "rainlanguage/rain.string",
-            "number": 126,
-            "url": "https://github.com/rainlanguage/rain.string/pull/126",
-            "title": "Add signed slow-reference differential fuzz"
+            "repo": "rainlanguage/raindex",
+            "number": 2846,
+            "url": "https://github.com/rainlanguage/raindex/pull/2846",
+            "title": "Add the Manual sol verify caller workflow"
           },
           {
-            "repo": "rainlanguage/rain.string",
-            "number": 125,
-            "url": "https://github.com/rainlanguage/rain.string/pull/125",
-            "title": "Widen signed empty fuzz domain to full uint256"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 124,
-            "url": "https://github.com/rainlanguage/rain.string/pull/124",
-            "title": "Wire leadingZeros into the very-large overflow fuzz input"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 123,
-            "url": "https://github.com/rainlanguage/rain.string/pull/123",
-            "title": "Delete obsolete foundry#6572 workaround contract in LibParseCMask.sol"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 122,
-            "url": "https://github.com/rainlanguage/rain.string/pull/122",
-            "title": "Document LibParseCharSlow's oracle role"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 121,
-            "url": "https://github.com/rainlanguage/rain.string/pull/121",
-            "title": "Annotate all forge-lint warned sites in tests"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 120,
-            "url": "https://github.com/rainlanguage/rain.string/pull/120",
-            "title": "Document lone negative sign mapping to ParseEmptyDecimalString"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 119,
-            "url": "https://github.com/rainlanguage/rain.string/pull/119",
-            "title": "Extract shared zeros-string test helper"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 118,
-            "url": "https://github.com/rainlanguage/rain.string/pull/118",
-            "title": "Drop dead deployments ignore entries and stale deploy-scripts comment"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 117,
-            "url": "https://github.com/rainlanguage/rain.string/pull/117",
-            "title": "Bump forge-std to 1.16.2 and openzeppelin-contracts to 5.7.0"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 116,
-            "url": "https://github.com/rainlanguage/rain.string/pull/116",
-            "title": "Add @param str NatSpec to the four conform wrappers"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 115,
-            "url": "https://github.com/rainlanguage/rain.string/pull/115",
-            "title": "Fix @dev subject name in LibParseDecimal.unsafeDecimalStringToInt test NatSpec"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 114,
-            "url": "https://github.com/rainlanguage/rain.string/pull/114",
-            "title": "Use relative paths for first-party imports in the test tree"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 113,
-            "url": "https://github.com/rainlanguage/rain.string/pull/113",
-            "title": "Delete stale unenforced .gas-snapshot"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 112,
-            "url": "https://github.com/rainlanguage/rain.string/pull/112",
-            "title": "Widen EmptyStringMask doc to cover both throw sites"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 111,
-            "url": "https://github.com/rainlanguage/rain.string/pull/111",
-            "title": "Document the three cmask alias constants"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 110,
-            "url": "https://github.com/rainlanguage/rain.string/pull/110",
-            "title": "Fix inverted CMask header claim about CMASK_NOT_IDENTIFIER_TAIL"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 109,
-            "url": "https://github.com/rainlanguage/rain.string/pull/109",
-            "title": "Fix conformStringToMask NatSpec: rejection sampling, not linear probing"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 108,
-            "url": "https://github.com/rainlanguage/rain.string/pull/108",
-            "title": "Document ZeroStringStartPointer revert in both parse functions' NatSpec"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 107,
-            "url": "https://github.com/rainlanguage/rain.string/pull/107",
-            "title": "Widen ParseDecimalOverflow doc to both conversions"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 106,
-            "url": "https://github.com/rainlanguage/rain.string/pull/106",
-            "title": "Fix skipMask test contract @notice to describe skipMask"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 105,
-            "url": "https://github.com/rainlanguage/rain.string/pull/105",
-            "title": "Bump LibConformString pragma to ^0.8.25"
+            "repo": "rainlanguage/rainlang",
+            "number": 570,
+            "url": "https://github.com/rainlanguage/rainlang/pull/570",
+            "title": "Add the Manual sol verify caller workflow"
           },
           {
             "repo": "rainlanguage/rain.factory",
@@ -1100,18 +980,6 @@
             "number": 2842,
             "url": "https://github.com/rainlanguage/raindex/pull/2842",
             "title": "Float the suites declaration's pragma, as every other abstract here does"
-          },
-          {
-            "repo": "rainlanguage/rain.verify",
-            "number": 32,
-            "url": "https://github.com/rainlanguage/rain.verify/pull/32",
-            "title": "Bump rain-sol-codegen 0.1.0 -> 0.1.36 (companion: forge-std 1.16.2, rain-deploy 0.1.7)"
-          },
-          {
-            "repo": "rainlanguage/rainix",
-            "number": 356,
-            "url": "https://github.com/rainlanguage/rainix/pull/356",
-            "title": "Publish npm via OIDC trusted publishing instead of NPM_PUBLISH_PRIVATE_TOKEN"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -1162,40 +1030,10 @@
             "title": "AMT coverage: g4-dotrainsourcev1-hash-fet"
           },
           {
-            "repo": "rainlanguage/rain.math.float.deploy",
-            "number": 13,
-            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/13",
-            "title": "Bump rain-datacontract 0.1.0 -> 0.1.3 (and rain-solmem 0.1.26 it pins)"
-          },
-          {
             "repo": "rainlanguage/rain.metadata",
             "number": 152,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/152",
             "title": "AMT coverage: g7-libdescribedbymeta-emitf"
-          },
-          {
-            "repo": "rainlanguage/rainlang.interface",
-            "number": 131,
-            "url": "https://github.com/rainlanguage/rainlang.interface/pull/131",
-            "title": "chore(deps): bump rain-lib-typecast 0.1.0 -> 0.1.4, rain-sol-codegen 0.1.0 -> 0.1.36"
-          },
-          {
-            "repo": "rainlanguage/rain.math.fixedpoint",
-            "number": 32,
-            "url": "https://github.com/rainlanguage/rain.math.fixedpoint/pull/32",
-            "title": "Bump rain-math-saturating 0.1.1 -> 0.1.2"
-          },
-          {
-            "repo": "rainlanguage/rain.intorastring",
-            "number": 24,
-            "url": "https://github.com/rainlanguage/rain.intorastring/pull/24",
-            "title": "Bump rain-solmem to 0.1.26"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection.deploy",
-            "number": 5,
-            "url": "https://github.com/rainlanguage/rain.extrospection.deploy/pull/5",
-            "title": "Bump rain-solmem to 0.1.26 via rain-extrospection 0.1.13"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -1243,12 +1081,6 @@
             "repo": "rainlanguage/rain.solmem",
             "number": 152,
             "url": "https://github.com/rainlanguage/rain.solmem/pull/152",
-            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 261,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/261",
             "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
           },
           {
@@ -2327,52 +2159,22 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rainix",
+      "number": 361,
+      "url": "https://github.com/rainlanguage/rainix/issues/361",
+      "title": "rainix-manual-sol-verify runs under a write-scoped GITHUB_TOKEN it never uses; cap it in the reusable, not in each caller"
+    },
+    {
+      "repo": "rainlanguage/rain.verify",
+      "number": 33,
+      "url": "https://github.com/rainlanguage/rain.verify/issues/33",
+      "title": "rainix-sol/static red on main since 2026-08-13: three test files declare multiple contracts"
+    },
+    {
       "repo": "rainlanguage/adversarial-mutation-test",
       "number": 35,
       "url": "https://github.com/rainlanguage/adversarial-mutation-test/issues/35",
       "title": "Optimizer-pruned mutants read as SURVIVED: the probe cannot tell a live mutant from one solc deleted"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 98,
-      "url": "https://github.com/rainlanguage/rain.string/issues/98",
-      "title": "[AUD-028] [INFO] Mutation-scan ledger staleness anchors track the retired v* tag namespace"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 94,
-      "url": "https://github.com/rainlanguage/rain.string/issues/94",
-      "title": "[AUD-024] [INFO] LibParseChar and LibParseDecimal lack library-level @title/@notice"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 93,
-      "url": "https://github.com/rainlanguage/rain.string/issues/93",
-      "title": "[AUD-023] [INFO] skipMask has no @return tag while sibling isMask does"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 88,
-      "url": "https://github.com/rainlanguage/rain.string/issues/88",
-      "title": "[AUD-018] [LOW] Unsigned (0,0) guard ordering is unpinned: swapping empty-check and zero-pointer revert survives the suite"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 87,
-      "url": "https://github.com/rainlanguage/rain.string/issues/87",
-      "title": "[AUD-017] [LOW] Six of eight bitlength shift steps in conformStringToMask lack deterministic discriminating tests"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 78,
-      "url": "https://github.com/rainlanguage/rain.string/issues/78",
-      "title": "[AUD-008] [LOW] ASCII-domain invariant written as two unlinked type(uint128).max literals with no shared constant or linking test"
-    },
-    {
-      "repo": "rainlanguage/rain.string",
-      "number": 72,
-      "url": "https://github.com/rainlanguage/rain.string/issues/72",
-      "title": "[AUD-002] [MEDIUM] Publish workflow races the test workflow on push to main: a red merge still publishes to soldeer"
     },
     {
       "repo": "rainlanguage/rain.math.fixedpoint",
@@ -6933,7 +6735,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 87,
+    "unvetted": 59,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6944,18 +6746,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 217,
+    "totalProducerPrs": 189,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 763,
+    "uncoveredIssues": 758,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 938
+    "openIssues": 911
   },
   "ages": {
     "openIssues": {
-      "meanDays": 259.3,
-      "medianDays": 80.0,
-      "oldestDays": 1674.5
+      "meanDays": 267.0,
+      "medianDays": 89.6,
+      "oldestDays": 1674.6
     }
   }
 }
