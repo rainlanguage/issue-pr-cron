@@ -2171,6 +2171,120 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 79,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/79",
+      "title": "[F19] [INFO] Assembly locals dataLength/paddedDataLength hold prefix+data lengths"
+    },
+    {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 78,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/78",
+      "title": "[F18] [INFO] Tracked empty .gas-snapshot signals a gas gate that gates nothing"
+    },
+    {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 77,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/77",
+      "title": "[F17] [INFO] forge-std pinned 1.16.1; registry latest is 1.16.2"
+    },
+    {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 76,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/76",
+      "title": "[F16] [INFO] Test locals named read/readSlice shadow the library function names"
+    },
+    {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 75,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/75",
+      "title": "[F15] [LOW] A breaking src change autopublishes as a patch bump unless a human remembers a next-v tag"
+    },
+    {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 74,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/74",
+      "title": "[F14] [LOW] MCOPY/cancun floor undeclared to consumers: writes halt on pre-cancun chains, reads work"
+    },
+    {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 73,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/73",
+      "title": "[F13] [LOW] Three tests inline the deploy assembly the deploy() helper wraps, skipping its create-success assert"
+    },
+    {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 72,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/72",
+      "title": "[F12] [LOW] Unused console2 import"
+    },
+    {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 71,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/71",
+      "title": "[F11] [LOW] Test of first-party src sits in test/lib/ instead of the mirror tree test/src/lib/"
+    },
+    {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 70,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/70",
+      "title": "[F10] [LOW] Dead rain.cli flake input drags a 2024 dependency tree into flake.lock"
+    },
+    {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 69,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/69",
+      "title": "[F09] [LOW] src imports LibPointer/Pointer unused and lint-suppressed, only to re-export for the test"
+    },
+    {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 68,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/68",
+      "title": "[F08] [LOW] Bare src/ import in the test file breaks vendored consumption"
+    },
+    {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 67,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/67",
+      "title": "[F07] [LOW] Deployment-context independence (create2/proxy claim) is untested"
+    },
+    {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 66,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/66",
+      "title": "[F06] [LOW] BASE_PREFIX/PREFIX_BYTES_LENGTH have no re-derivation test against the documented opcode table"
+    },
+    {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 65,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/65",
+      "title": "[F05] [LOW] ReadError has no raw-selector pin; a signature change passes the suite silently"
+    },
+    {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 64,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/64",
+      "title": "[F04] [LOW] readSlice comment says new bytes(size); the allocation is length bytes"
+    },
+    {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 63,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/63",
+      "title": "[F03] [LOW] README 'byte-equivalent to type(Foo).creationCode' claim is false"
+    },
+    {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 62,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/62",
+      "title": "[F02] [LOW] readSlice uses uint16 params unmasked in assembly; dirty high bits would corrupt the allocation"
+    },
+    {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 61,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/61",
+      "title": "[F01] [MEDIUM] README Publish section documents a nonexistent tag-driven pipeline (dead publish-soldeer.yaml link)"
+    },
+    {
       "repo": "rainlanguage/rainix",
       "number": 361,
       "url": "https://github.com/rainlanguage/rainix/issues/361",
@@ -6754,15 +6868,15 @@
     "leaks": 0,
     "totalProducerPrs": 191,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 757,
+    "uncoveredIssues": 776,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 911
+    "openIssues": 930
   },
   "ages": {
     "openIssues": {
-      "meanDays": 267.0,
-      "medianDays": 89.6,
+      "meanDays": 261.6,
+      "medianDays": 82.5,
       "oldestDays": 1674.6
     }
   }
