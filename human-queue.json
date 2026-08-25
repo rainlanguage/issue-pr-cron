@@ -931,8 +931,44 @@
         ]
       },
       "un-vetted": {
-        "count": 92,
+        "count": 93,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 287,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/287",
+            "title": "fix: fetch_by_subject refuses to guess between conflicting metas under one subject"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 286,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/286",
+            "title": "Ignore unknown cbor map keys on meta item decode"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 285,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/285",
+            "title": "Distinguish corrupt subgraph records from absence"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 284,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/284",
+            "title": "fix(cli): verify metaboard bytes against the describedByMetaV1 hash"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 282,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/282",
+            "title": "Scope the MetaV1 entity id to its metaboard"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 279,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/279",
+            "title": "fix(cli): fail loudly on a truncated introspection type-ref"
+          },
           {
             "repo": "rainlanguage/rain.metadata",
             "number": 278,
@@ -962,12 +998,6 @@
             "number": 274,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/274",
             "title": "fix: drop unknown-magic items in cbor_decode instead of failing the document"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 273,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/273",
-            "title": "Retire KnownSubgraphs and the subgraph subcommand: every endpoint is on the decommissioned hosted service"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -1180,12 +1210,6 @@
             "title": "Name error inputs in the indexed rejection message"
           },
           {
-            "repo": "rainlanguage/rain.datacontract",
-            "number": 96,
-            "url": "https://github.com/rainlanguage/rain.datacontract/pull/96",
-            "title": "readSlice takes uint256 start/length; masks are explicit domain truncation"
-          },
-          {
             "repo": "rainlanguage/raindex",
             "number": 2846,
             "url": "https://github.com/rainlanguage/raindex/pull/2846",
@@ -1282,12 +1306,6 @@
             "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
           },
           {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 152,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/152",
-            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
-          },
-          {
             "repo": "rainlanguage/rain.pyth",
             "number": 36,
             "url": "https://github.com/rainlanguage/rain.pyth/pull/36",
@@ -1312,12 +1330,6 @@
             "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
           },
           {
-            "repo": "rainlanguage/rain.lib.hash",
-            "number": 18,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/18",
-            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
-          },
-          {
             "repo": "rainlanguage/rain.intorastring",
             "number": 23,
             "url": "https://github.com/rainlanguage/rain.intorastring/pull/23",
@@ -1333,12 +1345,6 @@
             "repo": "rainlanguage/rain.math.fixedpoint",
             "number": 31,
             "url": "https://github.com/rainlanguage/rain.math.fixedpoint/pull/31",
-            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.binary",
-            "number": 39,
-            "url": "https://github.com/rainlanguage/rain.math.binary/pull/39",
             "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
           },
           {
@@ -2310,6 +2316,18 @@
   ],
   "closeCandidateIssues": [
     {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 223,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/223",
+      "title": "KnownSubgraphs polygon NPE2 endpoint name is 'npe2-mati' — possible typo vs deliberate 30-char hosted-service truncation, unverifiable since the hosted service sunset"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 219,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/219",
+      "title": "Dotrain source subject is derived two ways: generate emits under keccak(cbor item map) while DotrainSourceV1::hash and the subject field docs say keccak(content)"
+    },
+    {
       "repo": "rainlanguage/rain.dia",
       "number": 14,
       "url": "https://github.com/rainlanguage/rain.dia/issues/14",
@@ -2356,18 +2374,6 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
-    {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 76,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/76",
-      "title": "[F16] [INFO] Test locals named read/readSlice shadow the library function names"
-    },
-    {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 75,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/75",
-      "title": "[F15] [LOW] A breaking src change autopublishes as a patch bump unless a human remembers a next-v tag"
-    },
     {
       "repo": "rainlanguage/rainix",
       "number": 361,
@@ -2550,12 +2556,6 @@
     },
     {
       "repo": "rainlanguage/rain.metadata",
-      "number": 234,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/234",
-      "title": "process_meta_query reports corrupt payloads, bad hex and GraphQL errors all as NoRecordFound, indistinguishable from absence"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
       "number": 233,
       "url": "https://github.com/rainlanguage/rain.metadata/issues/233",
       "title": "str_to_bytes32 accepts embedded NULs that bytes32_to_str silently truncates: round trip loses data and distinct inputs collide"
@@ -2586,12 +2586,6 @@
     },
     {
       "repo": "rainlanguage/rain.metadata",
-      "number": 228,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/228",
-      "title": "subgraph: manifest entities list omits Transaction, which the mapping writes"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
       "number": 227,
       "url": "https://github.com/rainlanguage/rain.metadata/issues/227",
       "title": "subgraph: MetaV1 id is the bare per-board counter — collision across datasources, lexicographic ordering, relation keyed off address field"
@@ -2610,12 +2604,6 @@
     },
     {
       "repo": "rainlanguage/rain.metadata",
-      "number": 222,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/222",
-      "title": "schema_check introspection query caps type nesting at 4 ofType levels; deeper wrapper types silently render as Unknown and report false mismatches"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
       "number": 221,
       "url": "https://github.com/rainlanguage/rain.metadata/issues/221",
       "title": "InterpreterCallerMeta: context_columns cap length(max = u8::MAX) rejects 256 columns — off-by-one if the intent is u8-addressable column indices"
@@ -2628,45 +2616,15 @@
     },
     {
       "repo": "rainlanguage/rain.metadata",
-      "number": 216,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/216",
-      "title": "RainMetaDocumentV1Item decode hard-errors on unknown map keys, defeating the spec's forward-compatible key extension mechanism"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
       "number": 215,
       "url": "https://github.com/rainlanguage/rain.metadata/issues/215",
       "title": "fetch_by_subject returns an arbitrary, unverified meta when multiple metas share a subject"
     },
     {
       "repo": "rainlanguage/rain.metadata",
-      "number": 213,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/213",
-      "title": "process_deployer_query reports corrupt subgraph payloads as NoRecordFound, indistinguishable from absence"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
       "number": 211,
       "url": "https://github.com/rainlanguage/rain.metadata/issues/211",
       "title": "AuthoringMetaV2::fetch_for_contract panic-indexes metas[0] and decoded[0], relying on other crates' non-empty guarantees"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 210,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/210",
-      "title": "AuthoringMetaV2::fetch_for_contract trusts subgraph meta bytes without checking them against the describedByMetaV1 hash"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 206,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/206",
-      "title": "MetaV1 entity id collides across metaboards: the indexer implied by IDescribedByMetaV1 can lose retrieval-by-hash"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 205,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/205",
-      "title": "contracts()/committedPath coupling to crates/bindings has no cross-lane oracle: dropped or retargeted binding artifacts go silently stale"
     },
     {
       "repo": "S01-Issuer/st0x.deploy",
@@ -2676,39 +2634,15 @@
     },
     {
       "repo": "rainlanguage/rain.metadata",
-      "number": 204,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/204",
-      "title": "RainMetaDocumentV1 document magic is encodable as an item's own magic, producing representable-but-unusable metas"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
       "number": 201,
       "url": "https://github.com/rainlanguage/rain.metadata/issues/201",
       "title": "get_authoring_meta stops at the first AuthoringMetaV1 map on failure and collapses all failure modes into None"
     },
     {
       "repo": "rainlanguage/rain.metadata",
-      "number": 200,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/200",
-      "title": "schema-check INTROSPECTION_QUERY truncates wrapper chains deeper than 4 ofType levels, rendering them as Unknown"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 199,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/199",
-      "title": "Every KnownSubgraphs endpoint targets the sunset thegraph.com hosted service — of_chain and meta search cannot succeed"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
       "number": 194,
       "url": "https://github.com/rainlanguage/rain.metadata/issues/194",
       "title": "InterpreterCallerMeta::try_from(RainMetaDocumentV1Item) ignores the item's magic, accepting a mismatched intent signal"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 189,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/189",
-      "title": "KnownMeta::normalize OpV1 accepts only a single opcode object; array-shaped op meta v1 documents are rejected"
     },
     {
       "repo": "rainlanguage/rain.metadata",
@@ -6699,29 +6633,29 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 92,
+    "unvetted": 93,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
     "relink": 0,
     "design": 8,
     "blockedInfra": 0,
-    "closeCandidateIssues": 3,
+    "closeCandidateIssues": 5,
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 222,
+    "totalProducerPrs": 223,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 719,
+    "uncoveredIssues": 705,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 912
+    "openIssues": 905
   },
   "ages": {
     "openIssues": {
-      "meanDays": 266.9,
-      "medianDays": 89.0,
-      "oldestDays": 1674.8
+      "meanDays": 269.0,
+      "medianDays": 91.2,
+      "oldestDays": 1674.9
     }
   }
 }
