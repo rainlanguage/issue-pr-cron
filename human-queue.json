@@ -931,8 +931,146 @@
         ]
       },
       "un-vetted": {
-        "count": 55,
+        "count": 74,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 243,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/243",
+            "title": "propagate the erc165 probe error out of fetch_for_contract"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 242,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/242",
+            "title": "gate OpMeta and InterpreterCallerMeta item conversions on magic"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 241,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/241",
+            "title": "Key the tx-hash map on the deployer cache key in search_deployer"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 240,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/240",
+            "title": "fix: require at least one expression per InterpreterCallerMeta method"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 239,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/239",
+            "title": "Gate Store::update on keccak256(bytes) == hash"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 238,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/238",
+            "title": "Name error inputs in the indexed rejection message"
+          },
+          {
+            "repo": "rainlanguage/rain.datacontract",
+            "number": 96,
+            "url": "https://github.com/rainlanguage/rain.datacontract/pull/96",
+            "title": "Mask readSlice uint16 params where they enter assembly"
+          },
+          {
+            "repo": "rainlanguage/rain.datacontract",
+            "number": 95,
+            "url": "https://github.com/rainlanguage/rain.datacontract/pull/95",
+            "title": "test: pin deployment-context independence of data contract creation code"
+          },
+          {
+            "repo": "rainlanguage/rain.datacontract",
+            "number": 94,
+            "url": "https://github.com/rainlanguage/rain.datacontract/pull/94",
+            "title": "Re-derive creation code prefix constants from the documented opcode table"
+          },
+          {
+            "repo": "rainlanguage/rain.datacontract",
+            "number": 93,
+            "url": "https://github.com/rainlanguage/rain.datacontract/pull/93",
+            "title": "Use deploy() helper in tests that inlined its create assembly"
+          },
+          {
+            "repo": "rainlanguage/rain.datacontract",
+            "number": 92,
+            "url": "https://github.com/rainlanguage/rain.datacontract/pull/92",
+            "title": "Remove unused LibPointer/Pointer import from src"
+          },
+          {
+            "repo": "rainlanguage/rain.datacontract",
+            "number": 91,
+            "url": "https://github.com/rainlanguage/rain.datacontract/pull/91",
+            "title": "Use relative src import in LibDataContract.t.sol"
+          },
+          {
+            "repo": "rainlanguage/rain.datacontract",
+            "number": 90,
+            "url": "https://github.com/rainlanguage/rain.datacontract/pull/90",
+            "title": "Pin ReadError raw selector bytes in the test suite"
+          },
+          {
+            "repo": "rainlanguage/rain.datacontract",
+            "number": 89,
+            "url": "https://github.com/rainlanguage/rain.datacontract/pull/89",
+            "title": "Rename assembly locals to contentLength/paddedContentLength"
+          },
+          {
+            "repo": "rainlanguage/rain.datacontract",
+            "number": 88,
+            "url": "https://github.com/rainlanguage/rain.datacontract/pull/88",
+            "title": "Remove dead rain.cli flake input"
+          },
+          {
+            "repo": "rainlanguage/rain.datacontract",
+            "number": 87,
+            "url": "https://github.com/rainlanguage/rain.datacontract/pull/87",
+            "title": "Move LibDataContract test into mirror tree test/src/lib/"
+          },
+          {
+            "repo": "rainlanguage/rain.datacontract",
+            "number": 86,
+            "url": "https://github.com/rainlanguage/rain.datacontract/pull/86",
+            "title": "Remove README Publish section documenting a nonexistent pipeline"
+          },
+          {
+            "repo": "rainlanguage/rain.datacontract",
+            "number": 85,
+            "url": "https://github.com/rainlanguage/rain.datacontract/pull/85",
+            "title": "Remove empty .gas-snapshot and its config references"
+          },
+          {
+            "repo": "rainlanguage/rain.datacontract",
+            "number": 84,
+            "url": "https://github.com/rainlanguage/rain.datacontract/pull/84",
+            "title": "Bump forge-std 1.16.1 -> 1.16.2"
+          },
+          {
+            "repo": "rainlanguage/rain.datacontract",
+            "number": 83,
+            "url": "https://github.com/rainlanguage/rain.datacontract/pull/83",
+            "title": "Declare MCOPY/cancun floor for writes in NatSpec and README"
+          },
+          {
+            "repo": "rainlanguage/rain.datacontract",
+            "number": 82,
+            "url": "https://github.com/rainlanguage/rain.datacontract/pull/82",
+            "title": "docs: correct README creation code claim to deployment-method compatibility"
+          },
+          {
+            "repo": "rainlanguage/rain.datacontract",
+            "number": 81,
+            "url": "https://github.com/rainlanguage/rain.datacontract/pull/81",
+            "title": "Remove unused console2 import from LibDataContract.t.sol"
+          },
+          {
+            "repo": "rainlanguage/rain.datacontract",
+            "number": 80,
+            "url": "https://github.com/rainlanguage/rain.datacontract/pull/80",
+            "title": "Fix stale allocation comment in readSlice"
+          },
           {
             "repo": "rainlanguage/raindex",
             "number": 2846,
@@ -982,34 +1120,10 @@
             "title": "Float the suites declaration's pragma, as every other abstract here does"
           },
           {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 237,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/237",
-            "title": "Round-2 adversarial-mutation-test coverage: query, magic CLI, validators, CopyArtifacts"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 224,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/224",
-            "title": "AMT coverage: g5-interpretercallermeta-v1"
-          },
-          {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 321,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/321",
             "title": "Bump rain-sol-codegen to 0.1.36 (rain-deploy 0.1.7, forge-std 1.16.2)"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 202,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/202",
-            "title": "AMT coverage: g1-knownmagic-enum-prefix-b"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 197,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/197",
-            "title": "AMT coverage: g6-cli-plumbing-output-enco"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -2088,6 +2202,12 @@
   ],
   "closeCandidateIssues": [
     {
+      "repo": "rainlanguage/rain.datacontract",
+      "number": 75,
+      "url": "https://github.com/rainlanguage/rain.datacontract/issues/75",
+      "title": "[F15] [LOW] A breaking src change autopublishes as a patch bump unless a human remembers a next-v tag"
+    },
+    {
       "repo": "rainlanguage/rain.dia",
       "number": 14,
       "url": "https://github.com/rainlanguage/rain.dia/issues/14",
@@ -2136,24 +2256,6 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rain.datacontract",
-      "number": 79,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/79",
-      "title": "[F19] [INFO] Assembly locals dataLength/paddedDataLength hold prefix+data lengths"
-    },
-    {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 78,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/78",
-      "title": "[F18] [INFO] Tracked empty .gas-snapshot signals a gas gate that gates nothing"
-    },
-    {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 77,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/77",
-      "title": "[F17] [INFO] forge-std pinned 1.16.1; registry latest is 1.16.2"
-    },
-    {
-      "repo": "rainlanguage/rain.datacontract",
       "number": 76,
       "url": "https://github.com/rainlanguage/rain.datacontract/issues/76",
       "title": "[F16] [INFO] Test locals named read/readSlice shadow the library function names"
@@ -2163,90 +2265,6 @@
       "number": 75,
       "url": "https://github.com/rainlanguage/rain.datacontract/issues/75",
       "title": "[F15] [LOW] A breaking src change autopublishes as a patch bump unless a human remembers a next-v tag"
-    },
-    {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 74,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/74",
-      "title": "[F14] [LOW] MCOPY/cancun floor undeclared to consumers: writes halt on pre-cancun chains, reads work"
-    },
-    {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 73,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/73",
-      "title": "[F13] [LOW] Three tests inline the deploy assembly the deploy() helper wraps, skipping its create-success assert"
-    },
-    {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 72,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/72",
-      "title": "[F12] [LOW] Unused console2 import"
-    },
-    {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 71,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/71",
-      "title": "[F11] [LOW] Test of first-party src sits in test/lib/ instead of the mirror tree test/src/lib/"
-    },
-    {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 70,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/70",
-      "title": "[F10] [LOW] Dead rain.cli flake input drags a 2024 dependency tree into flake.lock"
-    },
-    {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 69,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/69",
-      "title": "[F09] [LOW] src imports LibPointer/Pointer unused and lint-suppressed, only to re-export for the test"
-    },
-    {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 68,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/68",
-      "title": "[F08] [LOW] Bare src/ import in the test file breaks vendored consumption"
-    },
-    {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 67,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/67",
-      "title": "[F07] [LOW] Deployment-context independence (create2/proxy claim) is untested"
-    },
-    {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 66,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/66",
-      "title": "[F06] [LOW] BASE_PREFIX/PREFIX_BYTES_LENGTH have no re-derivation test against the documented opcode table"
-    },
-    {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 65,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/65",
-      "title": "[F05] [LOW] ReadError has no raw-selector pin; a signature change passes the suite silently"
-    },
-    {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 64,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/64",
-      "title": "[F04] [LOW] readSlice comment says new bytes(size); the allocation is length bytes"
-    },
-    {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 63,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/63",
-      "title": "[F03] [LOW] README 'byte-equivalent to type(Foo).creationCode' claim is false"
-    },
-    {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 62,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/62",
-      "title": "[F02] [LOW] readSlice uses uint16 params unmasked in assembly; dirty high bits would corrupt the allocation"
-    },
-    {
-      "repo": "rainlanguage/rain.datacontract",
-      "number": 61,
-      "url": "https://github.com/rainlanguage/rain.datacontract/issues/61",
-      "title": "[F01] [MEDIUM] README Publish section documents a nonexistent tag-driven pipeline (dead publish-soldeer.yaml link)"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -2730,21 +2748,9 @@
     },
     {
       "repo": "rainlanguage/rain.metadata",
-      "number": 169,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/169",
-      "title": "Store::update caches subgraph bytes under the requested hash without the keccak gate update_with enforces"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
       "number": 168,
       "url": "https://github.com/rainlanguage/rain.metadata/issues/168",
       "title": "AuthoringMetaV2 words bypass the v1 word grammar: no validation on abi_decode or TryFrom"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 167,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/167",
-      "title": "Method.expressions permits an empty array despite 'at least one expression' docs"
     },
     {
       "repo": "rainlanguage/rain.metadata",
@@ -2754,21 +2760,9 @@
     },
     {
       "repo": "rainlanguage/rain.metadata",
-      "number": 165,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/165",
-      "title": "OpMeta and InterpreterCallerMeta TryFrom<RainMetaDocumentV1Item> accept items of any magic"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
       "number": 164,
       "url": "https://github.com/rainlanguage/rain.metadata/issues/164",
       "title": "Validate impls leak the per-index annotation string on every validation failure via Box::leak"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 163,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/163",
-      "title": "Store::search_deployer maps tx_hash to constructor meta hash, so tx-hash lookups return None and search_deployer_check is permanently poisoned"
     },
     {
       "repo": "rainlanguage/rain.metadata",
@@ -2781,12 +2775,6 @@
       "number": 161,
       "url": "https://github.com/rainlanguage/rain.metadata/issues/161",
       "title": "Store::update/search_deployer panic on an empty subgraph list instead of returning None (futures::select_ok empty-iterator panic)"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 160,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/160",
-      "title": "map_item_error_input rejects indexed on error inputs with the fn-io error message"
     },
     {
       "repo": "rainlanguage/rain.metadata",
@@ -2817,12 +2805,6 @@
       "number": 155,
       "url": "https://github.com/rainlanguage/rain.metadata/issues/155",
       "title": "RainString accepts non-ASCII Unicode whitespace despite 'printable ASCII chars and whitespace' contract"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 154,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/154",
-      "title": "fetch_for_contract reports transient RPC/transport failures during the erc165 probe as HasNoWords"
     },
     {
       "repo": "rainlanguage/rain.metadata",
@@ -6813,29 +6795,29 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 55,
+    "unvetted": 74,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
     "relink": 0,
     "design": 8,
     "blockedInfra": 0,
-    "closeCandidateIssues": 3,
+    "closeCandidateIssues": 4,
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 185,
+    "totalProducerPrs": 204,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 775,
+    "uncoveredIssues": 752,
     "designPresentable": 8,
     "designNoQuestion": 0,
     "openIssues": 928
   },
   "ages": {
     "openIssues": {
-      "meanDays": 262.2,
+      "meanDays": 262.3,
       "medianDays": 83.5,
-      "oldestDays": 1674.7
+      "oldestDays": 1674.8
     }
   }
 }
