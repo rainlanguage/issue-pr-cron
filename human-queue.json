@@ -931,8 +931,62 @@
         ]
       },
       "un-vetted": {
-        "count": 93,
+        "count": 102,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 296,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/296",
+            "title": "Correct the RainTitle validator message to match REGEX_RAIN_TITLE"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 295,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/295",
+            "title": "Enforce kebab-case in REGEX_RAIN_SYMBOL"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 294,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/294",
+            "title": "Reject nul bearing input in str_to_bytes32"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 293,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/293",
+            "title": "fix(cli): keep this store's tx-hash mapping on Store::merge collision"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 292,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/292",
+            "title": "Stop the matchstick run from executing a cached wasm"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 291,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/291",
+            "title": "Make the MetaV1 id a Bytes id that sorts chronologically"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 290,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/290",
+            "title": "solc artifact: error on a component the artifact does not carry"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 289,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/289",
+            "title": "Observe nextMetaId across a multi-event, multi-board matchstick run"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 288,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/288",
+            "title": "Bound extract_from_meta's descent into nested rain meta documents"
+          },
           {
             "repo": "rainlanguage/rain.metadata",
             "number": 287,
@@ -2317,15 +2371,9 @@
   "closeCandidateIssues": [
     {
       "repo": "rainlanguage/rain.metadata",
-      "number": 223,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/223",
-      "title": "KnownSubgraphs polygon NPE2 endpoint name is 'npe2-mati' — possible typo vs deliberate 30-char hosted-service truncation, unverifiable since the hosted service sunset"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 219,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/219",
-      "title": "Dotrain source subject is derived two ways: generate emits under keccak(cbor item map) while DotrainSourceV1::hash and the subject field docs say keccak(content)"
+      "number": 228,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/228",
+      "title": "subgraph: manifest entities list omits Transaction, which the mapping writes"
     },
     {
       "repo": "rainlanguage/rain.dia",
@@ -2544,57 +2592,9 @@
     },
     {
       "repo": "rainlanguage/rain.metadata",
-      "number": 236,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/236",
-      "title": "RainTitle validator message claims 'alphanumeric ASCII letters and spaces' but the regex accepts all printable ASCII and rejects edge spaces"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 235,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/235",
-      "title": "REGEX_RAIN_SYMBOL accepts trailing and consecutive hyphens despite documented kebab-case contract"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 233,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/233",
-      "title": "str_to_bytes32 accepts embedded NULs that bytes32_to_str silently truncates: round trip loses data and distinct inputs collide"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 232,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/232",
-      "title": "Store::merge treats deployer_hash_map opposite to the other three maps: unconditional overwrite vs skip-if-present"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 231,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/231",
-      "title": "CLI solc artifact prints null with exit 0 when the requested component is missing from the artifact"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 230,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/230",
-      "title": "subgraph: compiled matchstick binary tests/.bin/metaboard.wasm is committed; matchstick cache invalidation is mtime-based"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 229,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/229",
-      "title": "subgraph: matchstick suite never observes nextMetaId or any multi-event path"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 227,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/227",
-      "title": "subgraph: MetaV1 id is the bare per-board counter — collision across datasources, lexicographic ordering, relation keyed off address field"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 226,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/226",
-      "title": "OrderBuilderStateV1::extract_from_meta recurses unboundedly on nested RainMetaDocumentV1 payloads"
+      "number": 228,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/228",
+      "title": "subgraph: manifest entities list omits Transaction, which the mapping writes"
     },
     {
       "repo": "rainlanguage/rain.metadata",
@@ -6633,27 +6633,27 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 93,
+    "unvetted": 102,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
     "relink": 0,
     "design": 8,
     "blockedInfra": 0,
-    "closeCandidateIssues": 5,
+    "closeCandidateIssues": 4,
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 223,
+    "totalProducerPrs": 232,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 705,
+    "uncoveredIssues": 697,
     "designPresentable": 8,
     "designNoQuestion": 0,
     "openIssues": 905
   },
   "ages": {
     "openIssues": {
-      "meanDays": 269.0,
+      "meanDays": 269.1,
       "medianDays": 91.2,
       "oldestDays": 1674.9
     }
