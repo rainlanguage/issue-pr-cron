@@ -931,7 +931,7 @@
         ]
       },
       "un-vetted": {
-        "count": 93,
+        "count": 90,
         "prs": [
           {
             "repo": "rainlanguage/rain.metadata",
@@ -944,24 +944,6 @@
             "number": 287,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/287",
             "title": "fix: fetch_by_subject returns every source under the subject, reducing nothing"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 286,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/286",
-            "title": "Ignore unknown cbor map keys on meta item decode"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 285,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/285",
-            "title": "Distinguish corrupt subgraph records from absence"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 284,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/284",
-            "title": "fix(cli): verify metaboard bytes against the describedByMetaV1 hash"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -6573,7 +6555,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 93,
+    "unvetted": 90,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6584,18 +6566,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 223,
+    "totalProducerPrs": 220,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 697,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 896
+    "openIssues": 892
   },
   "ages": {
     "openIssues": {
-      "meanDays": 272.5,
-      "medianDays": 97.8,
-      "oldestDays": 1675.6
+      "meanDays": 273.7,
+      "medianDays": 99.3,
+      "oldestDays": 1675.7
     }
   }
 }
