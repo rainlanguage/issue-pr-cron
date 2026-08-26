@@ -931,50 +931,8 @@
         ]
       },
       "un-vetted": {
-        "count": 102,
+        "count": 93,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 296,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/296",
-            "title": "Correct the RainTitle validator message to match REGEX_RAIN_TITLE"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 295,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/295",
-            "title": "Enforce kebab-case in REGEX_RAIN_SYMBOL"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 294,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/294",
-            "title": "Reject nul bearing input in str_to_bytes32"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 293,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/293",
-            "title": "fix(cli): keep this store's tx-hash mapping on Store::merge collision"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 292,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/292",
-            "title": "Stop the matchstick run from executing a cached wasm"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 291,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/291",
-            "title": "Make the MetaV1 id a Bytes id that sorts chronologically"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 290,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/290",
-            "title": "solc artifact: error on a component the artifact does not carry"
-          },
           {
             "repo": "rainlanguage/rain.metadata",
             "number": 289,
@@ -983,15 +941,9 @@
           },
           {
             "repo": "rainlanguage/rain.metadata",
-            "number": 288,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/288",
-            "title": "Bound extract_from_meta's descent into nested rain meta documents"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
             "number": 287,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/287",
-            "title": "fix: fetch_by_subject refuses to guess between conflicting metas under one subject"
+            "title": "fix: fetch_by_subject returns every source under the subject, reducing nothing"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -1010,12 +962,6 @@
             "number": 284,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/284",
             "title": "fix(cli): verify metaboard bytes against the describedByMetaV1 hash"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 282,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/282",
-            "title": "Scope the MetaV1 entity id to its metaboard"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -6627,7 +6573,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 102,
+    "unvetted": 93,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6638,17 +6584,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 232,
+    "totalProducerPrs": 223,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 697,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 905
+    "openIssues": 896
   },
   "ages": {
     "openIssues": {
-      "meanDays": 269.7,
-      "medianDays": 91.9,
+      "meanDays": 272.5,
+      "medianDays": 97.8,
       "oldestDays": 1675.6
     }
   }
