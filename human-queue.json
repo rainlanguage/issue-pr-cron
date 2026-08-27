@@ -931,13 +931,115 @@
         ]
       },
       "un-vetted": {
-        "count": 91,
+        "count": 108,
         "prs": [
           {
+            "repo": "rainlanguage/rainlang",
+            "number": 572,
+            "url": "https://github.com/rainlanguage/rainlang/pull/572",
+            "title": "Rename the Git is clean job id to git-clean"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 213,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/213",
+            "title": "Rename the Git is clean job id to git-clean"
+          },
+          {
+            "repo": "rainlanguage/rain.factory.deploy",
+            "number": 30,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/30",
+            "title": "Rename the Git is clean job id to git-clean"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection.deploy",
+            "number": 8,
+            "url": "https://github.com/rainlanguage/rain.extrospection.deploy/pull/8",
+            "title": "Add the git-clean currency check"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 266,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/266",
+            "title": "Rename the Git is clean job id to git-clean"
+          },
+          {
             "repo": "rainlanguage/rain.metadata",
-            "number": 298,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/298",
+            "number": 300,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/300",
+            "title": "Rename the currency check to git-clean"
+          },
+          {
+            "repo": "rainlanguage/rain.dia",
+            "number": 71,
+            "url": "https://github.com/rainlanguage/rain.dia/pull/71",
+            "title": "Rename the Git is clean job id to git-clean"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float.deploy",
+            "number": 17,
+            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/17",
+            "title": "Rename the currency check to git-clean"
+          },
+          {
+            "repo": "rainlanguage/raindex",
+            "number": 2855,
+            "url": "https://github.com/rainlanguage/raindex/pull/2855",
+            "title": "Rename the currency check to git-clean"
+          },
+          {
+            "repo": "rainlanguage/rain.tofu.erc20-decimals.deploy",
+            "number": 5,
+            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals.deploy/pull/5",
+            "title": "ci: rename git-clean job id to git-clean (closes #4)"
+          },
+          {
+            "repo": "rainlanguage/rain.pyth",
+            "number": 38,
+            "url": "https://github.com/rainlanguage/rain.pyth/pull/38",
+            "title": "ci: rename git-clean job id to git-clean (closes #37)"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata.deploy",
+            "number": 11,
+            "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/11",
+            "title": "ci: rename git-clean job id to git-clean (closes #10)"
+          },
+          {
+            "repo": "rainlanguage/rain.merkle",
+            "number": 20,
+            "url": "https://github.com/rainlanguage/rain.merkle/pull/20",
+            "title": "ci: rename git-clean job id to git-clean (closes #19)"
+          },
+          {
+            "repo": "rainlanguage/rain.factory.deploy",
+            "number": 29,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/29",
+            "title": "Drop the stale snapshot enumeration from Build.sol"
+          },
+          {
+            "repo": "rainlanguage/raindex",
+            "number": 2854,
+            "url": "https://github.com/rainlanguage/raindex/pull/2854",
             "title": "Verify the graph-node API schema snapshot in CI"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float.deploy",
+            "number": 16,
+            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/16",
+            "title": "Drop the \"cut no release yet\" comment on the chain test"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 155,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/155",
+            "title": "Ship the network-config check, behind one binding consumers keep"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 154,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/154",
+            "title": "Drop the \"this repo has released none\" comments"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -2351,6 +2453,12 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rainix",
+      "number": 365,
+      "url": "https://github.com/rainlanguage/rainix/issues/365",
+      "title": "Upstream the graph-node API schema snapshot check as a reusable workflow, once two consumers have defined its seam"
+    },
+    {
       "repo": "rainlanguage/raindex",
       "number": 2851,
       "url": "https://github.com/rainlanguage/raindex/issues/2851",
@@ -2507,12 +2615,6 @@
       "title": "copy-artifacts is untracked-blind while release-guard is not: a new generated file passes every PR and kills the tag"
     },
     {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 153,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/153",
-      "title": "Stale comments claim 'this repo has released none' in three repos that now have frozen records"
-    },
-    {
       "repo": "rainlanguage/rain.extrospection.deploy",
       "number": 6,
       "url": "https://github.com/rainlanguage/rain.extrospection.deploy/issues/6",
@@ -2523,12 +2625,6 @@
       "number": 152,
       "url": "https://github.com/rainlanguage/rain.deploy/issues/152",
       "title": "No PR-time currency check: generated drift is caught only at tag time, after the deploy"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 151,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/151",
-      "title": "supportedNetworks() vs foundry.toml consistency test is not shipped, so no consumer has it"
     },
     {
       "repo": "rainlanguage/rain.metadata",
@@ -6573,7 +6669,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 91,
+    "unvetted": 108,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6584,17 +6680,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 221,
+    "totalProducerPrs": 238,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 699,
+    "uncoveredIssues": 698,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 895
+    "openIssues": 911
   },
   "ages": {
     "openIssues": {
-      "meanDays": 273.4,
-      "medianDays": 98.5,
+      "meanDays": 268.6,
+      "medianDays": 91.4,
       "oldestDays": 1676.3
     }
   }
