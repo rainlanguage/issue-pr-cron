@@ -931,8 +931,14 @@
         ]
       },
       "un-vetted": {
-        "count": 108,
+        "count": 107,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 156,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/156",
+            "title": "Check generated files are current at PR time"
+          },
           {
             "repo": "rainlanguage/rainlang",
             "number": 572,
@@ -1028,18 +1034,6 @@
             "number": 16,
             "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/16",
             "title": "Drop the \"cut no release yet\" comment on the chain test"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 155,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/155",
-            "title": "Ship the network-config check, behind one binding consumers keep"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 154,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/154",
-            "title": "Drop the \"this repo has released none\" comments"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -2618,12 +2612,6 @@
       "repo": "rainlanguage/rain.extrospection.deploy",
       "number": 6,
       "url": "https://github.com/rainlanguage/rain.extrospection.deploy/issues/6",
-      "title": "No PR-time currency check: generated drift is caught only at tag time, after the deploy"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 152,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/152",
       "title": "No PR-time currency check: generated drift is caught only at tag time, after the deploy"
     },
     {
@@ -6669,7 +6657,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 108,
+    "unvetted": 107,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6680,18 +6668,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 238,
+    "totalProducerPrs": 237,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 698,
+    "uncoveredIssues": 697,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 911
+    "openIssues": 909
   },
   "ages": {
     "openIssues": {
-      "meanDays": 268.7,
+      "meanDays": 269.3,
       "medianDays": 91.4,
-      "oldestDays": 1676.3
+      "oldestDays": 1676.4
     }
   }
 }
