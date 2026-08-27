@@ -2363,6 +2363,18 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 327,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/327",
+      "title": "Protofire 5.0 and 6.0 reports are cited across the tree but not in audit/protofire/"
+    },
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 326,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/326",
+      "title": "Orchestrator instance uses nonce-derived CREATE on a permissionless deploy(); use the rain-factory clone factory the repo already depends on"
+    },
+    {
       "repo": "rainlanguage/rainix",
       "number": 368,
       "url": "https://github.com/rainlanguage/rainix/issues/368",
@@ -6604,15 +6616,15 @@
     "leaks": 0,
     "totalProducerPrs": 223,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 700,
+    "uncoveredIssues": 702,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 898
+    "openIssues": 900
   },
   "ages": {
     "openIssues": {
-      "meanDays": 272.9,
-      "medianDays": 97.9,
+      "meanDays": 272.3,
+      "medianDays": 96.7,
       "oldestDays": 1676.7
     }
   }
