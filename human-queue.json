@@ -931,86 +931,8 @@
         ]
       },
       "un-vetted": {
-        "count": 106,
+        "count": 93,
         "prs": [
-          {
-            "repo": "rainlanguage/rainlang",
-            "number": 572,
-            "url": "https://github.com/rainlanguage/rainlang/pull/572",
-            "title": "Rename the Git is clean job id to git-clean"
-          },
-          {
-            "repo": "rainlanguage/rain.flare",
-            "number": 213,
-            "url": "https://github.com/rainlanguage/rain.flare/pull/213",
-            "title": "Rename the Git is clean job id to git-clean"
-          },
-          {
-            "repo": "rainlanguage/rain.factory.deploy",
-            "number": 30,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/30",
-            "title": "Rename the Git is clean job id to git-clean"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection.deploy",
-            "number": 8,
-            "url": "https://github.com/rainlanguage/rain.extrospection.deploy/pull/8",
-            "title": "Add the git-clean currency check"
-          },
-          {
-            "repo": "rainlanguage/rain.erc4626.words",
-            "number": 266,
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/266",
-            "title": "Rename the Git is clean job id to git-clean"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 300,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/300",
-            "title": "Rename the currency check to git-clean"
-          },
-          {
-            "repo": "rainlanguage/rain.dia",
-            "number": 71,
-            "url": "https://github.com/rainlanguage/rain.dia/pull/71",
-            "title": "Rename the Git is clean job id to git-clean"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float.deploy",
-            "number": 17,
-            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/17",
-            "title": "Rename the currency check to git-clean"
-          },
-          {
-            "repo": "rainlanguage/raindex",
-            "number": 2855,
-            "url": "https://github.com/rainlanguage/raindex/pull/2855",
-            "title": "Rename the currency check to git-clean"
-          },
-          {
-            "repo": "rainlanguage/rain.tofu.erc20-decimals.deploy",
-            "number": 5,
-            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals.deploy/pull/5",
-            "title": "ci: rename git-clean job id to git-clean (closes #4)"
-          },
-          {
-            "repo": "rainlanguage/rain.pyth",
-            "number": 38,
-            "url": "https://github.com/rainlanguage/rain.pyth/pull/38",
-            "title": "ci: rename git-clean job id to git-clean (closes #37)"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata.deploy",
-            "number": 11,
-            "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/11",
-            "title": "ci: rename git-clean job id to git-clean (closes #10)"
-          },
-          {
-            "repo": "rainlanguage/rain.merkle",
-            "number": 20,
-            "url": "https://github.com/rainlanguage/rain.merkle/pull/20",
-            "title": "ci: rename git-clean job id to git-clean (closes #19)"
-          },
           {
             "repo": "rainlanguage/rain.factory.deploy",
             "number": 29,
@@ -2440,6 +2362,24 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 368,
+      "url": "https://github.com/rainlanguage/rainix/issues/368",
+      "title": "Reusable workflow and action refs are @main across every consumer, carrying their secrets"
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 367,
+      "url": "https://github.com/rainlanguage/rainix/issues/367",
+      "title": "rainix-copy-artifacts: set permissions: contents: read on the reusable's job"
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 366,
+      "url": "https://github.com/rainlanguage/rainix/issues/366",
+      "title": "rainix-copy-artifacts: declare the CACHIX_AUTH_TOKEN contract so consumers can drop secrets: inherit"
+    },
     {
       "repo": "rainlanguage/rainix",
       "number": 365,
@@ -6651,7 +6591,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 106,
+    "unvetted": 93,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6662,17 +6602,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 236,
+    "totalProducerPrs": 223,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 697,
+    "uncoveredIssues": 700,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 908
+    "openIssues": 898
   },
   "ages": {
     "openIssues": {
-      "meanDays": 269.7,
-      "medianDays": 91.6,
+      "meanDays": 272.7,
+      "medianDays": 97.8,
       "oldestDays": 1676.5
     }
   }
