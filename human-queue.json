@@ -931,14 +931,8 @@
         ]
       },
       "un-vetted": {
-        "count": 107,
+        "count": 106,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 156,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/156",
-            "title": "Check generated files are current at PR time"
-          },
           {
             "repo": "rainlanguage/rainlang",
             "number": 572,
@@ -6657,7 +6651,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 107,
+    "unvetted": 106,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6668,17 +6662,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 237,
+    "totalProducerPrs": 236,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 697,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 909
+    "openIssues": 908
   },
   "ages": {
     "openIssues": {
-      "meanDays": 269.3,
-      "medianDays": 91.4,
+      "meanDays": 269.6,
+      "medianDays": 91.6,
       "oldestDays": 1676.4
     }
   }
