@@ -931,14 +931,8 @@
         ]
       },
       "un-vetted": {
-        "count": 95,
+        "count": 94,
         "prs": [
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 330,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/330",
-            "title": "One dispatch ships a suite to every supported network"
-          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 328,
@@ -2374,12 +2368,6 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
-    {
-      "repo": "S01-Issuer/st0x.deploy",
-      "number": 329,
-      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/329",
-      "title": "0.1.30 rollout is one dispatch per (suite, network): the scripts pass a one-element array to a function that loops a list"
-    },
     {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 327,
@@ -6621,7 +6609,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 95,
+    "unvetted": 94,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6632,17 +6620,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 225,
+    "totalProducerPrs": 224,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 703,
+    "uncoveredIssues": 702,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 901
+    "openIssues": 900
   },
   "ages": {
     "openIssues": {
-      "meanDays": 272.0,
-      "medianDays": 96.3,
+      "meanDays": 272.4,
+      "medianDays": 96.8,
       "oldestDays": 1676.8
     }
   }
