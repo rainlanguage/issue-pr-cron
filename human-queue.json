@@ -931,8 +931,14 @@
         ]
       },
       "un-vetted": {
-        "count": 94,
+        "count": 95,
         "prs": [
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 332,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/332",
+            "title": "Drop pre-fork dependency state reads from deploy scripts"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 328,
@@ -2368,6 +2374,18 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 333,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/333",
+      "title": "Orchestrator beacon owner is pinned to the hot deploy EOA as permanent expected state, and the timelock migration structurally cannot reach it"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 157,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/157",
+      "title": "Consumers that read dependency state before forking silently break every network after the first"
+    },
     {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 327,
@@ -6609,7 +6627,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 94,
+    "unvetted": 95,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6620,17 +6638,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 224,
+    "totalProducerPrs": 225,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 702,
+    "uncoveredIssues": 704,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 900
+    "openIssues": 903
   },
   "ages": {
     "openIssues": {
-      "meanDays": 272.4,
-      "medianDays": 96.8,
+      "meanDays": 271.5,
+      "medianDays": 96.3,
       "oldestDays": 1676.8
     }
   }
