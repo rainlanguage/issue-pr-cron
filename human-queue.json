@@ -931,8 +931,14 @@
         ]
       },
       "un-vetted": {
-        "count": 90,
+        "count": 91,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 298,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/298",
+            "title": "Verify the graph-node API schema snapshot in CI"
+          },
           {
             "repo": "rainlanguage/rain.metadata",
             "number": 289,
@@ -2344,6 +2350,18 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 2851,
+      "url": "https://github.com/rainlanguage/raindex/issues/2851",
+      "title": "Pin clear3's shipped signed-context routing with a baseline test"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 2850,
+      "url": "https://github.com/rainlanguage/raindex/issues/2850",
+      "title": "clear3 cross-wires alice/bob signed context vs its interface docs; next version must fix it with a loud break"
+    },
     {
       "repo": "rainlanguage/rainix",
       "number": 361,
@@ -6555,7 +6573,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 90,
+    "unvetted": 91,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6566,18 +6584,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 220,
+    "totalProducerPrs": 221,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 697,
+    "uncoveredIssues": 699,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 892
+    "openIssues": 895
   },
   "ages": {
     "openIssues": {
-      "meanDays": 274.3,
-      "medianDays": 99.8,
-      "oldestDays": 1676.2
+      "meanDays": 273.4,
+      "medianDays": 98.5,
+      "oldestDays": 1676.3
     }
   }
 }
