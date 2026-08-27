@@ -931,8 +931,20 @@
         ]
       },
       "un-vetted": {
-        "count": 93,
+        "count": 95,
         "prs": [
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 330,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/330",
+            "title": "One dispatch ships a suite to every supported network"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 328,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/328",
+            "title": "Commit the Protofire 6.0 report the 0.1.30 freeze rests on"
+          },
           {
             "repo": "rainlanguage/rain.factory.deploy",
             "number": 29,
@@ -2362,6 +2374,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 329,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/329",
+      "title": "0.1.30 rollout is one dispatch per (suite, network): the scripts pass a one-element array to a function that loops a list"
+    },
     {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 327,
@@ -6603,7 +6621,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 93,
+    "unvetted": 95,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6614,18 +6632,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 223,
+    "totalProducerPrs": 225,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 702,
+    "uncoveredIssues": 703,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 900
+    "openIssues": 901
   },
   "ages": {
     "openIssues": {
-      "meanDays": 272.3,
-      "medianDays": 96.7,
-      "oldestDays": 1676.7
+      "meanDays": 272.0,
+      "medianDays": 96.3,
+      "oldestDays": 1676.8
     }
   }
 }
