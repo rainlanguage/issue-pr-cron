@@ -931,20 +931,8 @@
         ]
       },
       "un-vetted": {
-        "count": 96,
+        "count": 94,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 158,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/158",
-            "title": "Create every fork before selecting any"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 332,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/332",
-            "title": "Drop pre-fork dependency state reads from deploy scripts"
-          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 328,
@@ -6627,7 +6615,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 96,
+    "unvetted": 94,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6638,17 +6626,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 226,
+    "totalProducerPrs": 224,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 703,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 903
+    "openIssues": 901
   },
   "ages": {
     "openIssues": {
-      "meanDays": 272.3,
-      "medianDays": 97.0,
+      "meanDays": 272.9,
+      "medianDays": 97.1,
       "oldestDays": 1677.6
     }
   }
