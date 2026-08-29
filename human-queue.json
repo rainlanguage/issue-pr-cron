@@ -2369,6 +2369,18 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 302,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/302",
+      "title": "DotrainSourceV1 and OrderBuilderStateV1 read payload directly, ignoring content_encoding"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 301,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/301",
+      "title": "get_metabytes_by_hash returns rows without checking them against the hash the caller asked for"
+    },
+    {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 335,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/335",
@@ -6640,16 +6652,16 @@
     "leaks": 0,
     "totalProducerPrs": 224,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 705,
+    "uncoveredIssues": 707,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 902
+    "openIssues": 904
   },
   "ages": {
     "openIssues": {
-      "meanDays": 273.8,
-      "medianDays": 98.3,
-      "oldestDays": 1678.8
+      "meanDays": 273.3,
+      "medianDays": 96.7,
+      "oldestDays": 1678.9
     }
   }
 }
