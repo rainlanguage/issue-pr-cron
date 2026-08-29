@@ -931,7 +931,7 @@
         ]
       },
       "un-vetted": {
-        "count": 87,
+        "count": 86,
         "prs": [
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -1046,12 +1046,6 @@
             "number": 262,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/262",
             "title": "Split the empty-result error into by-hash and by-subject variants"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 261,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/261",
-            "title": "fix: key subject-path FromHexError by the meta hash verbatim"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -6585,7 +6579,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 87,
+    "unvetted": 86,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6596,17 +6590,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 217,
+    "totalProducerPrs": 216,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 705,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 896
+    "openIssues": 895
   },
   "ages": {
     "openIssues": {
-      "meanDays": 275.7,
-      "medianDays": 101.1,
+      "meanDays": 276.1,
+      "medianDays": 101.3,
       "oldestDays": 1679.0
     }
   }
