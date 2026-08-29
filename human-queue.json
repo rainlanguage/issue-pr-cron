@@ -931,7 +931,7 @@
         ]
       },
       "un-vetted": {
-        "count": 95,
+        "count": 94,
         "prs": [
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -962,12 +962,6 @@
             "number": 16,
             "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/16",
             "title": "Drop the \"cut no release yet\" comment on the chain test"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 289,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/289",
-            "title": "Observe nextMetaId across a multi-event, multi-board matchstick run"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -2583,6 +2577,12 @@
       "number": 6,
       "url": "https://github.com/rainlanguage/rain.extrospection.deploy/issues/6",
       "title": "No PR-time currency check: generated drift is caught only at tag time, after the deploy"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 229,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/229",
+      "title": "subgraph: matchstick suite never observes nextMetaId or any multi-event path"
     },
     {
       "repo": "rainlanguage/rain.metadata",
@@ -6627,7 +6627,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 95,
+    "unvetted": 94,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6638,9 +6638,9 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 225,
+    "totalProducerPrs": 224,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 704,
+    "uncoveredIssues": 705,
     "designPresentable": 8,
     "designNoQuestion": 0,
     "openIssues": 902
