@@ -931,7 +931,7 @@
         ]
       },
       "un-vetted": {
-        "count": 92,
+        "count": 87,
         "prs": [
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -989,12 +989,6 @@
           },
           {
             "repo": "rainlanguage/rain.metadata",
-            "number": 275,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/275",
-            "title": "Cap ContextColumn.cells at u8::MAX, matching context_columns"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
             "number": 274,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/274",
             "title": "fix: drop unknown-magic items in cbor_decode instead of failing the document"
@@ -1013,21 +1007,9 @@
           },
           {
             "repo": "rainlanguage/rain.metadata",
-            "number": 270,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/270",
-            "title": "fix: correct InterpreterCallerMeta.desc doc comment and 'feild' typos"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
             "number": 269,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/269",
             "title": "fix: drop unreachable sub-conditions from the cbor_decode corrupt-meta guard"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 268,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/268",
-            "title": "Add KnownMagic::WebDataV1 for the spec's 0xff5dcce9b571ba42"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -1115,12 +1097,6 @@
           },
           {
             "repo": "rainlanguage/rain.metadata",
-            "number": 253,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/253",
-            "title": "Restrict REGEX_RAIN_STRING to ASCII whitespace"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
             "number": 251,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/251",
             "title": "fix: scan every metaboard meta and cbor document for the authoring meta"
@@ -1196,12 +1172,6 @@
             "number": 239,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/239",
             "title": "Gate Store::update on keccak256(bytes) == hash"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 238,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/238",
-            "title": "Name error inputs in the indexed rejection message"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -6615,7 +6585,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 92,
+    "unvetted": 87,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6626,18 +6596,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 222,
+    "totalProducerPrs": 217,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 705,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 902
+    "openIssues": 896
   },
   "ages": {
     "openIssues": {
-      "meanDays": 273.9,
-      "medianDays": 98.4,
-      "oldestDays": 1678.9
+      "meanDays": 275.7,
+      "medianDays": 101.1,
+      "oldestDays": 1679.0
     }
   }
 }

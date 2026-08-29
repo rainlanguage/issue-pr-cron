@@ -475,3 +475,8 @@
 {"ts":"2026-08-28T11:55:43Z","observedAt":"2026-08-28T12:31:05Z","kind":"pr","repo":"S01-Issuer/st0x.deploy","number":332}
 {"ts":"2026-08-28T11:55:17Z","observedAt":"2026-08-28T12:31:05Z","kind":"pr","repo":"rainlanguage/rain.deploy","number":158}
 {"ts":"2026-08-29T18:33:09Z","observedAt":"2026-08-29T19:31:06Z","kind":"pr","repo":"rainlanguage/rain.metadata","number":287}
+{"ts":"2026-08-29T20:25:39Z","observedAt":"2026-08-29T20:32:29Z","kind":"pr","repo":"rainlanguage/rain.metadata","number":238}
+{"ts":"2026-08-29T20:05:09Z","observedAt":"2026-08-29T20:32:29Z","kind":"pr","repo":"rainlanguage/rain.metadata","number":253}
+{"ts":"2026-08-29T20:30:49Z","observedAt":"2026-08-29T20:32:29Z","kind":"pr","repo":"rainlanguage/rain.metadata","number":268}
+{"ts":"2026-08-29T20:25:05Z","observedAt":"2026-08-29T20:32:29Z","kind":"pr","repo":"rainlanguage/rain.metadata","number":270}
+{"ts":"2026-08-29T20:24:18Z","observedAt":"2026-08-29T20:32:29Z","kind":"pr","repo":"rainlanguage/rain.metadata","number":275}
