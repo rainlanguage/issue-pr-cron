@@ -931,8 +931,14 @@
         ]
       },
       "un-vetted": {
-        "count": 94,
+        "count": 95,
         "prs": [
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 334,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/334",
+            "title": "Add the orchestrator beacon to the governed beacon set"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 328,
@@ -2368,6 +2374,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 335,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/335",
+      "title": "SECURITY: the orchestrator beacon is owned by a compromised EOA on all three chains; #324 must not run until it is moved"
+    },
     {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 333,
@@ -6615,7 +6627,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 94,
+    "unvetted": 95,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6626,16 +6638,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 224,
+    "totalProducerPrs": 225,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 703,
+    "uncoveredIssues": 704,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 901
+    "openIssues": 902
   },
   "ages": {
     "openIssues": {
-      "meanDays": 274.0,
+      "meanDays": 273.8,
       "medianDays": 98.3,
       "oldestDays": 1678.8
     }
