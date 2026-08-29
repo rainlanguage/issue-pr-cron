@@ -931,7 +931,7 @@
         ]
       },
       "un-vetted": {
-        "count": 94,
+        "count": 92,
         "prs": [
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -962,12 +962,6 @@
             "number": 16,
             "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/16",
             "title": "Drop the \"cut no release yet\" comment on the chain test"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 287,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/287",
-            "title": "fix: fetch_by_subject returns every source under the subject, reducing nothing"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -1124,12 +1118,6 @@
             "number": 253,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/253",
             "title": "Restrict REGEX_RAIN_STRING to ASCII whitespace"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 252,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/252",
-            "title": "fix: scan every meta and item under a subject for DotrainSourceV1"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -2370,12 +2358,6 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rain.metadata",
-      "number": 302,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/302",
-      "title": "DotrainSourceV1 and OrderBuilderStateV1 read payload directly, ignoring content_encoding"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
       "number": 301,
       "url": "https://github.com/rainlanguage/rain.metadata/issues/301",
       "title": "get_metabytes_by_hash returns rows without checking them against the hash the caller asked for"
@@ -2649,12 +2631,6 @@
       "number": 194,
       "url": "https://github.com/rainlanguage/rain.metadata/issues/194",
       "title": "InterpreterCallerMeta::try_from(RainMetaDocumentV1Item) ignores the item's magic, accepting a mismatched intent signal"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 188,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/188",
-      "title": "Items missing mandatory cbor keys 0/1 abort the whole decode; spec says they MUST be treated as unexpected and dropped/ignored"
     },
     {
       "repo": "rainlanguage/rain.metadata",
@@ -6639,7 +6615,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 94,
+    "unvetted": 92,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6650,17 +6626,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 224,
+    "totalProducerPrs": 222,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 707,
+    "uncoveredIssues": 705,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 904
+    "openIssues": 902
   },
   "ages": {
     "openIssues": {
-      "meanDays": 273.3,
-      "medianDays": 96.7,
+      "meanDays": 273.9,
+      "medianDays": 98.4,
       "oldestDays": 1678.9
     }
   }
