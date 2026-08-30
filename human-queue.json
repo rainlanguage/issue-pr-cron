@@ -931,7 +931,7 @@
         ]
       },
       "un-vetted": {
-        "count": 86,
+        "count": 84,
         "prs": [
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -1109,12 +1109,6 @@
           },
           {
             "repo": "rainlanguage/rain.metadata",
-            "number": 248,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/248",
-            "title": "Return NoRecordFound instead of panicking on an empty subgraph list"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
             "number": 247,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/247",
             "title": "fix: emit dotrain source metas under the content hash, not the cbor item hash"
@@ -1130,12 +1124,6 @@
             "number": 245,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/245",
             "title": "Declare Transaction in mapping.entities, and pin the list to the schema"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 244,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/244",
-            "title": "Stop leaking the per-index annotation key in Validate impls"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -6579,7 +6567,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 86,
+    "unvetted": 84,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6590,18 +6578,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 216,
+    "totalProducerPrs": 214,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 705,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 895
+    "openIssues": 893
   },
   "ages": {
     "openIssues": {
-      "meanDays": 276.9,
-      "medianDays": 102.1,
-      "oldestDays": 1679.8
+      "meanDays": 277.5,
+      "medianDays": 102.5,
+      "oldestDays": 1679.9
     }
   }
 }
