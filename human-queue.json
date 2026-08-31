@@ -931,7 +931,7 @@
         ]
       },
       "un-vetted": {
-        "count": 82,
+        "count": 81,
         "prs": [
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -992,12 +992,6 @@
             "number": 274,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/274",
             "title": "fix: drop unknown-magic items in cbor_decode instead of failing the document"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 272,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/272",
-            "title": "fix: emit generic metas as a rain meta document, not a bare cbor map"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -6555,7 +6549,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 82,
+    "unvetted": 81,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6566,18 +6560,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 212,
+    "totalProducerPrs": 211,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 705,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 892
+    "openIssues": 891
   },
   "ages": {
     "openIssues": {
-      "meanDays": 278.5,
-      "medianDays": 104.1,
-      "oldestDays": 1680.5
+      "meanDays": 278.8,
+      "medianDays": 105.2,
+      "oldestDays": 1680.6
     }
   }
 }
