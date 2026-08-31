@@ -931,7 +931,7 @@
         ]
       },
       "un-vetted": {
-        "count": 83,
+        "count": 82,
         "prs": [
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -1112,12 +1112,6 @@
             "number": 247,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/247",
             "title": "fix: emit dotrain source metas under the content hash, not the cbor item hash"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 246,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/246",
-            "title": "Unpack the payload in the dotrain TryFrom impls"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -6561,7 +6555,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 83,
+    "unvetted": 82,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6572,17 +6566,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 213,
+    "totalProducerPrs": 212,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 705,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 893
+    "openIssues": 892
   },
   "ages": {
     "openIssues": {
-      "meanDays": 278.1,
-      "medianDays": 103.1,
+      "meanDays": 278.5,
+      "medianDays": 104.1,
       "oldestDays": 1680.5
     }
   }
