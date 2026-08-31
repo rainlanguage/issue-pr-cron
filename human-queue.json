@@ -1135,7 +1135,7 @@
             "repo": "rainlanguage/rain.metadata",
             "number": 239,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/239",
-            "title": "Gate Store::update on keccak256(bytes) == hash"
+            "title": "Put the keccak gate in the type: one way into the meta and deployer caches"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -6571,7 +6571,7 @@
     "openIssues": {
       "meanDays": 279.1,
       "medianDays": 105.5,
-      "oldestDays": 1680.8
+      "oldestDays": 1680.9
     }
   }
 }
