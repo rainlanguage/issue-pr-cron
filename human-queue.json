@@ -931,7 +931,7 @@
         ]
       },
       "un-vetted": {
-        "count": 84,
+        "count": 83,
         "prs": [
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -1130,12 +1130,6 @@
             "number": 243,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/243",
             "title": "propagate the erc165 probe error out of fetch_for_contract"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 242,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/242",
-            "title": "gate OpMeta and InterpreterCallerMeta item conversions on magic"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -6567,7 +6561,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 84,
+    "unvetted": 83,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6578,7 +6572,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 214,
+    "totalProducerPrs": 213,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 705,
     "designPresentable": 8,
@@ -6588,8 +6582,8 @@
   "ages": {
     "openIssues": {
       "meanDays": 278.1,
-      "medianDays": 103.0,
-      "oldestDays": 1680.4
+      "medianDays": 103.1,
+      "oldestDays": 1680.5
     }
   }
 }
