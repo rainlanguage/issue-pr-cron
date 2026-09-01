@@ -919,8 +919,20 @@
         ]
       },
       "un-vetted": {
-        "count": 64,
+        "count": 70,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 308,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/308",
+            "title": "Put the deployer key and reproducibility checks in the cache gate"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 307,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/307",
+            "title": "Fail CynicClient::query on a non-2xx HTTP status"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 334,
@@ -962,6 +974,18 @@
             "number": 278,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/278",
             "title": "Give the crate a document level cbor decoder for the spec's MUST-discard rule"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 274,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/274",
+            "title": "fix: drop unknown-magic items in cbor_decode instead of failing the document"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 267,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/267",
+            "title": "Drop cbor items missing mandatory keys 0/1 instead of failing the whole document"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -1007,6 +1031,12 @@
           },
           {
             "repo": "rainlanguage/rain.metadata",
+            "number": 254,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/254",
+            "title": "Validate deployer writes in Store::set_deployer"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
             "number": 251,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/251",
             "title": "fix: scan every metaboard meta and cbor document for the authoring meta"
@@ -1028,6 +1058,12 @@
             "number": 245,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/245",
             "title": "Declare Transaction in mapping.entities, and pin the list to the schema"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 243,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/243",
+            "title": "propagate the erc165 probe error out of fetch_for_contract"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -2148,32 +2184,7 @@
       "title": "[F20] [MEDIUM] Public ankr RPC default in LibFork makes the entire fork test suite depend on an unowned, mutable endpoint that no test or CI step pins"
     }
   ],
-  "closeCandidateUnvetted": [
-    {
-      "repo": "rainlanguage/rain.dia",
-      "number": 14,
-      "url": "https://github.com/rainlanguage/rain.dia/issues/14",
-      "title": "[AUDIT-M09] [medium] NatSpec claims revert on zero price but only (0,0) sentinel reverts"
-    },
-    {
-      "repo": "rainlanguage/rain.dia",
-      "number": 9,
-      "url": "https://github.com/rainlanguage/rain.dia/issues/9",
-      "title": "[AUDIT-M04] [medium] maxAge exact boundary elapsed==staleAfter untested"
-    },
-    {
-      "repo": "rainlanguage/rain.flare",
-      "number": 67,
-      "url": "https://github.com/rainlanguage/rain.flare/issues/67",
-      "title": "[F20] [MEDIUM] Public ankr RPC default in LibFork makes the entire fork test suite depend on an unowned, mutable endpoint that no test or CI step pins"
-    },
-    {
-      "repo": "rainlanguage/rain.dia",
-      "number": 61,
-      "url": "https://github.com/rainlanguage/rain.dia/pull/61",
-      "title": "fix(dia): revert ZeroDiaPrice on any zero price, not only the (0,0) sentinel"
-    }
-  ],
+  "closeCandidateUnvetted": [],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [],
   "archivedRepoPrs": [
@@ -2194,11 +2205,17 @@
       "number": 675,
       "url": "https://github.com/rainlanguage/rain-protocol/pull/675",
       "title": "remove ob"
+    },
+    {
+      "repo": "rainlanguage/rain-protocol",
+      "number": 613,
+      "url": "https://github.com/rainlanguage/rain-protocol/pull/613",
+      "title": "add generic errors for integrity operand overflow and underflow"
     }
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 64,
+    "unvetted": 70,
     "blockedOn": 17,
     "ready": 1,
     "needsWork": 102,
@@ -2206,11 +2223,11 @@
     "design": 8,
     "blockedInfra": 0,
     "closeCandidateIssues": 3,
-    "closeCandidateUnvetted": 4,
+    "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 193,
-    "archivedRepoPrs": 3,
+    "totalProducerPrs": 199,
+    "archivedRepoPrs": 4,
     "uncoveredIssues": 0,
     "designPresentable": 8,
     "designNoQuestion": 0
