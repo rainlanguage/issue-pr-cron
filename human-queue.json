@@ -2267,6 +2267,12 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "S01-Issuer/s01.ops",
+      "number": 243,
+      "url": "https://github.com/S01-Issuer/s01.ops/issues/243",
+      "title": "Fleet completion: registry-verified records, Token Terms, KIDs and a venue travel-rules surface for every live ST0x asset"
+    },
+    {
       "repo": "rainlanguage/rain.metadata",
       "number": 301,
       "url": "https://github.com/rainlanguage/rain.metadata/issues/301",
@@ -6550,15 +6556,15 @@
     "leaks": 0,
     "totalProducerPrs": 207,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 707,
+    "uncoveredIssues": 708,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 885
+    "openIssues": 886
   },
   "ages": {
     "openIssues": {
-      "meanDays": 282.1,
-      "medianDays": 111.0,
+      "meanDays": 281.8,
+      "medianDays": 110.8,
       "oldestDays": 1682.0
     }
   }
