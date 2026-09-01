@@ -2,6 +2,12 @@
   "states": {
     "ai:blocked-on": [
       {
+        "repo": "rainlanguage/rainlang",
+        "number": 554,
+        "url": "https://github.com/rainlanguage/rainlang/pull/554",
+        "title": "Remove submodule-era residue from .soldeerignore"
+      },
+      {
         "repo": "rainlanguage/rain.math.float",
         "number": 259,
         "url": "https://github.com/rainlanguage/rain.math.float/pull/259",
@@ -812,8 +818,14 @@
   "lanes": {
     "vet-lifecycle": {
       "ai:blocked-on": {
-        "count": 17,
+        "count": 18,
         "prs": [
+          {
+            "repo": "rainlanguage/rainlang",
+            "number": 554,
+            "url": "https://github.com/rainlanguage/rainlang/pull/554",
+            "title": "Remove submodule-era residue from .soldeerignore"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 259,
@@ -919,7 +931,7 @@
         ]
       },
       "un-vetted": {
-        "count": 70,
+        "count": 73,
         "prs": [
           {
             "repo": "rainlanguage/rain.metadata",
@@ -1084,6 +1096,12 @@
             "title": "Add the Manual sol verify caller workflow"
           },
           {
+            "repo": "rainlanguage/rainlang",
+            "number": 570,
+            "url": "https://github.com/rainlanguage/rainlang/pull/570",
+            "title": "Add the Manual sol verify caller workflow"
+          },
+          {
             "repo": "rainlanguage/rain.factory",
             "number": 80,
             "url": "https://github.com/rainlanguage/rain.factory/pull/80",
@@ -1144,6 +1162,12 @@
             "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
           },
           {
+            "repo": "rainlanguage/rainlang",
+            "number": 559,
+            "url": "https://github.com/rainlanguage/rainlang/pull/559",
+            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
+          },
+          {
             "repo": "rainlanguage/raindex.interface",
             "number": 72,
             "url": "https://github.com/rainlanguage/raindex.interface/pull/72",
@@ -1195,6 +1219,12 @@
             "repo": "rainlanguage/rain.math.saturating",
             "number": 28,
             "url": "https://github.com/rainlanguage/rain.math.saturating/pull/28",
+            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.fixedpoint",
+            "number": 31,
+            "url": "https://github.com/rainlanguage/rain.math.fixedpoint/pull/31",
             "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
           },
           {
@@ -2184,7 +2214,32 @@
       "title": "[F20] [MEDIUM] Public ankr RPC default in LibFork makes the entire fork test suite depend on an unowned, mutable endpoint that no test or CI step pins"
     }
   ],
-  "closeCandidateUnvetted": [],
+  "closeCandidateUnvetted": [
+    {
+      "repo": "rainlanguage/rain.dia",
+      "number": 14,
+      "url": "https://github.com/rainlanguage/rain.dia/issues/14",
+      "title": "[AUDIT-M09] [medium] NatSpec claims revert on zero price but only (0,0) sentinel reverts"
+    },
+    {
+      "repo": "rainlanguage/rain.dia",
+      "number": 9,
+      "url": "https://github.com/rainlanguage/rain.dia/issues/9",
+      "title": "[AUDIT-M04] [medium] maxAge exact boundary elapsed==staleAfter untested"
+    },
+    {
+      "repo": "rainlanguage/rain.flare",
+      "number": 67,
+      "url": "https://github.com/rainlanguage/rain.flare/issues/67",
+      "title": "[F20] [MEDIUM] Public ankr RPC default in LibFork makes the entire fork test suite depend on an unowned, mutable endpoint that no test or CI step pins"
+    },
+    {
+      "repo": "rainlanguage/rain.dia",
+      "number": 61,
+      "url": "https://github.com/rainlanguage/rain.dia/pull/61",
+      "title": "fix(dia): revert ZeroDiaPrice on any zero price, not only the (0,0) sentinel"
+    }
+  ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [],
   "archivedRepoPrs": [
@@ -2215,18 +2270,18 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 70,
-    "blockedOn": 17,
+    "unvetted": 73,
+    "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
     "relink": 0,
     "design": 8,
     "blockedInfra": 0,
     "closeCandidateIssues": 3,
-    "closeCandidateUnvetted": 0,
+    "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 199,
+    "totalProducerPrs": 203,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 0,
     "designPresentable": 8,
