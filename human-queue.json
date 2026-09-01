@@ -931,7 +931,7 @@
         ]
       },
       "un-vetted": {
-        "count": 81,
+        "count": 77,
         "prs": [
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -974,12 +974,6 @@
             "number": 278,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/278",
             "title": "Give the crate a document level cbor decoder for the spec's MUST-discard rule"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 277,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/277",
-            "title": "fix: op meta v1 documents are arrays of opcodes"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -1040,18 +1034,6 @@
             "number": 262,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/262",
             "title": "Split the empty-result error into by-hash and by-subject variants"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 260,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/260",
-            "title": "fix: OpMeta Input computation requires bits"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 259,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/259",
-            "title": "op meta: propagate sub-validation errors dropped by ValidationErrors::merge_all misuse"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -1130,12 +1112,6 @@
             "number": 240,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/240",
             "title": "fix: require at least one expression per InterpreterCallerMeta method"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 239,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/239",
-            "title": "Put the keccak gate in the type: one way into the meta and deployer caches"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -6549,7 +6525,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 81,
+    "unvetted": 77,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6560,17 +6536,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 211,
+    "totalProducerPrs": 207,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 705,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 891
+    "openIssues": 887
   },
   "ages": {
     "openIssues": {
-      "meanDays": 279.6,
-      "medianDays": 106.0,
+      "meanDays": 280.9,
+      "medianDays": 110.0,
       "oldestDays": 1681.4
     }
   }
