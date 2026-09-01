@@ -931,8 +931,14 @@
         ]
       },
       "un-vetted": {
-        "count": 76,
+        "count": 77,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 313,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/313",
+            "title": "Remove the expression deployer surface"
+          },
           {
             "repo": "rainlanguage/rain.metadata",
             "number": 312,
@@ -6531,7 +6537,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 76,
+    "unvetted": 77,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6542,7 +6548,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 206,
+    "totalProducerPrs": 207,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 707,
     "designPresentable": 8,
