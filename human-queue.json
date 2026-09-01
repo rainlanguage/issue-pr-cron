@@ -931,7 +931,7 @@
         ]
       },
       "un-vetted": {
-        "count": 77,
+        "count": 71,
         "prs": [
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -989,18 +989,6 @@
           },
           {
             "repo": "rainlanguage/rain.metadata",
-            "number": 271,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/271",
-            "title": "propagate the IDescribedByMetaV1 probe error out of implements_i_described_by_meta_v1"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 269,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/269",
-            "title": "fix: drop unreachable sub-conditions from the cbor_decode corrupt-meta guard"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
             "number": 267,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/267",
             "title": "Drop cbor items missing mandatory keys 0/1 instead of failing the whole document"
@@ -1010,18 +998,6 @@
             "number": 266,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/266",
             "title": "schema ls: list only the metas schema show can produce"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 265,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/265",
-            "title": "Fail CynicClient::query on a non-2xx HTTP status"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 264,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/264",
-            "title": "Make CynicClientError::Empty reachable for missing-data responses"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -1061,12 +1037,6 @@
           },
           {
             "repo": "rainlanguage/rain.metadata",
-            "number": 254,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/254",
-            "title": "Validate deployer writes in Store::set_deployer"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
             "number": 251,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/251",
             "title": "fix: scan every metaboard meta and cbor document for the authoring meta"
@@ -1094,12 +1064,6 @@
             "number": 245,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/245",
             "title": "Declare Transaction in mapping.entities, and pin the list to the schema"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 243,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/243",
-            "title": "propagate the erc165 probe error out of fetch_for_contract"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -6525,7 +6489,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 77,
+    "unvetted": 71,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6536,17 +6500,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 207,
+    "totalProducerPrs": 201,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 705,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 887
+    "openIssues": 881
   },
   "ages": {
     "openIssues": {
-      "meanDays": 281.1,
-      "medianDays": 110.2,
+      "meanDays": 283.0,
+      "medianDays": 110.9,
       "oldestDays": 1681.6
     }
   }
