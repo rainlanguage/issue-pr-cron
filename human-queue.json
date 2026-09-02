@@ -182,6 +182,12 @@
         "title": "Drop snapshot-generate-cmd: rainix owns the release freeze"
       },
       {
+        "repo": "rainlanguage/rain.flare",
+        "number": 205,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/205",
+        "title": "bump rain-math-binary 0.1.1 -> 0.1.3"
+      },
+      {
         "repo": "rainlanguage/rain.pyth",
         "number": 32,
         "url": "https://github.com/rainlanguage/rain.pyth/pull/32",
@@ -270,6 +276,12 @@
         "number": 263,
         "url": "https://github.com/rainlanguage/rainix/pull/263",
         "title": "feat(ci): component-screenshots reusable (Storybook → PNG)"
+      },
+      {
+        "repo": "rainlanguage/rain.flare",
+        "number": 199,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/199",
+        "title": "test: assert authoringMetaV2 descriptions state correct operand input counts"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -524,12 +536,6 @@
         "title": "docs(natspec): add NatSpec to interfaces and op libraries"
       },
       {
-        "repo": "rainlanguage/rain.vats",
-        "number": 323,
-        "url": "https://github.com/rainlanguage/rain.vats/pull/323",
-        "title": "docs(natspec): document authorizer-trust assumption in call-sites"
-      },
-      {
         "repo": "rainlanguage/rain.flare",
         "number": 167,
         "url": "https://github.com/rainlanguage/rain.flare/pull/167",
@@ -720,12 +726,6 @@
         "number": 2702,
         "url": "https://github.com/rainlanguage/raindex/pull/2702",
         "title": "Dust accounting: per-(user, token) credit ledger realized on the next token move (#2673)"
-      },
-      {
-        "repo": "rainlanguage/flow",
-        "number": 475,
-        "url": "https://github.com/rainlanguage/flow/pull/475",
-        "title": "WIP: migrate flow to V4 interpreter + soldeer + reusable workflows"
       },
       {
         "repo": "S01-Issuer/st0x.deploy",
@@ -919,7 +919,7 @@
         ]
       },
       "un-vetted": {
-        "count": 60,
+        "count": 63,
         "prs": [
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -1120,6 +1120,12 @@
             "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
           },
           {
+            "repo": "rainlanguage/rain.flare",
+            "number": 211,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/211",
+            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
+          },
+          {
             "repo": "rainlanguage/rain.sol.binmaskflag",
             "number": 22,
             "url": "https://github.com/rainlanguage/rain.sol.binmaskflag/pull/22",
@@ -1228,6 +1234,12 @@
             "title": "Remove submodule-era residue; repair the copilot build fallback"
           },
           {
+            "repo": "rainlanguage/rain.flare",
+            "number": 209,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/209",
+            "title": "Remove the dead submodule-era entries from .soldeerignore"
+          },
+          {
             "repo": "rainlanguage/rain.verify",
             "number": 31,
             "url": "https://github.com/rainlanguage/rain.verify/pull/31",
@@ -1256,6 +1268,12 @@
             "number": 29,
             "url": "https://github.com/rainlanguage/rain.verify/pull/29",
             "title": "codegen: use LibCodeGen.addressConstantString instead of a local copy"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 206,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/206",
+            "title": "fix(ci): grant Package Release the token permissions its callee needs"
           },
           {
             "repo": "rainlanguage/rain.pyth",
@@ -1369,6 +1387,12 @@
             "title": "Drop snapshot-generate-cmd: rainix owns the release freeze"
           },
           {
+            "repo": "rainlanguage/rain.flare",
+            "number": 205,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/205",
+            "title": "bump rain-math-binary 0.1.1 -> 0.1.3"
+          },
+          {
             "repo": "rainlanguage/rain.pyth",
             "number": 32,
             "url": "https://github.com/rainlanguage/rain.pyth/pull/32",
@@ -1457,6 +1481,12 @@
             "number": 263,
             "url": "https://github.com/rainlanguage/rainix/pull/263",
             "title": "feat(ci): component-screenshots reusable (Storybook → PNG)"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 199,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/199",
+            "title": "test: assert authoringMetaV2 descriptions state correct operand input counts"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1711,12 +1741,6 @@
             "title": "docs(natspec): add NatSpec to interfaces and op libraries"
           },
           {
-            "repo": "rainlanguage/rain.vats",
-            "number": 323,
-            "url": "https://github.com/rainlanguage/rain.vats/pull/323",
-            "title": "docs(natspec): document authorizer-trust assumption in call-sites"
-          },
-          {
             "repo": "rainlanguage/rain.flare",
             "number": 167,
             "url": "https://github.com/rainlanguage/rain.flare/pull/167",
@@ -1907,12 +1931,6 @@
             "number": 2702,
             "url": "https://github.com/rainlanguage/raindex/pull/2702",
             "title": "Dust accounting: per-(user, token) credit ledger realized on the next token move (#2673)"
-          },
-          {
-            "repo": "rainlanguage/flow",
-            "number": 475,
-            "url": "https://github.com/rainlanguage/flow/pull/475",
-            "title": "WIP: migrate flow to V4 interpreter + soldeer + reusable workflows"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -2152,23 +2170,11 @@
       "number": 31,
       "url": "https://github.com/rainlanguage/rain.uniswap/pull/31",
       "title": "2024 06 23 sushi v3"
-    },
-    {
-      "repo": "rainlanguage/rain-protocol",
-      "number": 675,
-      "url": "https://github.com/rainlanguage/rain-protocol/pull/675",
-      "title": "remove ob"
-    },
-    {
-      "repo": "rainlanguage/rain-protocol",
-      "number": 613,
-      "url": "https://github.com/rainlanguage/rain-protocol/pull/613",
-      "title": "add generic errors for integrity operand overflow and underflow"
     }
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 60,
+    "unvetted": 63,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 100,
@@ -2179,8 +2185,8 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 188,
-    "archivedRepoPrs": 4,
+    "totalProducerPrs": 191,
+    "archivedRepoPrs": 2,
     "uncoveredIssues": 0,
     "designPresentable": 8,
     "designNoQuestion": 0
