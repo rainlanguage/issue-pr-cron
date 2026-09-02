@@ -536,6 +536,12 @@
         "title": "docs(natspec): add NatSpec to interfaces and op libraries"
       },
       {
+        "repo": "rainlanguage/rain.vats",
+        "number": 323,
+        "url": "https://github.com/rainlanguage/rain.vats/pull/323",
+        "title": "docs(natspec): document authorizer-trust assumption in call-sites"
+      },
+      {
         "repo": "rainlanguage/rain.flare",
         "number": 167,
         "url": "https://github.com/rainlanguage/rain.flare/pull/167",
@@ -726,6 +732,12 @@
         "number": 2702,
         "url": "https://github.com/rainlanguage/raindex/pull/2702",
         "title": "Dust accounting: per-(user, token) credit ledger realized on the next token move (#2673)"
+      },
+      {
+        "repo": "rainlanguage/flow",
+        "number": 475,
+        "url": "https://github.com/rainlanguage/flow/pull/475",
+        "title": "WIP: migrate flow to V4 interpreter + soldeer + reusable workflows"
       },
       {
         "repo": "S01-Issuer/st0x.deploy",
@@ -1372,7 +1384,7 @@
         }
       },
       "ai:needs-work": {
-        "count": 100,
+        "count": 102,
         "prs": [
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -1741,6 +1753,12 @@
             "title": "docs(natspec): add NatSpec to interfaces and op libraries"
           },
           {
+            "repo": "rainlanguage/rain.vats",
+            "number": 323,
+            "url": "https://github.com/rainlanguage/rain.vats/pull/323",
+            "title": "docs(natspec): document authorizer-trust assumption in call-sites"
+          },
+          {
             "repo": "rainlanguage/rain.flare",
             "number": 167,
             "url": "https://github.com/rainlanguage/rain.flare/pull/167",
@@ -1931,6 +1949,12 @@
             "number": 2702,
             "url": "https://github.com/rainlanguage/raindex/pull/2702",
             "title": "Dust accounting: per-(user, token) credit ledger realized on the next token move (#2673)"
+          },
+          {
+            "repo": "rainlanguage/flow",
+            "number": 475,
+            "url": "https://github.com/rainlanguage/flow/pull/475",
+            "title": "WIP: migrate flow to V4 interpreter + soldeer + reusable workflows"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -2170,6 +2194,18 @@
       "number": 31,
       "url": "https://github.com/rainlanguage/rain.uniswap/pull/31",
       "title": "2024 06 23 sushi v3"
+    },
+    {
+      "repo": "rainlanguage/rain-protocol",
+      "number": 675,
+      "url": "https://github.com/rainlanguage/rain-protocol/pull/675",
+      "title": "remove ob"
+    },
+    {
+      "repo": "rainlanguage/rain-protocol",
+      "number": 613,
+      "url": "https://github.com/rainlanguage/rain-protocol/pull/613",
+      "title": "add generic errors for integrity operand overflow and underflow"
     }
   ],
   "leaks": [],
@@ -2177,7 +2213,7 @@
     "unvetted": 63,
     "blockedOn": 18,
     "ready": 1,
-    "needsWork": 100,
+    "needsWork": 102,
     "relink": 0,
     "design": 8,
     "blockedInfra": 0,
@@ -2185,8 +2221,8 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 191,
-    "archivedRepoPrs": 2,
+    "totalProducerPrs": 193,
+    "archivedRepoPrs": 4,
     "uncoveredIssues": 0,
     "designPresentable": 8,
     "designNoQuestion": 0
