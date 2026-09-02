@@ -931,8 +931,26 @@
         ]
       },
       "un-vetted": {
-        "count": 58,
+        "count": 59,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 316,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/316",
+            "title": "cbor_decode requires the rain meta document prefix"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 315,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/315",
+            "title": "get_metabytes_by_hash returns only rows that hash to the hash asked for"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata",
+            "number": 314,
+            "url": "https://github.com/rainlanguage/rain.metadata/pull/314",
+            "title": "Make CynicClientError::Empty reachable for missing-data responses"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 334,
@@ -965,12 +983,6 @@
           },
           {
             "repo": "rainlanguage/rain.metadata",
-            "number": 278,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/278",
-            "title": "Give the crate a document level cbor decoder for the spec's MUST-discard rule"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
             "number": 257,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/257",
             "title": "fix: give AuthoringMetaV2 the rain word grammar it was missing"
@@ -986,12 +998,6 @@
             "number": 249,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/249",
             "title": "Reject unknown and kind-mismatched fields in SolidityAbiItem"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 245,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/245",
-            "title": "Declare Transaction in mapping.entities, and pin the list to the schema"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -2165,12 +2171,6 @@
       "title": "Fleet completion: registry-verified records, Token Terms, KIDs and a venue travel-rules surface for every live ST0x asset"
     },
     {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 301,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/301",
-      "title": "get_metabytes_by_hash returns rows without checking them against the hash the caller asked for"
-    },
-    {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 335,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/335",
@@ -2379,12 +2379,6 @@
       "number": 6,
       "url": "https://github.com/rainlanguage/rain.extrospection.deploy/issues/6",
       "title": "No PR-time currency check: generated drift is caught only at tag time, after the deploy"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 229,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/229",
-      "title": "subgraph: matchstick suite never observes nextMetaId or any multi-event path"
     },
     {
       "repo": "S01-Issuer/st0x.deploy",
@@ -6363,7 +6357,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 58,
+    "unvetted": 59,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6374,18 +6368,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 188,
+    "totalProducerPrs": 189,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 697,
+    "uncoveredIssues": 695,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 860
+    "openIssues": 858
   },
   "ages": {
     "openIssues": {
-      "meanDays": 290.8,
+      "meanDays": 291.5,
       "medianDays": 118.4,
-      "oldestDays": 1682.8
+      "oldestDays": 1682.9
     }
   }
 }
