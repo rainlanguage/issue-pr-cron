@@ -931,14 +931,8 @@
         ]
       },
       "un-vetted": {
-        "count": 77,
+        "count": 72,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 313,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/313",
-            "title": "Remove the expression deployer surface"
-          },
           {
             "repo": "rainlanguage/rain.metadata",
             "number": 312,
@@ -962,12 +956,6 @@
             "number": 309,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/309",
             "title": "Propagate both erc165 probe errors out of implements_i_described_by_meta_v1"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 308,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/308",
-            "title": "Put the deployer key and reproducibility checks in the cache gate"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -1043,12 +1031,6 @@
           },
           {
             "repo": "rainlanguage/rain.metadata",
-            "number": 258,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/258",
-            "title": "get_authoring_meta scans past an invalid authoring item"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
             "number": 257,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/257",
             "title": "fix: give AuthoringMetaV2 the rain word grammar it was missing"
@@ -1064,12 +1046,6 @@
             "number": 255,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/255",
             "title": "SolidityAbiMeta: give the abi items the validation rules the machinery was shaped for"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 254,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/254",
-            "title": "Validate deployer writes in Store::set_deployer"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -1100,12 +1076,6 @@
             "number": 243,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/243",
             "title": "propagate the erc165 probe error out of fetch_for_contract"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 241,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/241",
-            "title": "Key the tx-hash map on the deployer cache key in search_deployer"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -2565,6 +2535,12 @@
       "number": 156,
       "url": "https://github.com/rainlanguage/rain.metadata/issues/156",
       "title": "fetch_for_contract accepts a Vec of RPC urls but only ever uses the first: no failover"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 154,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/154",
+      "title": "fetch_for_contract reports transient RPC/transport failures during the erc165 probe as HasNoWords"
     },
     {
       "repo": "rainlanguage/rainlang",
@@ -6543,7 +6519,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 77,
+    "unvetted": 72,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6554,18 +6530,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 207,
+    "totalProducerPrs": 202,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 708,
+    "uncoveredIssues": 709,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 886
+    "openIssues": 882
   },
   "ages": {
     "openIssues": {
-      "meanDays": 282.1,
-      "medianDays": 111.2,
-      "oldestDays": 1682.3
+      "meanDays": 283.4,
+      "medianDays": 111.7,
+      "oldestDays": 1682.4
     }
   }
 }
