@@ -931,7 +931,7 @@
         ]
       },
       "un-vetted": {
-        "count": 64,
+        "count": 63,
         "prs": [
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -962,12 +962,6 @@
             "number": 16,
             "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/16",
             "title": "Drop the \"cut no release yet\" comment on the chain test"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 279,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/279",
-            "title": "fix(cli): fail loudly on a truncated introspection type-ref"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -6459,7 +6453,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 64,
+    "unvetted": 63,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6470,18 +6464,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 194,
+    "totalProducerPrs": 193,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 707,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 876
+    "openIssues": 874
   },
   "ages": {
     "openIssues": {
-      "meanDays": 285.3,
-      "medianDays": 113.5,
-      "oldestDays": 1682.4
+      "meanDays": 286.0,
+      "medianDays": 115.0,
+      "oldestDays": 1682.5
     }
   }
 }
