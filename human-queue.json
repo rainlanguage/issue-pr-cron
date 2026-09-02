@@ -931,32 +931,8 @@
         ]
       },
       "un-vetted": {
-        "count": 72,
+        "count": 64,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 312,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/312",
-            "title": "Drop cbor items the spec calls unexpected, keep nested documents corrupt"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 311,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/311",
-            "title": "fail over across every RPC in fetch_for_contract"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 310,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/310",
-            "title": "Reject duplicate cbor map keys on meta item decode"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 309,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/309",
-            "title": "Propagate both erc165 probe errors out of implements_i_described_by_meta_v1"
-          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 334,
@@ -998,24 +974,6 @@
             "number": 278,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/278",
             "title": "Give the crate a document level cbor decoder for the spec's MUST-discard rule"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 274,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/274",
-            "title": "fix: drop unknown-magic items in cbor_decode instead of failing the document"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 267,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/267",
-            "title": "Drop cbor items missing mandatory keys 0/1 instead of failing the whole document"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 266,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/266",
-            "title": "schema ls: list only the metas schema show can produce"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -1070,12 +1028,6 @@
             "number": 245,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/245",
             "title": "Declare Transaction in mapping.entities, and pin the list to the schema"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 243,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/243",
-            "title": "propagate the erc165 probe error out of fetch_for_contract"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -2529,18 +2481,6 @@
       "number": 178,
       "url": "https://github.com/rainlanguage/rain.metadata/issues/178",
       "title": "CynicClientError::Empty is unreachable from CynicClient::query: missing/null data surfaces as a Request decode error"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 156,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/156",
-      "title": "fetch_for_contract accepts a Vec of RPC urls but only ever uses the first: no failover"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 154,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/154",
-      "title": "fetch_for_contract reports transient RPC/transport failures during the erc165 probe as HasNoWords"
     },
     {
       "repo": "rainlanguage/rainlang",
@@ -6519,7 +6459,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 72,
+    "unvetted": 64,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6530,17 +6470,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 202,
+    "totalProducerPrs": 194,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 709,
+    "uncoveredIssues": 707,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 882
+    "openIssues": 876
   },
   "ages": {
     "openIssues": {
-      "meanDays": 283.4,
-      "medianDays": 111.7,
+      "meanDays": 285.3,
+      "medianDays": 113.5,
       "oldestDays": 1682.4
     }
   }
