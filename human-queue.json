@@ -931,7 +931,7 @@
         ]
       },
       "un-vetted": {
-        "count": 62,
+        "count": 58,
         "prs": [
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -971,21 +971,9 @@
           },
           {
             "repo": "rainlanguage/rain.metadata",
-            "number": 263,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/263",
-            "title": "fix(cli): gate authoring-meta-v2 normalize on an abi decode"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
             "number": 257,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/257",
             "title": "fix: give AuthoringMetaV2 the rain word grammar it was missing"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 256,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/256",
-            "title": "fix(cli): keep shared dotrain meta until the last uri drops it"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -995,21 +983,9 @@
           },
           {
             "repo": "rainlanguage/rain.metadata",
-            "number": 251,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/251",
-            "title": "fix: scan every metaboard meta and cbor document for the authoring meta"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
             "number": 249,
             "url": "https://github.com/rainlanguage/rain.metadata/pull/249",
             "title": "Reject unknown and kind-mismatched fields in SolidityAbiItem"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 247,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/247",
-            "title": "fix: emit dotrain source metas under the content hash, not the cbor item hash"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -2177,6 +2153,12 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/raindex",
+      "number": 2856,
+      "url": "https://github.com/rainlanguage/raindex/issues/2856",
+      "title": "try_into_emit_meta_call hand-rolls the dotrain emission recipe rain-metadata exports"
+    },
+    {
       "repo": "S01-Issuer/s01.ops",
       "number": 243,
       "url": "https://github.com/S01-Issuer/s01.ops/issues/243",
@@ -2405,82 +2387,16 @@
       "title": "subgraph: matchstick suite never observes nextMetaId or any multi-event path"
     },
     {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 228,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/228",
-      "title": "subgraph: manifest entities list omits Transaction, which the mapping writes"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 223,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/223",
-      "title": "KnownSubgraphs polygon NPE2 endpoint name is 'npe2-mati' — possible typo vs deliberate 30-char hosted-service truncation, unverifiable since the hosted service sunset"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 221,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/221",
-      "title": "InterpreterCallerMeta: context_columns cap length(max = u8::MAX) rejects 256 columns — off-by-one if the intent is u8-addressable column indices"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 219,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/219",
-      "title": "Dotrain source subject is derived two ways: generate emits under keccak(cbor item map) while DotrainSourceV1::hash and the subject field docs say keccak(content)"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 215,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/215",
-      "title": "fetch_by_subject returns an arbitrary, unverified meta when multiple metas share a subject"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 211,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/211",
-      "title": "AuthoringMetaV2::fetch_for_contract panic-indexes metas[0] and decoded[0], relying on other crates' non-empty guarantees"
-    },
-    {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 322,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/322",
       "title": "build-artifact + rainix-sol test red on main: live-chain grant/pin drift"
     },
     {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 201,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/201",
-      "title": "get_authoring_meta stops at the first AuthoringMetaV1 map on failure and collapses all failure modes into None"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 194,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/194",
-      "title": "InterpreterCallerMeta::try_from(RainMetaDocumentV1Item) ignores the item's magic, accepting a mismatched intent signal"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 184,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/184",
-      "title": "LibMeta fuzz oracles asserted raw fuzz data is never rain meta; counterexample 0xff0a89c674ee7874 falsifies three tests on unmutated code"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 178,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/178",
-      "title": "CynicClientError::Empty is unreachable from CynicClient::query: missing/null data surfaces as a Request decode error"
-    },
-    {
       "repo": "rainlanguage/rainlang",
       "number": 561,
       "url": "https://github.com/rainlanguage/rainlang/issues/561",
       "title": "rainix-sol/test red on main: 5 prod fork tests assert deployments that lag main"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 150,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/150",
-      "title": "LibMeta fuzz tests assert non-meta behaviour over inputs that CAN be rain meta; a seed emitting the magic prefix turns the suite red on unmutated code"
     },
     {
       "repo": "rainlanguage/raindex",
@@ -6447,7 +6363,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 62,
+    "unvetted": 58,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6458,17 +6374,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 192,
+    "totalProducerPrs": 188,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 707,
+    "uncoveredIssues": 697,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 873
+    "openIssues": 860
   },
   "ages": {
     "openIssues": {
-      "meanDays": 286.6,
-      "medianDays": 115.8,
+      "meanDays": 290.8,
+      "medianDays": 118.4,
       "oldestDays": 1682.8
     }
   }
