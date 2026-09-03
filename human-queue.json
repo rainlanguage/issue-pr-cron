@@ -931,7 +931,7 @@
         ]
       },
       "un-vetted": {
-        "count": 60,
+        "count": 58,
         "prs": [
           {
             "repo": "rainlanguage/rain.lib.hash",
@@ -971,21 +971,9 @@
           },
           {
             "repo": "rainlanguage/rain.lib.hash",
-            "number": 31,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/31",
-            "title": "README: fix dead links and stale dev instructions (#27)"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.hash",
             "number": 30,
             "url": "https://github.com/rainlanguage/rain.lib.hash/pull/30",
             "title": "README: sub-word struct members are sign-extended (intN) or left-aligned (bytesN), not always zero-padded"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.hash",
-            "number": 29,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/29",
-            "title": "Remove submodule-era residue: foundry.lock, .gitmodules/lib references, slither filter"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -6345,7 +6333,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 60,
+    "unvetted": 58,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6356,17 +6344,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 190,
+    "totalProducerPrs": 188,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 692,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 857
+    "openIssues": 855
   },
   "ages": {
     "openIssues": {
-      "meanDays": 292.4,
-      "medianDays": 119.1,
+      "meanDays": 293.1,
+      "medianDays": 120.3,
       "oldestDays": 1683.6
     }
   }
