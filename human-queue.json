@@ -934,10 +934,10 @@
         "count": 52,
         "prs": [
           {
-            "repo": "rainlanguage/rain.solmem",
-            "number": 154,
-            "url": "https://github.com/rainlanguage/rain.solmem/pull/154",
-            "title": "Commit the August 2026 Protofire report and delete the README audit section"
+            "repo": "rainlanguage/rainix",
+            "number": 369,
+            "url": "https://github.com/rainlanguage/rainix/pull/369",
+            "title": "Vendor rainix-static through fetchCargoVendor: crates.io/api now 403s nix"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -2116,12 +2116,6 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 153,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/153",
-      "title": "Audit report: attach the PDF here, then commit it under audit/"
-    },
     {
       "repo": "rainlanguage/raindex",
       "number": 2856,
@@ -5454,6 +5448,12 @@
     },
     {
       "repo": "rainlanguage/raindex",
+      "number": 889,
+      "url": "https://github.com/rainlanguage/raindex/issues/889",
+      "title": "Change the \"rainlang\" tab on the order page to \"source\" and add subtabs for the rainlang and the dotrain"
+    },
+    {
+      "repo": "rainlanguage/raindex",
       "number": 888,
       "url": "https://github.com/rainlanguage/raindex/issues/888",
       "title": "Add the dotrain for a deployment to the meta for an order, as well as the composed rainlang"
@@ -6323,9 +6323,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 294.2,
+      "meanDays": 295.1,
       "medianDays": 121.0,
-      "oldestDays": 1683.4
+      "oldestDays": 1683.5
     }
   }
 }
