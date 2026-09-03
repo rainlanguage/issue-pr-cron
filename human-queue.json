@@ -931,14 +931,8 @@
         ]
       },
       "un-vetted": {
-        "count": 51,
+        "count": 50,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.lib.hash",
-            "number": 36,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/36",
-            "title": "docs: state the per-type restriction the composition security argument needs (#22)"
-          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 328,
@@ -2111,16 +2105,16 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rainlang.interface",
+      "number": 133,
+      "url": "https://github.com/rainlanguage/rainlang.interface/issues/133",
+      "title": "EIP-712 signed context: SignedContextV2 with a caller-chosen domain, hashStruct over the context words, forge-std oracle tests"
+    },
+    {
       "repo": "rainlanguage/rain.deploy",
       "number": 159,
       "url": "https://github.com/rainlanguage/rain.deploy/issues/159",
       "title": "Let a migration opt in to a prerequisite in another writer's namespace"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 38,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/38",
-      "title": "README claims the allocator always keeps the free memory pointer at a multiple of 32; bytes.concat and abi.encodePacked leave it unaligned under the legacy pipeline"
     },
     {
       "repo": "rainlanguage/raindex",
@@ -2546,12 +2540,6 @@
       "repo": "rainlanguage/raindex.interface",
       "number": 70,
       "url": "https://github.com/rainlanguage/raindex.interface/issues/70",
-      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 17,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/17",
       "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
     },
     {
@@ -4613,12 +4601,6 @@
       "title": "I migrated your subgraph to HyperIndex - 100x faster indexing"
     },
     {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 7,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/7",
-      "title": "eip 712"
-    },
-    {
       "repo": "rainlanguage/raindex",
       "number": 2410,
       "url": "https://github.com/rainlanguage/raindex/issues/2410",
@@ -6297,7 +6279,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 51,
+    "unvetted": 50,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6308,17 +6290,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 181,
+    "totalProducerPrs": 180,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 693,
+    "uncoveredIssues": 691,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 850
+    "openIssues": 847
   },
   "ages": {
     "openIssues": {
-      "meanDays": 295.0,
-      "medianDays": 121.3,
+      "meanDays": 295.8,
+      "medianDays": 121.4,
       "oldestDays": 1683.8
     }
   }
