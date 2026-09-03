@@ -931,14 +931,8 @@
         ]
       },
       "un-vetted": {
-        "count": 57,
+        "count": 56,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.lib.hash",
-            "number": 37,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/37",
-            "title": "Document what hashBytes/hashWords read; a lying length word is caller UB"
-          },
           {
             "repo": "rainlanguage/rain.lib.hash",
             "number": 36,
@@ -2146,6 +2140,18 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 159,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/159",
+      "title": "Let a migration opt in to a prerequisite in another writer's namespace"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.hash",
+      "number": 38,
+      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/38",
+      "title": "README claims the allocator always keeps the free memory pointer at a multiple of 32; bytes.concat and abi.encodePacked leave it unaligned under the legacy pipeline"
+    },
     {
       "repo": "rainlanguage/raindex",
       "number": 2856,
@@ -6321,7 +6327,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 57,
+    "unvetted": 56,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6332,17 +6338,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 187,
+    "totalProducerPrs": 186,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 691,
+    "uncoveredIssues": 693,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 854
+    "openIssues": 855
   },
   "ages": {
     "openIssues": {
-      "meanDays": 293.5,
-      "medianDays": 120.7,
+      "meanDays": 293.2,
+      "medianDays": 120.4,
       "oldestDays": 1683.7
     }
   }
