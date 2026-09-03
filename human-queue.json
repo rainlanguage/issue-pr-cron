@@ -931,13 +931,13 @@
         ]
       },
       "un-vetted": {
-        "count": 58,
+        "count": 57,
         "prs": [
           {
             "repo": "rainlanguage/rain.lib.hash",
             "number": 37,
             "url": "https://github.com/rainlanguage/rain.lib.hash/pull/37",
-            "title": "hashWords: revert with HashWordsLengthOverflow when the length word's byte size does not fit in a word"
+            "title": "Document what hashBytes/hashWords read; a lying length word is caller UB"
           },
           {
             "repo": "rainlanguage/rain.lib.hash",
@@ -974,12 +974,6 @@
             "number": 30,
             "url": "https://github.com/rainlanguage/rain.lib.hash/pull/30",
             "title": "README: sub-word struct members are sign-extended (intN) or left-aligned (bytesN), not always zero-padded"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 334,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/334",
-            "title": "Add the orchestrator beacon to the governed beacon set"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -2169,12 +2163,6 @@
       "number": 335,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/335",
       "title": "SECURITY: the orchestrator beacon is owned by a compromised EOA on all three chains; #324 must not run until it is moved"
-    },
-    {
-      "repo": "S01-Issuer/st0x.deploy",
-      "number": 333,
-      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/333",
-      "title": "Orchestrator beacon owner is pinned to the hot deploy EOA as permanent expected state, and the timelock migration structurally cannot reach it"
     },
     {
       "repo": "S01-Issuer/st0x.deploy",
@@ -6333,7 +6321,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 58,
+    "unvetted": 57,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6344,18 +6332,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 188,
+    "totalProducerPrs": 187,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 692,
+    "uncoveredIssues": 691,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 855
+    "openIssues": 854
   },
   "ages": {
     "openIssues": {
-      "meanDays": 293.1,
-      "medianDays": 120.3,
-      "oldestDays": 1683.6
+      "meanDays": 293.5,
+      "medianDays": 120.7,
+      "oldestDays": 1683.7
     }
   }
 }
