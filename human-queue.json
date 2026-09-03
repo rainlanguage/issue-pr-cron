@@ -931,8 +931,14 @@
         ]
       },
       "un-vetted": {
-        "count": 55,
+        "count": 52,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.solmem",
+            "number": 154,
+            "url": "https://github.com/rainlanguage/rain.solmem/pull/154",
+            "title": "Commit the August 2026 Protofire report and delete the README audit section"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 334,
@@ -962,24 +968,6 @@
             "number": 16,
             "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/16",
             "title": "Drop the \"cut no release yet\" comment on the chain test"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 255,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/255",
-            "title": "SolidityAbiMeta: give the abi items the validation rules the machinery was shaped for"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 249,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/249",
-            "title": "Reject unknown and kind-mismatched fields in SolidityAbiItem"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 240,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/240",
-            "title": "fix: require at least one expression per InterpreterCallerMeta method"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -1040,12 +1028,6 @@
             "number": 2839,
             "url": "https://github.com/rainlanguage/raindex/pull/2839",
             "title": "Bump rain-solmem 0.1.3 -> 0.1.26"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata.deploy",
-            "number": 7,
-            "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/7",
-            "title": "ci: run metaboard-subgraph-report on dispatch"
           },
           {
             "repo": "rainlanguage/rainlang.interface",
@@ -2135,10 +2117,10 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 317,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/317",
-      "title": "Delete the SolidityAbiMeta and InterpreterCallerMeta models: no producer and no consumer"
+      "repo": "rainlanguage/rain.solmem",
+      "number": 153,
+      "url": "https://github.com/rainlanguage/rain.solmem/issues/153",
+      "title": "Audit report: attach the PDF here, then commit it under audit/"
     },
     {
       "repo": "rainlanguage/raindex",
@@ -2435,12 +2417,6 @@
       "title": "`subgraph-deploy` runs `npm ci` in the same environment as `GOLDSKY_TOKEN`, so a consumer cannot withhold it"
     },
     {
-      "repo": "rainlanguage/rain.metadata",
-      "number": 149,
-      "url": "https://github.com/rainlanguage/rain.metadata/issues/149",
-      "title": "Split subgraph on deployment facts, not wholesale: manifest as a template in the lib repo, networks.json in the deploy repo"
-    },
-    {
       "repo": "rainlanguage/rainix",
       "number": 344,
       "url": "https://github.com/rainlanguage/rainix/issues/344",
@@ -2529,12 +2505,6 @@
       "number": 321,
       "url": "https://github.com/rainlanguage/rainix/issues/321",
       "title": "Report audited-source drift from audit/audits.json in rainix-sol"
-    },
-    {
-      "repo": "rainlanguage/rain.solmem",
-      "number": 128,
-      "url": "https://github.com/rainlanguage/rain.solmem/issues/128",
-      "title": "Nothing detects the uint256 and bytes32 TEST suites drifting apart"
     },
     {
       "repo": "rainlanguage/issue-pr-cron",
@@ -5484,12 +5454,6 @@
     },
     {
       "repo": "rainlanguage/raindex",
-      "number": 889,
-      "url": "https://github.com/rainlanguage/raindex/issues/889",
-      "title": "Change the \"rainlang\" tab on the order page to \"source\" and add subtabs for the rainlang and the dotrain"
-    },
-    {
-      "repo": "rainlanguage/raindex",
       "number": 888,
       "url": "https://github.com/rainlanguage/raindex/issues/888",
       "title": "Add the dotrain for a deployment to the meta for an order, as well as the composed rainlang"
@@ -6339,7 +6303,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 55,
+    "unvetted": 52,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6350,17 +6314,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 185,
+    "totalProducerPrs": 182,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 696,
+    "uncoveredIssues": 693,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 855
+    "openIssues": 849
   },
   "ages": {
     "openIssues": {
-      "meanDays": 293.0,
-      "medianDays": 120.0,
+      "meanDays": 294.2,
+      "medianDays": 121.0,
       "oldestDays": 1683.4
     }
   }
