@@ -931,37 +931,13 @@
         ]
       },
       "un-vetted": {
-        "count": 55,
+        "count": 51,
         "prs": [
           {
             "repo": "rainlanguage/rain.lib.hash",
             "number": 36,
             "url": "https://github.com/rainlanguage/rain.lib.hash/pull/36",
             "title": "docs: state the per-type restriction the composition security argument needs (#22)"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.hash",
-            "number": 35,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/35",
-            "title": "Describe the shipped no-alloc mechanism and measured gas behaviour instead of stale figures"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.hash",
-            "number": 34,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/34",
-            "title": "test: assert the no-alloc gas saving by gasleft() delta; drop the unchecked .gas-snapshot"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.hash",
-            "number": 33,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/33",
-            "title": "README: fix the Yul examples in \"The pattern\" and test them against the prose"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.hash",
-            "number": 32,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/32",
-            "title": "README: describe the Foo[] fold as nil-hash seeded in every passage"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -6321,7 +6297,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 55,
+    "unvetted": 51,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6332,17 +6308,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 185,
+    "totalProducerPrs": 181,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 693,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 854
+    "openIssues": 850
   },
   "ages": {
     "openIssues": {
-      "meanDays": 293.6,
-      "medianDays": 120.8,
+      "meanDays": 295.0,
+      "medianDays": 121.3,
       "oldestDays": 1683.8
     }
   }
