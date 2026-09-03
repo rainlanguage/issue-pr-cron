@@ -931,7 +931,7 @@
         ]
       },
       "un-vetted": {
-        "count": 56,
+        "count": 55,
         "prs": [
           {
             "repo": "rainlanguage/rain.lib.hash",
@@ -962,12 +962,6 @@
             "number": 32,
             "url": "https://github.com/rainlanguage/rain.lib.hash/pull/32",
             "title": "README: describe the Foo[] fold as nil-hash seeded in every passage"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.hash",
-            "number": 30,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/30",
-            "title": "README: sub-word struct members are sign-extended (intN) or left-aligned (bytesN), not always zero-padded"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -6327,7 +6321,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 56,
+    "unvetted": 55,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6338,18 +6332,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 186,
+    "totalProducerPrs": 185,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 693,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 855
+    "openIssues": 854
   },
   "ages": {
     "openIssues": {
-      "meanDays": 293.2,
-      "medianDays": 120.4,
-      "oldestDays": 1683.7
+      "meanDays": 293.6,
+      "medianDays": 120.8,
+      "oldestDays": 1683.8
     }
   }
 }
