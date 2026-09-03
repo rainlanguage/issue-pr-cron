@@ -931,26 +931,8 @@
         ]
       },
       "un-vetted": {
-        "count": 59,
+        "count": 55,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 316,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/316",
-            "title": "cbor_decode requires the rain meta document prefix"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 315,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/315",
-            "title": "get_metabytes_by_hash returns only rows that hash to the hash asked for"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 314,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/314",
-            "title": "Make CynicClientError::Empty reachable for missing-data responses"
-          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 334,
@@ -980,12 +962,6 @@
             "number": 16,
             "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/16",
             "title": "Drop the \"cut no release yet\" comment on the chain test"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata",
-            "number": 257,
-            "url": "https://github.com/rainlanguage/rain.metadata/pull/257",
-            "title": "fix: give AuthoringMetaV2 the rain word grammar it was missing"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -2158,6 +2134,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 317,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/317",
+      "title": "Delete the SolidityAbiMeta and InterpreterCallerMeta models: no producer and no consumer"
+    },
     {
       "repo": "rainlanguage/raindex",
       "number": 2856,
@@ -6357,7 +6339,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 59,
+    "unvetted": 55,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6368,18 +6350,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 189,
+    "totalProducerPrs": 185,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 695,
+    "uncoveredIssues": 696,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 858
+    "openIssues": 855
   },
   "ages": {
     "openIssues": {
-      "meanDays": 292.0,
-      "medianDays": 118.9,
-      "oldestDays": 1683.3
+      "meanDays": 293.0,
+      "medianDays": 120.0,
+      "oldestDays": 1683.4
     }
   }
 }
