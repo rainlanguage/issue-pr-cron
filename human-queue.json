@@ -2105,6 +2105,162 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain.math.saturating",
+      "number": 54,
+      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/54",
+      "title": "[S26] [LOW] Release tags live in two namespaces (v* and sol-v*), so a \"latest release\" lookup by prefix answers with a stale version"
+    },
+    {
+      "repo": "rainlanguage/rain.math.saturating",
+      "number": 53,
+      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/53",
+      "title": "[S25] [INFO] README restates the library's behavioural contract from the NatSpec with nothing that fires when the two diverge"
+    },
+    {
+      "repo": "rainlanguage/rain.math.saturating",
+      "number": 52,
+      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/52",
+      "title": "[S24] [INFO] Dead a >= max / a < max guards in the add and sub boundary sweeps"
+    },
+    {
+      "repo": "rainlanguage/rain.math.saturating",
+      "number": 51,
+      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/51",
+      "title": "[S23] [LOW] magnitude() helper's \"exactly the selected bit width\" claim has no test; the mul fuzz domain could silently narrow"
+    },
+    {
+      "repo": "rainlanguage/rain.math.saturating",
+      "number": 50,
+      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/50",
+      "title": "[S22] [LOW] Oracle harness panic is never asserted directly; a harness that delegated to the library would make the oracle vacuous silently"
+    },
+    {
+      "repo": "rainlanguage/rain.math.saturating",
+      "number": 49,
+      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/49",
+      "title": "[S21] [INFO] forge-std pinned at 1.16.1 while 1.16.2 is on the registry: confirm the pin is intentional"
+    },
+    {
+      "repo": "rainlanguage/rain.math.saturating",
+      "number": 48,
+      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/48",
+      "title": "[S20] [LOW] Committed .gas-snapshot is a hand-regenerated artifact that nothing reads or checks"
+    },
+    {
+      "repo": "rainlanguage/rain.math.saturating",
+      "number": 47,
+      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/47",
+      "title": "[S19] [INFO] Three tests restate assertions other tests already make"
+    },
+    {
+      "repo": "rainlanguage/rain.math.saturating",
+      "number": 46,
+      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/46",
+      "title": "[S18] [LOW] Named returns on corners() and boundaryOperands()"
+    },
+    {
+      "repo": "rainlanguage/rain.math.saturating",
+      "number": 45,
+      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/45",
+      "title": "[S17] [LOW] checkAdd, checkSub and checkMul are one try/catch oracle block copied three times"
+    },
+    {
+      "repo": "rainlanguage/rain.math.saturating",
+      "number": 44,
+      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/44",
+      "title": "[S16] [LOW] checkNeverReverts hand-unrolls the loop testNeverReverts already has, and drops its value check"
+    },
+    {
+      "repo": "rainlanguage/rain.math.saturating",
+      "number": 43,
+      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/43",
+      "title": "[S15] [LOW] Short meaningless local and parameter names in the test file: x, xs, n, p"
+    },
+    {
+      "repo": "rainlanguage/rain.math.saturating",
+      "number": 42,
+      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/42",
+      "title": "[S14] [LOW] Mutable test state variable `harness` lacks the `s` storage-class prefix"
+    },
+    {
+      "repo": "rainlanguage/rain.math.saturating",
+      "number": 41,
+      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/41",
+      "title": "[S13] [LOW] Test tree does not follow the mirror-tree placement rule: harness inside test/src/, test file not at its subject's path"
+    },
+    {
+      "repo": "rainlanguage/rain.math.saturating",
+      "number": 40,
+      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/40",
+      "title": "[S12] [LOW] Bare first-party imports in both test files (3 occurrences)"
+    },
+    {
+      "repo": "rainlanguage/rain.math.saturating",
+      "number": 39,
+      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/39",
+      "title": "[S11] [INFO] foundry.toml scaffold comment links to a foundry path that returns 404"
+    },
+    {
+      "repo": "rainlanguage/rain.math.saturating",
+      "number": 38,
+      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/38",
+      "title": "[S10] [INFO] testDirectionOfSaturation NatSpec omits the multiplication assertions"
+    },
+    {
+      "repo": "rainlanguage/rain.math.saturating",
+      "number": 37,
+      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/37",
+      "title": "[S09] [LOW] boundaryOperands() comment places the subtraction saturation curve at a == b, where the result is still exact"
+    },
+    {
+      "repo": "rainlanguage/rain.math.saturating",
+      "number": 36,
+      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/36",
+      "title": "[S08] [LOW] testMulEdgeValues comment calls 2 * (2**255 - 1) the largest product that fits; the same test asserts a larger one"
+    },
+    {
+      "repo": "rainlanguage/rain.math.saturating",
+      "number": 35,
+      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/35",
+      "title": "[S07] [LOW] corners() NatSpec does not describe the values the function returns"
+    },
+    {
+      "repo": "rainlanguage/rain.math.saturating",
+      "number": 34,
+      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/34",
+      "title": "[S06] [LOW] boundaryOperands() comment describes a guard that does not exist"
+    },
+    {
+      "repo": "rainlanguage/rain.math.saturating",
+      "number": 33,
+      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/33",
+      "title": "[S05] [LOW] saturatingMul zero-guard comment calls a division-by-zero guard a gas optimisation"
+    },
+    {
+      "repo": "rainlanguage/rain.math.saturating",
+      "number": 32,
+      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/32",
+      "title": "[S04] [LOW] Typo \"arithmatic\" in the library @notice"
+    },
+    {
+      "repo": "rainlanguage/rain.math.saturating",
+      "number": 31,
+      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/31",
+      "title": "[S03] [LOW] README license summary attributes CAL-1.0's own user-data obligations to DCL-1.0"
+    },
+    {
+      "repo": "rainlanguage/rain.math.saturating",
+      "number": 30,
+      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/30",
+      "title": "[S02] [LOW] README names three dev-shell tasks and a verify command that do not exist in the sol-shell"
+    },
+    {
+      "repo": "rainlanguage/rain.math.saturating",
+      "number": 29,
+      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/29",
+      "title": "[S01] [MEDIUM] README Publish section documents a tag-driven flow and a workflow file that do not exist"
+    },
+    {
       "repo": "rainlanguage/rainlang.interface",
       "number": 133,
       "url": "https://github.com/rainlanguage/rainlang.interface/issues/133",
@@ -6292,16 +6448,16 @@
     "leaks": 0,
     "totalProducerPrs": 180,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 691,
+    "uncoveredIssues": 717,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 847
+    "openIssues": 873
   },
   "ages": {
     "openIssues": {
-      "meanDays": 296.3,
-      "medianDays": 121.9,
-      "oldestDays": 1684.3
+      "meanDays": 287.6,
+      "medianDays": 116.4,
+      "oldestDays": 1684.4
     }
   }
 }
