@@ -931,8 +931,68 @@
         ]
       },
       "un-vetted": {
-        "count": 62,
+        "count": 72,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.saturating",
+            "number": 76,
+            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/76",
+            "title": "Place the subtraction saturation curve at b == a + 1 in the boundaryOperands NatSpec"
+          },
+          {
+            "repo": "rainlanguage/rain.math.saturating",
+            "number": 75,
+            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/75",
+            "title": "Call 2 * (2 ** 255 - 1) the largest even product in the mul edge NatSpec"
+          },
+          {
+            "repo": "rainlanguage/rain.math.saturating",
+            "number": 74,
+            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/74",
+            "title": "Describe the values corners() actually returns in its NatSpec"
+          },
+          {
+            "repo": "rainlanguage/rain.math.saturating",
+            "number": 73,
+            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/73",
+            "title": "Delete three tests whose assertions other tests already make"
+          },
+          {
+            "repo": "rainlanguage/rain.math.saturating",
+            "number": 72,
+            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/72",
+            "title": "Pin the bit width magnitude selects with a fuzz test and its extremes"
+          },
+          {
+            "repo": "rainlanguage/rain.math.saturating",
+            "number": 71,
+            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/71",
+            "title": "Delete the never-taken max guards from the add and sub boundary sweeps"
+          },
+          {
+            "repo": "rainlanguage/rain.math.saturating",
+            "number": 70,
+            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/70",
+            "title": "Delete the boundaryOperands comment describing a guard that does not exist"
+          },
+          {
+            "repo": "rainlanguage/rain.math.saturating",
+            "number": 69,
+            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/69",
+            "title": "Name the test file's fuzz seed, operand arrays, write cursor and power of two"
+          },
+          {
+            "repo": "rainlanguage/rain.math.saturating",
+            "number": 68,
+            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/68",
+            "title": "Assert the checked arithmetic oracle panics one step past each boundary"
+          },
+          {
+            "repo": "rainlanguage/rain.math.saturating",
+            "number": 67,
+            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/67",
+            "title": "Fold the unrolled never-reverts helper into the value-checking loop"
+          },
           {
             "repo": "rainlanguage/rain.math.saturating",
             "number": 66,
@@ -6477,7 +6537,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 62,
+    "unvetted": 72,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6488,7 +6548,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 192,
+    "totalProducerPrs": 202,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 712,
     "designPresentable": 8,
@@ -6498,7 +6558,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 288.1,
-      "medianDays": 117.1,
+      "medianDays": 117.2,
       "oldestDays": 1684.6
     }
   }
