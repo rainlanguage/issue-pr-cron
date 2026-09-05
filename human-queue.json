@@ -931,7 +931,7 @@
         ]
       },
       "un-vetted": {
-        "count": 74,
+        "count": 68,
         "prs": [
           {
             "repo": "rainlanguage/rain.math.saturating",
@@ -1031,51 +1031,15 @@
           },
           {
             "repo": "rainlanguage/rain.math.saturating",
-            "number": 62,
-            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/62",
-            "title": "Delete the inaccurate CAL-1.0 comparison from the README license section"
-          },
-          {
-            "repo": "rainlanguage/rain.math.saturating",
-            "number": 61,
-            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/61",
-            "title": "Delete the README dev-shell task list and REUSE verify command"
-          },
-          {
-            "repo": "rainlanguage/rain.math.saturating",
             "number": 60,
             "url": "https://github.com/rainlanguage/rain.math.saturating/pull/60",
             "title": "Use relative paths for first-party imports in test files"
           },
           {
             "repo": "rainlanguage/rain.math.saturating",
-            "number": 59,
-            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/59",
-            "title": "Replace saturatingMul zero-guard comment with the division-by-zero fact"
-          },
-          {
-            "repo": "rainlanguage/rain.math.saturating",
-            "number": 58,
-            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/58",
-            "title": "Delete the README Publish section"
-          },
-          {
-            "repo": "rainlanguage/rain.math.saturating",
             "number": 57,
             "url": "https://github.com/rainlanguage/rain.math.saturating/pull/57",
             "title": "Remove the committed gas snapshot nothing reads or checks"
-          },
-          {
-            "repo": "rainlanguage/rain.math.saturating",
-            "number": 56,
-            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/56",
-            "title": "Fix \"arithmatic\" typo in LibSaturatingMath notice"
-          },
-          {
-            "repo": "rainlanguage/rain.math.saturating",
-            "number": 55,
-            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/55",
-            "title": "Delete dead foundry-rs config link from foundry.toml"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -2250,12 +2214,6 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rain.math.saturating",
-      "number": 53,
-      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/53",
-      "title": "[S25] [INFO] README restates the library's behavioural contract from the NatSpec with nothing that fires when the two diverge"
-    },
-    {
-      "repo": "rainlanguage/rain.math.saturating",
       "number": 52,
       "url": "https://github.com/rainlanguage/rain.math.saturating/issues/52",
       "title": "[S24] [INFO] Dead a >= max / a < max guards in the add and sub boundary sweeps"
@@ -2355,24 +2313,6 @@
       "number": 34,
       "url": "https://github.com/rainlanguage/rain.math.saturating/issues/34",
       "title": "[S06] [LOW] boundaryOperands() comment describes a guard that does not exist"
-    },
-    {
-      "repo": "rainlanguage/rain.math.saturating",
-      "number": 33,
-      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/33",
-      "title": "[S05] [LOW] saturatingMul zero-guard comment calls a division-by-zero guard a gas optimisation"
-    },
-    {
-      "repo": "rainlanguage/rain.math.saturating",
-      "number": 31,
-      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/31",
-      "title": "[S03] [LOW] README license summary attributes CAL-1.0's own user-data obligations to DCL-1.0"
-    },
-    {
-      "repo": "rainlanguage/rain.math.saturating",
-      "number": 30,
-      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/30",
-      "title": "[S02] [LOW] README names three dev-shell tasks and a verify command that do not exist in the sol-shell"
     },
     {
       "repo": "rainlanguage/rainlang.interface",
@@ -6549,7 +6489,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 74,
+    "unvetted": 68,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6560,18 +6500,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 204,
+    "totalProducerPrs": 198,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 712,
+    "uncoveredIssues": 708,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 872
+    "openIssues": 866
   },
   "ages": {
     "openIssues": {
-      "meanDays": 288.8,
-      "medianDays": 117.9,
-      "oldestDays": 1685.3
+      "meanDays": 290.9,
+      "medianDays": 118.6,
+      "oldestDays": 1685.4
     }
   }
 }
