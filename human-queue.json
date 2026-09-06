@@ -931,31 +931,13 @@
         ]
       },
       "un-vetted": {
-        "count": 52,
+        "count": 49,
         "prs": [
           {
             "repo": "rainlanguage/rainlang",
             "number": 573,
             "url": "https://github.com/rainlanguage/rainlang/pull/573",
             "title": "Bump rain-solmem 0.1.26 -> 0.1.28 and the dep chain pinning it"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float.deploy",
-            "number": 18,
-            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/18",
-            "title": "Bump rain-solmem 0.1.26 -> 0.1.28 and rain-datacontract 0.1.3 -> 0.1.9"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 273,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/273",
-            "title": "Bump rain-solmem 0.1.26 -> 0.1.28 and rain-datacontract 0.1.3 -> 0.1.9"
-          },
-          {
-            "repo": "rainlanguage/rain.datacontract",
-            "number": 100,
-            "url": "https://github.com/rainlanguage/rain.datacontract/pull/100",
-            "title": "Bump rain-solmem 0.1.26 -> 0.1.28"
           },
           {
             "repo": "rainlanguage/rainlang.interface",
@@ -6267,7 +6249,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 52,
+    "unvetted": 49,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6278,7 +6260,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 182,
+    "totalProducerPrs": 179,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 687,
     "designPresentable": 8,
@@ -6287,9 +6269,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 299.8,
-      "medianDays": 124.0,
-      "oldestDays": 1686.5
+      "meanDays": 299.9,
+      "medianDays": 124.1,
+      "oldestDays": 1686.6
     }
   }
 }
