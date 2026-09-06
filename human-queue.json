@@ -931,43 +931,19 @@
         ]
       },
       "un-vetted": {
-        "count": 56,
+        "count": 51,
         "prs": [
           {
-            "repo": "rainlanguage/rain.math.saturating",
-            "number": 78,
-            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/78",
-            "title": "Bump forge-std to 1.16.2"
+            "repo": "rainlanguage/rain.intorastring",
+            "number": 27,
+            "url": "https://github.com/rainlanguage/rain.intorastring/pull/27",
+            "title": "test: pin toStringV3 trailing-byte zeroing and the documented V3 layout"
           },
           {
-            "repo": "rainlanguage/rain.math.saturating",
-            "number": 77,
-            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/77",
-            "title": "Name the multiplication assertions in the testDirectionOfSaturation NatSpec"
-          },
-          {
-            "repo": "rainlanguage/rain.math.saturating",
-            "number": 76,
-            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/76",
-            "title": "Place the subtraction saturation curve at b == a + 1 in the boundaryOperands NatSpec"
-          },
-          {
-            "repo": "rainlanguage/rain.math.saturating",
-            "number": 75,
-            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/75",
-            "title": "Call 2 * (2 ** 255 - 1) the largest even product in the mul edge NatSpec"
-          },
-          {
-            "repo": "rainlanguage/rain.math.saturating",
-            "number": 74,
-            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/74",
-            "title": "Describe the values corners() actually returns in its NatSpec"
-          },
-          {
-            "repo": "rainlanguage/rain.math.saturating",
-            "number": 73,
-            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/73",
-            "title": "Delete three tests whose assertions other tests already make"
+            "repo": "rainlanguage/rainlang.interface",
+            "number": 134,
+            "url": "https://github.com/rainlanguage/rainlang.interface/pull/134",
+            "title": "SignedContextV2: EIP-712 signed context under a caller-chosen domain separator"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -1111,12 +1087,6 @@
             "repo": "rainlanguage/rain.intorastring",
             "number": 23,
             "url": "https://github.com/rainlanguage/rain.intorastring/pull/23",
-            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.saturating",
-            "number": 28,
-            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/28",
             "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
           },
           {
@@ -2141,40 +2111,16 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
-      "repo": "rainlanguage/rain.math.saturating",
-      "number": 49,
-      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/49",
-      "title": "[S21] [INFO] forge-std pinned at 1.16.1 while 1.16.2 is on the registry: confirm the pin is intentional"
+      "repo": "rainlanguage/rain.intorastring",
+      "number": 26,
+      "url": "https://github.com/rainlanguage/rain.intorastring/issues/26",
+      "title": ".gas-snapshot names V2 tests that no longer exist and nothing checks or regenerates it"
     },
     {
-      "repo": "rainlanguage/rain.math.saturating",
-      "number": 38,
-      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/38",
-      "title": "[S10] [INFO] testDirectionOfSaturation NatSpec omits the multiplication assertions"
-    },
-    {
-      "repo": "rainlanguage/rain.math.saturating",
-      "number": 37,
-      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/37",
-      "title": "[S09] [LOW] boundaryOperands() comment places the subtraction saturation curve at a == b, where the result is still exact"
-    },
-    {
-      "repo": "rainlanguage/rain.math.saturating",
-      "number": 36,
-      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/36",
-      "title": "[S08] [LOW] testMulEdgeValues comment calls 2 * (2**255 - 1) the largest product that fits; the same test asserts a larger one"
-    },
-    {
-      "repo": "rainlanguage/rain.math.saturating",
-      "number": 35,
-      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/35",
-      "title": "[S07] [LOW] corners() NatSpec does not describe the values the function returns"
-    },
-    {
-      "repo": "rainlanguage/rainlang.interface",
-      "number": 133,
-      "url": "https://github.com/rainlanguage/rainlang.interface/issues/133",
-      "title": "EIP-712 signed context: SignedContextV2 with a caller-chosen domain, hashStruct over the context words, forge-std oracle tests"
+      "repo": "rainlanguage/rain.intorastring",
+      "number": 25,
+      "url": "https://github.com/rainlanguage/rain.intorastring/issues/25",
+      "title": "README and NatSpec describe the pre-V3 packed layout: length byte, truthy bits, garbage reproduction and truncation rule all contradict the code"
     },
     {
       "repo": "rainlanguage/rain.deploy",
@@ -2627,12 +2573,6 @@
       "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
     },
     {
-      "repo": "rainlanguage/rain.math.saturating",
-      "number": 27,
-      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/27",
-      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
-    },
-    {
       "repo": "rainlanguage/rain.vats",
       "number": 335,
       "url": "https://github.com/rainlanguage/rain.vats/issues/335",
@@ -2829,12 +2769,6 @@
       "number": 34,
       "url": "https://github.com/rainlanguage/rain.pyth/issues/34",
       "title": "Remove the submodule-era residue — the manual deploy workflow still runs inside `./lib/rain.interpreter`, which does not exist"
-    },
-    {
-      "repo": "rainlanguage/rain.math.saturating",
-      "number": 26,
-      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/26",
-      "title": "Remove the submodule-era residue — dead `foundry.lock`, `.gitmodules`/`lib/` references, and a slither filter pointed at `lib/forge-std`"
     },
     {
       "repo": "rainlanguage/rain.math.fixedpoint",
@@ -6345,7 +6279,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 56,
+    "unvetted": 51,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6356,18 +6290,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 186,
+    "totalProducerPrs": 181,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 696,
+    "uncoveredIssues": 690,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 853
+    "openIssues": 847
   },
   "ages": {
     "openIssues": {
-      "meanDays": 296.1,
-      "medianDays": 122.9,
-      "oldestDays": 1686.2
+      "meanDays": 298.2,
+      "medianDays": 123.8,
+      "oldestDays": 1686.3
     }
   }
 }
