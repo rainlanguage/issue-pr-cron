@@ -931,14 +931,8 @@
         ]
       },
       "un-vetted": {
-        "count": 51,
+        "count": 48,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.intorastring",
-            "number": 27,
-            "url": "https://github.com/rainlanguage/rain.intorastring/pull/27",
-            "title": "test: pin toStringV3 trailing-byte zeroing and the documented V3 layout"
-          },
           {
             "repo": "rainlanguage/rainlang.interface",
             "number": 134,
@@ -1084,12 +1078,6 @@
             "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
           },
           {
-            "repo": "rainlanguage/rain.intorastring",
-            "number": 23,
-            "url": "https://github.com/rainlanguage/rain.intorastring/pull/23",
-            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
-          },
-          {
             "repo": "rainlanguage/rain.math.fixedpoint",
             "number": 31,
             "url": "https://github.com/rainlanguage/rain.math.fixedpoint/pull/31",
@@ -1196,12 +1184,6 @@
             "number": 18,
             "url": "https://github.com/rainlanguage/rain.merkle/pull/18",
             "title": "Remove submodule-era residue: dead REUSE.toml annotations and dead lib/rain.interpreter workflow steps"
-          },
-          {
-            "repo": "rainlanguage/rain.intorastring",
-            "number": 21,
-            "url": "https://github.com/rainlanguage/rain.intorastring/pull/21",
-            "title": "Remove the submodule-era residue — dead foundry.lock, .gitmodules and lib/ references"
           },
           {
             "repo": "rainlanguage/rain.verify",
@@ -2111,18 +2093,6 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
-      "repo": "rainlanguage/rain.intorastring",
-      "number": 26,
-      "url": "https://github.com/rainlanguage/rain.intorastring/issues/26",
-      "title": ".gas-snapshot names V2 tests that no longer exist and nothing checks or regenerates it"
-    },
-    {
-      "repo": "rainlanguage/rain.intorastring",
-      "number": 25,
-      "url": "https://github.com/rainlanguage/rain.intorastring/issues/25",
-      "title": "README and NatSpec describe the pre-V3 packed layout: length byte, truthy bits, garbage reproduction and truncation rule all contradict the code"
-    },
-    {
       "repo": "rainlanguage/rain.deploy",
       "number": 159,
       "url": "https://github.com/rainlanguage/rain.deploy/issues/159",
@@ -2588,12 +2558,6 @@
       "repo": "rainlanguage/rain.pyth",
       "number": 35,
       "url": "https://github.com/rainlanguage/rain.pyth/issues/35",
-      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
-    },
-    {
-      "repo": "rainlanguage/rain.intorastring",
-      "number": 22,
-      "url": "https://github.com/rainlanguage/rain.intorastring/issues/22",
       "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
     },
     {
@@ -6279,7 +6243,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 51,
+    "unvetted": 48,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6290,18 +6254,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 181,
+    "totalProducerPrs": 178,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 690,
+    "uncoveredIssues": 687,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 847
+    "openIssues": 843
   },
   "ages": {
     "openIssues": {
-      "meanDays": 298.4,
+      "meanDays": 299.8,
       "medianDays": 124.0,
-      "oldestDays": 1686.4
+      "oldestDays": 1686.5
     }
   }
 }
