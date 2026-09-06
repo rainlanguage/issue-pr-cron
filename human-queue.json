@@ -935,9 +935,9 @@
         "prs": [
           {
             "repo": "rainlanguage/rainlang",
-            "number": 573,
-            "url": "https://github.com/rainlanguage/rainlang/pull/573",
-            "title": "Bump rain-solmem 0.1.26 -> 0.1.28 and the dep chain pinning it"
+            "number": 574,
+            "url": "https://github.com/rainlanguage/rainlang/pull/574",
+            "title": "Cut release 0.1.10: freeze candidate pins as src/generated/0_1_10/"
           },
           {
             "repo": "rainlanguage/rainlang.interface",
@@ -6271,7 +6271,7 @@
     "openIssues": {
       "meanDays": 300.2,
       "medianDays": 124.4,
-      "oldestDays": 1686.8
+      "oldestDays": 1686.9
     }
   }
 }
