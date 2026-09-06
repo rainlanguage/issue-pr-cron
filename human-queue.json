@@ -931,7 +931,7 @@
         ]
       },
       "un-vetted": {
-        "count": 68,
+        "count": 56,
         "prs": [
           {
             "repo": "rainlanguage/rain.math.saturating",
@@ -968,78 +968,6 @@
             "number": 73,
             "url": "https://github.com/rainlanguage/rain.math.saturating/pull/73",
             "title": "Delete three tests whose assertions other tests already make"
-          },
-          {
-            "repo": "rainlanguage/rain.math.saturating",
-            "number": 72,
-            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/72",
-            "title": "Pin the bit width magnitude selects with a fuzz test and its extremes"
-          },
-          {
-            "repo": "rainlanguage/rain.math.saturating",
-            "number": 71,
-            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/71",
-            "title": "Delete the never-taken max guards from the add and sub boundary sweeps"
-          },
-          {
-            "repo": "rainlanguage/rain.math.saturating",
-            "number": 70,
-            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/70",
-            "title": "Delete the boundaryOperands comment describing a guard that does not exist"
-          },
-          {
-            "repo": "rainlanguage/rain.math.saturating",
-            "number": 69,
-            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/69",
-            "title": "Name the test file's fuzz seed, operand arrays, write cursor and power of two"
-          },
-          {
-            "repo": "rainlanguage/rain.math.saturating",
-            "number": 68,
-            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/68",
-            "title": "Assert the checked arithmetic oracle panics one step past each boundary"
-          },
-          {
-            "repo": "rainlanguage/rain.math.saturating",
-            "number": 67,
-            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/67",
-            "title": "Fold the unrolled never-reverts helper into the value-checking loop"
-          },
-          {
-            "repo": "rainlanguage/rain.math.saturating",
-            "number": 66,
-            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/66",
-            "title": "Fold the three checked arithmetic oracle blocks into one helper"
-          },
-          {
-            "repo": "rainlanguage/rain.math.saturating",
-            "number": 65,
-            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/65",
-            "title": "Prefix the mutable test harness state variable with s"
-          },
-          {
-            "repo": "rainlanguage/rain.math.saturating",
-            "number": 64,
-            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/64",
-            "title": "Point the README at the NatSpec instead of restating the library contract"
-          },
-          {
-            "repo": "rainlanguage/rain.math.saturating",
-            "number": 63,
-            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/63",
-            "title": "Move the harness out of the mirror tree and put the test at its subject's path"
-          },
-          {
-            "repo": "rainlanguage/rain.math.saturating",
-            "number": 60,
-            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/60",
-            "title": "Use relative paths for first-party imports in test files"
-          },
-          {
-            "repo": "rainlanguage/rain.math.saturating",
-            "number": 57,
-            "url": "https://github.com/rainlanguage/rain.math.saturating/pull/57",
-            "title": "Remove the committed gas snapshot nothing reads or checks"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -2214,75 +2142,9 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rain.math.saturating",
-      "number": 52,
-      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/52",
-      "title": "[S24] [INFO] Dead a >= max / a < max guards in the add and sub boundary sweeps"
-    },
-    {
-      "repo": "rainlanguage/rain.math.saturating",
-      "number": 51,
-      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/51",
-      "title": "[S23] [LOW] magnitude() helper's \"exactly the selected bit width\" claim has no test; the mul fuzz domain could silently narrow"
-    },
-    {
-      "repo": "rainlanguage/rain.math.saturating",
-      "number": 50,
-      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/50",
-      "title": "[S22] [LOW] Oracle harness panic is never asserted directly; a harness that delegated to the library would make the oracle vacuous silently"
-    },
-    {
-      "repo": "rainlanguage/rain.math.saturating",
       "number": 49,
       "url": "https://github.com/rainlanguage/rain.math.saturating/issues/49",
       "title": "[S21] [INFO] forge-std pinned at 1.16.1 while 1.16.2 is on the registry: confirm the pin is intentional"
-    },
-    {
-      "repo": "rainlanguage/rain.math.saturating",
-      "number": 47,
-      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/47",
-      "title": "[S19] [INFO] Three tests restate assertions other tests already make"
-    },
-    {
-      "repo": "rainlanguage/rain.math.saturating",
-      "number": 46,
-      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/46",
-      "title": "[S18] [LOW] Named returns on corners() and boundaryOperands()"
-    },
-    {
-      "repo": "rainlanguage/rain.math.saturating",
-      "number": 45,
-      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/45",
-      "title": "[S17] [LOW] checkAdd, checkSub and checkMul are one try/catch oracle block copied three times"
-    },
-    {
-      "repo": "rainlanguage/rain.math.saturating",
-      "number": 44,
-      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/44",
-      "title": "[S16] [LOW] checkNeverReverts hand-unrolls the loop testNeverReverts already has, and drops its value check"
-    },
-    {
-      "repo": "rainlanguage/rain.math.saturating",
-      "number": 43,
-      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/43",
-      "title": "[S15] [LOW] Short meaningless local and parameter names in the test file: x, xs, n, p"
-    },
-    {
-      "repo": "rainlanguage/rain.math.saturating",
-      "number": 42,
-      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/42",
-      "title": "[S14] [LOW] Mutable test state variable `harness` lacks the `s` storage-class prefix"
-    },
-    {
-      "repo": "rainlanguage/rain.math.saturating",
-      "number": 41,
-      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/41",
-      "title": "[S13] [LOW] Test tree does not follow the mirror-tree placement rule: harness inside test/src/, test file not at its subject's path"
-    },
-    {
-      "repo": "rainlanguage/rain.math.saturating",
-      "number": 40,
-      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/40",
-      "title": "[S12] [LOW] Bare first-party imports in both test files (3 occurrences)"
     },
     {
       "repo": "rainlanguage/rain.math.saturating",
@@ -2307,12 +2169,6 @@
       "number": 35,
       "url": "https://github.com/rainlanguage/rain.math.saturating/issues/35",
       "title": "[S07] [LOW] corners() NatSpec does not describe the values the function returns"
-    },
-    {
-      "repo": "rainlanguage/rain.math.saturating",
-      "number": 34,
-      "url": "https://github.com/rainlanguage/rain.math.saturating/issues/34",
-      "title": "[S06] [LOW] boundaryOperands() comment describes a guard that does not exist"
     },
     {
       "repo": "rainlanguage/rainlang.interface",
@@ -6489,7 +6345,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 68,
+    "unvetted": 56,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6500,17 +6356,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 198,
+    "totalProducerPrs": 186,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 708,
+    "uncoveredIssues": 696,
     "designPresentable": 8,
     "designNoQuestion": 0,
-    "openIssues": 866
+    "openIssues": 853
   },
   "ages": {
     "openIssues": {
-      "meanDays": 291.7,
-      "medianDays": 119.4,
+      "meanDays": 296.1,
+      "medianDays": 122.9,
       "oldestDays": 1686.2
     }
   }
