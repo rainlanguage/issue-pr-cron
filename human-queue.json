@@ -931,8 +931,14 @@
         ]
       },
       "un-vetted": {
-        "count": 49,
+        "count": 50,
         "prs": [
+          {
+            "repo": "rainlanguage/rainlang",
+            "number": 575,
+            "url": "https://github.com/rainlanguage/rainlang/pull/575",
+            "title": "Move the deployed contracts' logic into BaseRainlang* abstracts (#552 step 1)"
+          },
           {
             "repo": "rainlanguage/rainlang",
             "number": 574,
@@ -6249,7 +6255,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 49,
+    "unvetted": 50,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6260,7 +6266,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 179,
+    "totalProducerPrs": 180,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 687,
     "designPresentable": 8,
@@ -6270,7 +6276,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 300.2,
-      "medianDays": 124.4,
+      "medianDays": 124.5,
       "oldestDays": 1686.9
     }
   }
