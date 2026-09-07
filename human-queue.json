@@ -86,12 +86,6 @@
         "title": "fix: enforce the DecimalsTooLarge bound inside LibFtsoCurrentPriceUsd"
       },
       {
-        "repo": "rainlanguage/rainlang",
-        "number": 535,
-        "url": "https://github.com/rainlanguage/rainlang/pull/535",
-        "title": "pi constant word"
-      },
-      {
         "repo": "rainlanguage/raindex",
         "number": 2724,
         "url": "https://github.com/rainlanguage/raindex/pull/2724",
@@ -674,22 +668,10 @@
         "title": "ci: add rainix-npm-blacklist reusable workflow"
       },
       {
-        "repo": "rainlanguage/rainlang",
-        "number": 536,
-        "url": "https://github.com/rainlanguage/rainlang/pull/536",
-        "title": "test: mutation-harden LibOpConditions coverage"
-      },
-      {
         "repo": "rainlanguage/rain.math.fixedpoint",
         "number": 22,
         "url": "https://github.com/rainlanguage/rain.math.fixedpoint/pull/22",
         "title": "test: mutation-harden LibFixedPointDecimalParse coverage"
-      },
-      {
-        "repo": "rainlanguage/rainlang",
-        "number": 534,
-        "url": "https://github.com/rainlanguage/rainlang/pull/534",
-        "title": "Add LibParseMeta.lookupWord unit test"
       },
       {
         "repo": "rainlanguage/raindex",
@@ -806,7 +788,7 @@
   "lanes": {
     "vet-lifecycle": {
       "ai:blocked-on": {
-        "count": 17,
+        "count": 16,
         "prs": [
           {
             "repo": "rainlanguage/rain.math.float",
@@ -893,12 +875,6 @@
             "title": "fix: enforce the DecimalsTooLarge bound inside LibFtsoCurrentPriceUsd"
           },
           {
-            "repo": "rainlanguage/rainlang",
-            "number": 535,
-            "url": "https://github.com/rainlanguage/rainlang/pull/535",
-            "title": "pi constant word"
-          },
-          {
             "repo": "rainlanguage/raindex",
             "number": 2724,
             "url": "https://github.com/rainlanguage/raindex/pull/2724",
@@ -913,8 +889,56 @@
         ]
       },
       "un-vetted": {
-        "count": 49,
+        "count": 57,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float.deploy",
+            "number": 19,
+            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/19",
+            "title": "Cross-reference FLOAT_PI and FLOAT_E against values derived in Rust"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 274,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/274",
+            "title": "Add FLOAT_PI beside FLOAT_E"
+          },
+          {
+            "repo": "rainlanguage/rainlang",
+            "number": 579,
+            "url": "https://github.com/rainlanguage/rainlang/pull/579",
+            "title": "Add the pi constant word"
+          },
+          {
+            "repo": "rainlanguage/rain.verify",
+            "number": 34,
+            "url": "https://github.com/rainlanguage/rain.verify/pull/34",
+            "title": "Bump rainlang 0.1.2 -> 0.2.1 and the dep chain pinning it"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 267,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/267",
+            "title": "Bump rainlang 0.1.2 -> 0.2.1 and the dep chain pinning it"
+          },
+          {
+            "repo": "rainlanguage/rain.pyth",
+            "number": 39,
+            "url": "https://github.com/rainlanguage/rain.pyth/pull/39",
+            "title": "Bump rainlang 0.1.2 -> 0.2.1 and the dep chain pinning it"
+          },
+          {
+            "repo": "rainlanguage/rain.merkle",
+            "number": 21,
+            "url": "https://github.com/rainlanguage/rain.merkle/pull/21",
+            "title": "Bump rainlang 0.1.2 -> 0.2.1 and the dep chain pinning it"
+          },
+          {
+            "repo": "rainlanguage/rainlang.deploy",
+            "number": 4,
+            "url": "https://github.com/rainlanguage/rainlang.deploy/pull/4",
+            "title": "Re-pin rainlang 0.2.1 and drop the version alias remappings"
+          },
           {
             "repo": "rainlanguage/rain.flare",
             "number": 214,
@@ -1275,7 +1299,7 @@
         }
       },
       "ai:needs-work": {
-        "count": 102,
+        "count": 100,
         "prs": [
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -1794,22 +1818,10 @@
             "title": "ci: add rainix-npm-blacklist reusable workflow"
           },
           {
-            "repo": "rainlanguage/rainlang",
-            "number": 536,
-            "url": "https://github.com/rainlanguage/rainlang/pull/536",
-            "title": "test: mutation-harden LibOpConditions coverage"
-          },
-          {
             "repo": "rainlanguage/rain.math.fixedpoint",
             "number": 22,
             "url": "https://github.com/rainlanguage/rain.math.fixedpoint/pull/22",
             "title": "test: mutation-harden LibFixedPointDecimalParse coverage"
-          },
-          {
-            "repo": "rainlanguage/rainlang",
-            "number": 534,
-            "url": "https://github.com/rainlanguage/rainlang/pull/534",
-            "title": "Add LibParseMeta.lookupWord unit test"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -6446,10 +6458,10 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 49,
-    "blockedOn": 17,
+    "unvetted": 57,
+    "blockedOn": 16,
     "ready": 1,
-    "needsWork": 102,
+    "needsWork": 100,
     "relink": 0,
     "design": 7,
     "blockedInfra": 0,
@@ -6457,7 +6469,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 177,
+    "totalProducerPrs": 182,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 724,
     "designPresentable": 7,
