@@ -931,8 +931,14 @@
         ]
       },
       "un-vetted": {
-        "count": 51,
+        "count": 52,
         "prs": [
+          {
+            "repo": "rainlanguage/rainlang.deploy",
+            "number": 1,
+            "url": "https://github.com/rainlanguage/rainlang.deploy/pull/1",
+            "title": "Carry .envrc and .devcontainer.json over from rainlang"
+          },
           {
             "repo": "rainlanguage/rain.lib.hash",
             "number": 77,
@@ -6477,7 +6483,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 51,
+    "unvetted": 52,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6488,7 +6494,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 181,
+    "totalProducerPrs": 182,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 723,
     "designPresentable": 8,
@@ -6498,7 +6504,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 288.6,
-      "medianDays": 116.8,
+      "medianDays": 116.9,
       "oldestDays": 1687.6
     }
   }
