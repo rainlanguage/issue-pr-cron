@@ -154,12 +154,6 @@
         "number": 161,
         "url": "https://github.com/rainlanguage/rain.flare/pull/161",
         "title": "fix: remove ankr public RPC fallback from LibFork — fail loud on unset env"
-      },
-      {
-        "repo": "rainlanguage/rainlang",
-        "number": 537,
-        "url": "https://github.com/rainlanguage/rainlang/pull/537",
-        "title": "test: one contract per file (satisfy rainix single-contract gate)"
       }
     ],
     "ai:needs-work": [
@@ -919,14 +913,8 @@
         ]
       },
       "un-vetted": {
-        "count": 50,
+        "count": 49,
         "prs": [
-          {
-            "repo": "rainlanguage/rainlang",
-            "number": 577,
-            "url": "https://github.com/rainlanguage/rainlang/pull/577",
-            "title": "Spell the pinned forge-std and rain-sol-codegen versions in every import"
-          },
           {
             "repo": "rainlanguage/rain.flare",
             "number": 214,
@@ -1226,7 +1214,7 @@
     },
     "vetter-verdicts": {
       "ai:design": {
-        "count": 8,
+        "count": 7,
         "prs": [
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -1276,20 +1264,13 @@
             "url": "https://github.com/rainlanguage/rain.flare/pull/161",
             "title": "fix: remove ankr public RPC fallback from LibFork — fail loud on unset env",
             "bucket": "presentable"
-          },
-          {
-            "repo": "rainlanguage/rainlang",
-            "number": 537,
-            "url": "https://github.com/rainlanguage/rainlang/pull/537",
-            "title": "test: one contract per file (satisfy rainix single-contract gate)",
-            "bucket": "presentable"
           }
         ],
         "breakdown": {
           "draft": 0,
           "fetchErrors": 0,
           "noQuestion": 0,
-          "presentable": 8,
+          "presentable": 7,
           "unaddressable": 0
         }
       },
@@ -6465,29 +6446,29 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 50,
+    "unvetted": 49,
     "blockedOn": 17,
     "ready": 1,
     "needsWork": 102,
     "relink": 0,
-    "design": 8,
+    "design": 7,
     "blockedInfra": 0,
     "closeCandidateIssues": 3,
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 179,
+    "totalProducerPrs": 177,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 724,
-    "designPresentable": 8,
+    "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 879
   },
   "ages": {
     "openIssues": {
-      "meanDays": 288.6,
-      "medianDays": 116.9,
-      "oldestDays": 1687.6
+      "meanDays": 288.7,
+      "medianDays": 117.0,
+      "oldestDays": 1687.7
     }
   }
 }
