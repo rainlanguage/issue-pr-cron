@@ -889,8 +889,26 @@
         ]
       },
       "un-vetted": {
-        "count": 56,
+        "count": 59,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float.deploy",
+            "number": 22,
+            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/22",
+            "title": "Drop the library-logic tests that now run in rain.math.float"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 275,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/275",
+            "title": "Run the bindings' library tests here, over this source"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float.deploy",
+            "number": 21,
+            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/21",
+            "title": "Let a consumer run the bindings over its own build of the concrete"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 274,
@@ -6452,7 +6470,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 56,
+    "unvetted": 59,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6463,7 +6481,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 181,
+    "totalProducerPrs": 184,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 724,
     "designPresentable": 7,
@@ -6472,7 +6490,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 288.7,
+      "meanDays": 288.8,
       "medianDays": 117.1,
       "oldestDays": 1687.8
     }
