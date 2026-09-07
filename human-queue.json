@@ -2,12 +2,6 @@
   "states": {
     "ai:blocked-on": [
       {
-        "repo": "rainlanguage/rainlang",
-        "number": 554,
-        "url": "https://github.com/rainlanguage/rainlang/pull/554",
-        "title": "Remove submodule-era residue from .soldeerignore"
-      },
-      {
         "repo": "rainlanguage/rain.math.float",
         "number": 259,
         "url": "https://github.com/rainlanguage/rain.math.float/pull/259",
@@ -818,14 +812,8 @@
   "lanes": {
     "vet-lifecycle": {
       "ai:blocked-on": {
-        "count": 18,
+        "count": 17,
         "prs": [
-          {
-            "repo": "rainlanguage/rainlang",
-            "number": 554,
-            "url": "https://github.com/rainlanguage/rainlang/pull/554",
-            "title": "Remove submodule-era residue from .soldeerignore"
-          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 259,
@@ -931,31 +919,31 @@
         ]
       },
       "un-vetted": {
-        "count": 52,
+        "count": 50,
         "prs": [
           {
-            "repo": "rainlanguage/rainlang.deploy",
-            "number": 1,
-            "url": "https://github.com/rainlanguage/rainlang.deploy/pull/1",
-            "title": "Carry .envrc and .devcontainer.json over from rainlang"
+            "repo": "rainlanguage/rainlang",
+            "number": 577,
+            "url": "https://github.com/rainlanguage/rainlang/pull/577",
+            "title": "Spell the pinned forge-std and rain-sol-codegen versions in every import"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 214,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/214",
+            "title": "Bump rainlang 0.1.2 -> 0.2.0 and the dep chain pinning it"
+          },
+          {
+            "repo": "rainlanguage/rain.dia",
+            "number": 72,
+            "url": "https://github.com/rainlanguage/rain.dia/pull/72",
+            "title": "Bump rainlang 0.1.2 -> 0.2.0 and the dep chain pinning it"
           },
           {
             "repo": "rainlanguage/rain.lib.hash",
             "number": 77,
             "url": "https://github.com/rainlanguage/rain.lib.hash/pull/77",
             "title": "audit: append run stamp + scope (0.35.0)"
-          },
-          {
-            "repo": "rainlanguage/rainlang",
-            "number": 576,
-            "url": "https://github.com/rainlanguage/rainlang/pull/576",
-            "title": "Slim to the library half: the deploy half moves to rainlang.deploy (#552 step 2)"
-          },
-          {
-            "repo": "rainlanguage/rainlang",
-            "number": 574,
-            "url": "https://github.com/rainlanguage/rainlang/pull/574",
-            "title": "Cut release 0.1.10: freeze candidate pins as src/generated/0_1_10/"
           },
           {
             "repo": "rainlanguage/rainlang.interface",
@@ -991,12 +979,6 @@
             "repo": "rainlanguage/raindex",
             "number": 2846,
             "url": "https://github.com/rainlanguage/raindex/pull/2846",
-            "title": "Add the Manual sol verify caller workflow"
-          },
-          {
-            "repo": "rainlanguage/rainlang",
-            "number": 570,
-            "url": "https://github.com/rainlanguage/rainlang/pull/570",
             "title": "Add the Manual sol verify caller workflow"
           },
           {
@@ -1051,12 +1033,6 @@
             "repo": "rainlanguage/rainlang.interface",
             "number": 128,
             "url": "https://github.com/rainlanguage/rainlang.interface/pull/128",
-            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
-          },
-          {
-            "repo": "rainlanguage/rainlang",
-            "number": 559,
-            "url": "https://github.com/rainlanguage/rainlang/pull/559",
             "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
           },
           {
@@ -2116,6 +2092,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 578,
+      "url": "https://github.com/rainlanguage/rainlang/issues/578",
+      "title": "LibParseStackName: two fuzz tests fail for a specific ParseState input"
+    },
     {
       "repo": "rainlanguage/rain.lib.hash",
       "number": 76,
@@ -6483,8 +6465,8 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 52,
-    "blockedOn": 18,
+    "unvetted": 50,
+    "blockedOn": 17,
     "ready": 1,
     "needsWork": 102,
     "relink": 0,
@@ -6494,9 +6476,9 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 182,
+    "totalProducerPrs": 179,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 723,
+    "uncoveredIssues": 724,
     "designPresentable": 8,
     "designNoQuestion": 0,
     "openIssues": 879
