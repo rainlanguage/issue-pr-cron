@@ -889,14 +889,8 @@
         ]
       },
       "un-vetted": {
-        "count": 57,
+        "count": 56,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.math.float.deploy",
-            "number": 19,
-            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/19",
-            "title": "Cross-reference FLOAT_PI and FLOAT_E against values derived in Rust"
-          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 274,
@@ -6458,7 +6452,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 57,
+    "unvetted": 56,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6469,7 +6463,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 182,
+    "totalProducerPrs": 181,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 724,
     "designPresentable": 7,
@@ -6479,8 +6473,8 @@
   "ages": {
     "openIssues": {
       "meanDays": 288.7,
-      "medianDays": 117.0,
-      "oldestDays": 1687.7
+      "medianDays": 117.1,
+      "oldestDays": 1687.8
     }
   }
 }
