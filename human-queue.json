@@ -931,7 +931,7 @@
         ]
       },
       "un-vetted": {
-        "count": 52,
+        "count": 51,
         "prs": [
           {
             "repo": "rainlanguage/rain.lib.hash",
@@ -944,12 +944,6 @@
             "number": 576,
             "url": "https://github.com/rainlanguage/rainlang/pull/576",
             "title": "Slim to the library half: the deploy half moves to rainlang.deploy (#552 step 2)"
-          },
-          {
-            "repo": "rainlanguage/rainlang",
-            "number": 575,
-            "url": "https://github.com/rainlanguage/rainlang/pull/575",
-            "title": "Move the deployed contracts' logic into BaseRainlang* abstracts (#552 step 1)"
           },
           {
             "repo": "rainlanguage/rainlang",
@@ -6483,7 +6477,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 52,
+    "unvetted": 51,
     "blockedOn": 18,
     "ready": 1,
     "needsWork": 102,
@@ -6494,7 +6488,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 182,
+    "totalProducerPrs": 181,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 723,
     "designPresentable": 8,
@@ -6503,9 +6497,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 288.4,
-      "medianDays": 116.7,
-      "oldestDays": 1687.4
+      "meanDays": 288.5,
+      "medianDays": 116.8,
+      "oldestDays": 1687.5
     }
   }
 }
