@@ -889,8 +889,14 @@
         ]
       },
       "un-vetted": {
-        "count": 54,
+        "count": 55,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 160,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/160",
+            "title": "Let a migration opt in to prerequisites in other writers' namespaces (IMigrationRegistryV2)"
+          },
           {
             "repo": "rainlanguage/raindex",
             "number": 2863,
@@ -2294,12 +2300,6 @@
       "number": 41,
       "url": "https://github.com/rainlanguage/rain.lib.hash/issues/41",
       "title": "[RLH-01] [LOW] README fold-vs-abi.encode gas bands are wrong in direction and unmeasured by any test"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 159,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/159",
-      "title": "Let a migration opt in to a prerequisite in another writer's namespace"
     },
     {
       "repo": "rainlanguage/raindex",
@@ -6446,7 +6446,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 54,
+    "unvetted": 55,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6457,9 +6457,9 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 179,
+    "totalProducerPrs": 180,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 725,
+    "uncoveredIssues": 724,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 879
@@ -6467,8 +6467,8 @@
   "ages": {
     "openIssues": {
       "meanDays": 289.9,
-      "medianDays": 118.2,
-      "oldestDays": 1688.9
+      "medianDays": 118.3,
+      "oldestDays": 1689.0
     }
   }
 }
