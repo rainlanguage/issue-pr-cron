@@ -889,20 +889,8 @@
         ]
       },
       "un-vetted": {
-        "count": 57,
+        "count": 55,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.math.float.deploy",
-            "number": 21,
-            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/21",
-            "title": "Let a consumer run the bindings over its own build of the concrete"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 274,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/274",
-            "title": "Add FLOAT_PI beside FLOAT_E"
-          },
           {
             "repo": "rainlanguage/rainlang",
             "number": 579,
@@ -2085,6 +2073,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 276,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/276",
+      "title": "pow reverts with Panic(0x11) instead of a typed error for extreme exponents"
+    },
     {
       "repo": "rainlanguage/rainlang",
       "number": 578,
@@ -6458,7 +6452,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 57,
+    "unvetted": 55,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6469,16 +6463,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 182,
+    "totalProducerPrs": 180,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 724,
+    "uncoveredIssues": 725,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 879
+    "openIssues": 880
   },
   "ages": {
     "openIssues": {
-      "meanDays": 289.4,
+      "meanDays": 289.1,
       "medianDays": 117.7,
       "oldestDays": 1688.4
     }
