@@ -889,8 +889,14 @@
         ]
       },
       "un-vetted": {
-        "count": 55,
+        "count": 56,
         "prs": [
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 340,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/340",
+            "title": "ci: manual-sol-verify dispatcher for already-deployed contracts"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 277,
@@ -6452,7 +6458,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 55,
+    "unvetted": 56,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6463,7 +6469,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 180,
+    "totalProducerPrs": 181,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 725,
     "designPresentable": 7,
@@ -6472,7 +6478,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 289.4,
+      "meanDays": 289.5,
       "medianDays": 117.8,
       "oldestDays": 1688.5
     }
