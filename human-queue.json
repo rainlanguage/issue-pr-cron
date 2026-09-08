@@ -892,6 +892,12 @@
         "count": 54,
         "prs": [
           {
+            "repo": "rainlanguage/raindex",
+            "number": 2863,
+            "url": "https://github.com/rainlanguage/raindex/pull/2863",
+            "title": "Bump rainlang 0.1.5 -> 0.2.1 and the dep chain it spells (rain-solmem 0.1.28)"
+          },
+          {
             "repo": "rainlanguage/rainlang",
             "number": 579,
             "url": "https://github.com/rainlanguage/rainlang/pull/579",
@@ -1016,12 +1022,6 @@
             "number": 321,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/321",
             "title": "Bump rain-sol-codegen to 0.1.36 (rain-deploy 0.1.7, forge-std 1.16.2)"
-          },
-          {
-            "repo": "rainlanguage/raindex",
-            "number": 2839,
-            "url": "https://github.com/rainlanguage/raindex/pull/2839",
-            "title": "Bump rain-solmem 0.1.3 -> 0.1.26"
           },
           {
             "repo": "rainlanguage/rainlang.interface",
@@ -6466,9 +6466,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 289.8,
-      "medianDays": 118.1,
-      "oldestDays": 1688.8
+      "meanDays": 289.9,
+      "medianDays": 118.2,
+      "oldestDays": 1688.9
     }
   }
 }
