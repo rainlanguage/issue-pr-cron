@@ -892,6 +892,12 @@
         "count": 55,
         "prs": [
           {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 277,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/277",
+            "title": "Pin the published rain-math-float 0.1.12 bindings"
+          },
+          {
             "repo": "rainlanguage/rainlang",
             "number": 579,
             "url": "https://github.com/rainlanguage/rainlang/pull/579",
@@ -968,12 +974,6 @@
             "number": 2854,
             "url": "https://github.com/rainlanguage/raindex/pull/2854",
             "title": "Verify the graph-node API schema snapshot in CI"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float.deploy",
-            "number": 16,
-            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/16",
-            "title": "Drop the \"cut no release yet\" comment on the chain test"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -6468,13 +6468,13 @@
     "uncoveredIssues": 725,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 880
+    "openIssues": 879
   },
   "ages": {
     "openIssues": {
-      "meanDays": 289.1,
-      "medianDays": 117.7,
-      "oldestDays": 1688.4
+      "meanDays": 289.4,
+      "medianDays": 117.8,
+      "oldestDays": 1688.5
     }
   }
 }
