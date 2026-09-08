@@ -889,14 +889,8 @@
         ]
       },
       "un-vetted": {
-        "count": 55,
+        "count": 54,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 277,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/277",
-            "title": "Pin the published rain-math-float 0.1.12 bindings"
-          },
           {
             "repo": "rainlanguage/rainlang",
             "number": 579,
@@ -6452,7 +6446,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 55,
+    "unvetted": 54,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6463,7 +6457,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 180,
+    "totalProducerPrs": 179,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 725,
     "designPresentable": 7,
