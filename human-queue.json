@@ -889,7 +889,7 @@
         ]
       },
       "un-vetted": {
-        "count": 55,
+        "count": 51,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -922,34 +922,10 @@
             "title": "Bump rainlang 0.1.2 -> 0.2.1 and the dep chain pinning it"
           },
           {
-            "repo": "rainlanguage/rain.pyth",
-            "number": 39,
-            "url": "https://github.com/rainlanguage/rain.pyth/pull/39",
-            "title": "Bump rainlang 0.1.2 -> 0.2.1 and the dep chain pinning it"
-          },
-          {
-            "repo": "rainlanguage/rain.merkle",
-            "number": 21,
-            "url": "https://github.com/rainlanguage/rain.merkle/pull/21",
-            "title": "Bump rainlang 0.1.2 -> 0.2.1 and the dep chain pinning it"
-          },
-          {
             "repo": "rainlanguage/rainlang.deploy",
             "number": 4,
             "url": "https://github.com/rainlanguage/rainlang.deploy/pull/4",
             "title": "Re-pin rainlang 0.2.1 and drop the version alias remappings"
-          },
-          {
-            "repo": "rainlanguage/rain.flare",
-            "number": 214,
-            "url": "https://github.com/rainlanguage/rain.flare/pull/214",
-            "title": "Bump rainlang 0.1.2 -> 0.2.0 and the dep chain pinning it"
-          },
-          {
-            "repo": "rainlanguage/rain.dia",
-            "number": 72,
-            "url": "https://github.com/rainlanguage/rain.dia/pull/72",
-            "title": "Bump rainlang 0.1.2 -> 0.2.0 and the dep chain pinning it"
           },
           {
             "repo": "rainlanguage/rain.lib.hash",
@@ -6446,7 +6422,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 55,
+    "unvetted": 51,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6457,7 +6433,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 180,
+    "totalProducerPrs": 176,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 724,
     "designPresentable": 7,
@@ -6466,8 +6442,8 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 290.0,
-      "medianDays": 118.3,
+      "meanDays": 290.1,
+      "medianDays": 118.4,
       "oldestDays": 1689.1
     }
   }

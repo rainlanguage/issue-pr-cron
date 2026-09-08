@@ -569,3 +569,7 @@
 {"ts":"2026-09-08T08:10:52Z","observedAt":"2026-09-08T08:31:01Z","kind":"pr","repo":"rainlanguage/rain.math.float.deploy","number":16}
 {"ts":"2026-09-08T13:48:27Z","observedAt":"2026-09-08T14:31:30Z","kind":"pr","repo":"S01-Issuer/st0x.deploy","number":340}
 {"ts":"2026-09-08T17:04:11Z","observedAt":"2026-09-08T17:32:59Z","kind":"pr","repo":"rainlanguage/rain.math.float","number":277}
+{"ts":"2026-09-08T23:23:48Z","observedAt":"2026-09-08T23:32:38Z","kind":"pr","repo":"rainlanguage/rain.dia","number":72}
+{"ts":"2026-09-08T23:26:37Z","observedAt":"2026-09-08T23:32:38Z","kind":"pr","repo":"rainlanguage/rain.flare","number":214}
+{"ts":"2026-09-08T23:28:41Z","observedAt":"2026-09-08T23:32:38Z","kind":"pr","repo":"rainlanguage/rain.merkle","number":21}
+{"ts":"2026-09-08T23:30:22Z","observedAt":"2026-09-08T23:32:38Z","kind":"pr","repo":"rainlanguage/rain.pyth","number":39}
