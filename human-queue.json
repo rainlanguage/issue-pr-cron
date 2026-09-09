@@ -889,14 +889,8 @@
         ]
       },
       "un-vetted": {
-        "count": 50,
+        "count": 48,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.math.float.deploy",
-            "number": 24,
-            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/24",
-            "title": "Cut release 0.1.2"
-          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 160,
@@ -908,12 +902,6 @@
             "number": 2863,
             "url": "https://github.com/rainlanguage/raindex/pull/2863",
             "title": "Bump rainlang 0.1.5 -> 0.2.1 and the dep chain it spells (rain-solmem 0.1.28)"
-          },
-          {
-            "repo": "rainlanguage/rainlang",
-            "number": 579,
-            "url": "https://github.com/rainlanguage/rainlang/pull/579",
-            "title": "Add the pi constant word"
           },
           {
             "repo": "rainlanguage/rain.verify",
@@ -6416,7 +6404,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 50,
+    "unvetted": 48,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6427,16 +6415,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 175,
+    "totalProducerPrs": 173,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 724,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 879
+    "openIssues": 878
   },
   "ages": {
     "openIssues": {
-      "meanDays": 290.3,
+      "meanDays": 289.7,
       "medianDays": 118.6,
       "oldestDays": 1689.3
     }
