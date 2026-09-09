@@ -14,7 +14,9 @@
       "Grep",
       "Skill",
       "Task",
-      "ToolSearch"
+      "ToolSearch",
+      "ListAgents",
+      "SendMessage"
     ],
     "deny": [
       "Bash",
@@ -33,7 +35,6 @@
       "TaskList",
       "TaskOutput",
       "TaskStop",
-      "SendMessage",
       "PushNotification",
       "RemoteTrigger",
       "ReportFindings",
