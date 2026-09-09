@@ -573,3 +573,4 @@
 {"ts":"2026-09-08T23:26:37Z","observedAt":"2026-09-08T23:32:38Z","kind":"pr","repo":"rainlanguage/rain.flare","number":214}
 {"ts":"2026-09-08T23:28:41Z","observedAt":"2026-09-08T23:32:38Z","kind":"pr","repo":"rainlanguage/rain.merkle","number":21}
 {"ts":"2026-09-08T23:30:22Z","observedAt":"2026-09-08T23:32:38Z","kind":"pr","repo":"rainlanguage/rain.pyth","number":39}
+{"ts":"2026-09-08T23:40:03Z","observedAt":"2026-09-09T00:32:02Z","kind":"pr","repo":"rainlanguage/rain.erc4626.words","number":267}

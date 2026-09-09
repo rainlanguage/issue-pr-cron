@@ -889,7 +889,7 @@
         ]
       },
       "un-vetted": {
-        "count": 51,
+        "count": 50,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -913,12 +913,6 @@
             "repo": "rainlanguage/rain.verify",
             "number": 34,
             "url": "https://github.com/rainlanguage/rain.verify/pull/34",
-            "title": "Bump rainlang 0.1.2 -> 0.2.1 and the dep chain pinning it"
-          },
-          {
-            "repo": "rainlanguage/rain.erc4626.words",
-            "number": 267,
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/267",
             "title": "Bump rainlang 0.1.2 -> 0.2.1 and the dep chain pinning it"
           },
           {
@@ -6422,7 +6416,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 51,
+    "unvetted": 50,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6433,7 +6427,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 176,
+    "totalProducerPrs": 175,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 724,
     "designPresentable": 7,
