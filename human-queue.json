@@ -892,6 +892,12 @@
         "count": 50,
         "prs": [
           {
+            "repo": "rainlanguage/rain.math.float.deploy",
+            "number": 24,
+            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/24",
+            "title": "Cut release 0.1.2"
+          },
+          {
             "repo": "rainlanguage/rain.deploy",
             "number": 160,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/160",
@@ -914,12 +920,6 @@
             "number": 34,
             "url": "https://github.com/rainlanguage/rain.verify/pull/34",
             "title": "Bump rainlang 0.1.2 -> 0.2.1 and the dep chain pinning it"
-          },
-          {
-            "repo": "rainlanguage/rainlang.deploy",
-            "number": 4,
-            "url": "https://github.com/rainlanguage/rainlang.deploy/pull/4",
-            "title": "Re-pin rainlang 0.2.1 and drop the version alias remappings"
           },
           {
             "repo": "rainlanguage/rain.lib.hash",
@@ -6436,7 +6436,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 290.2,
+      "meanDays": 290.3,
       "medianDays": 118.6,
       "oldestDays": 1689.3
     }
