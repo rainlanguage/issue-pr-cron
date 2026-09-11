@@ -889,14 +889,8 @@
         ]
       },
       "un-vetted": {
-        "count": 49,
+        "count": 48,
         "prs": [
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 367,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/367",
-            "title": "Create-Safe review fixes: canonical contract pre-flight, lib-owned derivation, fork-free pins"
-          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 160,
@@ -6416,7 +6410,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 49,
+    "unvetted": 48,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6427,7 +6421,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 174,
+    "totalProducerPrs": 173,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 725,
     "designPresentable": 7,
@@ -6436,9 +6430,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 292.0,
+      "meanDays": 292.1,
       "medianDays": 121.3,
-      "oldestDays": 1692.0
+      "oldestDays": 1692.1
     }
   }
 }
