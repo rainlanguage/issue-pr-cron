@@ -2032,6 +2032,12 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 364,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/364",
+      "title": "BSC carries a second, unpinned set of 41 token vaults from run 34542307257 — record it as orphaned (or re-pin to it)"
+    },
+    {
       "repo": "rainlanguage/rain.math.float",
       "number": 276,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/276",
@@ -6417,16 +6423,16 @@
     "leaks": 0,
     "totalProducerPrs": 173,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 724,
+    "uncoveredIssues": 725,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 878
+    "openIssues": 879
   },
   "ages": {
     "openIssues": {
-      "meanDays": 291.8,
+      "meanDays": 291.6,
       "medianDays": 120.8,
-      "oldestDays": 1691.5
+      "oldestDays": 1691.6
     }
   }
 }
