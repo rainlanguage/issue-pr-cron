@@ -907,7 +907,7 @@
             "repo": "rainlanguage/rain.deploy",
             "number": 160,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/160",
-            "title": "One ordering mechanism for the migration registry: prerequisites replace the per-writer head"
+            "title": "Prerequisites on the migration registry writes"
           },
           {
             "repo": "rainlanguage/raindex",
