@@ -889,8 +889,14 @@
         ]
       },
       "un-vetted": {
-        "count": 47,
+        "count": 48,
         "prs": [
+          {
+            "repo": "rainlanguage/rainlang",
+            "number": 581,
+            "url": "https://github.com/rainlanguage/rainlang/pull/581",
+            "title": "Bump rain-metadata 0.1.0 -> 0.1.7 and rain-lib-typecast 0.1.0 -> 0.1.4"
+          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 160,
@@ -6404,7 +6410,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 47,
+    "unvetted": 48,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6415,7 +6421,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 172,
+    "totalProducerPrs": 173,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 725,
     "designPresentable": 7,
