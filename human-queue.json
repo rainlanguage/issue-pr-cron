@@ -889,7 +889,7 @@
         ]
       },
       "un-vetted": {
-        "count": 48,
+        "count": 47,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -902,12 +902,6 @@
             "number": 2863,
             "url": "https://github.com/rainlanguage/raindex/pull/2863",
             "title": "Bump rainlang 0.1.5 -> 0.2.1 and the dep chain it spells (rain-solmem 0.1.28)"
-          },
-          {
-            "repo": "rainlanguage/rain.verify",
-            "number": 34,
-            "url": "https://github.com/rainlanguage/rain.verify/pull/34",
-            "title": "Bump rainlang 0.1.2 -> 0.2.1 and the dep chain pinning it"
           },
           {
             "repo": "rainlanguage/rain.lib.hash",
@@ -6410,7 +6404,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 48,
+    "unvetted": 47,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6421,7 +6415,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 173,
+    "totalProducerPrs": 172,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 725,
     "designPresentable": 7,
@@ -6431,7 +6425,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 292.6,
-      "medianDays": 121.8,
+      "medianDays": 121.9,
       "oldestDays": 1692.6
     }
   }
