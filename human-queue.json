@@ -907,13 +907,13 @@
             "repo": "rainlanguage/rain.deploy",
             "number": 160,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/160",
-            "title": "Let a migration opt in to prerequisites in other writers' namespaces (IMigrationRegistryV2)"
+            "title": "One ordering mechanism for the migration registry: prerequisites replace the per-writer head"
           },
           {
             "repo": "rainlanguage/raindex",
             "number": 2863,
             "url": "https://github.com/rainlanguage/raindex/pull/2863",
-            "title": "Bump rainlang 0.1.5 -> 0.2.1 and the dep chain it spells (rain-solmem 0.1.28)"
+            "title": "Bump rainlang 0.1.5 -> 0.2.4 and the dep chain it spells (rain-solmem 0.1.28), no alias remappings"
           },
           {
             "repo": "rainlanguage/rain.lib.hash",
@@ -6436,9 +6436,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 292.7,
+      "meanDays": 292.8,
       "medianDays": 122.0,
-      "oldestDays": 1692.7
+      "oldestDays": 1692.8
     }
   }
 }
