@@ -889,8 +889,14 @@
         ]
       },
       "un-vetted": {
-        "count": 48,
+        "count": 49,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 165,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/165",
+            "title": "Namespace per repo within a writer"
+          },
           {
             "repo": "rainlanguage/rainlang",
             "number": 582,
@@ -2031,12 +2037,6 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 164,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/164",
-      "title": "Migration registry: one key writes for several repos, so a namespace per repo within a writer"
-    },
     {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 364,
@@ -6416,7 +6416,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 48,
+    "unvetted": 49,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6427,17 +6427,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 173,
+    "totalProducerPrs": 174,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 726,
+    "uncoveredIssues": 725,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 879
   },
   "ages": {
     "openIssues": {
-      "meanDays": 293.0,
-      "medianDays": 122.3,
+      "meanDays": 293.1,
+      "medianDays": 122.4,
       "oldestDays": 1693.1
     }
   }
