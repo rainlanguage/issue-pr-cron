@@ -889,7 +889,7 @@
         ]
       },
       "un-vetted": {
-        "count": 49,
+        "count": 48,
         "prs": [
           {
             "repo": "rainlanguage/rainlang",
@@ -902,12 +902,6 @@
             "number": 75,
             "url": "https://github.com/rainlanguage/raindex.interface/pull/75",
             "title": "Bump rain-math-float 0.1.1 -> 0.2.1"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 160,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/160",
-            "title": "Prerequisites on the migration registry writes"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -2037,6 +2031,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 164,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/164",
+      "title": "Migration registry: one key writes for several repos, so a namespace per repo within a writer"
+    },
     {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 364,
@@ -6416,7 +6416,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 49,
+    "unvetted": 48,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6427,9 +6427,9 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 174,
+    "totalProducerPrs": 173,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 725,
+    "uncoveredIssues": 726,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 879
@@ -6438,7 +6438,7 @@
     "openIssues": {
       "meanDays": 293.0,
       "medianDays": 122.3,
-      "oldestDays": 1693.0
+      "oldestDays": 1693.1
     }
   }
 }
