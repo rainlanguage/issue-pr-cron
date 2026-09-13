@@ -2038,6 +2038,12 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain.cli",
+      "number": 23,
+      "url": "https://github.com/rainlanguage/rain.cli/issues/23",
+      "title": "nix build of `rain` fails on a cache miss: cargoLock fetches crates from crates.io API, which now returns 403"
+    },
+    {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 364,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/364",
@@ -6429,16 +6435,16 @@
     "leaks": 0,
     "totalProducerPrs": 174,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 725,
+    "uncoveredIssues": 726,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 879
+    "openIssues": 880
   },
   "ages": {
     "openIssues": {
-      "meanDays": 293.6,
+      "meanDays": 293.3,
       "medianDays": 122.9,
-      "oldestDays": 1693.6
+      "oldestDays": 1693.7
     }
   }
 }
