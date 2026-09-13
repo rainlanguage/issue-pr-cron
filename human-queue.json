@@ -889,14 +889,8 @@
         ]
       },
       "un-vetted": {
-        "count": 49,
+        "count": 48,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 165,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/165",
-            "title": "Namespace per repo within a writer"
-          },
           {
             "repo": "rainlanguage/rainlang",
             "number": 582,
@@ -6422,7 +6416,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 49,
+    "unvetted": 48,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6433,18 +6427,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 174,
+    "totalProducerPrs": 173,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 726,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 880
+    "openIssues": 879
   },
   "ages": {
     "openIssues": {
-      "meanDays": 293.5,
-      "medianDays": 123.0,
-      "oldestDays": 1693.8
+      "meanDays": 293.9,
+      "medianDays": 123.2,
+      "oldestDays": 1693.9
     }
   }
 }
