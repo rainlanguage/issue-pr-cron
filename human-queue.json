@@ -889,19 +889,13 @@
         ]
       },
       "un-vetted": {
-        "count": 48,
+        "count": 47,
         "prs": [
           {
-            "repo": "rainlanguage/rainlang",
-            "number": 582,
-            "url": "https://github.com/rainlanguage/rainlang/pull/582",
-            "title": "Bump rain-deploy 0.1.7 -> 0.1.8"
-          },
-          {
-            "repo": "rainlanguage/raindex.interface",
-            "number": 75,
-            "url": "https://github.com/rainlanguage/raindex.interface/pull/75",
-            "title": "Bump rain-math-float 0.1.1 -> 0.2.1"
+            "repo": "rainlanguage/rain.verify",
+            "number": 35,
+            "url": "https://github.com/rainlanguage/rain.verify/pull/35",
+            "title": "Bump rain-sol-codegen to 0.1.37"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -6416,7 +6410,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 48,
+    "unvetted": 47,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6427,7 +6421,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 173,
+    "totalProducerPrs": 172,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 726,
     "designPresentable": 7,
