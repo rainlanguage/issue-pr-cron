@@ -889,19 +889,49 @@
         ]
       },
       "un-vetted": {
-        "count": 47,
+        "count": 52,
         "prs": [
           {
-            "repo": "rainlanguage/rainlang",
-            "number": 583,
-            "url": "https://github.com/rainlanguage/rainlang/pull/583",
-            "title": "Bump rain-sol-codegen 0.1.37, rainlang-interface 0.2.9, rain-deploy 0.1.10"
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 377,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/377",
+            "title": "Bump rain-sol-codegen 0.1.37, rain-deploy 0.1.10, forge-std 1.16.2"
           },
           {
-            "repo": "rainlanguage/rain.verify",
-            "number": 35,
-            "url": "https://github.com/rainlanguage/rain.verify/pull/35",
-            "title": "Bump rain-sol-codegen to 0.1.37"
+            "repo": "rainlanguage/rain.cli",
+            "number": 25,
+            "url": "https://github.com/rainlanguage/rain.cli/pull/25",
+            "title": "Fetch crates through importCargoLock with an accepted User-Agent"
+          },
+          {
+            "repo": "rainlanguage/rainlang.deploy",
+            "number": 6,
+            "url": "https://github.com/rainlanguage/rainlang.deploy/pull/6",
+            "title": "Bump rain-sol-codegen 0.1.37 with rainlang 0.2.6, rainlang-interface 0.2.9, rain-deploy 0.1.10 and the transitive pins rainlang 0.2.6 imports"
+          },
+          {
+            "repo": "rainlanguage/rain.dia",
+            "number": 73,
+            "url": "https://github.com/rainlanguage/rain.dia/pull/73",
+            "title": "Bump rain-sol-codegen 0.1.37, rainlang 0.2.6, rainlang-interface 0.2.9, rain-deploy 0.1.10 and the float/metadata/typecast pins rainlang 0.2.6 requires"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 215,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/215",
+            "title": "Bump rain-sol-codegen 0.1.37, rainlang-interface 0.2.9, rain-deploy 0.1.10, rainlang 0.2.6 and the float/metadata/typecast pins they force"
+          },
+          {
+            "repo": "rainlanguage/raindex.interface",
+            "number": 76,
+            "url": "https://github.com/rainlanguage/raindex.interface/pull/76",
+            "title": "Bump rainlang-interface 0.2.8 -> 0.2.9 and rain-sol-codegen 0.1.0 -> 0.1.37"
+          },
+          {
+            "repo": "rainlanguage/rain.merkle",
+            "number": 22,
+            "url": "https://github.com/rainlanguage/rain.merkle/pull/22",
+            "title": "Bump rain-sol-codegen 0.1.37, rainlang 0.2.6, rainlang-interface 0.2.9, rain-deploy 0.1.10 and transitive pins"
           },
           {
             "repo": "rainlanguage/rain.lib.hash",
@@ -2025,6 +2055,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 378,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/378",
+      "title": "forge build --deny warnings fails on main"
+    },
     {
       "repo": "rainlanguage/rainix",
       "number": 377,
@@ -6416,7 +6452,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 47,
+    "unvetted": 52,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6427,18 +6463,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 172,
+    "totalProducerPrs": 177,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 727,
+    "uncoveredIssues": 728,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 880
+    "openIssues": 881
   },
   "ages": {
     "openIssues": {
-      "meanDays": 294.3,
+      "meanDays": 294.0,
       "medianDays": 123.8,
-      "oldestDays": 1694.6
+      "oldestDays": 1694.7
     }
   }
 }
