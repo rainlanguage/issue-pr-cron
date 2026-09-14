@@ -889,8 +889,44 @@
         ]
       },
       "un-vetted": {
-        "count": 60,
+        "count": 66,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 188,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/188",
+            "title": "test: broadcast carries the recorded code hash, one suite, and the env key"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 187,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/187",
+            "title": "test(verify snapshot): bare address literal and the candidate subject"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 186,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/186",
+            "title": "test: pin the deploy script's target set and the registries' dependency lists"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 185,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/185",
+            "title": "test: a suite key is the whole string, not its length"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 184,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/184",
+            "title": "test: pin every generated contract's committed alias lib to its declaration"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 183,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/183",
+            "title": "test: assert what the deploy derivation returns"
+          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 182,
@@ -2103,6 +2139,120 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 207,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/207",
+      "title": "No argument, loop bound or call ordering inside Build's generator hooks is asserted anywhere"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 206,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/206",
+      "title": "cutRelease under an overridden recordRoot freezes from a record the regeneration never wrote, after writing the real one"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 205,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/205",
+      "title": "A candidate can be declared so that the source anchor compares current source against itself"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 204,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/204",
+      "title": "Neither env name nor the fork selection in CreditHyperCore.run is asserted anywhere"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 203,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/203",
+      "title": "The valid-key list in UnknownDeploymentSuite cannot be read back as the set of keys it reports"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 202,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/202",
+      "title": "An unset DEPLOYMENT_SUITE can select and broadcast a suite, because the empty string is a declarable suite key"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 201,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/201",
+      "title": "Exchange success is declared on the response envelope alone, with the payload discarded"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 200,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/200",
+      "title": "The chain matrix aborts on the first bad cell, so a partial release is enumerated one red run at a time"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 199,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/199",
+      "title": "A variable that is set to non-UTF-8 is reported as not set"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 198,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/198",
+      "title": "RainDeployVerifyChain NatSpec states a seven-network roster that supportedNetworks() contradicts at nine"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 197,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/197",
+      "title": "A wrong record root leaves the frozen-snapshot check green with no subject"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 196,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/196",
+      "title": "deployToNetworks NatSpec states the factory and dependency checks per network, while they run only on the deploy branch"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 195,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/195",
+      "title": "isStartBlock answers true at the block a contract STOPS existing when expectedCodeHash is zero"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 194,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/194",
+      "title": "Nothing in the suite can make the foundry.toml config assertions fail"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 193,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/193",
+      "title": "LibAddressRegistry NatSpec claims a codeless account hashes to zero, which is false for a codeless account holding value"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 192,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/192",
+      "title": "The config check passes an [etherscan] entry that takes verification down for every network"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 191,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/191",
+      "title": "A version component the record ordering cannot parse passes the releasable-version guard"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 190,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/190",
+      "title": "A failing freeze-guard test leaves its fixture cut behind and then fails permanently with a different error"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 189,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/189",
+      "title": "A frozen record declaration inside a block comment is read as the record deploy address"
+    },
     {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 378,
@@ -6500,7 +6650,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 60,
+    "unvetted": 66,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6511,18 +6661,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 185,
+    "totalProducerPrs": 191,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 728,
+    "uncoveredIssues": 747,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 881
+    "openIssues": 900
   },
   "ages": {
     "openIssues": {
-      "meanDays": 294.3,
-      "medianDays": 124.0,
-      "oldestDays": 1694.9
+      "meanDays": 288.1,
+      "medianDays": 112.8,
+      "oldestDays": 1695.0
     }
   }
 }
