@@ -889,14 +889,8 @@
         ]
       },
       "un-vetted": {
-        "count": 47,
+        "count": 46,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 167,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/167",
-            "title": "Package Release: soldeer rain-deploy 0.1.9"
-          },
           {
             "repo": "rainlanguage/rain.verify",
             "number": 35,
@@ -2025,6 +2019,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 377,
+      "url": "https://github.com/rainlanguage/rainix/issues/377",
+      "title": "crates.io returns 403 to nix fetchurl crate downloads, breaking every rain-cli rebuild"
+    },
     {
       "repo": "rainlanguage/rain.cli",
       "number": 23,
@@ -6410,7 +6410,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 47,
+    "unvetted": 46,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6421,16 +6421,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 172,
+    "totalProducerPrs": 171,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 726,
+    "uncoveredIssues": 727,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 879
+    "openIssues": 880
   },
   "ages": {
     "openIssues": {
-      "meanDays": 294.5,
+      "meanDays": 294.3,
       "medianDays": 123.8,
       "oldestDays": 1694.6
     }
