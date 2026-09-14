@@ -889,8 +889,50 @@
         ]
       },
       "un-vetted": {
-        "count": 53,
+        "count": 60,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 182,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/182",
+            "title": "Cover the big blocks tool CLI end to end"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 181,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/181",
+            "title": "test: RainDeployVerify is the union of both verification halves"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 180,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/180",
+            "title": "Assert the read index, the per-read calldata, and empty createForks"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 179,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/179",
+            "title": "test: pin the refusal order in the two NoNetworks guards"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 178,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/178",
+            "title": "Cover the NotDeployed precedence and the deployZoltu scratch clean"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 177,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/177",
+            "title": "test: pin LibHyperCore guard order and the system contract calldata revert"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 176,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/176",
+            "title": "test: pin every generated lib to the generator, not only the first contract"
+          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 175,
@@ -6458,7 +6500,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 53,
+    "unvetted": 60,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6469,7 +6511,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 178,
+    "totalProducerPrs": 185,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 728,
     "designPresentable": 7,
@@ -6478,7 +6520,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 294.2,
+      "meanDays": 294.3,
       "medianDays": 124.0,
       "oldestDays": 1694.9
     }
