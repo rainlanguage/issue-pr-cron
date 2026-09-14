@@ -943,7 +943,7 @@
             "repo": "rainlanguage/rain.deploy",
             "number": 181,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/181",
-            "title": "test: RainDeployVerify is the union of both verification halves"
+            "title": "test: pin the chain matrix behaviours the fork suite reaches"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -6676,9 +6676,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 288.1,
+      "meanDays": 288.2,
       "medianDays": 112.9,
-      "oldestDays": 1695.0
+      "oldestDays": 1695.1
     }
   }
 }
