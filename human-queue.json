@@ -889,8 +889,38 @@
         ]
       },
       "un-vetted": {
-        "count": 48,
+        "count": 53,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 175,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/175",
+            "title": "Test LibStringSet.holds membership directly"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 174,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/174",
+            "title": "test: what a written snapshot records, and where the record walk stops"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 173,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/173",
+            "title": "test: drive freeze guard order, regeneration and the append-only record"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 172,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/172",
+            "title": "test: pin the genesis head to its preimage"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 171,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/171",
+            "title": "test: keep EIP-7702 designators out of the hypercore fuzzed etch"
+          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 170,
@@ -6428,7 +6458,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 48,
+    "unvetted": 53,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6439,7 +6469,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 173,
+    "totalProducerPrs": 178,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 728,
     "designPresentable": 7,
@@ -6449,8 +6479,8 @@
   "ages": {
     "openIssues": {
       "meanDays": 294.2,
-      "medianDays": 123.9,
-      "oldestDays": 1694.8
+      "medianDays": 124.0,
+      "oldestDays": 1694.9
     }
   }
 }
