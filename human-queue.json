@@ -889,8 +889,14 @@
         ]
       },
       "un-vetted": {
-        "count": 66,
+        "count": 67,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 208,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/208",
+            "title": "test: the skipped network's code hash, and the remembered key"
+          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 188,
@@ -6650,7 +6656,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 66,
+    "unvetted": 67,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6661,7 +6667,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 191,
+    "totalProducerPrs": 192,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 747,
     "designPresentable": 7,
@@ -6671,7 +6677,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 288.1,
-      "medianDays": 112.8,
+      "medianDays": 112.9,
       "oldestDays": 1695.0
     }
   }
