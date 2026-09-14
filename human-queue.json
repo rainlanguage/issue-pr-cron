@@ -889,8 +889,26 @@
         ]
       },
       "un-vetted": {
-        "count": 45,
+        "count": 48,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 170,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/170",
+            "title": "Assert the snapshot record's own consensus, prose and selection"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 169,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/169",
+            "title": "Address registry: close three mutation gaps and add the deploy-pin assertion"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 168,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/168",
+            "title": "test(lib-migration-registry): the three cases the suite could not see"
+          },
           {
             "repo": "rainlanguage/rain.lib.hash",
             "number": 77,
@@ -6410,7 +6428,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 45,
+    "unvetted": 48,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6421,7 +6439,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 170,
+    "totalProducerPrs": 173,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 728,
     "designPresentable": 7,
@@ -6430,7 +6448,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 294.1,
+      "meanDays": 294.2,
       "medianDays": 123.9,
       "oldestDays": 1694.8
     }
