@@ -589,3 +589,6 @@
 {"ts":"2026-09-14T11:21:00Z","observedAt":"2026-09-14T11:31:06Z","kind":"pr","repo":"rainlanguage/rain.deploy","number":167}
 {"ts":"2026-09-14T12:36:55Z","observedAt":"2026-09-14T13:32:55Z","kind":"pr","repo":"rainlanguage/rain.verify","number":35}
 {"ts":"2026-09-14T12:32:36Z","observedAt":"2026-09-14T13:32:55Z","kind":"pr","repo":"rainlanguage/rainlang","number":583}
+{"ts":"2026-09-14T13:35:30Z","observedAt":"2026-09-14T14:30:39Z","kind":"pr","repo":"rainlanguage/rain.cli","number":25}
+{"ts":"2026-09-14T14:22:21Z","observedAt":"2026-09-14T14:30:39Z","kind":"pr","repo":"rainlanguage/rain.flare","number":215}
+{"ts":"2026-09-14T14:20:41Z","observedAt":"2026-09-14T14:30:39Z","kind":"pr","repo":"rainlanguage/raindex.interface","number":76}
