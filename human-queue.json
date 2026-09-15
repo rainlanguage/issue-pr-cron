@@ -889,8 +889,14 @@
         ]
       },
       "un-vetted": {
-        "count": 67,
+        "count": 68,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 209,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/209",
+            "title": "audit: record the 2026-09-15 whole-repo mutation scan"
+          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 208,
@@ -6656,7 +6662,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 67,
+    "unvetted": 68,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6667,7 +6673,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 192,
+    "totalProducerPrs": 193,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 747,
     "designPresentable": 7,
@@ -6677,7 +6683,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 288.3,
-      "medianDays": 113.0,
+      "medianDays": 113.1,
       "oldestDays": 1695.2
     }
   }
