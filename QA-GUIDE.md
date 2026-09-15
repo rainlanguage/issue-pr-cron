@@ -31,8 +31,7 @@ every word. The convention answers the issue; that is a close, not a question.
 
 ## 1. Baseline
 
-Run the suite green on the UNCHANGED code before touching anything. A red
-baseline is its own bug to surface — never build on it, never mask it.
+Green on UNCHANGED code first; a red baseline is its own bug to surface.
 
 ## 2. Discriminating tests — the core rule
 
@@ -47,23 +46,30 @@ Every behavior the diff claims to fix or add gets a test that:
 sides of your change has pinned nothing (cyclo.site#398: three deploy-gate
 fixes, 15KB test file untouched, every test green before AND after).
 
-## 3. Mutation-validate the new tests
+## 3. Mutation-validate the new tests — with the bundled tool
 
-For each new test, apply ONE targeted mutation to the line it claims to cover
-(negate the guard, flip the comparison, drop the call), confirm the test fails,
-restore. A test that survives its own mutation is decoration.
+The route is the `adversarial-mutation-test` skill scoped to your change, whose
+probe step authors ONE targeted mutation per behavior (its catalog) into a
+`mutants.toml` and runs the bundled bin:
+
+```sh
+nix run github:rainlanguage/adversarial-mutation-test#mutation-probe -- mutants.toml
+```
+
+`mutation-probe --help` is the manual: file format, verdicts, exit codes. Do NOT
+hand-roll an edit-run-restore loop — the bin ENFORCES what a hand loop can only
+assert. A red, silent or zero-test baseline aborts before any probe; the suite's
+own tally proves it RAN, so a crash or compile error is NO-RUN and never a pass;
+each target must occur EXACTLY once in its file; and every restore is verified
+byte-exact before the next mutant. A test that survives its own mutation is
+decoration.
 
 ## 4. Oracle discipline
 
-- Expected values derive from the SPEC/ISSUE, never recomputed with the same
-  function the implementation uses (mirror tests enshrine bugs).
-- Fixtures must exercise the case the fix exists for: a decimals-split fix with
-  all-18/18 fixtures makes every wrong usage an equivalent mutant
-  (cyclo.site#372); README literals pin the mirror, not the source
-  (erc4626#185).
-- Symmetric properties cannot detect swaps — a*b == b*a whatever the order
-  (flare#196's reciprocity). Prefer ASYMMETRIC invariants that fail under the
-  exact confusion the issue names.
+The skill's adversarial pass owns the method; these are the local precedents.
+All-18/18 decimals fixtures make every wrong usage an equivalent mutant
+(cyclo.site#372); README literals pin the mirror, not the source (erc4626#185);
+symmetric properties cannot detect swaps (flare#196's reciprocity).
 
 ## 5. Guard strength
 
@@ -101,20 +107,15 @@ don't hold.
 
 All four lines are required. A line your change cannot have takes `n/a` **with
 the reason** (a docs-only diff has no mutations to apply); an absent line is not
-an option.
+an option. `Mutations applied` is TRANSCRIBED from the probe's verdicts (§3) —
+the mutant, and the test that KILLED it — never recalled; a mutation nothing
+scored is not evidence.
 
-That is enforced where the PR is opened, not only where it is judged. You open
-PRs with the `open_pr` MCP tool, which reads the body file and REFUSES (exit 3)
-before anything is created, so "a PR without its QA evidence does not get
-opened" is literal: it costs one retry inside the run instead of a round trip
-through the vetter's queue. The gate checks that the block is PRESENT; whether
-its claims hold is still the vetter's call.
+That is enforced where the PR is opened, not only where it is judged: `open_pr`
+reads the body file and REFUSES (exit 3) — PRESENCE only — before anything is
+created, so "a PR without its QA evidence does not get opened" is literal.
 
-Both gates are on PR-OPEN, so neither can reach a PR already open without the
-block. `pr-review-report repair-qa-block <owner/repo> <n> --block-file <path>`
-is the retrofit: it APPENDS the block to the body and leaves every other byte
-identical, validated with the same predicate the open gate uses. It REFUSES a
-body that already has a `## QA` section unless you pass `--replace` — a present
-block whose claims don't hold is fixed by re-running the evidence, never by
-rewriting the sentence. A body edit moves no commit, so push an `--allow-empty`
-commit afterwards or the vetter will skip the PR as already vetted at that head.
+The gate cannot reach a PR already open without the block. The retrofit is
+`pr-review-report repair-qa-block`, whose `--help` is the manual. A body edit
+moves no commit, so push an `--allow-empty` commit afterwards or the vetter
+skips the PR as already vetted at that head.
