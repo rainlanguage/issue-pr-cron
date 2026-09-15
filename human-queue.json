@@ -889,13 +889,25 @@
         ]
       },
       "un-vetted": {
-        "count": 87,
+        "count": 86,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 111,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/111",
+            "title": "test: pin the five documented claims that had no witness"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 110,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/110",
+            "title": "build: bump forge-std to 1.16.2"
+          },
           {
             "repo": "rainlanguage/rain.lib.hash",
             "number": 109,
             "url": "https://github.com/rainlanguage/rain.lib.hash/pull/109",
-            "title": "Cite the solc pin and immutable refs, and test the agreement"
+            "title": "Cite the ABI spec and memory layout without naming a compiler version"
           },
           {
             "repo": "rainlanguage/rain.lib.hash",
@@ -995,12 +1007,6 @@
           },
           {
             "repo": "rainlanguage/rain.lib.hash",
-            "number": 92,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/92",
-            "title": "test: check the README pattern examples against their test copies"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.hash",
             "number": 91,
             "url": "https://github.com/rainlanguage/rain.lib.hash/pull/91",
             "title": "chore: apply the generated pre-commit hooks to the three hook-dirty files"
@@ -1094,18 +1100,6 @@
             "number": 232,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/232",
             "title": "Clear the snapshot test fixture roots at the start of every run"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 231,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/231",
-            "title": "Reserve the empty suite key, which an unset DEPLOYMENT_SUITE arrives as"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 230,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/230",
-            "title": "Document that a bad matrix cell ends the chain run at that cell"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -2267,6 +2261,12 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rain.deploy",
+      "number": 233,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/233",
+      "title": "Generate the network config sections from supportedNetworks() instead of comparing them"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
       "number": 225,
       "url": "https://github.com/rainlanguage/rain.deploy/issues/225",
       "title": "The testWriteSnapshot family shares one fixture directory and races itself"
@@ -2306,18 +2306,6 @@
       "number": 578,
       "url": "https://github.com/rainlanguage/rainlang/issues/578",
       "title": "LibParseStackName: two fuzz tests fail for a specific ParseState input"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 76,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/76",
-      "title": "[RLH-36] [INFO] README/NatSpec claims with no pinning test (residue): the packed-collision motivating example, 'a Foo is ALWAYS 4 words' with populated members, deterministic boundary lengths, pointer non-determinism, bytes1[] as a word list"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 73,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/73",
-      "title": "[RLH-33] [INFO] forge-std pinned at 1.16.1; 1.16.2 is published — confirm the pin is intentional"
     },
     {
       "repo": "rainlanguage/rain.lib.hash",
@@ -6482,7 +6470,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 87,
+    "unvetted": 86,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6493,17 +6481,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 212,
+    "totalProducerPrs": 211,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 698,
+    "uncoveredIssues": 697,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 891
+    "openIssues": 889
   },
   "ages": {
     "openIssues": {
-      "meanDays": 291.9,
-      "medianDays": 118.2,
+      "meanDays": 292.6,
+      "medianDays": 118.5,
       "oldestDays": 1695.9
     }
   }
