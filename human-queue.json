@@ -889,8 +889,14 @@
         ]
       },
       "un-vetted": {
-        "count": 62,
+        "count": 63,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 210,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/210",
+            "title": "Replace LibStringSet with LibMemoryKV"
+          },
           {
             "repo": "rainlanguage/rain.string",
             "number": 136,
@@ -6626,7 +6632,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 62,
+    "unvetted": 63,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6637,7 +6643,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 187,
+    "totalProducerPrs": 188,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 747,
     "designPresentable": 7,
@@ -6646,9 +6652,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 288.6,
+      "meanDays": 288.7,
       "medianDays": 113.4,
-      "oldestDays": 1695.5
+      "oldestDays": 1695.6
     }
   }
 }
