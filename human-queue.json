@@ -889,7 +889,7 @@
         ]
       },
       "un-vetted": {
-        "count": 80,
+        "count": 79,
         "prs": [
           {
             "repo": "rainlanguage/rainix",
@@ -1040,12 +1040,6 @@
             "number": 83,
             "url": "https://github.com/rainlanguage/rain.lib.hash/pull/83",
             "title": "[RLH-12] Fix 12 spelling and word-slip errors in README, NatSpec and two test docstrings"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.hash",
-            "number": 81,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/81",
-            "title": "test: derive the gas floors from the KECCAK256 schedule and cover the uncovered overloads"
           },
           {
             "repo": "rainlanguage/rain.lib.hash",
@@ -6440,7 +6434,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 80,
+    "unvetted": 79,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6451,18 +6445,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 205,
+    "totalProducerPrs": 204,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 698,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 882
+    "openIssues": 881
   },
   "ages": {
     "openIssues": {
-      "meanDays": 294.9,
-      "medianDays": 124.8,
-      "oldestDays": 1696.0
+      "meanDays": 295.3,
+      "medianDays": 125.1,
+      "oldestDays": 1696.1
     }
   }
 }
