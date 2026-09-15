@@ -889,8 +889,200 @@
         ]
       },
       "un-vetted": {
-        "count": 57,
+        "count": 87,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 109,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/109",
+            "title": "Cite the solc pin and immutable refs, and test the agreement"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 108,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/108",
+            "title": "Migrate src/ and test/ to the org's kind-partitioned tree"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 107,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/107",
+            "title": "[RLH-05] naming: role names for the README examples and the test locals"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 106,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/106",
+            "title": "[RLH-35] Anchor slither filter_paths so a checkout path containing 'test' cannot filter every src finding"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 105,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/105",
+            "title": "docs: list the pointer-only struct / list fold collision, and pin it"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 104,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/104",
+            "title": "README: name the library, its API and its package, and add the two sections the document promises"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 103,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/103",
+            "title": "Make the memory-layout tests assert what their docs claim"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 102,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/102",
+            "title": "docs: correct five inaccurate statements in the README and test docs"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 101,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/101",
+            "title": "[RLH-30] HashPatternFold: independent oracle seed, drop the tautology, run the README Yul inside the fold"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 100,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/100",
+            "title": "README: restore the elided EIP-712 collision sentence and cite the revision quoted"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 99,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/99",
+            "title": "audit: pin the library's compiled form to the audited revisions"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 98,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/98",
+            "title": "test: parse and shape-check the mutation ledger in CI"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 97,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/97",
+            "title": "[RLH-04] Dedupe the test suite behind shared test libraries"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 96,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/96",
+            "title": "test: document the suites and name tests by the behaviour they pin"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 95,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/95",
+            "title": "[RLH-01] Correct the fold-vs-abi.encode gas bands and pin them with a measuring test"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 94,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/94",
+            "title": "Align editor ruler with the enforced 120-column formatter; fix foundry.toml docs link"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 93,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/93",
+            "title": "Dev instructions that reproduce CI; flake serves CI's sol-shell"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 92,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/92",
+            "title": "test: check the README pattern examples against their test copies"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 91,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/91",
+            "title": "chore: apply the generated pre-commit hooks to the three hook-dirty files"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 90,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/90",
+            "title": "[RLH-09] Correct four claims in the LibHashNoAlloc title block"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 89,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/89",
+            "title": "README: pointer-vs-inline is decided by type class, not size"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 88,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/88",
+            "title": "README: document the release lifecycle and the hash stability it implies"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 87,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/87",
+            "title": "ci: lock rainix to the RAINIX_SHA that CI runs"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 86,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/86",
+            "title": "soldeer: publish only src, README and licences via an allowlist"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 85,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/85",
+            "title": "test: clear the three forge-lint warnings in MemoryLayout"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 84,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/84",
+            "title": "test: pin the no-alloc promise as a memory property, not one fixed input"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 83,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/83",
+            "title": "[RLH-12] Fix 12 spelling and word-slip errors in README, NatSpec and two test docstrings"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 82,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/82",
+            "title": "ci: run rainix-sol on pull_request so a fork PR gets checks"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 81,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/81",
+            "title": "test: derive the gas floors from the KECCAK256 schedule and cover the uncovered overloads"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 80,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/80",
+            "title": "Rename the NatSpec static struct example off the README's Foo and pin its claims"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 79,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/79",
+            "title": "docs: replace the duplicated library title block with a README reference"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.hash",
+            "number": 78,
+            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/78",
+            "title": "[RLH-07] Pin the five concrete test contracts at =0.8.25"
+          },
           {
             "repo": "rainlanguage/rain-org-health",
             "number": 181,
@@ -938,18 +1130,6 @@
             "number": 226,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/226",
             "title": "Generate the rolling snapshots under the record root they are frozen from"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 224,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/224",
-            "title": "The record walk the check calls takes no root"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 223,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/223",
-            "title": "Bound a release version component to the uint256 the record ordering reads"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -2135,93 +2315,9 @@
     },
     {
       "repo": "rainlanguage/rain.lib.hash",
-      "number": 75,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/75",
-      "title": "[RLH-35] [LOW] slither filter_paths entry test is an unanchored regex over the absolute path: any checkout whose path contains 'test' silently filters every src finding"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 74,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/74",
-      "title": "[RLH-34] [LOW] Cross-type collision list omits the type-level collision the README's own two procedures produce: a struct of only pointer fields hashes exactly as the fold of a list of those fields"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
       "number": 73,
       "url": "https://github.com/rainlanguage/rain.lib.hash/issues/73",
       "title": "[RLH-33] [INFO] forge-std pinned at 1.16.1; 1.16.2 is published — confirm the pin is intentional"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 72,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/72",
-      "title": "[RLH-32] [INFO] Flat src/ and test/ layout is a migration candidate against the org's kind-partitioned tree"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 71,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/71",
-      "title": "[RLH-31] [INFO] Tests that assert less than their names or docs claim: tautological assertTrue lines, allocator facts asserted for element 0 only with a wrong 'zero-initialised' doc, a boundary value never pinned, unused fuzz params"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 70,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/70",
-      "title": "[RLH-30] [INFO] HashPatternFold: oracles seeded from the library's HASH_NIL despite the builtins-only claim, one tautological assertion, and the README item Yul never runs inside a fold"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 69,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/69",
-      "title": "[RLH-29] [INFO] Test-suite documentation and names: LibHashNoAllocTest undocumented, tests named after README exposition or their oracle, LibHashSlow has no NatSpec"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 68,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/68",
-      "title": "[RLH-28] [LOW] Small doc inaccuracies: a README section citation that does not exist, a stale Yul comment, a wrong bucket qualifier, a wrong nesting-size sentence, an induction step attributed to the base case"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 67,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/67",
-      "title": "[RLH-27] [LOW] EIP-712 block quote elides the sentences stating the RLP/bytestring collision and its fix, and cites an earlier version with no link"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 66,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/66",
-      "title": "[RLH-26] [LOW] README never names the library, its API, HASH_NIL, the package or an import line, and promises an implementation/QA guide that no section provides"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 65,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/65",
-      "title": "[RLH-25] [INFO] Compiler version is stated in nine places with no agreement check, and README citations point at moving or stale refs"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 64,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/64",
-      "title": "[RLH-24] [INFO] Config nits: editor ruler 80 vs the 120-column formatter CI enforces; foundry.toml comment links a 404"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 63,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/63",
-      "title": "[RLH-23] [INFO] Nothing ties HEAD's library source to the revisions Protofire and the mutation campaign audited"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 62,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/62",
-      "title": "[RLH-22] [LOW] The hand-appended mutation ledger is parsed by nothing in CI; a malformed append or non-ancestor SHA silently mis-bases the next audit"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 61,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/61",
-      "title": "[RLH-21] [LOW] Generated pre-commit hooks are enforced by nobody: README, slither.config.json and .vscode/settings.json are already hook-dirty"
     },
     {
       "repo": "rainlanguage/rain.lib.hash",
@@ -2237,111 +2333,9 @@
     },
     {
       "repo": "rainlanguage/rain.lib.hash",
-      "number": 58,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/58",
-      "title": "[RLH-18] [LOW] main is unprotected: one collaborator push publishes a registry release; fork PRs get no pre-merge check"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 57,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/57",
-      "title": "[RLH-17] [LOW] .soldeerignore ships test/ (ten no-op registry versions) and any new root file by default"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 56,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/56",
-      "title": "[RLH-16] [LOW] flake.lock pins rainix 218 commits behind the RAINIX_SHA every CI job runs; the local shell lacks CI's static gates"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 55,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/55",
-      "title": "[RLH-15] [LOW] Release lifecycle is undocumented in-repo: autopublish trigger, next-v intent tags, the deliberate absence of [package], two tag namespaces, and what a preimage change means for the version"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 54,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/54",
-      "title": "[RLH-14] [LOW] Dev instructions do not reproduce CI: bare nix develop opens rainix's heavy default shell, no soldeer install step, no command list; flake.nix carries a dead rec and a duplicate flake-utils"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 53,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/53",
-      "title": "[RLH-13] [LOW] README states the pointer-vs-inline rule by size; one-word reference members are pointer words too, and no test covers a static-array member"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 52,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/52",
-      "title": "[RLH-12] [LOW] Spelling and word-slip errors in README, library NatSpec and two test docstrings (12 sites)"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 51,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/51",
-      "title": "[RLH-11] [LOW] NatSpec's 3-field Foo example shares its name with the README's 4-field Foo and its in-place hash, size and encoding-cost claims are pinned by no test"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 50,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/50",
-      "title": "[RLH-10] [LOW] Library title-block NatSpec is a second hand-maintained copy of the README rationale; the two drifted once and nothing keeps them aligned"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 49,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/49",
-      "title": "[RLH-09] [LOW] Library NatSpec accuracy: dynamic-field width, the 1k+ gas claim, abi.encode called a coincidence, HASH_NIL's seed role"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
       "number": 48,
       "url": "https://github.com/rainlanguage/rain.lib.hash/issues/48",
       "title": "[RLH-08] [LOW] Three forge-lint warnings stand at HEAD and nothing gates lint"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 47,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/47",
-      "title": "[RLH-07] [LOW] Five concrete test contracts float ^0.8.25; the org pins concretes with ="
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 46,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/46",
-      "title": "[RLH-06] [LOW] README Yul examples and their verbatim test copies are two hand-synchronised copies with no check that they still match"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 45,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/45",
-      "title": "[RLH-05] [LOW] Naming: trailing-underscore locals rooted in the README examples, the E/hash_ inconsistency, and single-letter locals across the suites"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 44,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/44",
-      "title": "[RLH-04] [LOW] Test-suite duplication: snapshot scaffolds x26, struct Foo x3, the A-E oracle x2, known-answer literals x5, inline oracles beside LibHashSlow"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 43,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/43",
-      "title": "[RLH-03] [LOW] gasleft() assertions cover only the bytes32[] overload, and their 30-gas floor does not prove the hash is in the window"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 42,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/42",
-      "title": "[RLH-02] [LOW] No-alloc / memory-safe promise is pinned only at one fixed input per function; five mutants survive the whole suite"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 41,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/41",
-      "title": "[RLH-01] [LOW] README fold-vs-abi.encode gas bands are wrong in direction and unmeasured by any test"
     },
     {
       "repo": "rainlanguage/raindex",
@@ -6488,7 +6482,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 57,
+    "unvetted": 87,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6499,18 +6493,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 182,
+    "totalProducerPrs": 212,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 729,
+    "uncoveredIssues": 698,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 893
+    "openIssues": 891
   },
   "ages": {
     "openIssues": {
-      "meanDays": 291.2,
-      "medianDays": 117.9,
-      "oldestDays": 1695.8
+      "meanDays": 291.9,
+      "medianDays": 118.2,
+      "oldestDays": 1695.9
     }
   }
 }
