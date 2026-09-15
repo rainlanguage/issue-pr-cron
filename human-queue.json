@@ -889,8 +889,14 @@
         ]
       },
       "un-vetted": {
-        "count": 68,
+        "count": 62,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.string",
+            "number": 136,
+            "url": "https://github.com/rainlanguage/rain.string/pull/136",
+            "title": "Take LibStringSet from rain.deploy"
+          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 209,
@@ -967,7 +973,7 @@
             "repo": "rainlanguage/rain.deploy",
             "number": 178,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/178",
-            "title": "Cover the NotDeployed precedence and the deployZoltu scratch clean"
+            "title": "Pin the block isStartBlock reads, the mid findDeployBlock keeps, the NotDeployed precedence and the deployZoltu scratch clean"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -986,48 +992,6 @@
             "number": 175,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/175",
             "title": "Test LibStringSet.holds membership directly"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 174,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/174",
-            "title": "test: what a written snapshot records, and where the record walk stops"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 173,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/173",
-            "title": "test: drive freeze guard order, regeneration and the append-only record"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 172,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/172",
-            "title": "test: pin the genesis head to its preimage"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 171,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/171",
-            "title": "test: keep EIP-7702 designators out of the hypercore fuzzed etch"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 170,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/170",
-            "title": "Assert the snapshot record's own consensus, prose and selection"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 169,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/169",
-            "title": "Address registry: close three mutation gaps and add the deploy-pin assertion"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 168,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/168",
-            "title": "test(lib-migration-registry): the three cases the suite could not see"
           },
           {
             "repo": "rainlanguage/rain.lib.hash",
@@ -6662,7 +6626,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 68,
+    "unvetted": 62,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6673,7 +6637,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 193,
+    "totalProducerPrs": 187,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 747,
     "designPresentable": 7,
@@ -6682,9 +6646,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 288.3,
+      "meanDays": 288.4,
       "medianDays": 113.1,
-      "oldestDays": 1695.2
+      "oldestDays": 1695.3
     }
   }
 }
