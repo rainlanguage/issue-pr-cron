@@ -889,7 +889,7 @@
         ]
       },
       "un-vetted": {
-        "count": 86,
+        "count": 79,
         "prs": [
           {
             "repo": "rainlanguage/rain.lib.hash",
@@ -920,12 +920,6 @@
             "number": 107,
             "url": "https://github.com/rainlanguage/rain.lib.hash/pull/107",
             "title": "[RLH-05] naming: role names for the README examples and the test locals"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.hash",
-            "number": 106,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/106",
-            "title": "[RLH-35] Anchor slither filter_paths so a checkout path containing 'test' cannot filter every src finding"
           },
           {
             "repo": "rainlanguage/rain.lib.hash",
@@ -1031,39 +1025,15 @@
           },
           {
             "repo": "rainlanguage/rain.lib.hash",
-            "number": 87,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/87",
-            "title": "ci: lock rainix to the RAINIX_SHA that CI runs"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.hash",
-            "number": 86,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/86",
-            "title": "soldeer: publish only src, README and licences via an allowlist"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.hash",
             "number": 85,
             "url": "https://github.com/rainlanguage/rain.lib.hash/pull/85",
             "title": "test: clear the three forge-lint warnings in MemoryLayout"
           },
           {
             "repo": "rainlanguage/rain.lib.hash",
-            "number": 84,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/84",
-            "title": "test: pin the no-alloc promise as a memory property, not one fixed input"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.hash",
             "number": 83,
             "url": "https://github.com/rainlanguage/rain.lib.hash/pull/83",
             "title": "[RLH-12] Fix 12 spelling and word-slip errors in README, NatSpec and two test docstrings"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.hash",
-            "number": 82,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/82",
-            "title": "ci: run rainix-sol on pull_request so a fork PR gets checks"
           },
           {
             "repo": "rainlanguage/rain.lib.hash",
@@ -1099,7 +1069,7 @@
             "repo": "rainlanguage/rain.deploy",
             "number": 232,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/232",
-            "title": "Clear the snapshot test fixture roots at the start of every run"
+            "title": "Clear one fixture tree at the start of every run"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -1115,21 +1085,9 @@
           },
           {
             "repo": "rainlanguage/rain.deploy",
-            "number": 227,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/227",
-            "title": "Move the foundry.toml config check onto RainDeployVerifySnapshotBase"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
             "number": 226,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/226",
             "title": "Generate the rolling snapshots under the record root they are frozen from"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 222,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/222",
-            "title": "Refuse an exchange answer that is not the empty default envelope"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -2270,6 +2228,12 @@
       "number": 225,
       "url": "https://github.com/rainlanguage/rain.deploy/issues/225",
       "title": "The testWriteSnapshot family shares one fixture directory and races itself"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 194,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/194",
+      "title": "Nothing in the suite can make the foundry.toml config assertions fail"
     },
     {
       "repo": "S01-Issuer/st0x.deploy",
@@ -6470,7 +6434,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 86,
+    "unvetted": 79,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6481,18 +6445,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 211,
+    "totalProducerPrs": 204,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 697,
+    "uncoveredIssues": 698,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 889
+    "openIssues": 883
   },
   "ages": {
     "openIssues": {
-      "meanDays": 292.6,
-      "medianDays": 118.5,
-      "oldestDays": 1695.9
+      "meanDays": 294.6,
+      "medianDays": 124.5,
+      "oldestDays": 1696.0
     }
   }
 }
