@@ -889,20 +889,8 @@
         ]
       },
       "un-vetted": {
-        "count": 63,
+        "count": 48,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 210,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/210",
-            "title": "Replace LibStringSet with LibMemoryKV"
-          },
-          {
-            "repo": "rainlanguage/rain.string",
-            "number": 136,
-            "url": "https://github.com/rainlanguage/rain.string/pull/136",
-            "title": "Take LibStringSet from rain.deploy"
-          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 209,
@@ -920,84 +908,6 @@
             "number": 188,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/188",
             "title": "test: broadcast carries the recorded code hash, one suite, and the env key"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 187,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/187",
-            "title": "test(verify snapshot): bare address literal and the candidate subject"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 186,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/186",
-            "title": "test: pin the deploy script's target set and the registries' dependency lists"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 185,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/185",
-            "title": "test: a suite key is the whole string, not its length"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 184,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/184",
-            "title": "test: pin every generated contract's committed alias lib to its declaration"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 183,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/183",
-            "title": "test: assert what the deploy derivation returns"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 182,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/182",
-            "title": "Cover the big blocks tool CLI end to end"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 181,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/181",
-            "title": "test: pin the chain matrix behaviours the fork suite reaches"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 180,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/180",
-            "title": "Assert the read index, the per-read calldata, and empty createForks"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 179,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/179",
-            "title": "test: pin the refusal order in the two NoNetworks guards"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 178,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/178",
-            "title": "Pin the block isStartBlock reads, the mid findDeployBlock keeps, the NotDeployed precedence and the deployZoltu scratch clean"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 177,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/177",
-            "title": "test: pin LibHyperCore guard order and the system contract calldata revert"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 176,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/176",
-            "title": "test: pin every generated lib to the generator, not only the first contract"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 175,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/175",
-            "title": "Test LibStringSet.holds membership directly"
           },
           {
             "repo": "rainlanguage/rain.lib.hash",
@@ -6632,7 +6542,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 63,
+    "unvetted": 48,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6643,7 +6553,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 188,
+    "totalProducerPrs": 173,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 747,
     "designPresentable": 7,
