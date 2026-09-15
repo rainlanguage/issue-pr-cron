@@ -889,8 +889,14 @@
         ]
       },
       "un-vetted": {
-        "count": 64,
+        "count": 57,
         "prs": [
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 181,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/181",
+            "title": "Replay health.json onto the race winner instead of rebasing onto it"
+          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 232,
@@ -953,57 +959,9 @@
           },
           {
             "repo": "rainlanguage/rain.deploy",
-            "number": 221,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/221",
-            "title": "Assert the env names and the fork selection in CreditHyperCore.run"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 220,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/220",
-            "title": "Hold the source anchor's operands to their provenance"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
             "number": 219,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/219",
             "title": "Refuse a deploy suite key that spells the key list separator"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 218,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/218",
-            "title": "Correct the codeless-account code hash claim in three NatSpec sites"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 217,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/217",
-            "title": "isStartBlock refuses a zero expectedCodeHash"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 216,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/216",
-            "title": "Qualify deployToNetworks' dependency precondition to the deploy branch"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 215,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/215",
-            "title": "Drop the stale seven-network count from prose"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 214,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/214",
-            "title": "Read a frozen record's address the way the compiler would"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 213,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/213",
-            "title": "Diagnose a non-UTF-8 env value as set rather than not set"
           },
           {
             "repo": "rainlanguage/rain.lib.hash",
@@ -6530,7 +6488,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 64,
+    "unvetted": 57,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6541,17 +6499,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 189,
+    "totalProducerPrs": 182,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 729,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 901
+    "openIssues": 893
   },
   "ages": {
     "openIssues": {
-      "meanDays": 288.6,
-      "medianDays": 112.1,
+      "meanDays": 291.2,
+      "medianDays": 117.9,
       "oldestDays": 1695.8
     }
   }
