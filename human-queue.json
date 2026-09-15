@@ -889,8 +889,20 @@
         ]
       },
       "un-vetted": {
-        "count": 79,
+        "count": 80,
         "prs": [
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 378,
+            "url": "https://github.com/rainlanguage/rainix/pull/378",
+            "title": "Gate every sol consumer on forge lint and the pre-commit hook bundle"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 234,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/234",
+            "title": "test: assert from the AST that run() calls every hook BuildScript declares"
+          },
           {
             "repo": "rainlanguage/rain.lib.hash",
             "number": 111,
@@ -968,12 +980,6 @@
             "number": 98,
             "url": "https://github.com/rainlanguage/rain.lib.hash/pull/98",
             "title": "test: parse and shape-check the mutation ledger in CI"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.hash",
-            "number": 97,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/97",
-            "title": "[RLH-04] Dedupe the test suite behind shared test libraries"
           },
           {
             "repo": "rainlanguage/rain.lib.hash",
@@ -1075,7 +1081,7 @@
             "repo": "rainlanguage/rain.deploy",
             "number": 229,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/229",
-            "title": "Assert [etherscan] entries can resolve, not just that the keys exist"
+            "title": "Assert [etherscan] entries resolve and bind each chain id to its network"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -1093,7 +1099,7 @@
             "repo": "rainlanguage/rain.deploy",
             "number": 219,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/219",
-            "title": "Refuse a deploy suite key that spells the key list separator"
+            "title": "Hold a deploy suite key to an alphabet the key list reads back as"
           },
           {
             "repo": "rainlanguage/rain.lib.hash",
@@ -6434,7 +6440,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 79,
+    "unvetted": 80,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6445,17 +6451,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 204,
+    "totalProducerPrs": 205,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 698,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 883
+    "openIssues": 882
   },
   "ages": {
     "openIssues": {
-      "meanDays": 294.6,
-      "medianDays": 124.5,
+      "meanDays": 294.9,
+      "medianDays": 124.8,
       "oldestDays": 1696.0
     }
   }
