@@ -108,6 +108,12 @@
     ],
     "ai:design": [
       {
+        "repo": "rainlanguage/rain.factory",
+        "number": 84,
+        "url": "https://github.com/rainlanguage/rain.factory/pull/84",
+        "title": "Make the clone-initialize-verify tail private to the library"
+      },
+      {
         "repo": "rainlanguage/adversarial-mutation-test",
         "number": 22,
         "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/22",
@@ -151,6 +157,12 @@
       }
     ],
     "ai:needs-work": [
+      {
+        "repo": "rainlanguage/rain.factory",
+        "number": 82,
+        "url": "https://github.com/rainlanguage/rain.factory/pull/82",
+        "title": "Document what CloneDeploymentFailed says about the occupant per derivation"
+      },
       {
         "repo": "rainlanguage/adversarial-mutation-test",
         "number": 26,
@@ -889,8 +901,62 @@
         ]
       },
       "un-vetted": {
-        "count": 56,
+        "count": 57,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 90,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/90",
+            "title": "Scope the open-salt code-size inference to the transaction boundary"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 89,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/89",
+            "title": "Raise InitializationFailed for every non-conforming initialize answer"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 88,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/88",
+            "title": "test: pin every salt-derivation boundary as a fixed case"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 87,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/87",
+            "title": "Reject an EIP-7702 delegated account as a clone implementation"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 86,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/86",
+            "title": "docs: NewClone address determinants are the emitting entry point's"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 85,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/85",
+            "title": "Document and pin the wire identity of every published NewClone"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 79,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/79",
+            "title": "test: enumerate every occupancy combination of the bisect tree from precomputed keys"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 83,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/83",
+            "title": "Condition ICloneableFactoryV3 cross-network claims on the implementation address"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 81,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/81",
+            "title": "Point ICloneableV2 implementers at the factory family, not the superseded V2"
+          },
           {
             "repo": "rainlanguage/rain.lib.memkv",
             "number": 78,
@@ -904,30 +970,6 @@
             "title": "refactor: types-only returns clauses with an explicit return"
           },
           {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 74,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/74",
-            "title": "docs: publish the gas the library actually costs, and delete the snapshot nothing reads"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 73,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/73",
-            "title": "fix: give the 16 bit word count a bound of its own"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 72,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/72",
-            "title": "ci: pin rainix at the RAINIX_SHA that CI runs"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 71,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/71",
-            "title": "docs: set can revert MemoryKVOverflow, and a MemoryKV handle is frame-local"
-          },
-          {
             "repo": "rainlanguage/rainix",
             "number": 391,
             "url": "https://github.com/rainlanguage/rainix/pull/391",
@@ -935,21 +977,9 @@
           },
           {
             "repo": "rainlanguage/rain.lib.memkv",
-            "number": 60,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/60",
-            "title": "docs: a MemoryKV handle aliases its store, asymmetrically"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
             "number": 53,
             "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/53",
             "title": "Document toBytes32Array export order as unspecified"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 52,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/52",
-            "title": "docs: set's return MUST be assigned back, it is not a mutation in place"
           },
           {
             "repo": "rainlanguage/rain.lib.memkv",
@@ -1004,18 +1034,6 @@
             "number": 2846,
             "url": "https://github.com/rainlanguage/raindex/pull/2846",
             "title": "Add the Manual sol verify caller workflow"
-          },
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 80,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/80",
-            "title": "test: fixtures out of the src mirror, and one conforming ICloneableV2"
-          },
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 78,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/78",
-            "title": "AMT coverage: g2-libicloneablefactoryv4-predi"
           },
           {
             "repo": "rainlanguage/rain.factory",
@@ -1232,8 +1250,15 @@
     },
     "vetter-verdicts": {
       "ai:design": {
-        "count": 7,
+        "count": 8,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 84,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/84",
+            "title": "Make the clone-initialize-verify tail private to the library",
+            "bucket": "noQuestion"
+          },
           {
             "repo": "rainlanguage/adversarial-mutation-test",
             "number": 22,
@@ -1287,14 +1312,20 @@
         "breakdown": {
           "draft": 0,
           "fetchErrors": 0,
-          "noQuestion": 0,
+          "noQuestion": 1,
           "presentable": 7,
           "unaddressable": 0
         }
       },
       "ai:needs-work": {
-        "count": 100,
+        "count": 101,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 82,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/82",
+            "title": "Document what CloneDeploymentFailed says about the occupant per derivation"
+          },
           {
             "repo": "rainlanguage/adversarial-mutation-test",
             "number": 26,
@@ -2285,75 +2316,9 @@
     },
     {
       "repo": "rainlanguage/rain.factory",
-      "number": 79,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/79",
-      "title": "NewClone's V3 NatSpec calls the clone address a pure function of (implementation, sender, salt), which is false on the open-salt derivation"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 74,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/74",
-      "title": "CloneDeploymentFailed's \"the exact clone asked for is already at the address\" is false on the namespaced derivation, which leaves data out"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 73,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/73",
-      "title": "checkImplementationCode admits an EIP-7702 delegated EOA, whose code the account holder can repoint or revoke after clones exist"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 71,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/71",
-      "title": "Library NatSpec claims a delegating concrete cannot misroute the msg.sender namespacing, but effectiveSalt + cloneAndInitialize compose to a factory that does"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 70,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/70",
-      "title": "Boundary-value coverage of the salt derivations is fuzz-seed luck: max-salt mutants survive the whole suite"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 69,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/69",
-      "title": "ICloneableV2's normative NatSpec points implementers at the superseded ICloneableFactoryV2, and ICloneableV1 names a non-existent ICloneFactoryV1"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 67,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/67",
-      "title": "TestCloneable, the only worked ICloneableV2 fixture, violates the interface's once-only initialize MUST that ICloneableFactoryV4's open-salt safety argument rests on"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 65,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/65",
-      "title": "NewClone is declared by three published interfaces under two signatures; ICloneableFactoryV1 and V2 share one topic0"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
       "number": 64,
       "url": "https://github.com/rainlanguage/rain.factory/issues/64",
       "title": "testCheckImplementationCodeEtched fails on unmutated main: vm.etch rejects fuzzed 0xEF-leading code"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 63,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/63",
-      "title": "ICloneableFactoryV3 cross-network determinism claim omits the implementation address, contradicting ICloneableFactoryV4"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 62,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/62",
-      "title": "predictDeterministicAddressOpenSalt NatSpec claims non-zero code implies initialized state, but the clone has code before initialize runs"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 61,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/61",
-      "title": "InitializationFailed is not raised when the implementation does not implement ICloneableV2.initialize — caller gets bare 0x"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -6302,28 +6267,28 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 56,
+    "unvetted": 57,
     "blockedOn": 16,
     "ready": 1,
-    "needsWork": 100,
+    "needsWork": 101,
     "relink": 0,
-    "design": 7,
+    "design": 8,
     "blockedInfra": 0,
     "closeCandidateIssues": 3,
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 181,
+    "totalProducerPrs": 184,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 699,
+    "uncoveredIssues": 688,
     "designPresentable": 7,
-    "designNoQuestion": 0,
-    "openIssues": 865
+    "designNoQuestion": 1,
+    "openIssues": 857
   },
   "ages": {
     "openIssues": {
-      "meanDays": 301.4,
-      "medianDays": 130.3,
+      "meanDays": 304.2,
+      "medianDays": 132.6,
       "oldestDays": 1697.1
     }
   }
