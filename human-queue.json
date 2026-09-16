@@ -889,13 +889,13 @@
         ]
       },
       "un-vetted": {
-        "count": 67,
+        "count": 59,
         "prs": [
           {
             "repo": "rainlanguage/rainix",
-            "number": 378,
-            "url": "https://github.com/rainlanguage/rainix/pull/378",
-            "title": "Gate every sol consumer on forge lint and the pre-commit hook bundle"
+            "number": 379,
+            "url": "https://github.com/rainlanguage/rainix/pull/379",
+            "title": "Put back the sol lint gate rationale the comment sweep deleted"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -905,45 +905,9 @@
           },
           {
             "repo": "rainlanguage/rain.lib.hash",
-            "number": 110,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/110",
-            "title": "build: bump forge-std to 1.16.2"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.hash",
-            "number": 109,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/109",
-            "title": "Cite the ABI spec and memory layout without naming a compiler version"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.hash",
-            "number": 108,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/108",
-            "title": "Migrate src/ and test/ to the org's kind-partitioned tree"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.hash",
-            "number": 107,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/107",
-            "title": "[RLH-05] naming: role names for the README examples and the test locals"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.hash",
-            "number": 102,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/102",
-            "title": "docs: correct five inaccurate statements in the README and test docs"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.hash",
             "number": 101,
             "url": "https://github.com/rainlanguage/rain.lib.hash/pull/101",
             "title": "[RLH-30] HashPatternFold: independent oracle seed, drop the tautology, run the README Yul inside the fold"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.hash",
-            "number": 99,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/99",
-            "title": "audit: drop the runtime-code pin; the audited revision is already recorded"
           },
           {
             "repo": "rainlanguage/rain.lib.hash",
@@ -956,12 +920,6 @@
             "number": 93,
             "url": "https://github.com/rainlanguage/rain.lib.hash/pull/93",
             "title": "Dev instructions that reproduce CI; flake serves CI's sol-shell"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.hash",
-            "number": 91,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/91",
-            "title": "chore: apply the generated pre-commit hooks to the three hook-dirty files"
           },
           {
             "repo": "rainlanguage/rain.lib.hash",
@@ -1022,12 +980,6 @@
             "number": 219,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/219",
             "title": "Hold a deploy suite key to an alphabet the key list reads back as"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.hash",
-            "number": 77,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/77",
-            "title": "audit: append run stamp + scope (0.35.0)"
           },
           {
             "repo": "rainlanguage/rainlang.interface",
@@ -6380,7 +6332,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 67,
+    "unvetted": 59,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6391,17 +6343,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 192,
+    "totalProducerPrs": 184,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 701,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 873
+    "openIssues": 866
   },
   "ages": {
     "openIssues": {
-      "meanDays": 298.0,
-      "medianDays": 126.3,
+      "meanDays": 300.3,
+      "medianDays": 129.4,
       "oldestDays": 1696.1
     }
   }
