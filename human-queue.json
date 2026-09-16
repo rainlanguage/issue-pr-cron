@@ -889,19 +889,19 @@
         ]
       },
       "un-vetted": {
-        "count": 57,
+        "count": 54,
         "prs": [
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 391,
+            "url": "https://github.com/rainlanguage/rainix/pull/391",
+            "title": "Install the staged config from rainix, not from a script in every consumer"
+          },
           {
             "repo": "rainlanguage/rain.lib.memkv",
             "number": 68,
             "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/68",
             "title": "test: pin the high half of the toBytes32Array bisect tree per slot"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 61,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/61",
-            "title": "test: measure the gas the bisect and the README claim"
           },
           {
             "repo": "rainlanguage/rain.lib.memkv",
@@ -914,12 +914,6 @@
             "number": 59,
             "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/59",
             "title": "docs: name the scratch coupling that makes set's zero guard untestable"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 58,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/58",
-            "title": "chore: normalise the two JSON files to what prettier-rainix writes"
           },
           {
             "repo": "rainlanguage/rain.lib.memkv",
@@ -947,12 +941,6 @@
           },
           {
             "repo": "rainlanguage/rain.lib.memkv",
-            "number": 49,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/49",
-            "title": "test: stop testSaturate's slot loop at the length field"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
             "number": 48,
             "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/48",
             "title": "docs: state the MemoryKV precondition the export's allocation relies on"
@@ -962,12 +950,6 @@
             "number": 237,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/237",
             "title": "Generate the network config from the roster instead of comparing it"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 236,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/236",
-            "title": "Give every write-snapshot fixture a root of its own"
           },
           {
             "repo": "rainlanguage/rain.lib.memkv",
@@ -6356,7 +6338,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 57,
+    "unvetted": 54,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6367,18 +6349,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 182,
+    "totalProducerPrs": 179,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 707,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 871
+    "openIssues": 869
   },
   "ages": {
     "openIssues": {
-      "meanDays": 299.2,
-      "medianDays": 128.9,
-      "oldestDays": 1696.9
+      "meanDays": 299.9,
+      "medianDays": 130.0,
+      "oldestDays": 1697.0
     }
   }
 }
