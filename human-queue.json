@@ -889,8 +889,38 @@
         ]
       },
       "un-vetted": {
-        "count": 54,
+        "count": 57,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 74,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/74",
+            "title": "docs: publish the gas the library actually costs, and delete the snapshot nothing reads"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 73,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/73",
+            "title": "fix: give the 16 bit word count a bound of its own"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 72,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/72",
+            "title": "ci: pin rainix at the RAINIX_SHA that CI runs"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 71,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/71",
+            "title": "docs: set can revert MemoryKVOverflow, and a MemoryKV handle is frame-local"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 70,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/70",
+            "title": "toBytes32Array docs: say bytes32[], and stop the Slither aside landing in @return"
+          },
           {
             "repo": "rainlanguage/rainix",
             "number": 391,
@@ -911,21 +941,9 @@
           },
           {
             "repo": "rainlanguage/rain.lib.memkv",
-            "number": 59,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/59",
-            "title": "docs: name the scratch coupling that makes set's zero guard untestable"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
             "number": 57,
             "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/57",
             "title": "Document MemoryKVOverflow's bound as the head pointer the guard actually checks"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 54,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/54",
-            "title": "docs: state get's exists literal and its first-match tie-break"
           },
           {
             "repo": "rainlanguage/rain.lib.memkv",
@@ -2069,39 +2087,15 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rain.lib.memkv",
+      "number": 69,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/69",
+      "title": "Name the empty store as a constant so callers never write MemoryKV.wrap"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
       "number": 67,
       "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/67",
       "title": "testAllLowSlotsHighPointerExport reverts MemoryKVOverflow for rare seeds: keyForSlot allocates per rehash on top of a deliberate 0x9000 pad"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.memkv",
-      "number": 66,
-      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/66",
-      "title": "The README's ~350 gas get and ~400 gas set do not measure the operations they name: the get is 236 and a colliding insert is 470"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.memkv",
-      "number": 65,
-      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/65",
-      "title": "toBytes32Array returns bytes32[] but the NatSpec and the README both call it uint256[]"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.memkv",
-      "number": 64,
-      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/64",
-      "title": ".gas-snapshot holds 24 entries for a 77 test suite, was last written nine months ago, and nothing checks it"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.memkv",
-      "number": 63,
-      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/63",
-      "title": "get and toBytes32Array use named returns against the org rule that returns are types-only with an explicit return"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.memkv",
-      "number": 62,
-      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/62",
-      "title": "The Slither cyclomatic-complexity aside is a `///` continuation of `@return array`, so it renders as part of what toBytes32Array gives back"
     },
     {
       "repo": "rainlanguage/adversarial-mutation-test",
@@ -2114,30 +2108,6 @@
       "number": 389,
       "url": "https://github.com/rainlanguage/rainix/issues/389",
       "title": "prettier-rainix gates JSON in a repo's own devShell but no-ops in sol-shell, so `pre-commit run --all-files` is two different gates under one name"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.memkv",
-      "number": 56,
-      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/56",
-      "title": "MemoryKV is a uint256 so it crosses an external call boundary intact, but its nodes do not, and nothing documents that the handle is frame-local"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.memkv",
-      "number": 55,
-      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/55",
-      "title": "set's NatSpec documents every parameter and the return but never mentions that it can revert MemoryKVOverflow"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.memkv",
-      "number": 51,
-      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/51",
-      "title": "flake.lock pins rainix 3.5 months behind the RAINIX_SHA CI runs, so no local shell reproduces CI"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.memkv",
-      "number": 50,
-      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/50",
-      "title": "The 16 bit word count wraps silently on overflow and is guarded only by a bound on node addresses, which any pointer widening removes"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -6338,7 +6308,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 54,
+    "unvetted": 57,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6349,17 +6319,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 179,
+    "totalProducerPrs": 182,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 707,
+    "uncoveredIssues": 699,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 869
+    "openIssues": 866
   },
   "ages": {
     "openIssues": {
-      "meanDays": 299.9,
-      "medianDays": 130.0,
+      "meanDays": 301.0,
+      "medianDays": 130.2,
       "oldestDays": 1697.0
     }
   }
