@@ -889,8 +889,14 @@
         ]
       },
       "un-vetted": {
-        "count": 53,
+        "count": 52,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 46,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/46",
+            "title": "audit: record the adversarial mutation scan of sol-v0.1.5"
+          },
           {
             "repo": "rainlanguage/rain.lib.memkv",
             "number": 35,
@@ -926,18 +932,6 @@
             "number": 30,
             "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/30",
             "title": "test: pin get/has behaviours with mutation evidence (group 1)"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.hash",
-            "number": 88,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/88",
-            "title": "README: state each hash function's preimage as its API"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.hash",
-            "number": 83,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/83",
-            "title": "[RLH-12] Fix 12 spelling and word-slip errors in README, NatSpec and two test docstrings"
           },
           {
             "repo": "rainlanguage/rain-org-health",
@@ -2189,27 +2183,15 @@
     },
     {
       "repo": "rainlanguage/rain.lib.hash",
-      "number": 60,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/60",
-      "title": "[RLH-20] [LOW] REUSE annotation audit/**/ stamps the third-party Protofire audit report as Rain copyright under DCL-1.0"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
       "number": 59,
       "url": "https://github.com/rainlanguage/rain.lib.hash/issues/59",
       "title": "[RLH-19] [LOW] next-v version intent depends on an unenforced tag-before-merge order and on the merge method"
     },
     {
       "repo": "rainlanguage/rain.lib.hash",
-      "number": 50,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/50",
-      "title": "[RLH-10] [LOW] Library title-block NatSpec is a second hand-maintained copy of the README rationale; the two drifted once and nothing keeps them aligned"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 48,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/48",
-      "title": "[RLH-08] [LOW] Three forge-lint warnings stand at HEAD and nothing gates lint"
+      "number": 55,
+      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/55",
+      "title": "[RLH-15] [LOW] Release lifecycle is undocumented in-repo: autopublish trigger, next-v intent tags, the deliberate absence of [package], two tag namespaces, and what a preimage change means for the version"
     },
     {
       "repo": "rainlanguage/raindex",
@@ -6356,7 +6338,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 53,
+    "unvetted": 52,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6367,17 +6349,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 178,
+    "totalProducerPrs": 177,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 711,
+    "uncoveredIssues": 709,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 866
+    "openIssues": 863
   },
   "ages": {
     "openIssues": {
-      "meanDays": 300.7,
-      "medianDays": 129.8,
+      "meanDays": 301.7,
+      "medianDays": 129.9,
       "oldestDays": 1696.6
     }
   }
