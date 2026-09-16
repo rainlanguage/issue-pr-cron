@@ -892,34 +892,46 @@
         "count": 59,
         "prs": [
           {
-            "repo": "rainlanguage/rainix",
-            "number": 379,
-            "url": "https://github.com/rainlanguage/rainix/pull/379",
-            "title": "Put back the sol lint gate rationale the comment sweep deleted"
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 35,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/35",
+            "title": "test: pin the low half of the toBytes32Array bisect tree per slot"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 34,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/34",
+            "title": "test: pin the set insert branch and overflow boundary"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 33,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/33",
+            "title": "test: pin the export's array header, allocation and pairwise copy"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 32,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/32",
+            "title": "test: pin the set hash/walk/update path"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 31,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/31",
+            "title": "Make the export tests see a misrouted list, not just a missing one"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 30,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/30",
+            "title": "test: pin get/has behaviours with mutation evidence (group 1)"
           },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 234,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/234",
             "title": "test: assert from the AST that run() calls every hook BuildScript declares"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.hash",
-            "number": 101,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/101",
-            "title": "[RLH-30] HashPatternFold: independent oracle seed, drop the tautology, run the README Yul inside the fold"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.hash",
-            "number": 95,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/95",
-            "title": "[RLH-01] Correct the fold-vs-abi.encode gas bands and pin them with a measuring test"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.hash",
-            "number": 93,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/93",
-            "title": "Dev instructions that reproduce CI; flake serves CI's sol-shell"
           },
           {
             "repo": "rainlanguage/rain.lib.hash",
@@ -932,18 +944,6 @@
             "number": 83,
             "url": "https://github.com/rainlanguage/rain.lib.hash/pull/83",
             "title": "[RLH-12] Fix 12 spelling and word-slip errors in README, NatSpec and two test docstrings"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.hash",
-            "number": 80,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/80",
-            "title": "Rename the NatSpec static struct example off the README's Foo and pin its claims"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.hash",
-            "number": 78,
-            "url": "https://github.com/rainlanguage/rain.lib.hash/pull/78",
-            "title": "[RLH-07] Pin the five concrete test contracts at =0.8.25"
           },
           {
             "repo": "rainlanguage/rain-org-health",
@@ -6348,13 +6348,13 @@
     "uncoveredIssues": 701,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 866
+    "openIssues": 861
   },
   "ages": {
     "openIssues": {
-      "meanDays": 300.3,
-      "medianDays": 129.4,
-      "oldestDays": 1696.1
+      "meanDays": 302.1,
+      "medianDays": 129.5,
+      "oldestDays": 1696.2
     }
   }
 }
