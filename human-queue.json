@@ -889,7 +889,7 @@
         ]
       },
       "un-vetted": {
-        "count": 52,
+        "count": 50,
         "prs": [
           {
             "repo": "rainlanguage/rain.lib.memkv",
@@ -914,18 +914,6 @@
             "number": 33,
             "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/33",
             "title": "test: pin the export's array header, allocation and pairwise copy"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 32,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/32",
-            "title": "test: pin the set hash/walk/update path"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 31,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/31",
-            "title": "Make the export tests see a misrouted list, not just a missing one"
           },
           {
             "repo": "rainlanguage/rain.lib.memkv",
@@ -2056,6 +2044,18 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rainix",
+      "number": 386,
+      "url": "https://github.com/rainlanguage/rainix/issues/386",
+      "title": "mutation-ledger: rain.lib.hash went red 33s after #385 merged, on an explicit `testsAfterCommit: null` and a second producer's `tool` string"
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 383,
+      "url": "https://github.com/rainlanguage/rainix/issues/383",
+      "title": "Restrict merge methods to merge commits org-wide: squash and rebase orphan the next-v intent tag autopublish reads"
+    },
+    {
       "repo": "rainlanguage/rain.lib.memkv",
       "number": 45,
       "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/45",
@@ -2168,18 +2168,6 @@
       "number": 578,
       "url": "https://github.com/rainlanguage/rainlang/issues/578",
       "title": "LibParseStackName: two fuzz tests fail for a specific ParseState input"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 76,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/76",
-      "title": "[RLH-36] [INFO] README/NatSpec claims with no pinning test (residue): the packed-collision motivating example, 'a Foo is ALWAYS 4 words' with populated members, deterministic boundary lengths, pointer non-determinism, bytes1[] as a word list"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 62,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/62",
-      "title": "[RLH-22] [LOW] The hand-appended mutation ledger is parsed by nothing in CI; a malformed append or non-ancestor SHA silently mis-bases the next audit"
     },
     {
       "repo": "rainlanguage/rain.lib.hash",
@@ -6338,7 +6326,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 52,
+    "unvetted": 50,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6349,16 +6337,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 177,
+    "totalProducerPrs": 175,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 709,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 863
+    "openIssues": 862
   },
   "ages": {
     "openIssues": {
-      "meanDays": 301.7,
+      "meanDays": 302.1,
       "medianDays": 129.9,
       "oldestDays": 1696.6
     }
