@@ -889,8 +889,62 @@
         ]
       },
       "un-vetted": {
-        "count": 48,
+        "count": 57,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 68,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/68",
+            "title": "test: pin the high half of the toBytes32Array bisect tree per slot"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 61,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/61",
+            "title": "test: measure the gas the bisect and the README claim"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 60,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/60",
+            "title": "docs: a MemoryKV handle aliases its store, asymmetrically"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 59,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/59",
+            "title": "docs: name the scratch coupling that makes set's zero guard untestable"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 58,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/58",
+            "title": "chore: normalise the two JSON files to what prettier-rainix writes"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 57,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/57",
+            "title": "Document MemoryKVOverflow's bound as the head pointer the guard actually checks"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 54,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/54",
+            "title": "docs: state get's exists literal and its first-match tie-break"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 53,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/53",
+            "title": "Document toBytes32Array export order as unspecified"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 52,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/52",
+            "title": "docs: set's return MUST be assigned back, it is not a mutation in place"
+          },
           {
             "repo": "rainlanguage/rain.lib.memkv",
             "number": 49,
@@ -2032,6 +2086,78 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 67,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/67",
+      "title": "testAllLowSlotsHighPointerExport reverts MemoryKVOverflow for rare seeds: keyForSlot allocates per rehash on top of a deliberate 0x9000 pad"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 66,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/66",
+      "title": "The README's ~350 gas get and ~400 gas set do not measure the operations they name: the get is 236 and a colliding insert is 470"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 65,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/65",
+      "title": "toBytes32Array returns bytes32[] but the NatSpec and the README both call it uint256[]"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 64,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/64",
+      "title": ".gas-snapshot holds 24 entries for a 77 test suite, was last written nine months ago, and nothing checks it"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 63,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/63",
+      "title": "get and toBytes32Array use named returns against the org rule that returns are types-only with an explicit return"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 62,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/62",
+      "title": "The Slither cyclomatic-complexity aside is a `///` continuation of `@return array`, so it renders as part of what toBytes32Array gives back"
+    },
+    {
+      "repo": "rainlanguage/adversarial-mutation-test",
+      "number": 36,
+      "url": "https://github.com/rainlanguage/adversarial-mutation-test/issues/36",
+      "title": "--json drops killer attribution, and the obvious fail-pattern silently matches nothing on forge fuzz failures"
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 389,
+      "url": "https://github.com/rainlanguage/rainix/issues/389",
+      "title": "prettier-rainix gates JSON in a repo's own devShell but no-ops in sol-shell, so `pre-commit run --all-files` is two different gates under one name"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 56,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/56",
+      "title": "MemoryKV is a uint256 so it crosses an external call boundary intact, but its nodes do not, and nothing documents that the handle is frame-local"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 55,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/55",
+      "title": "set's NatSpec documents every parameter and the return but never mentions that it can revert MemoryKVOverflow"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 51,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/51",
+      "title": "flake.lock pins rainix 3.5 months behind the RAINIX_SHA CI runs, so no local shell reproduces CI"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 50,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/50",
+      "title": "The 16 bit word count wraps silently on overflow and is guarded only by a bound on node addresses, which any pointer widening removes"
+    },
+    {
       "repo": "rainlanguage/rainix",
       "number": 388,
       "url": "https://github.com/rainlanguage/rainix/issues/388",
@@ -2054,54 +2180,6 @@
       "number": 383,
       "url": "https://github.com/rainlanguage/rainix/issues/383",
       "title": "Restrict merge methods to merge commits org-wide: squash and rebase orphan the next-v intent tag autopublish reads"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.memkv",
-      "number": 45,
-      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/45",
-      "title": "The walk's zero-pointer guard is redundant: end-of-list correctness currently also rests on mstore(0, key) having left the key in scratch slot 0x00"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.memkv",
-      "number": 44,
-      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/44",
-      "title": "The rainix CI workflow floats on @main, so an untouched tree that was green yesterday is red today and every concurrent PR pays for it"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.memkv",
-      "number": 43,
-      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/43",
-      "title": "get's NatSpec leaves two things the tests already depend on unstated: the truthy exists value, and which node answers when a list holds a key twice"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.memkv",
-      "number": 42,
-      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/42",
-      "title": "Nothing measures the gas saving that is the bisect's entire justification, and the seven gas tests assert nothing"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.memkv",
-      "number": 40,
-      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/40",
-      "title": "toBytes32Array's export order is fully deterministic but documented nowhere in either direction"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.memkv",
-      "number": 39,
-      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/39",
-      "title": "MemoryKVOverflow's NatSpec bounds the whole allocation but the guard bounds only the node's start address, and the guard is dead on the update path"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.memkv",
-      "number": 38,
-      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/38",
-      "title": "set's return value can be dropped with no compiler complaint, which silently works for an update and silently loses an insert"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.memkv",
-      "number": 37,
-      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/37",
-      "title": "A retained MemoryKV is not a snapshot: an in-place update through a newer handle changes what an older copy reads, while an insert does not"
     },
     {
       "repo": "S01-Issuer/st0x.deploy",
@@ -6278,7 +6356,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 48,
+    "unvetted": 57,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6289,17 +6367,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 173,
+    "totalProducerPrs": 182,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 703,
+    "uncoveredIssues": 707,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 860
+    "openIssues": 871
   },
   "ages": {
     "openIssues": {
-      "meanDays": 302.9,
-      "medianDays": 131.2,
+      "meanDays": 299.1,
+      "medianDays": 128.9,
       "oldestDays": 1696.8
     }
   }
