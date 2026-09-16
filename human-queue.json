@@ -889,8 +889,32 @@
         ]
       },
       "un-vetted": {
-        "count": 50,
+        "count": 53,
         "prs": [
+          {
+            "repo": "rainlanguage/rainlang.interface",
+            "number": 140,
+            "url": "https://github.com/rainlanguage/rainlang.interface/pull/140",
+            "title": "chore: scope forge-lint disables for the 37 findings on main"
+          },
+          {
+            "repo": "rainlanguage/rainlang.interface",
+            "number": 139,
+            "url": "https://github.com/rainlanguage/rainlang.interface/pull/139",
+            "title": "chore: apply pre-commit formatting to main"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 236,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/236",
+            "title": "Give every write-snapshot fixture a root of its own"
+          },
+          {
+            "repo": "rainlanguage/rainlang.interface",
+            "number": 138,
+            "url": "https://github.com/rainlanguage/rainlang.interface/pull/138",
+            "title": "chore: bump rain-lib-hash 0.1.10 -> 0.1.27"
+          },
           {
             "repo": "rainlanguage/rain.lib.memkv",
             "number": 46,
@@ -902,12 +926,6 @@
             "number": 35,
             "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/35",
             "title": "test: pin the low half of the toBytes32Array bisect tree per slot"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 34,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/34",
-            "title": "test: pin the set insert branch and overflow boundary"
           },
           {
             "repo": "rainlanguage/rain.lib.memkv",
@@ -2123,12 +2141,6 @@
     },
     {
       "repo": "rainlanguage/rain.deploy",
-      "number": 225,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/225",
-      "title": "The testWriteSnapshot family shares one fixture directory and races itself"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
       "number": 194,
       "url": "https://github.com/rainlanguage/rain.deploy/issues/194",
       "title": "Nothing in the suite can make the foundry.toml config assertions fail"
@@ -2168,18 +2180,6 @@
       "number": 578,
       "url": "https://github.com/rainlanguage/rainlang/issues/578",
       "title": "LibParseStackName: two fuzz tests fail for a specific ParseState input"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 59,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/59",
-      "title": "[RLH-19] [LOW] next-v version intent depends on an unenforced tag-before-merge order and on the merge method"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.hash",
-      "number": 55,
-      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/55",
-      "title": "[RLH-15] [LOW] Release lifecycle is undocumented in-repo: autopublish trigger, next-v intent tags, the deliberate absence of [package], two tag namespaces, and what a preimage change means for the version"
     },
     {
       "repo": "rainlanguage/raindex",
@@ -6326,7 +6326,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 50,
+    "unvetted": 53,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6337,18 +6337,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 175,
+    "totalProducerPrs": 178,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 709,
+    "uncoveredIssues": 706,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 862
+    "openIssues": 860
   },
   "ages": {
     "openIssues": {
-      "meanDays": 302.1,
-      "medianDays": 129.9,
-      "oldestDays": 1696.6
+      "meanDays": 302.8,
+      "medianDays": 131.1,
+      "oldestDays": 1696.7
     }
   }
 }
