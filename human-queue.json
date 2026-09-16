@@ -889,8 +889,20 @@
         ]
       },
       "un-vetted": {
-        "count": 51,
+        "count": 48,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 49,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/49",
+            "title": "test: stop testSaturate's slot loop at the length field"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 48,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/48",
+            "title": "docs: state the MemoryKV precondition the export's allocation relies on"
+          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 237,
@@ -908,24 +920,6 @@
             "number": 46,
             "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/46",
             "title": "audit: record the adversarial mutation scan of sol-v0.1.5"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 35,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/35",
-            "title": "test: pin the low half of the toBytes32Array bisect tree per slot"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 33,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/33",
-            "title": "test: pin the export's array header, allocation and pairwise copy"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 30,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/30",
-            "title": "test: pin get/has behaviours with mutation evidence (group 1)"
           },
           {
             "repo": "rainlanguage/rain-org-health",
@@ -1048,12 +1042,6 @@
             "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
           },
           {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 25,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/25",
-            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
-          },
-          {
             "repo": "rainlanguage/rain.math.fixedpoint",
             "number": 31,
             "url": "https://github.com/rainlanguage/rain.math.fixedpoint/pull/31",
@@ -1148,12 +1136,6 @@
             "number": 31,
             "url": "https://github.com/rainlanguage/rain.verify/pull/31",
             "title": "Remove the submodule-era residue from REUSE.toml and CLAUDE.md"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 23,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/23",
-            "title": "chore: remove submodule-era residue — dead foundry.lock, .gitmodules and lib/ references"
           },
           {
             "repo": "rainlanguage/rain.merkle",
@@ -2051,6 +2033,18 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rainix",
+      "number": 388,
+      "url": "https://github.com/rainlanguage/rainix/issues/388",
+      "title": "A deny-by-default gate lands on all 38 sol consumers in one commit, so 30 go red on a diff that did not cause it"
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 387,
+      "url": "https://github.com/rainlanguage/rainix/issues/387",
+      "title": "mutation-ledger takes summary.testsAfter on trust; verify it against the tree testsAfterCommit names"
+    },
+    {
+      "repo": "rainlanguage/rainix",
       "number": 386,
       "url": "https://github.com/rainlanguage/rainix/issues/386",
       "title": "mutation-ledger: rain.lib.hash went red 33s after #385 merged, on an explicit `testsAfterCommit: null` and a second producer's `tool` string"
@@ -2087,12 +2081,6 @@
     },
     {
       "repo": "rainlanguage/rain.lib.memkv",
-      "number": 41,
-      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/41",
-      "title": "testSaturate's slot loop runs to 0xff, so its last iteration asserts the 16 bit length field is a nonzero list pointer"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.memkv",
       "number": 40,
       "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/40",
       "title": "toBytes32Array's export order is fully deterministic but documented nowhere in either direction"
@@ -2114,12 +2102,6 @@
       "number": 37,
       "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/37",
       "title": "A retained MemoryKV is not a snapshot: an in-place update through a newer handle changes what an older copy reads, while an insert does not"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.memkv",
-      "number": 36,
-      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/36",
-      "title": "toBytes32Array sizes its allocation from the kv length field but copies from the linked lists, so any disagreement either leaks unwritten memory or writes past the array"
     },
     {
       "repo": "S01-Issuer/st0x.deploy",
@@ -2617,12 +2599,6 @@
       "repo": "rainlanguage/rain.pyth",
       "number": 35,
       "url": "https://github.com/rainlanguage/rain.pyth/issues/35",
-      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.memkv",
-      "number": 24,
-      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/24",
       "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
     },
     {
@@ -6302,7 +6278,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 51,
+    "unvetted": 48,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6313,9 +6289,9 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 176,
+    "totalProducerPrs": 173,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 704,
+    "uncoveredIssues": 703,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 860
