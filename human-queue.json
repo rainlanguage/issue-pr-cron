@@ -889,8 +889,20 @@
         ]
       },
       "un-vetted": {
-        "count": 57,
+        "count": 56,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 78,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/78",
+            "title": "refactor: name the empty store MEMORY_KV_EMPTY so callers never write wrap"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 75,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/75",
+            "title": "refactor: types-only returns clauses with an explicit return"
+          },
           {
             "repo": "rainlanguage/rain.lib.memkv",
             "number": 74,
@@ -916,12 +928,6 @@
             "title": "docs: set can revert MemoryKVOverflow, and a MemoryKV handle is frame-local"
           },
           {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 70,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/70",
-            "title": "toBytes32Array docs: say bytes32[], and stop the Slither aside landing in @return"
-          },
-          {
             "repo": "rainlanguage/rainix",
             "number": 391,
             "url": "https://github.com/rainlanguage/rainix/pull/391",
@@ -929,21 +935,9 @@
           },
           {
             "repo": "rainlanguage/rain.lib.memkv",
-            "number": 68,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/68",
-            "title": "test: pin the high half of the toBytes32Array bisect tree per slot"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
             "number": 60,
             "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/60",
             "title": "docs: a MemoryKV handle aliases its store, asymmetrically"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 57,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/57",
-            "title": "Document MemoryKVOverflow's bound as the head pointer the guard actually checks"
           },
           {
             "repo": "rainlanguage/rain.lib.memkv",
@@ -2087,15 +2081,15 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rain.lib.memkv",
-      "number": 69,
-      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/69",
-      "title": "Name the empty store as a constant so callers never write MemoryKV.wrap"
+      "number": 77,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/77",
+      "title": "set's count write is bit-identical to add(kv, shl(0xf0, 2)) and 32 gas cheaper"
     },
     {
       "repo": "rainlanguage/rain.lib.memkv",
-      "number": 67,
-      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/67",
-      "title": "testAllLowSlotsHighPointerExport reverts MemoryKVOverflow for rare seeds: keyForSlot allocates per rehash on top of a deliberate 0x9000 pad"
+      "number": 76,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/76",
+      "title": "testGetGas measures a miss against an empty store, and the gas report publishes it under a name that reads as a get"
     },
     {
       "repo": "rainlanguage/adversarial-mutation-test",
@@ -6308,7 +6302,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 57,
+    "unvetted": 56,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6319,18 +6313,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 182,
+    "totalProducerPrs": 181,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 699,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 866
+    "openIssues": 865
   },
   "ages": {
     "openIssues": {
-      "meanDays": 301.0,
-      "medianDays": 130.2,
-      "oldestDays": 1697.0
+      "meanDays": 301.4,
+      "medianDays": 130.3,
+      "oldestDays": 1697.1
     }
   }
 }
