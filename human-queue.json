@@ -889,7 +889,7 @@
         ]
       },
       "un-vetted": {
-        "count": 52,
+        "count": 51,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -902,12 +902,6 @@
             "number": 236,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/236",
             "title": "Give every write-snapshot fixture a root of its own"
-          },
-          {
-            "repo": "rainlanguage/rainlang.interface",
-            "number": 138,
-            "url": "https://github.com/rainlanguage/rainlang.interface/pull/138",
-            "title": "chore: bump rain-lib-hash 0.1.10 -> 0.1.27"
           },
           {
             "repo": "rainlanguage/rain.lib.memkv",
@@ -6308,7 +6302,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 52,
+    "unvetted": 51,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6319,7 +6313,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 177,
+    "totalProducerPrs": 176,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 704,
     "designPresentable": 7,
@@ -6329,8 +6323,8 @@
   "ages": {
     "openIssues": {
       "meanDays": 302.9,
-      "medianDays": 131.1,
-      "oldestDays": 1696.7
+      "medianDays": 131.2,
+      "oldestDays": 1696.8
     }
   }
 }
