@@ -901,7 +901,7 @@
         ]
       },
       "un-vetted": {
-        "count": 56,
+        "count": 53,
         "prs": [
           {
             "repo": "rainlanguage/rain.factory",
@@ -940,12 +940,6 @@
             "title": "Document and pin the wire identity of every published NewClone"
           },
           {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 79,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/79",
-            "title": "test: keep the named bisect tests and enumerate every occupancy combination"
-          },
-          {
             "repo": "rainlanguage/rain.factory",
             "number": 83,
             "url": "https://github.com/rainlanguage/rain.factory/pull/83",
@@ -968,18 +962,6 @@
             "number": 391,
             "url": "https://github.com/rainlanguage/rainix/pull/391",
             "title": "Install the staged config from rainix, not from a script in every consumer"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 53,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/53",
-            "title": "Document toBytes32Array export order as unspecified"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 48,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/48",
-            "title": "test: the word count bound is out of a correct caller's reach"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -6261,7 +6243,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 56,
+    "unvetted": 53,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 101,
@@ -6272,16 +6254,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 183,
+    "totalProducerPrs": 180,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 688,
     "designPresentable": 7,
     "designNoQuestion": 1,
-    "openIssues": 856
+    "openIssues": 855
   },
   "ages": {
     "openIssues": {
-      "meanDays": 305.0,
+      "meanDays": 305.4,
       "medianDays": 133.0,
       "oldestDays": 1697.5
     }
