@@ -901,8 +901,110 @@
         ]
       },
       "un-vetted": {
-        "count": 53,
+        "count": 68,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 96,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/96",
+            "title": "Test the model the round trip tests measure the library against"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 95,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/95",
+            "title": "test: make the empty export's length header observable"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 94,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/94",
+            "title": "test: backfill U2 - error declarations and payload contracts"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 93,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/93",
+            "title": "test(set): backfill U10 — insert allocation and node layout"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 92,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/92",
+            "title": "test: mutation backfill U8 - set's match walk and update/insert dispatch"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 91,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/91",
+            "title": "test: close the three unasserted edges of set's overflow guard"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 90,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/90",
+            "title": "Backfill U5: get's hit, miss and return semantics"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 89,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/89",
+            "title": "test: pin the exact width of the slot clear set's insert does"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 88,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/88",
+            "title": "test: U18 backfill — cross-function invariants and handle contracts"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 87,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/87",
+            "title": "Backfill U16: copyFromPtr's pairwise copy, offsets and ordering"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 86,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/86",
+            "title": "chore: U7 mutation backfill — set's bucket derivation, 19 mutants, no coverage gap"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 85,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/85",
+            "title": "test(get): backfill the U3 bucket-derivation mutation matrix"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 84,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/84",
+            "title": "Backfill U1: type declarations and MEMORY_KV_EMPTY"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 83,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/83",
+            "title": "test: copyFromPtr walk, termination and cursor return (U15)"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 82,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/82",
+            "title": "test(memkv): backfill U14 — set capacity, arm reachability and whole-function interaction"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 81,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/81",
+            "title": "test: backfill U6 mutation coverage for has"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 80,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/80",
+            "title": "test(get): backfill U4 — get list walk and termination"
+          },
           {
             "repo": "rainlanguage/rain.factory",
             "number": 90,
@@ -952,12 +1054,6 @@
             "title": "Point ICloneableV2 implementers at the factory family, not the superseded V2"
           },
           {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 75,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/75",
-            "title": "refactor: types-only returns clauses with an explicit return"
-          },
-          {
             "repo": "rainlanguage/rainix",
             "number": 391,
             "url": "https://github.com/rainlanguage/rainix/pull/391",
@@ -968,12 +1064,6 @@
             "number": 237,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/237",
             "title": "Generate the network config from the roster instead of comparing it"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 46,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/46",
-            "title": "audit: record the adversarial mutation scan of sol-v0.1.5"
           },
           {
             "repo": "rainlanguage/rain-org-health",
@@ -6243,7 +6333,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 53,
+    "unvetted": 68,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 101,
@@ -6254,18 +6344,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 180,
+    "totalProducerPrs": 195,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 688,
     "designPresentable": 7,
     "designNoQuestion": 1,
-    "openIssues": 855
+    "openIssues": 854
   },
   "ages": {
     "openIssues": {
-      "meanDays": 305.4,
-      "medianDays": 133.0,
-      "oldestDays": 1697.5
+      "meanDays": 305.8,
+      "medianDays": 133.1,
+      "oldestDays": 1697.6
     }
   }
 }
