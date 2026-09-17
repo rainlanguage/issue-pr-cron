@@ -901,7 +901,7 @@
         ]
       },
       "un-vetted": {
-        "count": 67,
+        "count": 64,
         "prs": [
           {
             "repo": "rainlanguage/rain.lib.memkv",
@@ -974,24 +974,6 @@
             "number": 84,
             "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/84",
             "title": "Backfill U1: type declarations and MEMORY_KV_EMPTY"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 83,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/83",
-            "title": "test: copyFromPtr walk, termination and cursor return (U15)"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 82,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/82",
-            "title": "test(memkv): backfill U14 — set capacity, arm reachability and whole-function interaction"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 81,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/81",
-            "title": "test: backfill U6 mutation coverage for has"
           },
           {
             "repo": "rainlanguage/rain.lib.memkv",
@@ -2170,6 +2152,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 98,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/98",
+      "title": "Mutation backfill 2026-09-17: 15 PRs awaiting review, merge-order trap, and the scan record entry to correct"
+    },
     {
       "repo": "rainlanguage/rain.lib.memkv",
       "number": 77,
@@ -6327,7 +6315,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 67,
+    "unvetted": 64,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 101,
@@ -6338,16 +6326,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 194,
+    "totalProducerPrs": 191,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 688,
+    "uncoveredIssues": 689,
     "designPresentable": 7,
     "designNoQuestion": 1,
-    "openIssues": 854
+    "openIssues": 855
   },
   "ages": {
     "openIssues": {
-      "meanDays": 305.9,
+      "meanDays": 305.6,
       "medianDays": 133.2,
       "oldestDays": 1697.7
     }
