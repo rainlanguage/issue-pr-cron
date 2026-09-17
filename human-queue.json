@@ -1300,14 +1300,14 @@
             "number": 161,
             "url": "https://github.com/rainlanguage/rain.flare/pull/161",
             "title": "fix: remove ankr public RPC fallback from LibFork — fail loud on unset env",
-            "bucket": "presentable"
+            "bucket": "fetchErrors"
           }
         ],
         "breakdown": {
           "draft": 0,
-          "fetchErrors": 0,
+          "fetchErrors": 1,
           "noQuestion": 1,
-          "presentable": 7,
+          "presentable": 6,
           "unaddressable": 0
         }
       },
@@ -6275,15 +6275,15 @@
     "totalProducerPrs": 183,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 688,
-    "designPresentable": 7,
+    "designPresentable": 6,
     "designNoQuestion": 1,
     "openIssues": 856
   },
   "ages": {
     "openIssues": {
-      "meanDays": 304.8,
-      "medianDays": 132.8,
-      "oldestDays": 1697.3
+      "meanDays": 304.9,
+      "medianDays": 132.9,
+      "oldestDays": 1697.4
     }
   }
 }
