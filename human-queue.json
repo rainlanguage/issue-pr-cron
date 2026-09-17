@@ -901,43 +901,13 @@
         ]
       },
       "un-vetted": {
-        "count": 57,
+        "count": 52,
         "prs": [
           {
             "repo": "rainlanguage/rain.lib.memkv",
-            "number": 96,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/96",
-            "title": "Hold the test double's linear export to the memory it writes"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 94,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/94",
-            "title": "test: backfill U2 - error declarations and payload contracts"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 93,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/93",
-            "title": "test(set): backfill U10 — insert allocation and node layout"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 92,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/92",
-            "title": "test: mutation backfill U8 - set's match walk and update/insert dispatch"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 85,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/85",
-            "title": "test(get): backfill the U3 bucket-derivation mutation matrix"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 80,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/80",
-            "title": "test(get): backfill U4 — get list walk and termination"
+            "number": 101,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/101",
+            "title": "audit: correct scan record entry 46 to the backfilled tree"
           },
           {
             "repo": "rainlanguage/rain.factory",
@@ -2110,12 +2080,6 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
-    {
-      "repo": "rainlanguage/rain.lib.memkv",
-      "number": 98,
-      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/98",
-      "title": "Mutation backfill 2026-09-17: 15 PRs awaiting review, merge-order trap, and the scan record entry to correct"
-    },
     {
       "repo": "rainlanguage/rain.lib.memkv",
       "number": 77,
@@ -6273,7 +6237,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 57,
+    "unvetted": 52,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 101,
@@ -6284,9 +6248,9 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 184,
+    "totalProducerPrs": 179,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 689,
+    "uncoveredIssues": 688,
     "designPresentable": 7,
     "designNoQuestion": 1,
     "openIssues": 855
@@ -6294,8 +6258,8 @@
   "ages": {
     "openIssues": {
       "meanDays": 305.9,
-      "medianDays": 133.5,
-      "oldestDays": 1698.0
+      "medianDays": 133.6,
+      "oldestDays": 1698.1
     }
   }
 }
