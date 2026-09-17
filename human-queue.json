@@ -901,7 +901,7 @@
         ]
       },
       "un-vetted": {
-        "count": 64,
+        "count": 59,
         "prs": [
           {
             "repo": "rainlanguage/rain.lib.memkv",
@@ -941,39 +941,9 @@
           },
           {
             "repo": "rainlanguage/rain.lib.memkv",
-            "number": 89,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/89",
-            "title": "test: pin the exact width of the slot clear set's insert does"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 88,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/88",
-            "title": "test: U18 backfill — cross-function invariants and handle contracts"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 87,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/87",
-            "title": "Backfill U16: copyFromPtr's pairwise copy, offsets and ordering"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 86,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/86",
-            "title": "chore: U7 mutation backfill — set's bucket derivation, 19 mutants, no coverage gap"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
             "number": 85,
             "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/85",
             "title": "test(get): backfill the U3 bucket-derivation mutation matrix"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 84,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/84",
-            "title": "Backfill U1: type declarations and MEMORY_KV_EMPTY"
           },
           {
             "repo": "rainlanguage/rain.lib.memkv",
@@ -6315,7 +6285,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 64,
+    "unvetted": 59,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 101,
@@ -6326,7 +6296,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 191,
+    "totalProducerPrs": 186,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 689,
     "designPresentable": 7,
@@ -6336,8 +6306,8 @@
   "ages": {
     "openIssues": {
       "meanDays": 305.6,
-      "medianDays": 133.2,
-      "oldestDays": 1697.7
+      "medianDays": 133.3,
+      "oldestDays": 1697.8
     }
   }
 }
