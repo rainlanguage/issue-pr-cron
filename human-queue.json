@@ -901,8 +901,14 @@
         ]
       },
       "un-vetted": {
-        "count": 59,
+        "count": 58,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 99,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/99",
+            "title": "test: define each shared test helper once under test/lib/"
+          },
           {
             "repo": "rainlanguage/rain.lib.memkv",
             "number": 96,
@@ -926,18 +932,6 @@
             "number": 92,
             "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/92",
             "title": "test: mutation backfill U8 - set's match walk and update/insert dispatch"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 91,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/91",
-            "title": "test: close the three unasserted edges of set's overflow guard"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 90,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/90",
-            "title": "Backfill U5: get's hit, miss and return semantics"
           },
           {
             "repo": "rainlanguage/rain.lib.memkv",
@@ -6285,7 +6279,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 59,
+    "unvetted": 58,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 101,
@@ -6296,7 +6290,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 186,
+    "totalProducerPrs": 185,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 689,
     "designPresentable": 7,
