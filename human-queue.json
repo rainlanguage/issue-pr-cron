@@ -901,19 +901,13 @@
         ]
       },
       "un-vetted": {
-        "count": 68,
+        "count": 67,
         "prs": [
           {
             "repo": "rainlanguage/rain.lib.memkv",
             "number": 96,
             "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/96",
-            "title": "Test the model the round trip tests measure the library against"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 95,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/95",
-            "title": "test: make the empty export's length header observable"
+            "title": "Hold the test double's linear export to the memory it writes"
           },
           {
             "repo": "rainlanguage/rain.lib.memkv",
@@ -6333,7 +6327,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 68,
+    "unvetted": 67,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 101,
@@ -6344,7 +6338,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 195,
+    "totalProducerPrs": 194,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 688,
     "designPresentable": 7,
