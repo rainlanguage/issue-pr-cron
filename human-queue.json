@@ -901,14 +901,8 @@
         ]
       },
       "un-vetted": {
-        "count": 58,
+        "count": 57,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 99,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/99",
-            "title": "test: define each shared test helper once under test/lib/"
-          },
           {
             "repo": "rainlanguage/rain.lib.memkv",
             "number": 96,
@@ -925,7 +919,7 @@
             "repo": "rainlanguage/rain.lib.memkv",
             "number": 93,
             "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/93",
-            "title": "test(set): backfill U10 — insert allocation and node layout; share `dirtyFreeMemory`"
+            "title": "test(set): backfill U10 — insert allocation and node layout"
           },
           {
             "repo": "rainlanguage/rain.lib.memkv",
@@ -6279,7 +6273,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 58,
+    "unvetted": 57,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 101,
@@ -6290,7 +6284,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 185,
+    "totalProducerPrs": 184,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 689,
     "designPresentable": 7,
@@ -6301,7 +6295,7 @@
     "openIssues": {
       "meanDays": 305.7,
       "medianDays": 133.4,
-      "oldestDays": 1697.8
+      "oldestDays": 1697.9
     }
   }
 }
