@@ -905,27 +905,45 @@
         "prs": [
           {
             "repo": "rainlanguage/rain.lib.memkv",
+            "number": 192,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/192",
+            "title": "test: read the handle layout from LibMemoryKV, not literals"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 191,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/191",
+            "title": "test: use rain-solmem primitives instead of hand-rolled assembly"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 190,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/190",
+            "title": "test: read handle fields through the helpers and count exports exactly"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 189,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/189",
+            "title": "docs: comments state current behaviour"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 188,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/188",
+            "title": "test: pin the count and head pointer tiling on a full word"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
             "number": 186,
             "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/186",
             "title": "test: check two live stores each against their own storage"
           },
           {
             "repo": "rainlanguage/rain.lib.memkv",
-            "number": 185,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/185",
-            "title": "test: crossFunction header states what its tests pin"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
             "number": 184,
             "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/184",
             "title": "test: name testSingleGetSet's read-back local got"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 183,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/183",
-            "title": "test: call the storageParity fuzz struct a key/value pair"
           },
           {
             "repo": "rainlanguage/rain.lib.memkv",
@@ -938,12 +956,6 @@
             "number": 181,
             "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/181",
             "title": "test: pin the export saving as an ordering across occupancy"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 180,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/180",
-            "title": "test: read the word count through lengthOf in setCapacity and types"
           },
           {
             "repo": "rainlanguage/rain.lib.memkv",
@@ -968,18 +980,6 @@
             "number": 175,
             "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/175",
             "title": "test: separate forge-std from dependencies in setCapacity imports"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 171,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/171",
-            "title": "test: gas comparisons within one build, setCapacity constant, relative gas docs"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 169,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/169",
-            "title": "Model tests: the layout tiles the word, an update writes no handle bit, storage parity checks get and export"
           },
           {
             "repo": "rainlanguage/rain.lib.memkv",
@@ -2158,6 +2158,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 115,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/115",
+      "title": "[A12] [LOW] storageParity testMultiGetSetDouble never checks two live stores against each other"
+    },
     {
       "repo": "rainlanguage/adversarial-mutation-test",
       "number": 36,
@@ -6310,15 +6316,15 @@
     "leaks": 0,
     "totalProducerPrs": 192,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 685,
+    "uncoveredIssues": 686,
     "designPresentable": 7,
     "designNoQuestion": 1,
-    "openIssues": 869
+    "openIssues": 865
   },
   "ages": {
     "openIssues": {
-      "meanDays": 301.7,
-      "medianDays": 131.8,
+      "meanDays": 303.1,
+      "medianDays": 132.0,
       "oldestDays": 1698.8
     }
   }
