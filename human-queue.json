@@ -901,37 +901,61 @@
         ]
       },
       "un-vetted": {
-        "count": 56,
+        "count": 60,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 171,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/171",
+            "title": "test: pin the documented gas and capacity figures against the text that states them"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 170,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/170",
+            "title": "Set-path tests: every key bit, both slot edges, no duplicate boundary tests"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 169,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/169",
+            "title": "Model tests: the layout tiles the word, an update writes no handle bit, storage parity checks get and export"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 168,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/168",
+            "title": "Export tests: order-free pairs, bounds on the real pointer, no rain-lib-hash"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 167,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/167",
+            "title": "Get-path tests: shared helpers, LibPointer, names that match what they pin"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 166,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/166",
+            "title": "MemoryKV is the address of a memory header: no pointer or count ceiling"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 165,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/165",
+            "title": "Gas report rows named by the pairs and sets they measure"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 164,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/164",
+            "title": "deps: forge-std 1.16.2"
+          },
           {
             "repo": "rainlanguage/rain.lib.memkv",
             "number": 163,
             "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/163",
             "title": "Test lib: layout constants, helper tests, helper NatSpec"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 162,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/162",
-            "title": "LibMemoryKV: layout constants, layout NatSpec, measured bisect saving"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 161,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/161",
-            "title": "Repo config: drop dead links, remove the slither path filter, keep test/ out of the package"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 160,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/160",
-            "title": "audit: append run stamp + scope (0.35.0)"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 102,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/102",
-            "title": "test: name the get gas entries for the miss and the hit they measure"
           },
           {
             "repo": "rainlanguage/rain.factory",
@@ -6489,7 +6513,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 56,
+    "unvetted": 60,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 101,
@@ -6500,17 +6524,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 183,
+    "totalProducerPrs": 187,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 726,
     "designPresentable": 7,
     "designNoQuestion": 1,
-    "openIssues": 909
+    "openIssues": 899
   },
   "ages": {
     "openIssues": {
-      "meanDays": 288.2,
-      "medianDays": 111.9,
+      "meanDays": 291.4,
+      "medianDays": 118.0,
       "oldestDays": 1698.6
     }
   }
