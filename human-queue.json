@@ -901,8 +901,14 @@
         ]
       },
       "un-vetted": {
-        "count": 52,
+        "count": 53,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 160,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/160",
+            "title": "audit: append run stamp + scope (0.35.0)"
+          },
           {
             "repo": "rainlanguage/rain.lib.memkv",
             "number": 102,
@@ -2080,6 +2086,342 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 159,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/159",
+      "title": "[A56] [INFO] forge-std pinned at 1.16.1 while 1.16.2 is the latest soldeer release"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 158,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/158",
+      "title": "[A55] [INFO] storageParity test compares against a no-op wrap/unwrap and names a local after `get`"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 157,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/157",
+      "title": "[A54] [INFO] getset.t.sol allocation checks use unlabelled assertTrue(a == b) instead of assertEq"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 156,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/156",
+      "title": "[A53] [INFO] frameLocal test: `lengthWord` holds the filler's address, not its length"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 155,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/155",
+      "title": "[A52] [INFO] bisect, exportWalk and gasClaims tests declare constants without `internal`, unlike sibling tests"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 154,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/154",
+      "title": "[A51] [INFO] Test files mix `kv.f()` and `LibMemoryKV.f(kv)` despite `using LibMemoryKV for MemoryKV`"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 153,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/153",
+      "title": "[A50] [INFO] testSaturate hand-unrolls 60 combineHashes calls, the only reason rain-lib-hash is a dependency"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 152,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/152",
+      "title": "[A49] [INFO] wordCountOverflow test starts a store from MemoryKV.wrap(0) instead of MEMORY_KV_EMPTY"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 151,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/151",
+      "title": "[A48] [INFO] testSetOverflow duplicates testSetPointerBoundaryOverflowReverts via a copy of SetAtFreePointer"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 150,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/150",
+      "title": "[A47] [INFO] has.t.sol imports LibMemoryKV by relative path; test import blocks are ordered inconsistently"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 149,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/149",
+      "title": "[A46] [INFO] Tests re-inline lengthOf/headOf/countPair/key/node-crafting instead of using test helpers"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 148,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/148",
+      "title": "[A45] [INFO] toBytes32Array NatSpec line 210 is 115 columns in a file wrapped at 80"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 147,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/147",
+      "title": "[A44] [INFO] foundry.toml comment links a Foundry config page that 404s"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 146,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/146",
+      "title": "[A43] [INFO] storageParity test KV struct NatSpec calls a key/value pair a \"get/set pair\""
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 145,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/145",
+      "title": "[A42] [INFO] testExportReachesEverySlot NatSpec says a wrong-slot read gives a wrong value; it can only drop a key"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 144,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/144",
+      "title": "[A41] [INFO] gasClaims NatSpec says measuring the linear walk first is 'pessimistic'; padMemory makes order irrelevant"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 143,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/143",
+      "title": "[A40] [INFO] Test helper constants use `//` instead of NatSpec; CANDIDATE_LIMIT doc understates its scope"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 142,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/142",
+      "title": "[A39] [INFO] setAtFreePointer NatSpec omits the preconditions for passing a MemoryKV across a call"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 141,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/141",
+      "title": "[A38] [INFO] get walk comment names nonexistent `k` instead of parameter `key`"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 140,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/140",
+      "title": "[A37] [INFO] getset and saturate test contracts carry no NatSpec stating what they pin"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 139,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/139",
+      "title": "[A36] [INFO] MemoryKVLengthOverflow does not document its `length` parameter"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 138,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/138",
+      "title": "[A35] [INFO] NatSpec narrates design rationale, replaced figures and killed mutants, not current behaviour"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 137,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/137",
+      "title": "[A34] [INFO] types.t.sol empty-store layout tests mask the zero word, so their layout claims can't fail"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 136,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/136",
+      "title": "[A33] [INFO] testMultiGetSetSingle never calls get and only checks exported pairs against storage"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 135,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/135",
+      "title": "[A32] [INFO] exportWalk test comments misstate how a truncated next-word read fails"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 134,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/134",
+      "title": "[A31] [INFO] buildSaturatedExternal rewinds to SATURATED_BASE without checking it clears the decoded keys"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 133,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/133",
+      "title": "[A30] [LOW] Pragma `^0.8.18` on LibMemoryKV is never compiled below 0.8.25"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 132,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/132",
+      "title": "[A29] [LOW] .soldeerignore omits /test, so tests ship in the package and test-only merges republish"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 131,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/131",
+      "title": "[A28] [LOW] Documented gas and capacity figures are retyped as test constants; prose-only drift fails no test"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 130,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/130",
+      "title": "[A27] [LOW] slither filter_paths: unanchored `test` can filter all of src; deps not filtered"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 129,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/129",
+      "title": "[A26] [LOW] SetAtFreePointer has no internal form, so tests reading the node back copy its body inline"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 128,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/128",
+      "title": "[A25] [LOW] getset.t.sol: tests named by serial number; the Simple pair never walks a list"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 127,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/127",
+      "title": "[A24] [LOW] Test support code uses single-letter and type-colliding identifiers"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 126,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/126",
+      "title": "[A23] [LOW] Tests hand-roll free-pointer, cheatcode and approx-assert primitives the dependencies provide"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 125,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/125",
+      "title": "[A22] [LOW] test/lib library and free-function helpers pin `=0.8.25` instead of `^0.8.25`"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 124,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/124",
+      "title": "[A21] [LOW] Word count read under three names: wordCount alias, lengthOf, and inline >> 0xf0"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 123,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/123",
+      "title": "[A20] [LOW] MemoryKV handle layout is spelled as literals and per-file constants, not one definition"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 122,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/122",
+      "title": "[A19] [LOW] slot0ChainKeys NatSpec says 12 keys make a list longer than the store's 15 slots"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 121,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/121",
+      "title": "[A18] [LOW] crossFunction test header says no library mutation can falsify its tests; set mutations do"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 120,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/120",
+      "title": "[A17] [LOW] MemoryKV NatSpec describes one linked list; src never states the 15-slot bit layout"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 119,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/119",
+      "title": "[A16] [LOW] exportWalk test docs call 0xFFC0 the widest head; it is the lowest whose next word clears 0xFFFF"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 118,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/118",
+      "title": "[A15] [LOW] toBytes32Array's \"~1-1.5k gas every export\" claim is wrong and its gas pin is one-sided"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 117,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/117",
+      "title": "[A14] [LOW] LibMemoryKVSlow oracle has no NatSpec on the library or any of its functions"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 116,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/116",
+      "title": "[A13] [LOW] README docs link points at a 404 site on the old rainprotocol org that nothing builds"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 115,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/115",
+      "title": "[A12] [LOW] storageParity testMultiGetSetDouble never checks two live stores against each other"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 114,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/114",
+      "title": "[A11] [LOW] testSetPointerBoundaryBelowMaxAccepted claims to kill a 0xFFFF->0xFFFE mutant it cannot"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 113,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/113",
+      "title": "[A10] [LOW] withCount's \"every other bit kept\" promise is never asserted"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 112,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/112",
+      "title": "[A09] [LOW] collidingPairDifferingInBit's exactly-one-bit property is never asserted"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 111,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/111",
+      "title": "[A08] [LOW] set's key-equality walk is tested only at bits 0 and 255; get's is tested at all 256"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 110,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/110",
+      "title": "[A07] [LOW] Insert's head-slot clear mask is never tested at bit 15: a 0x7FFF mask passes the suite"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 109,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/109",
+      "title": "[A06] [LOW] getScratch test misstates memory-safe; its name claims more than its 0x40/0x60 checks"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 108,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/108",
+      "title": "[A05] [LOW] testExportedArraySurvivesLaterAllocation passes when toBytes32Array under-allocates"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 107,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/107",
+      "title": "[A04] [LOW] crossFunction asymmetry test: NatSpec misstates what an insert changes; update never pins handle"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 106,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/106",
+      "title": "[A03] [LOW] exportWalk test pins the pair order that toBytes32Array documents as unspecified"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 105,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/105",
+      "title": "[A02] [LOW] Bisect low-pointer guard checks the free pointer before slotKeys() moves it 0x1E0 up"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.memkv",
+      "number": 104,
+      "url": "https://github.com/rainlanguage/rain.lib.memkv/issues/104",
+      "title": "[A01] [LOW] Gas-report test names give an index, not the store size or insert count measured"
+    },
     {
       "repo": "rainlanguage/adversarial-mutation-test",
       "number": 36,
@@ -6225,7 +6567,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 52,
+    "unvetted": 53,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 101,
@@ -6236,17 +6578,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 179,
+    "totalProducerPrs": 180,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 686,
+    "uncoveredIssues": 742,
     "designPresentable": 7,
     "designNoQuestion": 1,
-    "openIssues": 853
+    "openIssues": 909
   },
   "ages": {
     "openIssues": {
-      "meanDays": 307.0,
-      "medianDays": 134.0,
+      "meanDays": 288.2,
+      "medianDays": 111.9,
       "oldestDays": 1698.5
     }
   }
