@@ -901,19 +901,79 @@
         ]
       },
       "un-vetted": {
-        "count": 56,
+        "count": 65,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 186,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/186",
+            "title": "test: check two live stores each against their own storage"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 185,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/185",
+            "title": "test: crossFunction header states what its tests pin"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 184,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/184",
+            "title": "test: name testSingleGetSet's read-back local got"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 183,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/183",
+            "title": "test: call the storageParity fuzz struct a key/value pair"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 182,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/182",
+            "title": "test: padMemory makes measurement order immaterial"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 181,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/181",
+            "title": "test: pin the export saving as an ordering across occupancy"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 180,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/180",
+            "title": "test: read the word count through lengthOf in setCapacity and types"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 179,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/179",
+            "title": "test: pin set sequences against storage in both directions"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 178,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/178",
+            "title": "test: name the empty-frame capacity EMPTY_FRAME_PAIRS"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 176,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/176",
+            "title": "test: declare every gasClaims constant internal"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.memkv",
+            "number": 175,
+            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/175",
+            "title": "test: separate forge-std from dependencies in setCapacity imports"
+          },
           {
             "repo": "rainlanguage/rain.lib.memkv",
             "number": 171,
             "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/171",
-            "title": "test: pin the documented gas and capacity figures against the text that states them"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 170,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/170",
-            "title": "Set-path tests: every key bit, both slot edges, no duplicate boundary tests"
+            "title": "test: gas comparisons within one build, setCapacity constant, relative gas docs"
           },
           {
             "repo": "rainlanguage/rain.lib.memkv",
@@ -926,12 +986,6 @@
             "number": 166,
             "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/166",
             "title": "MemoryKV is the address of a memory header: no pointer or count ceiling"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.memkv",
-            "number": 164,
-            "url": "https://github.com/rainlanguage/rain.lib.memkv/pull/164",
-            "title": "deps: forge-std 1.16.2"
           },
           {
             "repo": "rainlanguage/rain.factory",
@@ -6243,7 +6297,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 56,
+    "unvetted": 65,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 101,
@@ -6254,18 +6308,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 183,
+    "totalProducerPrs": 192,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 685,
     "designPresentable": 7,
     "designNoQuestion": 1,
-    "openIssues": 879
+    "openIssues": 869
   },
   "ages": {
     "openIssues": {
-      "meanDays": 298.2,
-      "medianDays": 128.0,
-      "oldestDays": 1698.7
+      "meanDays": 301.7,
+      "medianDays": 131.8,
+      "oldestDays": 1698.8
     }
   }
 }
