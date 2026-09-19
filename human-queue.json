@@ -108,12 +108,6 @@
     ],
     "ai:design": [
       {
-        "repo": "rainlanguage/rain.factory",
-        "number": 84,
-        "url": "https://github.com/rainlanguage/rain.factory/pull/84",
-        "title": "Make the clone-initialize-verify tail private to the library"
-      },
-      {
         "repo": "rainlanguage/adversarial-mutation-test",
         "number": 22,
         "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/22",
@@ -895,14 +889,8 @@
         ]
       },
       "un-vetted": {
-        "count": 42,
+        "count": 41,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 89,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/89",
-            "title": "Raise InitializationFailed for every non-conforming initialize answer"
-          },
           {
             "repo": "rainlanguage/rain.factory",
             "number": 87,
@@ -1154,15 +1142,8 @@
     },
     "vetter-verdicts": {
       "ai:design": {
-        "count": 8,
+        "count": 7,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 84,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/84",
-            "title": "Make the clone-initialize-verify tail private to the library",
-            "bucket": "noQuestion"
-          },
           {
             "repo": "rainlanguage/adversarial-mutation-test",
             "number": 22,
@@ -1216,7 +1197,7 @@
         "breakdown": {
           "draft": 0,
           "fetchErrors": 0,
-          "noQuestion": 1,
+          "noQuestion": 0,
           "presentable": 7,
           "unaddressable": 0
         }
@@ -6141,28 +6122,28 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 42,
+    "unvetted": 41,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
     "relink": 0,
-    "design": 8,
+    "design": 7,
     "blockedInfra": 0,
     "closeCandidateIssues": 3,
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 168,
+    "totalProducerPrs": 166,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 684,
     "designPresentable": 7,
-    "designNoQuestion": 1,
-    "openIssues": 842
+    "designNoQuestion": 0,
+    "openIssues": 840
   },
   "ages": {
     "openIssues": {
-      "meanDays": 311.9,
-      "medianDays": 137.4,
+      "meanDays": 312.6,
+      "medianDays": 137.5,
       "oldestDays": 1699.9
     }
   }
