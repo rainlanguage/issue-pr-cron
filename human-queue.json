@@ -901,26 +901,8 @@
         ]
       },
       "un-vetted": {
-        "count": 54,
+        "count": 51,
         "prs": [
-          {
-            "repo": "rainlanguage/rainlang",
-            "number": 588,
-            "url": "https://github.com/rainlanguage/rainlang/pull/588",
-            "title": "Scope boolean-cst lint disables on the tuple-return bool literals"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 239,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/239",
-            "title": "Bump rain-lib-memkv 0.1.5 -> 0.2.0"
-          },
-          {
-            "repo": "rainlanguage/rainlang",
-            "number": 586,
-            "url": "https://github.com/rainlanguage/rainlang/pull/586",
-            "title": "Bump rain-lib-memkv to 0.2.0: fingerprint the stateKV contents, not the handle word"
-          },
           {
             "repo": "rainlanguage/rain.factory",
             "number": 90,
@@ -6231,7 +6213,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 54,
+    "unvetted": 51,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 101,
@@ -6242,16 +6224,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 181,
+    "totalProducerPrs": 178,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 685,
     "designPresentable": 7,
     "designNoQuestion": 1,
-    "openIssues": 854
+    "openIssues": 851
   },
   "ages": {
     "openIssues": {
-      "meanDays": 307.4,
+      "meanDays": 308.5,
       "medianDays": 135.0,
       "oldestDays": 1699.5
     }
