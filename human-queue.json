@@ -161,7 +161,7 @@
         "repo": "rainlanguage/rain.factory",
         "number": 82,
         "url": "https://github.com/rainlanguage/rain.factory/pull/82",
-        "title": "Document what CloneDeploymentFailed says about the occupant per derivation"
+        "title": "Split an occupied clone address from a failed create into typed errors"
       },
       {
         "repo": "rainlanguage/adversarial-mutation-test",
@@ -901,8 +901,14 @@
         ]
       },
       "un-vetted": {
-        "count": 51,
+        "count": 50,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 92,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/92",
+            "title": "test: pin the published ABI of every src/interface declaration"
+          },
           {
             "repo": "rainlanguage/rain.factory",
             "number": 90,
@@ -1001,21 +1007,9 @@
           },
           {
             "repo": "rainlanguage/rain.factory",
-            "number": 77,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/77",
-            "title": "AMT coverage: g3-libicloneablefactoryv4-clone"
-          },
-          {
-            "repo": "rainlanguage/rain.factory",
             "number": 76,
             "url": "https://github.com/rainlanguage/rain.factory/pull/76",
             "title": "AMT coverage: g4-icloneablefactoryv3-newclone"
-          },
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 75,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/75",
-            "title": "AMT coverage: g1-libicloneablefactoryv4-effec"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -1288,7 +1282,7 @@
             "repo": "rainlanguage/rain.factory",
             "number": 82,
             "url": "https://github.com/rainlanguage/rain.factory/pull/82",
-            "title": "Document what CloneDeploymentFailed says about the occupant per derivation"
+            "title": "Split an occupied clone address from a failed create into typed errors"
           },
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -2265,12 +2259,6 @@
       "number": 565,
       "url": "https://github.com/rainlanguage/rainlang/issues/565",
       "title": "RHS literal branch has no yang guard: adjacent literals parse without whitespace between them"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 64,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/64",
-      "title": "testCheckImplementationCodeEtched fails on unmutated main: vm.etch rejects fuzzed 0xEF-leading code"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -6213,7 +6201,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 51,
+    "unvetted": 50,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 101,
@@ -6224,9 +6212,9 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 178,
+    "totalProducerPrs": 177,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 685,
+    "uncoveredIssues": 684,
     "designPresentable": 7,
     "designNoQuestion": 1,
     "openIssues": 851
