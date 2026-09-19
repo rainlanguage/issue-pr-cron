@@ -889,13 +889,19 @@
         ]
       },
       "un-vetted": {
-        "count": 41,
+        "count": 42,
         "prs": [
           {
             "repo": "rainlanguage/rain.factory",
-            "number": 87,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/87",
-            "title": "Reject an EIP-7702 delegated account as a clone implementation"
+            "number": 99,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/99",
+            "title": "AMT coverage: g3-entry-points"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 98,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/98",
+            "title": "AMT coverage: g2-clone-tail"
           },
           {
             "repo": "rainlanguage/rainix",
@@ -1989,6 +1995,24 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 97,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/97",
+      "title": "ICLONEABLE_FACTORY_V4_OPEN_SALT_DOMAIN NatSpec credits the distinct tags with keeping every other entry point off open-salt addresses, which only the factory's MUST NOT provides"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 96,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/96",
+      "title": "TestCloneableCallRecorder is an ICloneableV2 that initializes successfully but can be re-initialized by anyone, contradicting TestCloneable's single-conforming-fixture notice"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 95,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/95",
+      "title": "Open-salt NatSpec says the deployer keeps exactly one lever (timing), but the gas forwarded to initialize is a second: a front-runner can pin a degraded init state at the pinned address"
+    },
     {
       "repo": "rainlanguage/adversarial-mutation-test",
       "number": 36,
@@ -6122,7 +6146,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 41,
+    "unvetted": 42,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6133,18 +6157,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 166,
+    "totalProducerPrs": 167,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 684,
+    "uncoveredIssues": 687,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 840
+    "openIssues": 842
   },
   "ages": {
     "openIssues": {
-      "meanDays": 312.6,
+      "meanDays": 311.9,
       "medianDays": 137.5,
-      "oldestDays": 1699.9
+      "oldestDays": 1700.0
     }
   }
 }
