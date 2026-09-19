@@ -901,8 +901,14 @@
         ]
       },
       "un-vetted": {
-        "count": 51,
+        "count": 52,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 240,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/240",
+            "title": "Package Release: soldeer rain-deploy 0.1.11"
+          },
           {
             "repo": "rainlanguage/rain.factory",
             "number": 90,
@@ -6213,7 +6219,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 51,
+    "unvetted": 52,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 101,
@@ -6224,7 +6230,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 178,
+    "totalProducerPrs": 179,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 685,
     "designPresentable": 7,
@@ -6233,8 +6239,8 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 308.6,
-      "medianDays": 135.1,
+      "meanDays": 308.7,
+      "medianDays": 135.2,
       "oldestDays": 1699.6
     }
   }
