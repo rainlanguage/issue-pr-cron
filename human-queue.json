@@ -901,14 +901,8 @@
         ]
       },
       "un-vetted": {
-        "count": 50,
+        "count": 44,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 92,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/92",
-            "title": "test: pin the published ABI of every src/interface declaration"
-          },
           {
             "repo": "rainlanguage/rain.factory",
             "number": 90,
@@ -932,30 +926,6 @@
             "number": 87,
             "url": "https://github.com/rainlanguage/rain.factory/pull/87",
             "title": "Reject an EIP-7702 delegated account as a clone implementation"
-          },
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 86,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/86",
-            "title": "docs: NewClone address determinants are the emitting entry point's"
-          },
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 85,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/85",
-            "title": "Document and pin the wire identity of every published NewClone"
-          },
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 83,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/83",
-            "title": "Condition ICloneableFactoryV3 cross-network claims on the implementation address"
-          },
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 81,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/81",
-            "title": "Point ICloneableV2 implementers at the factory family, not the superseded V2"
           },
           {
             "repo": "rainlanguage/rainix",
@@ -1004,12 +974,6 @@
             "number": 2846,
             "url": "https://github.com/rainlanguage/raindex/pull/2846",
             "title": "Add the Manual sol verify caller workflow"
-          },
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 76,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/76",
-            "title": "AMT coverage: g4-icloneablefactoryv3-newclone"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -6201,7 +6165,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 50,
+    "unvetted": 44,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 101,
@@ -6212,17 +6176,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 177,
+    "totalProducerPrs": 171,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 684,
     "designPresentable": 7,
     "designNoQuestion": 1,
-    "openIssues": 851
+    "openIssues": 845
   },
   "ages": {
     "openIssues": {
-      "meanDays": 308.7,
-      "medianDays": 135.3,
+      "meanDays": 310.8,
+      "medianDays": 137.3,
       "oldestDays": 1699.8
     }
   }
