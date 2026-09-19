@@ -158,12 +158,6 @@
     ],
     "ai:needs-work": [
       {
-        "repo": "rainlanguage/rain.factory",
-        "number": 82,
-        "url": "https://github.com/rainlanguage/rain.factory/pull/82",
-        "title": "Split an occupied clone address from a failed create into typed errors"
-      },
-      {
         "repo": "rainlanguage/adversarial-mutation-test",
         "number": 26,
         "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/26",
@@ -901,25 +895,13 @@
         ]
       },
       "un-vetted": {
-        "count": 44,
+        "count": 42,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 90,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/90",
-            "title": "Scope the open-salt code-size inference to the transaction boundary"
-          },
           {
             "repo": "rainlanguage/rain.factory",
             "number": 89,
             "url": "https://github.com/rainlanguage/rain.factory/pull/89",
             "title": "Raise InitializationFailed for every non-conforming initialize answer"
-          },
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 88,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/88",
-            "title": "test: pin every salt-derivation boundary as a fixed case"
           },
           {
             "repo": "rainlanguage/rain.factory",
@@ -1240,14 +1222,8 @@
         }
       },
       "ai:needs-work": {
-        "count": 101,
+        "count": 100,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 82,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/82",
-            "title": "Split an occupied clone address from a failed create into typed errors"
-          },
           {
             "repo": "rainlanguage/adversarial-mutation-test",
             "number": 26,
@@ -6165,10 +6141,10 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 44,
+    "unvetted": 42,
     "blockedOn": 16,
     "ready": 1,
-    "needsWork": 101,
+    "needsWork": 100,
     "relink": 0,
     "design": 8,
     "blockedInfra": 0,
@@ -6176,17 +6152,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 171,
+    "totalProducerPrs": 168,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 684,
     "designPresentable": 7,
     "designNoQuestion": 1,
-    "openIssues": 845
+    "openIssues": 842
   },
   "ages": {
     "openIssues": {
-      "meanDays": 310.8,
-      "medianDays": 137.3,
+      "meanDays": 311.9,
+      "medianDays": 137.4,
       "oldestDays": 1699.8
     }
   }
