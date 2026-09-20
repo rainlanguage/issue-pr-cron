@@ -889,8 +889,50 @@
         ]
       },
       "un-vetted": {
-        "count": 47,
+        "count": 53,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 194,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/194",
+            "title": "docs: scope the live-CloneFactory claims to the revision it pins"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 193,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/193",
+            "title": "ci: build src/ standalone so the no-external-imports invariant is checked"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 192,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/192",
+            "title": "docs: name which side of the library/deploy split a version, tag or report is on"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 191,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/191",
+            "title": "docs: the open-salt address fixes the implementation's address, not its code"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 190,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/190",
+            "title": "CLAUDE.md: state the two import-path conventions"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 189,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/189",
+            "title": "docs: scope the open-salt safety property to the transaction, not the block"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 188,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/188",
+            "title": "README: drop the dead docs-site link"
+          },
           {
             "repo": "rainlanguage/rainix",
             "number": 392,
@@ -902,12 +944,6 @@
             "number": 242,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/242",
             "title": "fix: read the candidate source anchor from the compiler, not the declaration"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 241,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/241",
-            "title": "Match each frozen record file to a released suite of its own"
           },
           {
             "repo": "rainlanguage/rain.factory.deploy",
@@ -2026,6 +2062,18 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rainix",
+      "number": 393,
+      "url": "https://github.com/rainlanguage/rainix/issues/393",
+      "title": "rainix-autopublish cannot see that a downstream repo pins a many-revisions-old copy of what it just published"
+    },
+    {
+      "repo": "rainlanguage/rain.factory.deploy",
+      "number": 42,
+      "url": "https://github.com/rainlanguage/rain.factory.deploy/issues/42",
+      "title": "The deployed CloneFactory embeds rain-factory 0.1.9 and is missing the 7702, occupied-address and initialize-answer changes"
+    },
+    {
       "repo": "rainlanguage/rain.factory.deploy",
       "number": 41,
       "url": "https://github.com/rainlanguage/rain.factory.deploy/issues/41",
@@ -2486,48 +2534,6 @@
       "number": 112,
       "url": "https://github.com/rainlanguage/rain.factory/issues/112",
       "title": "[F08] [LOW] CLAUDE.md's Build & Test pre-flight names four commands that do not exist, in the wrong dev shell, and omits every gate CI actually runs"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 111,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/111",
-      "title": "[F07] [MEDIUM] rain-factory 0.1.6 dropped the concrete and deploy pins under an autobumped patch, and audit/protofire/ names pre-split tags with no provenance boundary"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 110,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/110",
-      "title": "[F06] [MEDIUM] The live CloneFactory embeds rain-factory 0.1.9 while this repo publishes 0.1.23, and nothing here detects the gap"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 109,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/109",
-      "title": "[F05] [MEDIUM] Nothing compiles src/ standalone, so the \"published src imports nothing external\" invariant that makes this half publishable is enforced by author discipline alone"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 108,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/108",
-      "title": "[F04] [MEDIUM] README's docs link is a 404 while the repo's live GitHub Pages site serves a 2023 pre-split spec that nothing regenerates"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 107,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/107",
-      "title": "[F03] [MEDIUM] Open-salt \"no per-implementation audit to get wrong\" claim is false: the address fixes the implementation's address, not its code, and the next section imposes implementation MUSTs"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 106,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/106",
-      "title": "[F02] [MEDIUM] Open-salt safety argument enumerates the front-runner's levers (timing, gas) instead of stating the property, so a conforming implementation can still be pinned into attacker-chosen state or bricked at the pinned address"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 105,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/105",
-      "title": "[F01] [MEDIUM] CLAUDE.md states no import-path convention, though src and test use two different mandatory ones"
     },
     {
       "repo": "rainlanguage/adversarial-mutation-test",
@@ -6662,7 +6668,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 47,
+    "unvetted": 53,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6673,17 +6679,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 172,
+    "totalProducerPrs": 178,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 768,
+    "uncoveredIssues": 763,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 928
+    "openIssues": 929
   },
   "ages": {
     "openIssues": {
-      "meanDays": 283.7,
-      "medianDays": 106.5,
+      "meanDays": 283.4,
+      "medianDays": 106.2,
       "oldestDays": 1700.7
     }
   }
