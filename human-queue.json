@@ -2002,6 +2002,354 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain.factory",
+      "number": 162,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/162",
+      "title": "[F58] [INFO] CLAUDE.md restates foundry.toml's compiler and dependency values, giving agents a second copy of build config that nothing keeps in step"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 161,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/161",
+      "title": "[F57] [INFO] slither.config.json disarms unindexed-event-address tree-wide to silence one frozen declaration, so the next event with an unindexed address ships unflagged"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 160,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/160",
+      "title": "[F56] [INFO] `.soldeerignore` and `REUSE.toml` are parallel hand-maintained lists of the same non-source file set, and only one of the two fails loudly when it falls behind"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 159,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/159",
+      "title": "[F55] [INFO] TestCloneableRevert's notice claims no single fixture can exercise both failure halves, which the sibling TestCloneableRawAnswer does"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 158,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/158",
+      "title": "[F54] [INFO] Squat test states the attacker deploys \"with their own data\" but never asserts the attacker's clone holds evilData"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 157,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/157",
+      "title": "[F53] [INFO] Squat test's comment offers the attacker a route the namespaced preimage forbids, contradicting the test's own premise three lines above"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 156,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/156",
+      "title": "[F52] [INFO] testDerivationsDisjoint's comment states disjoint preimages imply disjoint images, an inference that holds only under collision resistance — the sibling test documents the opposite epistemics"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 155,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/155",
+      "title": "[F51] [INFO] predictDeterministicAddressOpenSalt NatSpec calls the deployer/data swap \"the entire difference\" from predictDeterministicAddress, omitting the distinct domain tag"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 154,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/154",
+      "title": "[F50] [INFO] One loop in the suite pre-increments where the other four post-increment"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 153,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/153",
+      "title": "[F49] [INFO] `flake.nix` declares a `rec` attrset with no self-references"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 152,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/152",
+      "title": "[F48] [INFO] Both soldeer dependencies are behind the published latest revision"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 151,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/151",
+      "title": "[F47] [INFO] The `TestCloneFactory` fixture and the `NewClone` log assertion are copy-pasted across the suite instead of living in one test base"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 150,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/150",
+      "title": "[F46] [INFO] ICloneableV2.initialize NatSpec is a rationale essay on ABI erasure and delegatecall patterns"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 149,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/149",
+      "title": "[F45] [INFO] LibICloneableFactoryV4's @notice narrates the repo split by issue number and claims test coverage"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 148,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/148",
+      "title": "[F44] [INFO] README's Legacy section omits ICloneableFactoryV1 while claiming to cover every deprecated interface"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 147,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/147",
+      "title": "[F43] [INFO] CLAUDE.md calls the soldeer dependencies \"vendored\" when `dependencies/` is gitignored and empty on clone"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 146,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/146",
+      "title": "[F42] [INFO] CLAUDE.md gives no test-layout rule, though the repo runs two distinct test trees"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 145,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/145",
+      "title": "[F41] [LOW] The repo's flake pins rainix 237 commits behind the RAINIX_SHA every CI job runs, and nothing reconciles the two"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 144,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/144",
+      "title": "[F40] [LOW] .soldeerignore does not exclude test/, so the published package ships uncompilable test sources and republishes on every test-only merge"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 143,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/143",
+      "title": "[F39] [LOW] README.md paraphrases the ICloneableFactoryV4 open-salt spec and has already fallen behind it: it still names tx.origin as the one residual the address cannot fix"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 142,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/142",
+      "title": "[F38] [LOW] audit/mutation-test-scans.json records the scanned release as \"0.1.20\", which matches no tag in the repo"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 141,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/141",
+      "title": "[F37] [LOW] `ICloneableFactoryV4` restates the two effective-salt formulas verbatim in three separate NatSpec passages, none checked against the code or each other"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 140,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/140",
+      "title": "[F36] [LOW] The `^0.8.18` pragma floor the interfaces publish to consumers is never compiled at 0.8.18 anywhere in the repo or CI"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 139,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/139",
+      "title": "[F35] [LOW] Open-salt caller-independence test claims an unconditional cross-chain re-establishment guarantee the interface scopes and the test never exercises"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 138,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/138",
+      "title": "[F34] [LOW] ICloneableV2.initialize.t.sol says it exercises \"ICloneableV2's two MUSTs on initialize\" when the interface states five, reading as complete conformance coverage"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 137,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/137",
+      "title": "[F33] [LOW] TestCloneableCallRecorder claims it records every call the proxy receives, but its own selectors()/sData() accessors are never recorded"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 136,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/136",
+      "title": "[F32] [LOW] Interface header says a factory \"may offer both\" derivations, but ICloneableFactoryV4 inherits ICloneableFactoryV3 so both pairs are mandatory"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 135,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/135",
+      "title": "[F31] [LOW] Open-salt Events note calls `salt` and `data` \"the whole of\" the address derivation, omitting `implementation`"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 134,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/134",
+      "title": "[F30] [LOW] Library header claims the derivation \"cannot drift from the spec\"; only the tag is shared, the preimage shape is duplicated"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 133,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/133",
+      "title": "[F29] [LOW] Cross-network note asserts a CREATE-deployed implementation's address differs per chain; CREATE addresses carry no chain id"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 132,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/132",
+      "title": "[F28] [LOW] Three more test contracts name their `TestCloneFactory` immutable `I_CLONE_FACTORY`, against the storage-class naming convention"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 131,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/131",
+      "title": "[F27] [LOW] Short, meaningless fuzz parameter `bytes1 b`, inconsistent with the same role's name elsewhere in the suite"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 130,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/130",
+      "title": "[F26] [LOW] `slither.config.json`'s `filter_paths` is dead and holds a third hardcoded copy of the forge-std version"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 129,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/129",
+      "title": "[F25] [LOW] Test immutables are named SCREAMING_SNAKE and a memory local carries the `s` mutable-storage prefix, both against the storage-class naming convention"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 128,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/128",
+      "title": "[F24] [LOW] Every test .sol imports first-party code through bare `src/…` / `test/…` paths, which resolve against the consumer's own tree in the published package"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 127,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/127",
+      "title": "[F23] [LOW] `DelegatedImplementation` name and doc assert EIP-7702, but the condition is any `0xef`-leading code"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 126,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/126",
+      "title": "[F22] [LOW] Library header names only the predictions as reading `address(this)`, but `cloneAndInitialize` reads it too"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 125,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/125",
+      "title": "[F21] [LOW] ICloneableFactoryV4's NatSpec is a multi-section essay that re-teaches CREATE2, front-running and Zoltu deploys"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 124,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/124",
+      "title": "[F20] [LOW] README's Interfaces rationale is about calling interpreters, not about clone factories"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 123,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/123",
+      "title": "[F19] [LOW] Four shared-tail clauses are pinned only through `cloneDeterministic`; nothing asserts `cloneDeterministicOpenSalt` reaches them"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 122,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/122",
+      "title": "[F18] [LOW] The call recorder's fallback is the detector for the MUST NOT-call-anything-else clause and no test proves it records, so `selectors.length == 1` can pass over a stray call"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 121,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/121",
+      "title": "[F17] [LOW] Re-entering the factory from inside `initialize` is untested, so nothing pins that a clone can deploy further clones during its own initialization"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 120,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/120",
+      "title": "[F16] [LOW] Nothing pins that the factory forwards uncapped gas to `initialize` — the behaviour #100 added to the NatSpec after the ledgered commit"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 119,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/119",
+      "title": "[F15] [LOW] A clone's failing `initialize` bubbles verbatim, so it can forge the library's own `CloneAddressOccupied`/`CloneDeploymentFailed`, while the interface invites callers to trust the address that error carries"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 118,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/118",
+      "title": "[F14] [LOW] CLAUDE.md's repo-wide \"no concrete contract\" claim contradicts its own TestCloneFactory line and the six concretes in test/concrete/"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 117,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/117",
+      "title": "[F13] [LOW] CLAUDE.md claims tests reach the library through TestCloneFactory; most test files call it directly"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 116,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/116",
+      "title": "[F12] [LOW] CLAUDE.md's \"No named return values\" is contradicted by the current ICloneableV2 interface"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 115,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/115",
+      "title": "[F11] [LOW] `.gas-snapshot` is a committed generated artifact that nothing regenerates, checks or documents, and it is stale by 30 of 78 tests"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 114,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/114",
+      "title": "[F10] [LOW] \"All source files must include SPDX headers\" omits the two path lists a new non-source file must also be added to"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 113,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/113",
+      "title": "[F09] [LOW] CLAUDE.md says deprecated interfaces are \"not for new work\" but never says they are frozen against edits"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 112,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/112",
+      "title": "[F08] [LOW] CLAUDE.md's Build & Test pre-flight names four commands that do not exist, in the wrong dev shell, and omits every gate CI actually runs"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 111,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/111",
+      "title": "[F07] [MEDIUM] rain-factory 0.1.6 dropped the concrete and deploy pins under an autobumped patch, and audit/protofire/ names pre-split tags with no provenance boundary"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 110,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/110",
+      "title": "[F06] [MEDIUM] The live CloneFactory embeds rain-factory 0.1.9 while this repo publishes 0.1.23, and nothing here detects the gap"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 109,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/109",
+      "title": "[F05] [MEDIUM] Nothing compiles src/ standalone, so the \"published src imports nothing external\" invariant that makes this half publishable is enforced by author discipline alone"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 108,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/108",
+      "title": "[F04] [MEDIUM] README's docs link is a 404 while the repo's live GitHub Pages site serves a 2023 pre-split spec that nothing regenerates"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 107,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/107",
+      "title": "[F03] [MEDIUM] Open-salt \"no per-implementation audit to get wrong\" claim is false: the address fixes the implementation's address, not its code, and the next section imposes implementation MUSTs"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 106,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/106",
+      "title": "[F02] [MEDIUM] Open-salt safety argument enumerates the front-runner's levers (timing, gas) instead of stating the property, so a conforming implementation can still be pinned into attacker-chosen state or bricked at the pinned address"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 105,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/105",
+      "title": "[F01] [MEDIUM] CLAUDE.md states no import-path convention, though src and test use two different mandatory ones"
+    },
+    {
       "repo": "rainlanguage/adversarial-mutation-test",
       "number": 36,
       "url": "https://github.com/rainlanguage/adversarial-mutation-test/issues/36",
@@ -6147,16 +6495,16 @@
     "leaks": 0,
     "totalProducerPrs": 168,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 684,
+    "uncoveredIssues": 742,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 841
+    "openIssues": 899
   },
   "ages": {
     "openIssues": {
-      "meanDays": 312.8,
-      "medianDays": 138.0,
-      "oldestDays": 1700.5
+      "meanDays": 292.7,
+      "medianDays": 116.8,
+      "oldestDays": 1700.6
     }
   }
 }
