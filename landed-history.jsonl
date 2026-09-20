@@ -758,3 +758,5 @@
 {"ts":"2026-09-19T19:34:36Z","observedAt":"2026-09-19T20:31:12Z","kind":"pr","repo":"rainlanguage/rain.factory","number":87}
 {"ts":"2026-09-20T03:49:58Z","observedAt":"2026-09-20T06:33:36Z","kind":"pr","repo":"rainlanguage/rain.factory","number":98}
 {"ts":"2026-09-20T03:55:14Z","observedAt":"2026-09-20T06:33:36Z","kind":"pr","repo":"rainlanguage/rain.factory","number":99}
+{"ts":"2026-09-20T13:01:39Z","observedAt":"2026-09-20T13:31:47Z","kind":"pr","repo":"rainlanguage/rain.factory.deploy","number":39}
+{"ts":"2026-09-20T13:19:54Z","observedAt":"2026-09-20T13:31:47Z","kind":"pr","repo":"rainlanguage/rain.factory.deploy","number":40}
