@@ -889,8 +889,26 @@
         ]
       },
       "un-vetted": {
-        "count": 53,
+        "count": 55,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 161,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/161",
+            "title": "audit: append run stamp + scope (0.35.0)"
+          },
+          {
+            "repo": "rainlanguage/rain.factory.deploy",
+            "number": 46,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/46",
+            "title": "audit: record the adversarial mutation-test scan of 5c165a8"
+          },
+          {
+            "repo": "rainlanguage/rain.factory.deploy",
+            "number": 45,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/45",
+            "title": "test: give the open-salt entry points an oracle independent of the library"
+          },
           {
             "repo": "rainlanguage/rain.factory",
             "number": 194,
@@ -940,16 +958,10 @@
             "title": "ci: witness that codegen still emits each committed generated file"
           },
           {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 242,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/242",
-            "title": "fix: read the candidate source anchor from the compiler, not the declaration"
-          },
-          {
             "repo": "rainlanguage/rain.factory.deploy",
             "number": 37,
             "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/37",
-            "title": "test: cover the deploy declaration's metadata and the open-salt entry points"
+            "title": "test: cover the deploy declaration's metadata"
           },
           {
             "repo": "rainlanguage/rain.factory",
@@ -2061,6 +2073,246 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 394,
+      "url": "https://github.com/rainlanguage/rainix/issues/394",
+      "title": "Adoption: 15 consumer repos need script/codegen-manifest.txt before #392 merges"
+    },
+    {
+      "repo": "rainlanguage/rain.tofu.erc20-decimals.deploy",
+      "number": 9,
+      "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals.deploy/issues/9",
+      "title": "Add script/codegen-manifest.txt: git-clean goes red when rainlanguage/rainix#392 merges"
+    },
+    {
+      "repo": "rainlanguage/rain.pyth",
+      "number": 41,
+      "url": "https://github.com/rainlanguage/rain.pyth/issues/41",
+      "title": "Add script/codegen-manifest.txt: git-clean goes red when rainlanguage/rainix#392 merges"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata.deploy",
+      "number": 14,
+      "url": "https://github.com/rainlanguage/rain.metadata.deploy/issues/14",
+      "title": "Add script/codegen-manifest.txt: git-clean goes red when rainlanguage/rainix#392 merges"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 323,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/323",
+      "title": "Add script/codegen-manifest.txt: git-clean goes red when rainlanguage/rainix#392 merges"
+    },
+    {
+      "repo": "rainlanguage/rain.merkle",
+      "number": 23,
+      "url": "https://github.com/rainlanguage/rain.merkle/issues/23",
+      "title": "Add script/codegen-manifest.txt: git-clean goes red when rainlanguage/rainix#392 merges"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float.deploy",
+      "number": 28,
+      "url": "https://github.com/rainlanguage/rain.math.float.deploy/issues/28",
+      "title": "Add script/codegen-manifest.txt: git-clean goes red when rainlanguage/rainix#392 merges"
+    },
+    {
+      "repo": "rainlanguage/rainlang.deploy",
+      "number": 9,
+      "url": "https://github.com/rainlanguage/rainlang.deploy/issues/9",
+      "title": "Add script/codegen-manifest.txt: git-clean goes red when rainlanguage/rainix#392 merges"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 589,
+      "url": "https://github.com/rainlanguage/rainlang/issues/589",
+      "title": "Add script/codegen-manifest.txt: git-clean goes red when rainlanguage/rainix#392 merges"
+    },
+    {
+      "repo": "rainlanguage/rain.flare",
+      "number": 216,
+      "url": "https://github.com/rainlanguage/rain.flare/issues/216",
+      "title": "Add script/codegen-manifest.txt: git-clean goes red when rainlanguage/rainix#392 merges"
+    },
+    {
+      "repo": "rainlanguage/rain.factory.deploy",
+      "number": 47,
+      "url": "https://github.com/rainlanguage/rain.factory.deploy/issues/47",
+      "title": "Add script/codegen-manifest.txt: git-clean goes red when rainlanguage/rainix#392 merges"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 160,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/160",
+      "title": "[A15] [INFO] REUSE.toml annotates a .claude/ directory that does not exist in the repo"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection.deploy",
+      "number": 11,
+      "url": "https://github.com/rainlanguage/rain.extrospection.deploy/issues/11",
+      "title": "Add script/codegen-manifest.txt: git-clean goes red when rainlanguage/rainix#392 merges"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 159,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/159",
+      "title": "[A14] [INFO] testOpcodeValues' docstring claims 135 opcode constants; there are 149 and it validates all of them"
+    },
+    {
+      "repo": "rainlanguage/rain.erc4626.words",
+      "number": 270,
+      "url": "https://github.com/rainlanguage/rain.erc4626.words/issues/270",
+      "title": "Add script/codegen-manifest.txt: git-clean goes red when rainlanguage/rainix#392 merges"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 158,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/158",
+      "title": "[A13] [INFO] EVM_OP_DIFFICULTY names 0x44 by the pre-Merge name EIP-4399 retired, in a file scoped current through Cancun"
+    },
+    {
+      "repo": "rainlanguage/rain.dia",
+      "number": 74,
+      "url": "https://github.com/rainlanguage/rain.dia/issues/74",
+      "title": "Add script/codegen-manifest.txt: git-clean goes red when rainlanguage/rainix#392 merges"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 2884,
+      "url": "https://github.com/rainlanguage/raindex/issues/2884",
+      "title": "Add script/codegen-manifest.txt: git-clean goes red when rainlanguage/rainix#392 merges"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 245,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/245",
+      "title": "Add script/codegen-manifest.txt: git-clean goes red when rainlanguage/rainix#392 merges"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 157,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/157",
+      "title": "[A12] [LOW] Both CBOR mask constants call the two 32-byte reads overlapping; they are adjacent and disjoint, as the function's own comment says"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 156,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/156",
+      "title": "[A11] [LOW] README's first content line points at a docs site that 404s under the former GitHub org, with no Pages site configured"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 155,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/155",
+      "title": "[A10] [LOW] README still carries the unqualified beacon-slot claim that #80 corrected in the library header"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 154,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/154",
+      "title": "[A09] [LOW] test/ ships in the soldeer package with 259 bare first-party imports, so the consumer-facing ERC1967 slots helper cannot compile in a consumer"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 153,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/153",
+      "title": "[A08] [LOW] The implementation() and owner() wire selectors are never pinned against their published values"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 152,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/152",
+      "title": "[A07] [LOW] .gas-snapshot is stale in 38 of 42 entries with no CI regenerate-and-diff, so it reads as a gas guard that cannot catch a regression"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 151,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/151",
+      "title": "[A06] [LOW] beaconImplementation's NatSpec re-states the permissive-fallback falsehood that #75 removed from its two sibling predicates"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 150,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/150",
+      "title": "[A05] [LOW] CLAUDE.md documents rain-solmem 0.1.3 and rain-math-binary 0.1.3, and an example import path that does not resolve"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 149,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/149",
+      "title": "[A04] [LOW] Four forge-lint warnings in src/ are neither fixed nor annotated, so the library has no clean-lint baseline"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 148,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/148",
+      "title": "[A03] [LOW] All 31 forge-lint assembly-usage annotations name a lint id that does not exist, emitting 31 warnings and suppressing nothing"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 147,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/147",
+      "title": "[A02] [MEDIUM] IExtrospectV2 claims to expose every library entry point but carries 16 of 17, and no test binds the interface to the library surface"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 146,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/146",
+      "title": "[A01] [MEDIUM] Every command in CLAUDE.md's Build & Test section names a rainix task that no longer exists at the pinned rev"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 244,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/244",
+      "title": "Candidates with no compiler artifact cannot be expressed after #242"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 243,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/243",
+      "title": "Track the #242 consumer migration: 7 repos, 17 candidates, 2 that #242 cannot express"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 2883,
+      "url": "https://github.com/rainlanguage/raindex/issues/2883",
+      "title": "Migrate to the compiler-derived candidate source anchor, and answer the no-artifact candidate: rain-deploy removes DeployCandidate.sourceCreationCode"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float.deploy",
+      "number": 27,
+      "url": "https://github.com/rainlanguage/rain.math.float.deploy/issues/27",
+      "title": "Migrate to the compiler-derived candidate source anchor, and answer the no-artifact candidate: rain-deploy removes DeployCandidate.sourceCreationCode"
+    },
+    {
+      "repo": "rainlanguage/rainlang.deploy",
+      "number": 8,
+      "url": "https://github.com/rainlanguage/rainlang.deploy/issues/8",
+      "title": "Migrate to the compiler-derived candidate source anchor: rain-deploy removes DeployCandidate.sourceCreationCode"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection.deploy",
+      "number": 10,
+      "url": "https://github.com/rainlanguage/rain.extrospection.deploy/issues/10",
+      "title": "Migrate to the compiler-derived candidate source anchor: rain-deploy removes DeployCandidate.sourceCreationCode"
+    },
+    {
+      "repo": "rainlanguage/rain.tofu.erc20-decimals.deploy",
+      "number": 8,
+      "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals.deploy/issues/8",
+      "title": "Migrate to the compiler-derived candidate source anchor: rain-deploy removes DeployCandidate.sourceCreationCode"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata.deploy",
+      "number": 13,
+      "url": "https://github.com/rainlanguage/rain.metadata.deploy/issues/13",
+      "title": "Migrate to the compiler-derived candidate source anchor: rain-deploy removes DeployCandidate.sourceCreationCode"
+    },
+    {
+      "repo": "rainlanguage/rain.factory.deploy",
+      "number": 44,
+      "url": "https://github.com/rainlanguage/rain.factory.deploy/issues/44",
+      "title": "Migrate to the compiler-derived candidate source anchor: rain-deploy removes DeployCandidate.sourceCreationCode"
+    },
     {
       "repo": "rainlanguage/rainix",
       "number": 393,
@@ -6668,7 +6920,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 53,
+    "unvetted": 55,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6679,18 +6931,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 178,
+    "totalProducerPrs": 180,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 763,
+    "uncoveredIssues": 803,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 929
+    "openIssues": 969
   },
   "ages": {
     "openIssues": {
-      "meanDays": 283.4,
-      "medianDays": 106.2,
-      "oldestDays": 1700.7
+      "meanDays": 271.7,
+      "medianDays": 96.1,
+      "oldestDays": 1700.8
     }
   }
 }
