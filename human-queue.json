@@ -889,8 +889,38 @@
         ]
       },
       "un-vetted": {
-        "count": 44,
+        "count": 49,
         "prs": [
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 392,
+            "url": "https://github.com/rainlanguage/rainix/pull/392",
+            "title": "ci: witness that codegen still emits each committed generated file"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 242,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/242",
+            "title": "fix: read the candidate source anchor from the compiler, not the declaration"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 241,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/241",
+            "title": "Match each frozen record file to a released suite of its own"
+          },
+          {
+            "repo": "rainlanguage/rain.factory.deploy",
+            "number": 40,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/40",
+            "title": "chore: delete the stale .gas-snapshot"
+          },
+          {
+            "repo": "rainlanguage/rain.factory.deploy",
+            "number": 39,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/39",
+            "title": "style: apply the current pre-commit hooks repo-wide"
+          },
           {
             "repo": "rainlanguage/rain.factory.deploy",
             "number": 37,
@@ -2008,6 +2038,12 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain.factory.deploy",
+      "number": 41,
+      "url": "https://github.com/rainlanguage/rain.factory.deploy/issues/41",
+      "title": "The record half of the candidate anchor can still be spelled type(X).creationCode"
+    },
+    {
       "repo": "rainlanguage/rain.factory",
       "number": 187,
       "url": "https://github.com/rainlanguage/rain.factory/issues/187",
@@ -2156,36 +2192,6 @@
       "number": 163,
       "url": "https://github.com/rainlanguage/rain.factory/issues/163",
       "title": "[F59] [LOW] CodeRabbit's config is named `.coderabbitai.yaml`, which CodeRabbit never reads, so its path filters have never been in force"
-    },
-    {
-      "repo": "rainlanguage/rain.factory.deploy",
-      "number": 38,
-      "url": "https://github.com/rainlanguage/rain.factory.deploy/issues/38",
-      "title": "rainix-sol / static is red on every PR from pre-commit formatter drift"
-    },
-    {
-      "repo": "rainlanguage/rain.factory.deploy",
-      "number": 36,
-      "url": "https://github.com/rainlanguage/rain.factory.deploy/issues/36",
-      "title": ".gas-snapshot is stale and no CI job regenerates or checks it"
-    },
-    {
-      "repo": "rainlanguage/rain.factory.deploy",
-      "number": 35,
-      "url": "https://github.com/rainlanguage/rain.factory.deploy/issues/35",
-      "title": "Currency check cannot detect a generator that has stopped emitting a file"
-    },
-    {
-      "repo": "rainlanguage/rain.factory.deploy",
-      "number": 34,
-      "url": "https://github.com/rainlanguage/rain.factory.deploy/issues/34",
-      "title": "The candidate source anchor can be made self-comparing, and the suite stays green"
-    },
-    {
-      "repo": "rainlanguage/rain.factory.deploy",
-      "number": 33,
-      "url": "https://github.com/rainlanguage/rain.factory.deploy/issues/33",
-      "title": "Frozen-record check cannot see a release dropped from the declaration when two releases share bytecode"
     },
     {
       "repo": "rainlanguage/rain.factory",
@@ -6668,7 +6674,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 44,
+    "unvetted": 49,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6679,16 +6685,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 169,
+    "totalProducerPrs": 174,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 772,
+    "uncoveredIssues": 768,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 929
+    "openIssues": 930
   },
   "ages": {
     "openIssues": {
-      "meanDays": 283.3,
+      "meanDays": 283.0,
       "medianDays": 106.1,
       "oldestDays": 1700.6
     }
