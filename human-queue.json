@@ -889,8 +889,14 @@
         ]
       },
       "un-vetted": {
-        "count": 121,
+        "count": 122,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.lib.leakybucket",
+            "number": 4,
+            "url": "https://github.com/rainlanguage/rain.lib.leakybucket/pull/4",
+            "title": "Keep the checkpoint monotonic and reject an unenforceable capacity"
+          },
           {
             "repo": "rainlanguage/rain.lib.leakybucket",
             "number": 3,
@@ -6896,7 +6902,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 121,
+    "unvetted": 122,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6907,7 +6913,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 246,
+    "totalProducerPrs": 247,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 733,
     "designPresentable": 7,
