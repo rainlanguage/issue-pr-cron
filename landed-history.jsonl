@@ -762,3 +762,5 @@
 {"ts":"2026-09-20T13:19:54Z","observedAt":"2026-09-20T13:31:47Z","kind":"pr","repo":"rainlanguage/rain.factory.deploy","number":40}
 {"ts":"2026-09-20T13:44:34Z","observedAt":"2026-09-20T14:32:15Z","kind":"pr","repo":"rainlanguage/rain.deploy","number":241}
 {"ts":"2026-09-20T14:35:17Z","observedAt":"2026-09-20T15:32:37Z","kind":"pr","repo":"rainlanguage/rain.deploy","number":242}
+{"ts":"2026-09-21T10:09:39Z","observedAt":"2026-09-21T10:32:15Z","kind":"pr","repo":"rainlanguage/rain.factory.deploy","number":45}
+{"ts":"2026-09-21T10:00:32Z","observedAt":"2026-09-21T10:32:15Z","kind":"pr","repo":"rainlanguage/rain.factory.deploy","number":46}
