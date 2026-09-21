@@ -889,8 +889,14 @@
         ]
       },
       "un-vetted": {
-        "count": 119,
+        "count": 120,
         "prs": [
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 381,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/381",
+            "title": "Pass forge lint -D warnings"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 380,
@@ -2457,6 +2463,18 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 247,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/247",
+      "title": "deriveDeployment runs a suite with none of its dependencies on chain, so constructors that need a dependency's code revert"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 246,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/246",
+      "title": "Verification is hardwired to supportedNetworks(), so a consumer that deploys to a subset cannot bind RainDeployVerify"
+    },
     {
       "repo": "rainlanguage/rainix",
       "number": 395,
@@ -6872,7 +6890,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 119,
+    "unvetted": 120,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6883,18 +6901,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 244,
+    "totalProducerPrs": 245,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 731,
+    "uncoveredIssues": 733,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 962
+    "openIssues": 964
   },
   "ages": {
     "openIssues": {
-      "meanDays": 274.7,
+      "meanDays": 274.1,
       "medianDays": 97.1,
-      "oldestDays": 1701.7
+      "oldestDays": 1701.8
     }
   }
 }
