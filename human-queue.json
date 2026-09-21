@@ -889,8 +889,14 @@
         ]
       },
       "un-vetted": {
-        "count": 120,
+        "count": 121,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.lib.leakybucket",
+            "number": 3,
+            "url": "https://github.com/rainlanguage/rain.lib.leakybucket/pull/3",
+            "title": "Adversarial mutation scan: close the packed fillableAt coverage gap"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 381,
@@ -6890,7 +6896,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 120,
+    "unvetted": 121,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6901,18 +6907,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 245,
+    "totalProducerPrs": 246,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 733,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 964
+    "openIssues": 966
   },
   "ages": {
     "openIssues": {
-      "meanDays": 274.2,
-      "medianDays": 97.2,
-      "oldestDays": 1701.8
+      "meanDays": 273.7,
+      "medianDays": 97.3,
+      "oldestDays": 1701.9
     }
   }
 }
