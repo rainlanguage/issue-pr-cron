@@ -889,8 +889,56 @@
         ]
       },
       "un-vetted": {
-        "count": 114,
+        "count": 117,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 267,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/267",
+            "title": "docs: no version-sensitive claims in the README"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 266,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/266",
+            "title": "test: pin atomicity by redeploying at the address, not by reading code length"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 265,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/265",
+            "title": "test: assert the shared-tail clauses through cloneDeterministicOpenSalt"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 264,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/264",
+            "title": "test: prove the call recorder records non-initialize calls"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 263,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/263",
+            "title": "test: pin that a clone can clone through the same factory during initialize"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 262,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/262",
+            "title": "test: pin that the factory forwards uncapped gas to initialize"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 261,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/261",
+            "title": "docs: drop the occupant-identity claim from CloneAddressOccupied"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 260,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/260",
+            "title": "Lock rainix at the SHA CI runs"
+          },
           {
             "repo": "rainlanguage/rain.factory",
             "number": 259,
@@ -1283,39 +1331,9 @@
           },
           {
             "repo": "rainlanguage/rain.factory",
-            "number": 194,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/194",
-            "title": "docs: scope the live-CloneFactory claims to the revision it pins"
-          },
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 193,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/193",
-            "title": "ci: build src/ standalone so the no-external-imports invariant is checked"
-          },
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 191,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/191",
-            "title": "docs: the open-salt address fixes the implementation's address, not its code"
-          },
-          {
-            "repo": "rainlanguage/rain.factory",
             "number": 190,
             "url": "https://github.com/rainlanguage/rain.factory/pull/190",
             "title": "CLAUDE.md: state the two import-path conventions"
-          },
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 189,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/189",
-            "title": "docs: scope the open-salt safety property to the transaction, not the block"
-          },
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 188,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/188",
-            "title": "README: drop the dead docs-site link"
           },
           {
             "repo": "rainlanguage/rainix",
@@ -2705,21 +2723,9 @@
     },
     {
       "repo": "rainlanguage/rain.factory",
-      "number": 166,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/166",
-      "title": "[F62] [LOW] Atomicity is pinned in three tests by `assertEq(predicted.code.length, 0)` after a `vm.expectRevert`, an assertion that cannot fail"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
       "number": 160,
       "url": "https://github.com/rainlanguage/rain.factory/issues/160",
       "title": "[F56] [INFO] `.soldeerignore` and `REUSE.toml` are parallel hand-maintained lists of the same non-source file set, and only one of the two fails loudly when it falls behind"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 145,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/145",
-      "title": "[F41] [LOW] The repo's flake pins rainix 237 commits behind the RAINIX_SHA every CI job runs, and nothing reconciles the two"
     },
     {
       "repo": "rainlanguage/rain.factory",
@@ -2732,42 +2738,6 @@
       "number": 128,
       "url": "https://github.com/rainlanguage/rain.factory/issues/128",
       "title": "[F24] [LOW] Every test .sol imports first-party code through bare `src/…` / `test/…` paths, which resolve against the consumer's own tree in the published package"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 123,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/123",
-      "title": "[F19] [LOW] Four shared-tail clauses are pinned only through `cloneDeterministic`; nothing asserts `cloneDeterministicOpenSalt` reaches them"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 122,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/122",
-      "title": "[F18] [LOW] The call recorder's fallback is the detector for the MUST NOT-call-anything-else clause and no test proves it records, so `selectors.length == 1` can pass over a stray call"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 121,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/121",
-      "title": "[F17] [LOW] Re-entering the factory from inside `initialize` is untested, so nothing pins that a clone can deploy further clones during its own initialization"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 120,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/120",
-      "title": "[F16] [LOW] Nothing pins that the factory forwards uncapped gas to `initialize` — the behaviour #100 added to the NatSpec after the ledgered commit"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 119,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/119",
-      "title": "[F15] [LOW] A clone's failing `initialize` bubbles verbatim, so it can forge the library's own `CloneAddressOccupied`/`CloneDeploymentFailed`, while the interface invites callers to trust the address that error carries"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 108,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/108",
-      "title": "[F04] [MEDIUM] README's docs link is a 404 while the repo's live GitHub Pages site serves a 2023 pre-split spec that nothing regenerates"
     },
     {
       "repo": "rainlanguage/adversarial-mutation-test",
@@ -6902,7 +6872,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 114,
+    "unvetted": 117,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6913,16 +6883,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 239,
+    "totalProducerPrs": 242,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 741,
+    "uncoveredIssues": 733,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 967
+    "openIssues": 962
   },
   "ages": {
     "openIssues": {
-      "meanDays": 273.1,
+      "meanDays": 274.6,
       "medianDays": 97.0,
       "oldestDays": 1701.6
     }
