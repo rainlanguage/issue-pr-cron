@@ -889,8 +889,392 @@
         ]
       },
       "un-vetted": {
-        "count": 53,
+        "count": 114,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 259,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/259",
+            "title": "gas: stop committing a snapshot nothing regenerates or checks"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 258,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/258",
+            "title": "package: stop shipping test/"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 257,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/257",
+            "title": "package: exclude the .audit run stamp beside /audit"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 256,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/256",
+            "title": "README: point at the open-salt spec instead of restating it"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 255,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/255",
+            "title": "README: drop the interpreter blurb from the Interfaces section"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 254,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/254",
+            "title": "package: ship the annotation that licenses the shipped README"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 253,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/253",
+            "title": "docs: cut the CREATE2, front-running and registry essays from the interface"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 252,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/252",
+            "title": "test: scope the recorder's claim to the calls it can record"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 251,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/251",
+            "title": "CLAUDE.md: a source file carries two SPDX lines, not one"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 250,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/250",
+            "title": "docs: state the open-salt MUST NOT as agreement, not data provenance"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 249,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/249",
+            "title": "CLAUDE.md: scope the no-concrete-contract claim to src/"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 248,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/248",
+            "title": "CLAUDE.md: state both routes the tests take into the library"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 247,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/247",
+            "title": "docs: state each effective-salt derivation once"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 246,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/246",
+            "title": "test: one CloneFactoryTest base for the factory fixture and the NewClone assertion"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 245,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/245",
+            "title": "CLAUDE.md: scope the no-named-returns rule to implementations"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 244,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/244",
+            "title": "docs: name `implementation` in the `NewClone` determinant set"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 243,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/243",
+            "title": "CLAUDE.md: name the two path lists a new non-source file must join"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 242,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/242",
+            "title": "docs: cut the false per-chain `CREATE` claim from the cross-network note"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 241,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/241",
+            "title": "CLAUDE.md: the deprecated interfaces are frozen, not just superseded"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 239,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/239",
+            "title": "docs: the namespaced clone address commits to `implementation` too"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 240,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/240",
+            "title": "CLAUDE.md: run the commands CI runs, not four rainix tasks that do not exist"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 238,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/238",
+            "title": "docs: both derivations are mandatory on an `ICloneableFactoryV4`"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 237,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/237",
+            "title": "coderabbit: name the config file the tool reads"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 236,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/236",
+            "title": "test: filter etch targets with forge-std's assumeUnusedAddress"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 235,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/235",
+            "title": "test: drop the closed oracle count from the predictCloneAddress notice"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 234,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/234",
+            "title": "slither: drop the filter for a tree slither never compiles"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 233,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/233",
+            "title": "test: state the cloneAndInitialize file's scope as a property"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 232,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/232",
+            "title": "build: drop the unreachable .coderabbitai.yaml annotation from REUSE.toml"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 230,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/230",
+            "title": "build: state the line width forge fmt already applies"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 229,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/229",
+            "title": "test: drop the statically-true preimage length assertions"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 228,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/228",
+            "title": "ci: triage the five known unindexed-event-address results, re-arm the detector"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 227,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/227",
+            "title": "test: scope LibICloneableFactoryV4Test's oracle claim to expected values"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 226,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/226",
+            "title": "build: drop the inert `rec` from the flake's per-system attrset"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 225,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/225",
+            "title": "build: bump both test-harness pins to the registry's current revisions"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 224,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/224",
+            "title": "docs: name the success value that makes ICloneableV2 current"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 223,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/223",
+            "title": "test: tag LibICloneableFactoryV4Test's description as @notice"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 221,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/221",
+            "title": "docs: README says how to install, build and test"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 222,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/222",
+            "title": "slither: exclude the detector that exists"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 220,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/220",
+            "title": "test: use forge-std's typed assertNotEq and assertGt"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 219,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/219",
+            "title": "docs: stop restating foundry.toml's build config in CLAUDE.md"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 218,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/218",
+            "title": "test: call the library directly from the single-byte pass test"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 217,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/217",
+            "title": "docs: give ICloneableFactoryV1 its Legacy entry"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 216,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/216",
+            "title": "docs: soldeer dependencies are fetched, not vendored"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 215,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/215",
+            "title": "docs: state where a new test file or fixture goes"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 214,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/214",
+            "title": "test: name the clone factory immutable in the three remaining test contracts"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 213,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/213",
+            "title": "ci: run the Solidity gate on pull requests"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 212,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/212",
+            "title": "test: assert the squat attacker's clone holds the attacker's data"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 211,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/211",
+            "title": "test: name the clone factory immutable and the snapshotted memory local"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 210,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/210",
+            "title": "audit: name the scanned release by its resolvable tag"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 209,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/209",
+            "title": "docs: drop the unconditional cross-chain claim from the open-salt caller test"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 208,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/208",
+            "title": "test: drop the no-op bytes32(uint256(...)) round trip on topic 0"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 207,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/207",
+            "title": "test: name predictCloneAddress's salt argument as the library declares it"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 206,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/206",
+            "title": "docs: name the two ICloneableV2 MUSTs the initialize suite exercises"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 205,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/205",
+            "title": "docs: drop TestCloneableRevert's false necessity claim"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 204,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/204",
+            "title": "test: drop the squat comment's impossible attacker route"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 203,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/203",
+            "title": "test: drop the unsound collision-resistance inference from testDerivationsDisjoint"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 202,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/202",
+            "title": "test: name the single-byte fuzz input in the open-salt boundary test"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 201,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/201",
+            "title": "test: post-increment the suite's one pre-incrementing loop"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 200,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/200",
+            "title": "docs: drop the library header's \"cannot drift from the spec\" claim"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 199,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/199",
+            "title": "docs: DelegatedImplementation is any 0xef first byte, not an EIP-7702 account"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 198,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/198",
+            "title": "docs: name cloneAndInitialize in the library's address(this) read list"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 197,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/197",
+            "title": "docs: drop the false \"entire difference\" claim from the open-salt prediction"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 196,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/196",
+            "title": "docs: cut the initialize rationale to the MUSTs it carries"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 195,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/195",
+            "title": "docs: cut the library @notice's repo-split narration"
+          },
           {
             "repo": "rainlanguage/rain.extrospection",
             "number": 161,
@@ -908,12 +1292,6 @@
             "number": 193,
             "url": "https://github.com/rainlanguage/rain.factory/pull/193",
             "title": "ci: build src/ standalone so the no-external-imports invariant is checked"
-          },
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 192,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/192",
-            "title": "docs: name which side of the library/deploy split a version, tag or report is on"
           },
           {
             "repo": "rainlanguage/rain.factory",
@@ -943,25 +1321,13 @@
             "repo": "rainlanguage/rainix",
             "number": 392,
             "url": "https://github.com/rainlanguage/rainix/pull/392",
-            "title": "ci: witness that codegen still emits each committed generated file"
+            "title": "ci: have the generator declare which paths it owns, and check it wrote them"
           },
           {
             "repo": "rainlanguage/rain.factory.deploy",
             "number": 37,
             "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/37",
             "title": "test: cover the deploy declaration's metadata"
-          },
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 104,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/104",
-            "title": "audit: append the 2026-09-20 whole-repo run stamp"
-          },
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 103,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/103",
-            "title": "docs: scope TestCloneable's conforming-fixture notice to what is true"
           },
           {
             "repo": "rainlanguage/rain.factory",
@@ -2063,6 +2429,12 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rainix",
+      "number": 395,
+      "url": "https://github.com/rainlanguage/rainix/issues/395",
+      "title": "`.soldeerignore` completeness is enforced by nobody: a missed root file silently ships in the published package and moves the autopublish content hash"
+    },
+    {
+      "repo": "rainlanguage/rainix",
       "number": 394,
       "url": "https://github.com/rainlanguage/rainix/issues/394",
       "title": "Adoption: 15 consumer repos need script/codegen-manifest.txt before #392 merges"
@@ -2321,111 +2693,9 @@
     },
     {
       "repo": "rainlanguage/rain.factory",
-      "number": 187,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/187",
-      "title": "[F83] [INFO] Precompile fuzz filter hand-copies a reserved-address range forge-std already owns, and already disagrees with it"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 186,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/186",
-      "title": "[F82] [INFO] predictCloneAddress test header enumerates two oracles; the file uses three"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 185,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/185",
-      "title": "[F81] [INFO] LibICloneableFactoryV4CloneAndInitializeTest's notice does not cover the prefunded-address test it holds"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
       "number": 184,
       "url": "https://github.com/rainlanguage/rain.factory/issues/184",
       "title": "[F80] [INFO] TestCloneable's guard-ordering rationale names a re-entrancy that its own `initialize` cannot have"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 183,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/183",
-      "title": "[F79] [INFO] Preimage-shape tests assert a 96-byte length that cannot fail"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 182,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/182",
-      "title": "[F78] [INFO] LibICloneableFactoryV4Test's \"never read back from the library\" claim is false for two of its own tests"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 181,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/181",
-      "title": "[F77] [INFO] LibICloneableFactoryV4.t.sol's contract NatSpec has no @notice, so its whole description is swallowed into @title"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 180,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/180",
-      "title": "[F76] [INFO] The suite asserts inequality with assertTrue(a != b) instead of forge-std's typed assertNotEq/assertGt, 18 times"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 179,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/179",
-      "title": "[F75] [INFO] `.coderabbitai.yaml` declares its licence twice, and its `REUSE.toml` entry can never take effect"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 178,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/178",
-      "title": "[F74] [INFO] A passing check is routed through the revert-only external wrapper while the two other passing checks call the library directly"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 177,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/177",
-      "title": "[F73] [INFO] Topic-0 assertions wrap keccak256 in a no-op bytes32(uint256(...)) round trip, four times"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 176,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/176",
-      "title": "[F72] [INFO] predictCloneAddress's own test file names one parameter two ways, and one of the names is a library function whose output it never uses"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 175,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/175",
-      "title": "[F71] [INFO] README describes the current ICloneableV2 in terms that equally describe deprecated ICloneableV1"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 174,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/174",
-      "title": "[F70] [INFO] README documents no way to build, test or install the package"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 173,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/173",
-      "title": "[F69] [INFO] 80-column ruler is the repo's only line-width signal and contradicts the formatted code"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 172,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/172",
-      "title": "[F68] [LOW] .soldeerignore excludes /audit but not the .audit/ run stamp the audit convention writes"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 171,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/171",
-      "title": "[F67] [LOW] REUSE.toml is excluded from the package while the only shipped file it licenses, README.md, carries no SPDX header"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 170,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/170",
-      "title": "[F66] [LOW] rainix-sol.yaml triggers on push only, so a fork pull request runs no Solidity gate at all in a repo with no branch protection and merge-driven autopublish"
     },
     {
       "repo": "rainlanguage/rain.factory",
@@ -2435,51 +2705,9 @@
     },
     {
       "repo": "rainlanguage/rain.factory",
-      "number": 168,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/168",
-      "title": "[F64] [LOW] Namespaced bullet says the address \"does not commit to WHAT was deployed\", but `implementation` is in the CREATE2 preimage on both derivations"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 167,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/167",
-      "title": "[F63] [LOW] slither.config.json excludes `assembly-usage`, which is not a detector id, and takes effect only because the exclusion list is substring-matched"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
       "number": 166,
       "url": "https://github.com/rainlanguage/rain.factory/issues/166",
       "title": "[F62] [LOW] Atomicity is pinned in three tests by `assertEq(predicted.code.length, 0)` after a `vm.expectRevert`, an assertion that cannot fail"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 165,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/165",
-      "title": "[F61] [LOW] Open-salt factory MUST NOT is qualified by \"with caller-supplied initialization data\", so an entry point that reaches the same effective-salt image with hardcoded data, or with no initialize at all, is conformant and still captures the pinned address"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 164,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/164",
-      "title": "[F60] [LOW] CLAUDE.md's SPDX rule names one tag where REUSE requires two"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 163,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/163",
-      "title": "[F59] [LOW] CodeRabbit's config is named `.coderabbitai.yaml`, which CodeRabbit never reads, so its path filters have never been in force"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 162,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/162",
-      "title": "[F58] [INFO] CLAUDE.md restates foundry.toml's compiler and dependency values, giving agents a second copy of build config that nothing keeps in step"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 161,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/161",
-      "title": "[F57] [INFO] slither.config.json disarms unindexed-event-address tree-wide to silence one frozen declaration, so the next event with an unindexed address ships unflagged"
     },
     {
       "repo": "rainlanguage/rain.factory",
@@ -2489,117 +2717,9 @@
     },
     {
       "repo": "rainlanguage/rain.factory",
-      "number": 159,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/159",
-      "title": "[F55] [INFO] TestCloneableRevert's notice claims no single fixture can exercise both failure halves, which the sibling TestCloneableRawAnswer does"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 158,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/158",
-      "title": "[F54] [INFO] Squat test states the attacker deploys \"with their own data\" but never asserts the attacker's clone holds evilData"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 157,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/157",
-      "title": "[F53] [INFO] Squat test's comment offers the attacker a route the namespaced preimage forbids, contradicting the test's own premise three lines above"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 156,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/156",
-      "title": "[F52] [INFO] testDerivationsDisjoint's comment states disjoint preimages imply disjoint images, an inference that holds only under collision resistance — the sibling test documents the opposite epistemics"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 155,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/155",
-      "title": "[F51] [INFO] predictDeterministicAddressOpenSalt NatSpec calls the deployer/data swap \"the entire difference\" from predictDeterministicAddress, omitting the distinct domain tag"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 154,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/154",
-      "title": "[F50] [INFO] One loop in the suite pre-increments where the other four post-increment"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 153,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/153",
-      "title": "[F49] [INFO] `flake.nix` declares a `rec` attrset with no self-references"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 152,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/152",
-      "title": "[F48] [INFO] Both soldeer dependencies are behind the published latest revision"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 151,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/151",
-      "title": "[F47] [INFO] The `TestCloneFactory` fixture and the `NewClone` log assertion are copy-pasted across the suite instead of living in one test base"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 150,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/150",
-      "title": "[F46] [INFO] ICloneableV2.initialize NatSpec is a rationale essay on ABI erasure and delegatecall patterns"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 149,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/149",
-      "title": "[F45] [INFO] LibICloneableFactoryV4's @notice narrates the repo split by issue number and claims test coverage"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 148,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/148",
-      "title": "[F44] [INFO] README's Legacy section omits ICloneableFactoryV1 while claiming to cover every deprecated interface"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 147,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/147",
-      "title": "[F43] [INFO] CLAUDE.md calls the soldeer dependencies \"vendored\" when `dependencies/` is gitignored and empty on clone"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 146,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/146",
-      "title": "[F42] [INFO] CLAUDE.md gives no test-layout rule, though the repo runs two distinct test trees"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
       "number": 145,
       "url": "https://github.com/rainlanguage/rain.factory/issues/145",
       "title": "[F41] [LOW] The repo's flake pins rainix 237 commits behind the RAINIX_SHA every CI job runs, and nothing reconciles the two"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 144,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/144",
-      "title": "[F40] [LOW] .soldeerignore does not exclude test/, so the published package ships uncompilable test sources and republishes on every test-only merge"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 143,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/143",
-      "title": "[F39] [LOW] README.md paraphrases the ICloneableFactoryV4 open-salt spec and has already fallen behind it: it still names tx.origin as the one residual the address cannot fix"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 142,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/142",
-      "title": "[F38] [LOW] audit/mutation-test-scans.json records the scanned release as \"0.1.20\", which matches no tag in the repo"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 141,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/141",
-      "title": "[F37] [LOW] `ICloneableFactoryV4` restates the two effective-salt formulas verbatim in three separate NatSpec passages, none checked against the code or each other"
     },
     {
       "repo": "rainlanguage/rain.factory",
@@ -2609,99 +2729,9 @@
     },
     {
       "repo": "rainlanguage/rain.factory",
-      "number": 139,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/139",
-      "title": "[F35] [LOW] Open-salt caller-independence test claims an unconditional cross-chain re-establishment guarantee the interface scopes and the test never exercises"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 138,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/138",
-      "title": "[F34] [LOW] ICloneableV2.initialize.t.sol says it exercises \"ICloneableV2's two MUSTs on initialize\" when the interface states five, reading as complete conformance coverage"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 137,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/137",
-      "title": "[F33] [LOW] TestCloneableCallRecorder claims it records every call the proxy receives, but its own selectors()/sData() accessors are never recorded"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 136,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/136",
-      "title": "[F32] [LOW] Interface header says a factory \"may offer both\" derivations, but ICloneableFactoryV4 inherits ICloneableFactoryV3 so both pairs are mandatory"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 135,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/135",
-      "title": "[F31] [LOW] Open-salt Events note calls `salt` and `data` \"the whole of\" the address derivation, omitting `implementation`"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 134,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/134",
-      "title": "[F30] [LOW] Library header claims the derivation \"cannot drift from the spec\"; only the tag is shared, the preimage shape is duplicated"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 133,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/133",
-      "title": "[F29] [LOW] Cross-network note asserts a CREATE-deployed implementation's address differs per chain; CREATE addresses carry no chain id"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 132,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/132",
-      "title": "[F28] [LOW] Three more test contracts name their `TestCloneFactory` immutable `I_CLONE_FACTORY`, against the storage-class naming convention"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 131,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/131",
-      "title": "[F27] [LOW] Short, meaningless fuzz parameter `bytes1 b`, inconsistent with the same role's name elsewhere in the suite"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 130,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/130",
-      "title": "[F26] [LOW] `slither.config.json`'s `filter_paths` is dead and holds a third hardcoded copy of the forge-std version"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 129,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/129",
-      "title": "[F25] [LOW] Test immutables are named SCREAMING_SNAKE and a memory local carries the `s` mutable-storage prefix, both against the storage-class naming convention"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
       "number": 128,
       "url": "https://github.com/rainlanguage/rain.factory/issues/128",
       "title": "[F24] [LOW] Every test .sol imports first-party code through bare `src/…` / `test/…` paths, which resolve against the consumer's own tree in the published package"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 127,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/127",
-      "title": "[F23] [LOW] `DelegatedImplementation` name and doc assert EIP-7702, but the condition is any `0xef`-leading code"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 126,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/126",
-      "title": "[F22] [LOW] Library header names only the predictions as reading `address(this)`, but `cloneAndInitialize` reads it too"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 125,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/125",
-      "title": "[F21] [LOW] ICloneableFactoryV4's NatSpec is a multi-section essay that re-teaches CREATE2, front-running and Zoltu deploys"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 124,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/124",
-      "title": "[F20] [LOW] README's Interfaces rationale is about calling interpreters, not about clone factories"
     },
     {
       "repo": "rainlanguage/rain.factory",
@@ -2735,45 +2765,9 @@
     },
     {
       "repo": "rainlanguage/rain.factory",
-      "number": 118,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/118",
-      "title": "[F14] [LOW] CLAUDE.md's repo-wide \"no concrete contract\" claim contradicts its own TestCloneFactory line and the six concretes in test/concrete/"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 117,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/117",
-      "title": "[F13] [LOW] CLAUDE.md claims tests reach the library through TestCloneFactory; most test files call it directly"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 116,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/116",
-      "title": "[F12] [LOW] CLAUDE.md's \"No named return values\" is contradicted by the current ICloneableV2 interface"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 115,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/115",
-      "title": "[F11] [LOW] `.gas-snapshot` is a committed generated artifact that nothing regenerates, checks or documents, and it is stale by 30 of 78 tests"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 114,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/114",
-      "title": "[F10] [LOW] \"All source files must include SPDX headers\" omits the two path lists a new non-source file must also be added to"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 113,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/113",
-      "title": "[F09] [LOW] CLAUDE.md says deprecated interfaces are \"not for new work\" but never says they are frozen against edits"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 112,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/112",
-      "title": "[F08] [LOW] CLAUDE.md's Build & Test pre-flight names four commands that do not exist, in the wrong dev shell, and omits every gate CI actually runs"
+      "number": 108,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/108",
+      "title": "[F04] [MEDIUM] README's docs link is a 404 while the repo's live GitHub Pages site serves a 2023 pre-split spec that nothing regenerates"
     },
     {
       "repo": "rainlanguage/adversarial-mutation-test",
@@ -6908,7 +6902,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 53,
+    "unvetted": 114,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6919,17 +6913,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 178,
+    "totalProducerPrs": 239,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 803,
+    "uncoveredIssues": 741,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 968
+    "openIssues": 967
   },
   "ages": {
     "openIssues": {
-      "meanDays": 272.8,
-      "medianDays": 96.9,
+      "meanDays": 273.1,
+      "medianDays": 97.0,
       "oldestDays": 1701.6
     }
   }
