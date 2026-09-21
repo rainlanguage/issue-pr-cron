@@ -889,8 +889,14 @@
         ]
       },
       "un-vetted": {
-        "count": 118,
+        "count": 119,
         "prs": [
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 380,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/380",
+            "title": "Delete the operational and deploy scripts that are already live"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 379,
@@ -6866,7 +6872,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 118,
+    "unvetted": 119,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6877,7 +6883,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 243,
+    "totalProducerPrs": 244,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 731,
     "designPresentable": 7,
@@ -6886,7 +6892,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 274.6,
+      "meanDays": 274.7,
       "medianDays": 97.1,
       "oldestDays": 1701.7
     }
