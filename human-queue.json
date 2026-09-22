@@ -2465,9 +2465,9 @@
   "uncoveredIssues": [
     {
       "repo": "S01-Issuer/st0x.deploy",
-      "number": 386,
-      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/386",
-      "title": "static: 29 forge-lint findings were masked by the compiler aborting first"
+      "number": 390,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/390",
+      "title": "A rebase silently rescales every mint cap, and loosens them on a consolidation"
     },
     {
       "repo": "rainlanguage/rain.deploy",
@@ -6929,8 +6929,8 @@
   "ages": {
     "openIssues": {
       "meanDays": 274.2,
-      "medianDays": 98.0,
-      "oldestDays": 1702.6
+      "medianDays": 98.1,
+      "oldestDays": 1702.7
     }
   }
 }
