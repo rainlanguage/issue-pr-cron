@@ -889,37 +889,13 @@
         ]
       },
       "un-vetted": {
-        "count": 122,
+        "count": 118,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.lib.leakybucket",
-            "number": 4,
-            "url": "https://github.com/rainlanguage/rain.lib.leakybucket/pull/4",
-            "title": "Keep the checkpoint monotonic and reject an unenforceable capacity"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.leakybucket",
-            "number": 3,
-            "url": "https://github.com/rainlanguage/rain.lib.leakybucket/pull/3",
-            "title": "Adversarial mutation scan: close the packed fillableAt coverage gap"
-          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 381,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/381",
             "title": "Pass forge lint -D warnings"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 380,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/380",
-            "title": "Delete the operational and deploy scripts that are already live"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 379,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/379",
-            "title": "Port build and deploy scripts onto rain-deploy 0.1.11"
           },
           {
             "repo": "rainlanguage/rain.factory",
@@ -2476,6 +2452,12 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain-org-health",
+      "number": 182,
+      "url": "https://github.com/rainlanguage/rain-org-health/issues/182",
+      "title": "Deployments tab: track live every state change the st0x.deploy scripts deleted in #380 established"
+    },
+    {
       "repo": "rainlanguage/rain.deploy",
       "number": 247,
       "url": "https://github.com/rainlanguage/rain.deploy/issues/247",
@@ -3193,6 +3175,12 @@
       "repo": "rainlanguage/raindex.governance",
       "number": 9,
       "url": "https://github.com/rainlanguage/raindex.governance/issues/9",
+      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
+    },
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 313,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/313",
       "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
     },
     {
@@ -4130,6 +4118,12 @@
       "number": 545,
       "url": "https://github.com/rainlanguage/rainlang/issues/545",
       "title": "Adopt per-release deploy snapshots (src/generated/<tag>/) via the shared LibSnapshot"
+    },
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 251,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/251",
+      "title": "Convert BuildPointers to the shared LibSnapshot (drop the local copy + reconcile deployTags divergence)"
     },
     {
       "repo": "rainlanguage/raindex",
@@ -6902,7 +6896,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 122,
+    "unvetted": 118,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6913,17 +6907,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 247,
+    "totalProducerPrs": 243,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 733,
+    "uncoveredIssues": 736,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 966
+    "openIssues": 965
   },
   "ages": {
     "openIssues": {
-      "meanDays": 274.1,
-      "medianDays": 97.6,
+      "meanDays": 274.4,
+      "medianDays": 97.7,
       "oldestDays": 1702.3
     }
   }
