@@ -892,16 +892,16 @@
         "count": 120,
         "prs": [
           {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 392,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/392",
+            "title": "Per-minter mint caps on the orchestrator via a leaky bucket"
+          },
+          {
             "repo": "rainlanguage/rain-org-health",
             "number": 183,
             "url": "https://github.com/rainlanguage/rain-org-health/pull/183",
             "title": "Deployments: live-track every state change the deleted st0x.deploy scripts set (#182)"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 383,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/383",
-            "title": "Per-minter mint caps on the orchestrator via a leaky bucket"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -2464,10 +2464,10 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
-      "repo": "S01-Issuer/st0x.deploy",
-      "number": 390,
-      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/390",
-      "title": "A rebase silently rescales every mint cap, and loosens them on a consolidation"
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 110,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/110",
+      "title": "Provide the bucket struct and take it as input"
     },
     {
       "repo": "rainlanguage/rain.deploy",
@@ -6924,13 +6924,13 @@
     "uncoveredIssues": 736,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 967
+    "openIssues": 968
   },
   "ages": {
     "openIssues": {
-      "meanDays": 274.2,
+      "meanDays": 274.0,
       "medianDays": 98.1,
-      "oldestDays": 1702.7
+      "oldestDays": 1702.8
     }
   }
 }
