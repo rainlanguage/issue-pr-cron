@@ -2464,10 +2464,22 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rainix",
+      "number": 396,
+      "url": "https://github.com/rainlanguage/rainix/issues/396",
+      "title": "Cap comment lines at code lines per source file in shared CI"
+    },
+    {
       "repo": "rainlanguage/rain.lib.leakybucket",
-      "number": 110,
-      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/110",
-      "title": "Provide the bucket struct and take it as input"
+      "number": 112,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/112",
+      "title": "Scan record is stale after #111"
+    },
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 393,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/393",
+      "title": "Move the mint caps onto the leaky bucket struct API once 0.2.0 publishes"
     },
     {
       "repo": "rainlanguage/rain.deploy",
@@ -6921,15 +6933,15 @@
     "leaks": 0,
     "totalProducerPrs": 245,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 736,
+    "uncoveredIssues": 738,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 968
+    "openIssues": 970
   },
   "ages": {
     "openIssues": {
-      "meanDays": 274.0,
-      "medianDays": 98.1,
+      "meanDays": 273.5,
+      "medianDays": 98.2,
       "oldestDays": 1702.8
     }
   }
