@@ -895,7 +895,7 @@
             "repo": "rainlanguage/rainix",
             "number": 397,
             "url": "https://github.com/rainlanguage/rainix/pull/397",
-            "title": "ci: cap comment lines at code lines per source file"
+            "title": "ci: cap comment lines at twice code lines, in aggregate"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -6936,7 +6936,7 @@
     "openIssues": {
       "meanDays": 274.0,
       "medianDays": 98.4,
-      "oldestDays": 1703.0
+      "oldestDays": 1703.1
     }
   }
 }
