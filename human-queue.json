@@ -2465,9 +2465,9 @@
   "uncoveredIssues": [
     {
       "repo": "S01-Issuer/st0x.deploy",
-      "number": 384,
-      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/384",
-      "title": "rainix-sol static has been red on main: seven functions trip forge lint -D warnings"
+      "number": 386,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/386",
+      "title": "static: 29 forge-lint findings were masked by the compiler aborting first"
     },
     {
       "repo": "rainlanguage/rain.deploy",
@@ -6928,7 +6928,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 274.1,
+      "meanDays": 274.2,
       "medianDays": 98.0,
       "oldestDays": 1702.6
     }
