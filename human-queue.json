@@ -889,14 +889,8 @@
         ]
       },
       "un-vetted": {
-        "count": 121,
+        "count": 120,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.lib.leakybucket",
-            "number": 101,
-            "url": "https://github.com/rainlanguage/rain.lib.leakybucket/pull/101",
-            "title": "Build the library at the top of the range it advertises"
-          },
           {
             "repo": "rainlanguage/rain-org-health",
             "number": 183,
@@ -2469,6 +2463,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 384,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/384",
+      "title": "rainix-sol static has been red on main: seven functions trip forge lint -D warnings"
+    },
     {
       "repo": "rainlanguage/rain.deploy",
       "number": 247,
@@ -6908,7 +6908,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 121,
+    "unvetted": 120,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6919,17 +6919,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 246,
+    "totalProducerPrs": 245,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 735,
+    "uncoveredIssues": 736,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 968
+    "openIssues": 967
   },
   "ages": {
     "openIssues": {
-      "meanDays": 273.8,
-      "medianDays": 97.9,
+      "meanDays": 274.1,
+      "medianDays": 98.0,
       "oldestDays": 1702.6
     }
   }
