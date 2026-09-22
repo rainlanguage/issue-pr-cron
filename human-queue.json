@@ -889,8 +889,14 @@
         ]
       },
       "un-vetted": {
-        "count": 120,
+        "count": 121,
         "prs": [
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 397,
+            "url": "https://github.com/rainlanguage/rainix/pull/397",
+            "title": "ci: cap comment lines at code lines per source file"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 392,
@@ -2463,12 +2469,6 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
-    {
-      "repo": "rainlanguage/rainix",
-      "number": 396,
-      "url": "https://github.com/rainlanguage/rainix/issues/396",
-      "title": "Cap comment lines at code lines per source file in shared CI"
-    },
     {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 393,
@@ -6914,7 +6914,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 120,
+    "unvetted": 121,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6925,9 +6925,9 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 245,
+    "totalProducerPrs": 246,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 737,
+    "uncoveredIssues": 736,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 969
