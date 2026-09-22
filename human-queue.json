@@ -889,8 +889,14 @@
         ]
       },
       "un-vetted": {
-        "count": 118,
+        "count": 119,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.lib.leakybucket",
+            "number": 53,
+            "url": "https://github.com/rainlanguage/rain.lib.leakybucket/pull/53",
+            "title": "Pin every declared dependency in the lockfile"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 381,
@@ -2451,6 +2457,300 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 52,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/52",
+      "title": "[LB-48] [LOW] The shipped source advertises a compiler range the repo never compiles."
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 51,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/51",
+      "title": "[LB-47] [MEDIUM] The published package does not carry its own dependency, and nothing"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 50,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/50",
+      "title": "[LB-46] [INFO] The README never states this library's own licence, while devoting a"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 49,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/49",
+      "title": "[LB-45] [INFO] The usage snippet in the library notice does not compile as written: it"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 48,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/48",
+      "title": "[LB-44] [INFO] `capacity` is described as \"the most that can ever be outstanding against"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 47,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/47",
+      "title": "[LB-43] [LOW] \"(audited by Protofire, January 2026, same licence as this library)\" is"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 46,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/46",
+      "title": "[LB-42] [LOW] \"Every operation that could leave the representable range is a saturating"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 45,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/45",
+      "title": "[LB-41] [LOW] The security-property section reverses the model stated twelve lines"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 44,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/44",
+      "title": "[LB-40] [LOW] \"`headroomAt` is exactly what `fill` takes: the amount it names always"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 43,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/43",
+      "title": "[LB-39] [MEDIUM] The gas section makes two numeric claims that do not reconcile with each"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 42,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/42",
+      "title": "[LB-38] [LOW] HAZARD: there is no release record, so a consumer cannot answer \"what"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 41,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/41",
+      "title": "[LB-37] [LOW] HAZARD: the four error selectors are part of the published surface — a"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 40,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/40",
+      "title": "[LB-36] [MEDIUM] HAZARD: `leakRate` is a bare `uint256` in units-per-second, and the"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 39,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/39",
+      "title": "[LB-35] [MEDIUM] HAZARD: \"a zero word is an empty bucket at the epoch\" is documented as a"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 38,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/38",
+      "title": "[LB-34] [MEDIUM] HAZARD: the entire release lifecycle of this repo depends on a human"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 37,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/37",
+      "title": "[LB-33] [INFO] licence coverage for non-source files is a hand-maintained enumeration of"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 36,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/36",
+      "title": "[LB-32] [LOW] the worked policy is defined four times across the suite, and the one"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 35,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/35",
+      "title": "[LB-31] [MEDIUM] a committed coverage claim whose generator is not in the repository, and"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 34,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/34",
+      "title": "[LB-30] [MEDIUM] the single claim that justifies shipping the codec at all is asserted"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 33,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/33",
+      "title": "[LB-29] [MEDIUM] IMPLICIT ORDERING DEPENDENCY, UNENFORCED IN THE ONLY WORKED EXAMPLE —"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 32,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/32",
+      "title": "[LB-28] [MEDIUM] the README publishes five exact gas figures and claims they are asserted;"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 31,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/31",
+      "title": "[LB-27] [MEDIUM] the rule \"a packed read must refuse exactly what `fill` refuses\" is"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 30,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/30",
+      "title": "[LB-26] [INFO] `testGasRejectedFill` is documented as \"A rejected fill costs the read"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 29,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/29",
+      "title": "[LB-25] [INFO] The three packing constants are independent literals whose correctness"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 28,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/28",
+      "title": "[LB-24] [LOW] `testLeakCreditedNeverExceedsTheBucket`'s docstring states a precise"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 27,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/27",
+      "title": "[LB-23] [LOW] `testFieldsDoNotAlias` is named and documented for a symmetric property ��"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 26,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/26",
+      "title": "[LB-22] [LOW] `testFillableAtNeverForImpossibleAmounts` states two claims in its"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 25,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/25",
+      "title": "[LB-21] [LOW] `fill`'s NatSpec enumerates its reverts exhaustively — \"Reverts with"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 24,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/24",
+      "title": "[LB-20] [LOW] The integrator-facing guidance for the security-critical governance"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 23,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/23",
+      "title": "[LB-19] [LOW] The stated safety argument for the one saturation that moves in the"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 22,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/22",
+      "title": "[LB-18] [INFO] The suite has no Foundry stateful invariant test. The nearest thing,"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 21,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/21",
+      "title": "[LB-17] [LOW] `testGasRejectedFill` asserts only `assertTrue(!ok)` on the low level"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 20,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/20",
+      "title": "[LB-16] [LOW] `testHeadroomAtIsAlwaysFillable` ends with `assertLe(newLevel,"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 19,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/19",
+      "title": "[LB-15] [LOW] Two boundaries in `fillableAt` have no deterministic test. (a) `if"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 18,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/18",
+      "title": "[LB-14] [MEDIUM] `fillableAt` documents three ways to return the `type(uint256).max`"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 17,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/17",
+      "title": "[LB-13] [MEDIUM] `testNoMintExceedsCapacityUnderArbitrarySplits` swallows every revert"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 16,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/16",
+      "title": "[LB-12] [MEDIUM] `testFillableAtPredictsTheNextMint` uses a bare `vm.expectRevert()` to"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 15,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/15",
+      "title": "[LB-11] [INFO] In `fillableAt`, `target = capacity - amount` is computed at lines"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 14,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/14",
+      "title": "[LB-10] [INFO] `headroom = saturatingSub(capacity, levelNow)` is written out three times"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 13,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/13",
+      "title": "[LB-09] [LOW] The `externalFillAt` external-boundary helper is duplicated verbatim —"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 12,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/12",
+      "title": "[LB-08] [LOW] `testIdlingAccruesNoCreditBeyondCapacity` is byte-for-byte the same"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 11,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/11",
+      "title": "[LB-07] [LOW] Mutable storage variables in the test contracts do not carry the `s`"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 10,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/10",
+      "title": "[LB-06] [LOW] Three concrete contracts live under `test/lib/`: `contract"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 9,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/9",
+      "title": "[LB-05] [LOW] `LibLeakyBucketSlow` is a `library` (line 12) but pins its pragma exactly"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 8,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/8",
+      "title": "[LB-04] [LOW] The shipped NatSpec embedding example names its storage mapping"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 7,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/7",
+      "title": "[LB-03] [LOW] There is no CLAUDE.md or AGENTS.md. For most repos that is not a defect,"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 6,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/6",
+      "title": "[LB-02] [LOW] The Usage instructions show the consuming import path"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 5,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/5",
+      "title": "[LB-01] [MEDIUM] The Development instructions (`nix develop` then `forge test`) are"
+    },
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 382,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/382",
+      "title": "Per-minter mint caps on the orchestrator via a leaky bucket"
+    },
     {
       "repo": "rainlanguage/rain-org-health",
       "number": 182,
@@ -6698,174 +6998,6 @@
       "number": 272,
       "url": "https://github.com/rainlanguage/raindex/issues/272",
       "title": "Transaction failure destroys the entry form: deposit/withdraw/withdraw-all/take-order modals close and clear on error"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 269,
-      "url": "https://github.com/rainlanguage/raindex/issues/269",
-      "title": "cancel in-progress transactions"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 262,
-      "url": "https://github.com/rainlanguage/raindex/issues/262",
-      "title": "Round values in order takes table -- show full value on hover"
-    },
-    {
-      "repo": "rainlanguage/forker",
-      "number": 3,
-      "url": "https://github.com/rainlanguage/forker/issues/3",
-      "title": "Make cache expiration configurable or default to never expire"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 236,
-      "url": "https://github.com/rainlanguage/raindex/issues/236",
-      "title": "Standardize CLI output method with other rain clis"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 235,
-      "url": "https://github.com/rainlanguage/raindex/issues/235",
-      "title": "Merge clears & takes into single chart / table"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 218,
-      "url": "https://github.com/rainlanguage/raindex/issues/218",
-      "title": "Frontmatter rebindings parse errors"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 212,
-      "url": "https://github.com/rainlanguage/raindex/issues/212",
-      "title": "Token detail page"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 211,
-      "url": "https://github.com/rainlanguage/raindex/issues/211",
-      "title": "make it impossible to close the diagnostics panel, or very easy to bring it back if it is closed"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 208,
-      "url": "https://github.com/rainlanguage/raindex/issues/208",
-      "title": "Link to orderbook in block explorer"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 206,
-      "url": "https://github.com/rainlanguage/raindex/issues/206",
-      "title": "Take Order Chart: number of transactions"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 205,
-      "url": "https://github.com/rainlanguage/raindex/issues/205",
-      "title": "Take Orders Chart: Token Balances"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 204,
-      "url": "https://github.com/rainlanguage/raindex/issues/204",
-      "title": "Live Chart w/ Polling"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 183,
-      "url": "https://github.com/rainlanguage/raindex/issues/183",
-      "title": "Disable \"Add Order\" button when linting finds problems"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 168,
-      "url": "https://github.com/rainlanguage/raindex/issues/168",
-      "title": "put counterparty desired amount in context"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 142,
-      "url": "https://github.com/rainlanguage/rainlang/issues/142",
-      "title": "utf8 support for parsing"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 141,
-      "url": "https://github.com/rainlanguage/rainlang/issues/141",
-      "title": "some kind of onchain registry (ens?) support for things like well known addresses (e.g. weth)"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 139,
-      "url": "https://github.com/rainlanguage/rainlang/issues/139",
-      "title": "undefined word (requires subsitution)"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 138,
-      "url": "https://github.com/rainlanguage/rainlang/issues/138",
-      "title": "calldata eval rather than onchain deploys"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 137,
-      "url": "https://github.com/rainlanguage/rainlang/issues/137",
-      "title": "LHS parse substitutions"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 135,
-      "url": "https://github.com/rainlanguage/rainlang/issues/135",
-      "title": "rounding direction in math"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 134,
-      "url": "https://github.com/rainlanguage/rainlang/issues/134",
-      "title": "multivariadic comparisons"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 133,
-      "url": "https://github.com/rainlanguage/rainlang/issues/133",
-      "title": "saturating math"
-    },
-    {
-      "repo": "rainlanguage/rain.cli",
-      "number": 6,
-      "url": "https://github.com/rainlanguage/rain.cli/issues/6",
-      "title": "use current metadata cli at https://crates.io/crates/rain-metadata"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 148,
-      "url": "https://github.com/rainlanguage/raindex/issues/148",
-      "title": "Call local Parser in addOrder functions"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 142,
-      "url": "https://github.com/rainlanguage/raindex/issues/142",
-      "title": "Transaction status notice should last until the subgraph includes the submitted transaction"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 102,
-      "url": "https://github.com/rainlanguage/raindex/issues/102",
-      "title": "subgraph query integration tests"
-    },
-    {
-      "repo": "rainlanguage/dotrain",
-      "number": 61,
-      "url": "https://github.com/rainlanguage/dotrain/issues/61",
-      "title": "fuzzing all the regexes against expectations"
-    },
-    {
-      "repo": "rainlanguage/rain-svelte-components",
-      "number": 63,
-      "url": "https://github.com/rainlanguage/rain-svelte-components/issues/63",
-      "title": "Bump Rainlang and the extension for the parser"
     }
   ],
   "archivedRepoPrs": [
@@ -6896,7 +7028,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 118,
+    "unvetted": 119,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6907,18 +7039,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 243,
+    "totalProducerPrs": 244,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 736,
+    "uncoveredIssues": 757,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 965
+    "openIssues": 979
   },
   "ages": {
     "openIssues": {
-      "meanDays": 274.4,
-      "medianDays": 97.7,
-      "oldestDays": 1702.3
+      "meanDays": 234.1,
+      "medianDays": 79.5,
+      "oldestDays": 948.5
     }
   }
 }
