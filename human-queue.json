@@ -889,8 +889,26 @@
         ]
       },
       "un-vetted": {
-        "count": 159,
+        "count": 162,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.lib.leakybucket",
+            "number": 96,
+            "url": "https://github.com/rainlanguage/rain.lib.leakybucket/pull/96",
+            "title": "Derive the two packing maxima from the one free width"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.leakybucket",
+            "number": 95,
+            "url": "https://github.com/rainlanguage/rain.lib.leakybucket/pull/95",
+            "title": "Assert the claim the codec exists for, against the mistake it removes"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.leakybucket",
+            "number": 94,
+            "url": "https://github.com/rainlanguage/rain.lib.leakybucket/pull/94",
+            "title": "Warn that a cleared bucket slot is a full refund"
+          },
           {
             "repo": "rainlanguage/rain.lib.leakybucket",
             "number": 93,
@@ -2717,21 +2735,9 @@
     },
     {
       "repo": "rainlanguage/rain.lib.leakybucket",
-      "number": 39,
-      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/39",
-      "title": "[LB-35] [MEDIUM] HAZARD: \"a zero word is an empty bucket at the epoch\" is documented as a"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.leakybucket",
       "number": 36,
       "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/36",
       "title": "[LB-32] [LOW] the worked policy is defined four times across the suite, and the one"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.leakybucket",
-      "number": 34,
-      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/34",
-      "title": "[LB-30] [MEDIUM] the single claim that justifies shipping the codec at all is asserted"
     },
     {
       "repo": "rainlanguage/rain.lib.leakybucket",
@@ -7082,7 +7088,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 159,
+    "unvetted": 162,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -7093,9 +7099,9 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 284,
+    "totalProducerPrs": 287,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 726,
+    "uncoveredIssues": 724,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 979
