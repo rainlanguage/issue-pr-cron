@@ -2470,12 +2470,6 @@
       "title": "Cap comment lines at code lines per source file in shared CI"
     },
     {
-      "repo": "rainlanguage/rain.lib.leakybucket",
-      "number": 112,
-      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/112",
-      "title": "Scan record is stale after #111"
-    },
-    {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 393,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/393",
@@ -6933,14 +6927,14 @@
     "leaks": 0,
     "totalProducerPrs": 245,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 738,
+    "uncoveredIssues": 737,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 970
+    "openIssues": 969
   },
   "ages": {
     "openIssues": {
-      "meanDays": 273.5,
+      "meanDays": 273.8,
       "medianDays": 98.2,
       "oldestDays": 1702.8
     }
