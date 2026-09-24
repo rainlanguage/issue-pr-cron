@@ -889,19 +889,13 @@
         ]
       },
       "un-vetted": {
-        "count": 124,
+        "count": 123,
         "prs": [
           {
             "repo": "rainlanguage/rainlang",
             "number": 592,
             "url": "https://github.com/rainlanguage/rainlang/pull/592",
             "title": "feat: in, unique, agree and agree-absolute words"
-          },
-          {
-            "repo": "rainlanguage/rainlang",
-            "number": 591,
-            "url": "https://github.com/rainlanguage/rainlang/pull/591",
-            "title": "feat: variadic comparisons, chained on adjacent pairs"
           },
           {
             "repo": "S01-Issuer/st0x.attest",
@@ -6950,7 +6944,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 124,
+    "unvetted": 123,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6961,16 +6955,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 249,
+    "totalProducerPrs": 248,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 739,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 973
+    "openIssues": 972
   },
   "ages": {
     "openIssues": {
-      "meanDays": 273.0,
+      "meanDays": 272.3,
       "medianDays": 100.3,
       "oldestDays": 1244.2
     }
