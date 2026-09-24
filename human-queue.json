@@ -889,8 +889,20 @@
         ]
       },
       "un-vetted": {
-        "count": 122,
+        "count": 124,
         "prs": [
+          {
+            "repo": "rainlanguage/rainlang",
+            "number": 592,
+            "url": "https://github.com/rainlanguage/rainlang/pull/592",
+            "title": "feat: in, unique, agree and agree-absolute words"
+          },
+          {
+            "repo": "rainlanguage/rainlang",
+            "number": 591,
+            "url": "https://github.com/rainlanguage/rainlang/pull/591",
+            "title": "feat: variadic comparisons, chained on adjacent pairs"
+          },
           {
             "repo": "S01-Issuer/st0x.attest",
             "number": 3,
@@ -2492,12 +2504,6 @@
       "number": 115,
       "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/115",
       "title": "Move the bucket to Rain Floats, and reject negative values"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 590,
-      "url": "https://github.com/rainlanguage/rainlang/issues/590",
-      "title": "in, unique, agree and agree-absolute words"
     },
     {
       "repo": "S01-Issuer/st0x.deploy",
@@ -6875,12 +6881,6 @@
     },
     {
       "repo": "rainlanguage/rainlang",
-      "number": 134,
-      "url": "https://github.com/rainlanguage/rainlang/issues/134",
-      "title": "multivariadic comparisons"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
       "number": 133,
       "url": "https://github.com/rainlanguage/rainlang/issues/133",
       "title": "saturating math"
@@ -6950,7 +6950,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 122,
+    "unvetted": 124,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6961,18 +6961,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 247,
+    "totalProducerPrs": 249,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 741,
+    "uncoveredIssues": 739,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 973
   },
   "ages": {
     "openIssues": {
-      "meanDays": 272.2,
-      "medianDays": 99.5,
-      "oldestDays": 1243.4
+      "meanDays": 272.3,
+      "medianDays": 99.6,
+      "oldestDays": 1243.5
     }
   }
 }
