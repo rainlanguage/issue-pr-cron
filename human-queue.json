@@ -889,8 +889,14 @@
         ]
       },
       "un-vetted": {
-        "count": 121,
+        "count": 122,
         "prs": [
+          {
+            "repo": "S01-Issuer/st0x.attest",
+            "number": 3,
+            "url": "https://github.com/S01-Issuer/st0x.attest/pull/3",
+            "title": "docs: characterise the Alpaca stock pricing API"
+          },
           {
             "repo": "rainlanguage/rainix",
             "number": 397,
@@ -901,7 +907,7 @@
             "repo": "S01-Issuer/st0x.deploy",
             "number": 392,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/392",
-            "title": "Per-minter mint caps on the orchestrator via a leaky bucket"
+            "title": "Value-based mint caps on the orchestrator, per minter and per recipient"
           },
           {
             "repo": "rainlanguage/rain-org-health",
@@ -2470,6 +2476,30 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "S01-Issuer/st0x.attest",
+      "number": 2,
+      "url": "https://github.com/S01-Issuer/st0x.attest/issues/2",
+      "title": "The Rainlang subparser"
+    },
+    {
+      "repo": "S01-Issuer/st0x.attest",
+      "number": 1,
+      "url": "https://github.com/S01-Issuer/st0x.attest/issues/1",
+      "title": "The Rust attestation binary"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 115,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/115",
+      "title": "Move the bucket to Rain Floats, and reject negative values"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 590,
+      "url": "https://github.com/rainlanguage/rainlang/issues/590",
+      "title": "in, unique, agree and agree-absolute words"
+    },
+    {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 393,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/393",
@@ -2852,6 +2882,12 @@
       "number": 578,
       "url": "https://github.com/rainlanguage/rainlang/issues/578",
       "title": "LibParseStackName: two fuzz tests fail for a specific ParseState input"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.hash",
+      "number": 39,
+      "url": "https://github.com/rainlanguage/rain.lib.hash/issues/39",
+      "title": "Retire rain.lib.hash after rainlang.interface adopts EIP-712 signed context: inline the one hashWords line and drop the dependency"
     },
     {
       "repo": "rainlanguage/raindex",
@@ -6914,7 +6950,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 121,
+    "unvetted": 122,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6925,18 +6961,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 246,
+    "totalProducerPrs": 247,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 736,
+    "uncoveredIssues": 741,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 969
+    "openIssues": 973
   },
   "ages": {
     "openIssues": {
-      "meanDays": 275.1,
+      "meanDays": 272.2,
       "medianDays": 99.5,
-      "oldestDays": 1704.1
+      "oldestDays": 1243.4
     }
   }
 }
