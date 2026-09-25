@@ -889,8 +889,20 @@
         ]
       },
       "un-vetted": {
-        "count": 123,
+        "count": 125,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 279,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/279",
+            "title": "fix: satisfy forge lint -D warnings, red on main since rainix added it"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 278,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/278",
+            "title": "feat: agree, a closeness test with an absolute and a proportional tolerance"
+          },
           {
             "repo": "rainlanguage/rainlang",
             "number": 592,
@@ -6944,7 +6956,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 123,
+    "unvetted": 125,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6955,7 +6967,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 248,
+    "totalProducerPrs": 250,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 739,
     "designPresentable": 7,
