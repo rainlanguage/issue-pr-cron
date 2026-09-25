@@ -889,14 +889,8 @@
         ]
       },
       "un-vetted": {
-        "count": 125,
+        "count": 124,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 279,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/279",
-            "title": "fix: satisfy forge lint -D warnings, red on main since rainix added it"
-          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 278,
@@ -6956,7 +6950,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 125,
+    "unvetted": 124,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6967,7 +6961,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 250,
+    "totalProducerPrs": 249,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 739,
     "designPresentable": 7,
