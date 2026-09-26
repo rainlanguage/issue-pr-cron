@@ -889,8 +889,14 @@
         ]
       },
       "un-vetted": {
-        "count": 124,
+        "count": 125,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 280,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/280",
+            "title": "fix: testEqXEqY asserted a false contract about eq, and passed by luck"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 278,
@@ -6950,7 +6956,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 124,
+    "unvetted": 125,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6961,7 +6967,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 249,
+    "totalProducerPrs": 250,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 739,
     "designPresentable": 7,
