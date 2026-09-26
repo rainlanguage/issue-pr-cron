@@ -889,20 +889,8 @@
         ]
       },
       "un-vetted": {
-        "count": 125,
+        "count": 123,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 280,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/280",
-            "title": "fix: testEqXEqY asserted a false contract about eq, and passed by luck"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 278,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/278",
-            "title": "feat: agree, a closeness test with an absolute and a proportional tolerance"
-          },
           {
             "repo": "rainlanguage/rainlang",
             "number": 592,
@@ -6956,7 +6944,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 125,
+    "unvetted": 123,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6967,7 +6955,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 250,
+    "totalProducerPrs": 248,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 739,
     "designPresentable": 7,
@@ -6976,8 +6964,8 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 274.3,
-      "medianDays": 102.3,
+      "meanDays": 274.4,
+      "medianDays": 102.4,
       "oldestDays": 1246.2
     }
   }
