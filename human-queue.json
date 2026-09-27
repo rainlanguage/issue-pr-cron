@@ -4798,24 +4798,6 @@
       "title": "Extract prod V2 invariant checks from StoxProdV2Test into a library"
     },
     {
-      "repo": "rainlanguage/raindex",
-      "number": 2580,
-      "url": "https://github.com/rainlanguage/raindex/issues/2580",
-      "title": "Review and deploy renamed subgraphs (raindex-* on Goldsky)"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 2578,
-      "url": "https://github.com/rainlanguage/raindex/issues/2578",
-      "title": "Replace git submodules with Soldeer for Solidity dependencies"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 2574,
-      "url": "https://github.com/rainlanguage/raindex/issues/2574",
-      "title": "Deploy + migration tasks for OrderBook → Raindex rename (#2526)"
-    },
-    {
       "repo": "rainlanguage/rain.cli",
       "number": 17,
       "url": "https://github.com/rainlanguage/rain.cli/issues/17",
@@ -4922,12 +4904,6 @@
       "number": 149,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/149",
       "title": "Bump rain.math.float to fully-audited release"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 2564,
-      "url": "https://github.com/rainlanguage/raindex/issues/2564",
-      "title": "visualize DB sync stages sequentially with % completion"
     },
     {
       "repo": "cyclofinance/cyclo.sol",
@@ -6957,16 +6933,16 @@
     "leaks": 0,
     "totalProducerPrs": 248,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 739,
+    "uncoveredIssues": 735,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 972
+    "openIssues": 969
   },
   "ages": {
     "openIssues": {
-      "meanDays": 275.2,
-      "medianDays": 103.1,
-      "oldestDays": 1247.0
+      "meanDays": 277.3,
+      "medianDays": 103.2,
+      "oldestDays": 1707.8
     }
   }
 }
