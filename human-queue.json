@@ -889,14 +889,8 @@
         ]
       },
       "un-vetted": {
-        "count": 124,
+        "count": 123,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 281,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/281",
-            "title": "fix: agree rejects nonsense tolerances itself"
-          },
           {
             "repo": "rainlanguage/rainlang",
             "number": 592,
@@ -6950,7 +6944,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 124,
+    "unvetted": 123,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6961,7 +6955,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 249,
+    "totalProducerPrs": 248,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 739,
     "designPresentable": 7,
@@ -6970,7 +6964,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 275.1,
+      "meanDays": 275.2,
       "medianDays": 103.1,
       "oldestDays": 1247.0
     }
