@@ -889,14 +889,8 @@
         ]
       },
       "un-vetted": {
-        "count": 124,
+        "count": 123,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.math.float.deploy",
-            "number": 31,
-            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/31",
-            "title": "audit: take deploy logic and network config from upstream"
-          },
           {
             "repo": "rainlanguage/rainlang",
             "number": 592,
@@ -6926,7 +6920,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 124,
+    "unvetted": 123,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6937,7 +6931,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 249,
+    "totalProducerPrs": 248,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 735,
     "designPresentable": 7,
@@ -6946,7 +6940,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 278.0,
+      "meanDays": 278.1,
       "medianDays": 104.0,
       "oldestDays": 1708.6
     }
