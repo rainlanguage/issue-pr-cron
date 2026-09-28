@@ -889,8 +889,20 @@
         ]
       },
       "un-vetted": {
-        "count": 123,
+        "count": 125,
         "prs": [
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 400,
+            "url": "https://github.com/rainlanguage/rainix/pull/400",
+            "title": "fix: verification reads the explorers from the caller's config"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float.deploy",
+            "number": 32,
+            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/32",
+            "title": "ci: add the manual verify caller"
+          },
           {
             "repo": "rainlanguage/rainlang",
             "number": 592,
@@ -6920,7 +6932,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 123,
+    "unvetted": 125,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6931,7 +6943,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 248,
+    "totalProducerPrs": 250,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 735,
     "designPresentable": 7,
@@ -6942,7 +6954,7 @@
     "openIssues": {
       "meanDays": 278.2,
       "medianDays": 104.1,
-      "oldestDays": 1708.7
+      "oldestDays": 1708.8
     }
   }
 }
