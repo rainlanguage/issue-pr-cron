@@ -889,14 +889,8 @@
         ]
       },
       "un-vetted": {
-        "count": 125,
+        "count": 123,
         "prs": [
-          {
-            "repo": "rainlanguage/rainix",
-            "number": 400,
-            "url": "https://github.com/rainlanguage/rainix/pull/400",
-            "title": "fix: verification reads the explorers from the caller's config"
-          },
           {
             "repo": "rainlanguage/rain.math.float.deploy",
             "number": 32,
@@ -914,12 +908,6 @@
             "number": 3,
             "url": "https://github.com/S01-Issuer/st0x.attest/pull/3",
             "title": "docs: characterise the Alpaca stock pricing API"
-          },
-          {
-            "repo": "rainlanguage/rainix",
-            "number": 397,
-            "url": "https://github.com/rainlanguage/rainix/pull/397",
-            "title": "ci: cap comment lines at twice code lines, in aggregate"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -6932,7 +6920,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 125,
+    "unvetted": 123,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6943,17 +6931,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 250,
+    "totalProducerPrs": 248,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 735,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 969
+    "openIssues": 968
   },
   "ages": {
     "openIssues": {
-      "meanDays": 279.0,
-      "medianDays": 104.9,
+      "meanDays": 279.3,
+      "medianDays": 105.0,
       "oldestDays": 1709.6
     }
   }
