@@ -889,14 +889,8 @@
         ]
       },
       "un-vetted": {
-        "count": 123,
+        "count": 122,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.math.float.deploy",
-            "number": 34,
-            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/34",
-            "title": "release: 0.1.3"
-          },
           {
             "repo": "rainlanguage/rainlang",
             "number": 592,
@@ -6920,7 +6914,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 123,
+    "unvetted": 122,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6931,7 +6925,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 248,
+    "totalProducerPrs": 247,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 735,
     "designPresentable": 7,
@@ -6941,8 +6935,8 @@
   "ages": {
     "openIssues": {
       "meanDays": 279.6,
-      "medianDays": 105.2,
-      "oldestDays": 1709.8
+      "medianDays": 105.3,
+      "oldestDays": 1709.9
     }
   }
 }
