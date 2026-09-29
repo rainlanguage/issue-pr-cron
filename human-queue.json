@@ -892,10 +892,10 @@
         "count": 123,
         "prs": [
           {
-            "repo": "rainlanguage/rain.math.float.deploy",
-            "number": 33,
-            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/33",
-            "title": "docs: the Sourcify fallback as it actually works"
+            "repo": "rainlanguage/rainix",
+            "number": 401,
+            "url": "https://github.com/rainlanguage/rainix/pull/401",
+            "title": "fix: fall back to Sourcify when an explorer refuses the submission"
           },
           {
             "repo": "rainlanguage/rainlang",
@@ -6941,7 +6941,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 279.5,
-      "medianDays": 105.1,
+      "medianDays": 105.2,
       "oldestDays": 1709.8
     }
   }
