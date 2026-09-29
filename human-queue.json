@@ -893,9 +893,9 @@
         "prs": [
           {
             "repo": "rainlanguage/rain.math.float.deploy",
-            "number": 32,
-            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/32",
-            "title": "ci: add the manual verify caller"
+            "number": 33,
+            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/33",
+            "title": "docs: the Sourcify fallback as it actually works"
           },
           {
             "repo": "rainlanguage/rainlang",
@@ -6940,7 +6940,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 279.3,
+      "meanDays": 279.4,
       "medianDays": 105.0,
       "oldestDays": 1709.6
     }
