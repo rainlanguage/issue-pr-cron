@@ -889,8 +889,14 @@
         ]
       },
       "un-vetted": {
-        "count": 121,
+        "count": 122,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.lib.leakybucket",
+            "number": 116,
+            "url": "https://github.com/rainlanguage/rain.lib.leakybucket/pull/116",
+            "title": "feat!: the bucket is Rain Floats"
+          },
           {
             "repo": "S01-Issuer/st0x.attest",
             "number": 3,
@@ -6908,7 +6914,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 121,
+    "unvetted": 122,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6919,7 +6925,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 246,
+    "totalProducerPrs": 247,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 735,
     "designPresentable": 7,
@@ -6928,9 +6934,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 280.0,
+      "meanDays": 280.1,
       "medianDays": 105.4,
-      "oldestDays": 1710.0
+      "oldestDays": 1710.1
     }
   }
 }
