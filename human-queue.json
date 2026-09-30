@@ -2476,6 +2476,12 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 117,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/117",
+      "title": "fill accepts an amount 68 orders below the level and credits nothing"
+    },
+    {
       "repo": "S01-Issuer/st0x.attest",
       "number": 2,
       "url": "https://github.com/S01-Issuer/st0x.attest/issues/2",
@@ -6927,14 +6933,14 @@
     "leaks": 0,
     "totalProducerPrs": 247,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 735,
+    "uncoveredIssues": 736,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 967
+    "openIssues": 968
   },
   "ages": {
     "openIssues": {
-      "meanDays": 280.1,
+      "meanDays": 279.9,
       "medianDays": 105.5,
       "oldestDays": 1710.1
     }
