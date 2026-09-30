@@ -1399,7 +1399,7 @@
             "repo": "rainlanguage/rainlang.interface",
             "number": 134,
             "url": "https://github.com/rainlanguage/rainlang.interface/pull/134",
-            "title": "SignedContextV2: EIP-712 signed context under a caller-chosen domain separator"
+            "title": "SignedContextV2: EIP-712 signed context under a caller-chosen domain separator, exposed in context"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -6929,7 +6929,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 281.1,
-      "medianDays": 106.4,
+      "medianDays": 106.5,
       "oldestDays": 1711.1
     }
   }
