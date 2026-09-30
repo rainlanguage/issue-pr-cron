@@ -889,13 +889,31 @@
         ]
       },
       "un-vetted": {
-        "count": 122,
+        "count": 125,
         "prs": [
           {
-            "repo": "rainlanguage/rain.lib.leakybucket",
-            "number": 116,
-            "url": "https://github.com/rainlanguage/rain.lib.leakybucket/pull/116",
-            "title": "feat!: the bucket is Rain Floats"
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 397,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/397",
+            "title": "feat!: mint caps are value-based, no corporate-action weighting (spec item 29)"
+          },
+          {
+            "repo": "S01-Issuer/st0x.attest",
+            "number": 6,
+            "url": "https://github.com/S01-Issuer/st0x.attest/pull/6",
+            "title": "feat: the Rainlang subparser (SPEC.md item 11)"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 396,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/396",
+            "title": "feat: a mint can never name its sender as the recipient (attest item 28)"
+          },
+          {
+            "repo": "S01-Issuer/st0x.attest",
+            "number": 5,
+            "url": "https://github.com/S01-Issuer/st0x.attest/pull/5",
+            "title": "spec: the expression pins the EIP-712 domain, exposed in context"
           },
           {
             "repo": "S01-Issuer/st0x.attest",
@@ -2475,18 +2493,6 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
-    {
-      "repo": "rainlanguage/rain.lib.leakybucket",
-      "number": 117,
-      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/117",
-      "title": "fill accepts an amount 68 orders below the level and credits nothing"
-    },
-    {
-      "repo": "S01-Issuer/st0x.attest",
-      "number": 2,
-      "url": "https://github.com/S01-Issuer/st0x.attest/issues/2",
-      "title": "The Rainlang subparser"
-    },
     {
       "repo": "S01-Issuer/st0x.attest",
       "number": 1,
@@ -6920,7 +6926,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 122,
+    "unvetted": 125,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6931,17 +6937,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 247,
+    "totalProducerPrs": 250,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 736,
+    "uncoveredIssues": 734,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 968
+    "openIssues": 967
   },
   "ages": {
     "openIssues": {
-      "meanDays": 280.5,
-      "medianDays": 106.1,
+      "meanDays": 280.8,
+      "medianDays": 106.2,
       "oldestDays": 1710.8
     }
   }
