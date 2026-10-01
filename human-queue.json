@@ -889,8 +889,14 @@
         ]
       },
       "un-vetted": {
-        "count": 122,
+        "count": 123,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.extrospection.deploy",
+            "number": 12,
+            "url": "https://github.com/rainlanguage/rain.extrospection.deploy/pull/12",
+            "title": "Bump rain-deploy 0.1.7 -> 0.1.11 and rain-sol-codegen 0.1.36 -> 0.1.37"
+          },
           {
             "repo": "S01-Issuer/st0x.attest",
             "number": 8,
@@ -6914,7 +6920,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 122,
+    "unvetted": 123,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6925,7 +6931,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 247,
+    "totalProducerPrs": 248,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 735,
     "designPresentable": 7,
@@ -6934,9 +6940,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 282.0,
+      "meanDays": 282.1,
       "medianDays": 107.4,
-      "oldestDays": 1712.0
+      "oldestDays": 1712.1
     }
   }
 }
