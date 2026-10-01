@@ -889,19 +889,31 @@
         ]
       },
       "un-vetted": {
-        "count": 123,
+        "count": 125,
         "prs": [
+          {
+            "repo": "S01-Issuer/st0x.attest",
+            "number": 10,
+            "url": "https://github.com/S01-Issuer/st0x.attest/pull/10",
+            "title": "spec: tick the items the orchestrator implements"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 284,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/284",
+            "title": "fix: packLossy sheds coefficient digits to reach the exponent floor (#271)"
+          },
+          {
+            "repo": "rainlanguage/rain.vats",
+            "number": 341,
+            "url": "https://github.com/rainlanguage/rain.vats/pull/341",
+            "title": "test: keep pranked-and-paid fuzz addresses off precompiles and contracts"
+          },
           {
             "repo": "rainlanguage/rain.extrospection.deploy",
             "number": 12,
             "url": "https://github.com/rainlanguage/rain.extrospection.deploy/pull/12",
             "title": "Bump rain-deploy 0.1.7 -> 0.1.11 and rain-sol-codegen 0.1.36 -> 0.1.37"
-          },
-          {
-            "repo": "S01-Issuer/st0x.attest",
-            "number": 8,
-            "url": "https://github.com/S01-Issuer/st0x.attest/pull/8",
-            "title": "spec: item 14 states the rounding bound rather than a direction"
           },
           {
             "repo": "S01-Issuer/st0x.attest",
@@ -3050,12 +3062,6 @@
       "number": 2840,
       "url": "https://github.com/rainlanguage/raindex/issues/2840",
       "title": "rainix-sol/static (slither) is red on main; #2838 merged over it"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 271,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/271",
-      "title": "Packed sub reverts ExponentUnderflow near EXPONENT_MIN where the unpacked reference path succeeds"
     },
     {
       "repo": "rainlanguage/rain.erc4626.words",
@@ -6920,7 +6926,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 123,
+    "unvetted": 125,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6931,9 +6937,9 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 248,
+    "totalProducerPrs": 250,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 735,
+    "uncoveredIssues": 734,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 967
@@ -6941,7 +6947,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 282.1,
-      "medianDays": 107.4,
+      "medianDays": 107.5,
       "oldestDays": 1712.1
     }
   }
