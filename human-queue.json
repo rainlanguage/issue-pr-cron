@@ -889,8 +889,14 @@
         ]
       },
       "un-vetted": {
-        "count": 121,
+        "count": 122,
         "prs": [
+          {
+            "repo": "S01-Issuer/st0x.attest",
+            "number": 8,
+            "url": "https://github.com/S01-Issuer/st0x.attest/pull/8",
+            "title": "spec: item 14 states the rounding bound rather than a direction"
+          },
           {
             "repo": "S01-Issuer/st0x.attest",
             "number": 3,
@@ -2469,30 +2475,6 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
-    {
-      "repo": "S01-Issuer/st0x.deploy",
-      "number": 401,
-      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/401",
-      "title": "Bucket drains faster than `leakRate`: the post-leak level is rounded down (st0x.attest SPEC item 14)"
-    },
-    {
-      "repo": "S01-Issuer/st0x.deploy",
-      "number": 400,
-      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/400",
-      "title": "Rounding goes with the minter: `LibLeakyBucket.headroomAt` can report more headroom than `capacity - level` (st0x.attest SPEC item 14)"
-    },
-    {
-      "repo": "S01-Issuer/st0x.deploy",
-      "number": 399,
-      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/399",
-      "title": "Bucket does not fill at least as fast as the true value: `LibLeakyBucket.fill` records `level + charge` rounded down (st0x.attest SPEC item 14)"
-    },
-    {
-      "repo": "S01-Issuer/st0x.deploy",
-      "number": 398,
-      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/398",
-      "title": "Rounding goes with the minter: `mul(mint-amount() lead-price())` truncates the charge toward zero (st0x.attest SPEC item 14)"
-    },
     {
       "repo": "S01-Issuer/st0x.attest",
       "number": 2,
@@ -6932,7 +6914,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 121,
+    "unvetted": 122,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6943,18 +6925,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 246,
+    "totalProducerPrs": 247,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 739,
+    "uncoveredIssues": 735,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 971
+    "openIssues": 967
   },
   "ages": {
     "openIssues": {
-      "meanDays": 280.7,
-      "medianDays": 106.7,
-      "oldestDays": 1711.8
+      "meanDays": 281.9,
+      "medianDays": 107.3,
+      "oldestDays": 1711.9
     }
   }
 }
