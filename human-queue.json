@@ -2470,6 +2470,30 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 401,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/401",
+      "title": "Bucket drains faster than `leakRate`: the post-leak level is rounded down (st0x.attest SPEC item 14)"
+    },
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 400,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/400",
+      "title": "Rounding goes with the minter: `LibLeakyBucket.headroomAt` can report more headroom than `capacity - level` (st0x.attest SPEC item 14)"
+    },
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 399,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/399",
+      "title": "Bucket does not fill at least as fast as the true value: `LibLeakyBucket.fill` records `level + charge` rounded down (st0x.attest SPEC item 14)"
+    },
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 398,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/398",
+      "title": "Rounding goes with the minter: `mul(mint-amount() lead-price())` truncates the charge toward zero (st0x.attest SPEC item 14)"
+    },
+    {
       "repo": "S01-Issuer/st0x.attest",
       "number": 2,
       "url": "https://github.com/S01-Issuer/st0x.attest/issues/2",
@@ -6921,16 +6945,16 @@
     "leaks": 0,
     "totalProducerPrs": 246,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 735,
+    "uncoveredIssues": 739,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 967
+    "openIssues": 971
   },
   "ages": {
     "openIssues": {
-      "meanDays": 281.5,
-      "medianDays": 106.9,
-      "oldestDays": 1711.5
+      "meanDays": 280.4,
+      "medianDays": 106.4,
+      "oldestDays": 1711.6
     }
   }
 }
