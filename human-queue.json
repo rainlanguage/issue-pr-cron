@@ -889,14 +889,8 @@
         ]
       },
       "un-vetted": {
-        "count": 124,
+        "count": 123,
         "prs": [
-          {
-            "repo": "rainlanguage/rainlang.interface",
-            "number": 145,
-            "url": "https://github.com/rainlanguage/rainlang.interface/pull/145",
-            "title": "test: exclude word sets a parse meta cannot represent"
-          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 286,
@@ -6932,7 +6926,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 124,
+    "unvetted": 123,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6943,7 +6937,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 249,
+    "totalProducerPrs": 248,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 736,
     "designPresentable": 7,
@@ -6952,9 +6946,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 281.8,
-      "medianDays": 107.8,
-      "oldestDays": 1712.7
+      "meanDays": 281.9,
+      "medianDays": 107.9,
+      "oldestDays": 1712.8
     }
   }
 }
