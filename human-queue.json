@@ -889,8 +889,20 @@
         ]
       },
       "un-vetted": {
-        "count": 122,
+        "count": 124,
         "prs": [
+          {
+            "repo": "rainlanguage/rainlang.interface",
+            "number": 145,
+            "url": "https://github.com/rainlanguage/rainlang.interface/pull/145",
+            "title": "test: exclude word sets a parse meta cannot represent"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 286,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/286",
+            "title": "fix: pow checks mul's exponent precondition in the squaring loop (#276)"
+          },
           {
             "repo": "rainlanguage/rain.extrospection.deploy",
             "number": 12,
@@ -2476,6 +2488,24 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rainlang.interface",
+      "number": 144,
+      "url": "https://github.com/rainlanguage/rainlang.interface/issues/144",
+      "title": "checkNoOOBPointers fuzz tests get TruncatedSource where they expect another error"
+    },
+    {
+      "repo": "S01-Issuer/s01.ops",
+      "number": 354,
+      "url": "https://github.com/S01-Issuer/s01.ops/issues/354",
+      "title": "Point the SFT sweep scripts at the Ormi prod subgraphs"
+    },
+    {
+      "repo": "rainlanguage/rainlang.interface",
+      "number": 143,
+      "url": "https://github.com/rainlanguage/rainlang.interface/issues/143",
+      "title": "buildParseMetaV2 can write one item past the end of the items region"
+    },
+    {
       "repo": "rainlanguage/rain.math.float",
       "number": 285,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/285",
@@ -2870,12 +2900,6 @@
       "number": 364,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/364",
       "title": "BSC carries a second, unpinned set of 41 token vaults from run 34542307257 — record it as orphaned (or re-pin to it)"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 276,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/276",
-      "title": "pow reverts with Panic(0x11) instead of a typed error for extreme exponents"
     },
     {
       "repo": "rainlanguage/rainlang",
@@ -6914,7 +6938,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 122,
+    "unvetted": 124,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6925,17 +6949,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 247,
+    "totalProducerPrs": 249,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 735,
+    "uncoveredIssues": 737,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 967
+    "openIssues": 970
   },
   "ages": {
     "openIssues": {
-      "meanDays": 282.5,
-      "medianDays": 107.9,
+      "meanDays": 281.7,
+      "medianDays": 107.7,
       "oldestDays": 1712.6
     }
   }
