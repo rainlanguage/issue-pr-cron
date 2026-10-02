@@ -835,3 +835,5 @@
 {"ts":"2026-09-30T17:03:07Z","observedAt":"2026-09-30T17:32:59Z","kind":"pr","repo":"S01-Issuer/st0x.attest","number":5}
 {"ts":"2026-09-30T17:12:09Z","observedAt":"2026-09-30T17:32:59Z","kind":"pr","repo":"S01-Issuer/st0x.deploy","number":397}
 {"ts":"2026-10-01T22:54:02Z","observedAt":"2026-10-01T23:32:22Z","kind":"pr","repo":"S01-Issuer/st0x.attest","number":8}
+{"ts":"2026-10-02T10:30:23Z","observedAt":"2026-10-02T10:31:58Z","kind":"pr","repo":"rainlanguage/rain.math.float","number":284}
+{"ts":"2026-10-02T09:58:46Z","observedAt":"2026-10-02T10:31:58Z","kind":"pr","repo":"rainlanguage/rain.vats","number":341}

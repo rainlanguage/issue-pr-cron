@@ -889,26 +889,8 @@
         ]
       },
       "un-vetted": {
-        "count": 125,
+        "count": 122,
         "prs": [
-          {
-            "repo": "S01-Issuer/st0x.attest",
-            "number": 10,
-            "url": "https://github.com/S01-Issuer/st0x.attest/pull/10",
-            "title": "spec: tick the items the orchestrator implements"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 284,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/284",
-            "title": "fix: packLossy sheds coefficient digits to reach the exponent floor (#271)"
-          },
-          {
-            "repo": "rainlanguage/rain.vats",
-            "number": 341,
-            "url": "https://github.com/rainlanguage/rain.vats/pull/341",
-            "title": "test: keep pranked-and-paid fuzz addresses off precompiles and contracts"
-          },
           {
             "repo": "rainlanguage/rain.extrospection.deploy",
             "number": 12,
@@ -2493,6 +2475,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 285,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/285",
+      "title": "packLossy reverts at the exponent ceiling for values it could represent by lifting the coefficient"
+    },
     {
       "repo": "S01-Issuer/st0x.attest",
       "number": 2,
@@ -6926,7 +6914,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 125,
+    "unvetted": 122,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6937,9 +6925,9 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 250,
+    "totalProducerPrs": 247,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 734,
+    "uncoveredIssues": 735,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 967
@@ -6948,7 +6936,7 @@
     "openIssues": {
       "meanDays": 282.5,
       "medianDays": 107.9,
-      "oldestDays": 1712.5
+      "oldestDays": 1712.6
     }
   }
 }
