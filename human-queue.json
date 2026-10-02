@@ -2482,6 +2482,12 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 249,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/249",
+      "title": "AddressRegistry: a rebind is resolvable in the same block, so a dormant root compromise can be timed to a consumer's upgrade"
+    },
+    {
       "repo": "rainlanguage/rainlang.interface",
       "number": 144,
       "url": "https://github.com/rainlanguage/rainlang.interface/issues/144",
@@ -6939,16 +6945,16 @@
     "leaks": 0,
     "totalProducerPrs": 248,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 736,
+    "uncoveredIssues": 737,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 970
+    "openIssues": 971
   },
   "ages": {
     "openIssues": {
-      "meanDays": 282.0,
-      "medianDays": 108.0,
-      "oldestDays": 1712.9
+      "meanDays": 281.8,
+      "medianDays": 107.8,
+      "oldestDays": 1713.0
     }
   }
 }
