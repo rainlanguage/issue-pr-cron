@@ -2494,12 +2494,6 @@
       "title": "checkNoOOBPointers fuzz tests get TruncatedSource where they expect another error"
     },
     {
-      "repo": "S01-Issuer/s01.ops",
-      "number": 354,
-      "url": "https://github.com/S01-Issuer/s01.ops/issues/354",
-      "title": "Point the SFT sweep scripts at the Ormi prod subgraphs"
-    },
-    {
       "repo": "rainlanguage/rainlang.interface",
       "number": 143,
       "url": "https://github.com/rainlanguage/rainlang.interface/issues/143",
@@ -6951,7 +6945,7 @@
     "leaks": 0,
     "totalProducerPrs": 249,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 737,
+    "uncoveredIssues": 736,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 970
@@ -6959,7 +6953,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 281.7,
-      "medianDays": 107.7,
+      "medianDays": 107.8,
       "oldestDays": 1712.6
     }
   }
