@@ -2482,6 +2482,24 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 404,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/404",
+      "title": "Docs sweep removed the regression rationale from test comments"
+    },
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 403,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/403",
+      "title": "Prod-state migration invariants branch on a hardcoded deadline instead of rain-deploy's MigrationRegistry"
+    },
+    {
+      "repo": "S01-Issuer/s01.ops",
+      "number": 357,
+      "url": "https://github.com/S01-Issuer/s01.ops/issues/357",
+      "title": "Data room review, part 2 input: the Albion data room in full (screens, rooms, access, features, design, stack)"
+    },
+    {
       "repo": "rainlanguage/rain.deploy",
       "number": 249,
       "url": "https://github.com/rainlanguage/rain.deploy/issues/249",
@@ -6945,16 +6963,16 @@
     "leaks": 0,
     "totalProducerPrs": 248,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 737,
+    "uncoveredIssues": 740,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 971
+    "openIssues": 973
   },
   "ages": {
     "openIssues": {
-      "meanDays": 281.8,
-      "medianDays": 107.8,
-      "oldestDays": 1713.0
+      "meanDays": 279.5,
+      "medianDays": 107.5,
+      "oldestDays": 1252.3
     }
   }
 }
