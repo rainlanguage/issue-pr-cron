@@ -2482,16 +2482,22 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rainlang.interface",
+      "number": 147,
+      "url": "https://github.com/rainlanguage/rainlang.interface/issues/147",
+      "title": "testFindExpanderMatchesReference is within 4x of its vm.assume rejection ceiling"
+    },
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 405,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/405",
+      "title": "Deploy tooling reimplements rain-deploy and misses its guards (no DeploySuite[], hand-rolled BuildScript, parallel chain-id chains)"
+    },
+    {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 404,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/404",
       "title": "Docs sweep removed the regression rationale from test comments"
-    },
-    {
-      "repo": "S01-Issuer/st0x.deploy",
-      "number": 403,
-      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/403",
-      "title": "Prod-state migration invariants branch on a hardcoded deadline instead of rain-deploy's MigrationRegistry"
     },
     {
       "repo": "S01-Issuer/s01.ops",
@@ -6963,14 +6969,14 @@
     "leaks": 0,
     "totalProducerPrs": 248,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 740,
+    "uncoveredIssues": 741,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 973
+    "openIssues": 975
   },
   "ages": {
     "openIssues": {
-      "meanDays": 279.5,
+      "meanDays": 278.9,
       "medianDays": 107.5,
       "oldestDays": 1252.3
     }
