@@ -838,3 +838,5 @@
 {"ts":"2026-10-02T10:30:23Z","observedAt":"2026-10-02T10:31:58Z","kind":"pr","repo":"rainlanguage/rain.math.float","number":284}
 {"ts":"2026-10-02T09:58:46Z","observedAt":"2026-10-02T10:31:58Z","kind":"pr","repo":"rainlanguage/rain.vats","number":341}
 {"ts":"2026-10-02T15:23:00Z","observedAt":"2026-10-02T15:32:44Z","kind":"pr","repo":"rainlanguage/rainlang.interface","number":145}
+{"ts":"2026-10-03T13:50:55Z","observedAt":"2026-10-03T14:32:21Z","kind":"pr","repo":"rainlanguage/rain.lib.leakybucket","number":122}
+{"ts":"2026-10-03T14:11:30Z","observedAt":"2026-10-03T14:32:21Z","kind":"pr","repo":"rainlanguage/rain.lib.leakybucket","number":123}

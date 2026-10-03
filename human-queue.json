@@ -889,8 +889,14 @@
         ]
       },
       "un-vetted": {
-        "count": 129,
+        "count": 128,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 252,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/252",
+            "title": "fix: fit the released-suites writer on the paris stack"
+          },
           {
             "repo": "rainlanguage/rain.lib.leakybucket",
             "number": 124,
@@ -904,22 +910,10 @@
             "title": "fix: derive the DeploySuite import path so consumers can generate suites libs"
           },
           {
-            "repo": "rainlanguage/rain.lib.leakybucket",
-            "number": 123,
-            "url": "https://github.com/rainlanguage/rain.lib.leakybucket/pull/123",
-            "title": "Reject a negative stored level and negative timestamps"
-          },
-          {
             "repo": "cyclofinance/cyclo.sol",
             "number": 57,
             "url": "https://github.com/cyclofinance/cyclo.sol/pull/57",
             "title": "chore: adopt rain-deploy 0.1.11 and its deploy-repo conventions"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.leakybucket",
-            "number": 122,
-            "url": "https://github.com/rainlanguage/rain.lib.leakybucket/pull/122",
-            "title": "docs: headroomAt names an amount fill takes only when it is positive"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -2517,6 +2511,24 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "cyclofinance/cyclo.site",
+      "number": 444,
+      "url": "https://github.com/cyclofinance/cyclo.site/issues/444",
+      "title": "Footer lock price ignores the Pyth confidence interval the vault's oracle subtracts"
+    },
+    {
+      "repo": "cyclofinance/cyclo.site",
+      "number": 443,
+      "url": "https://github.com/cyclofinance/cyclo.site/issues/443",
+      "title": "DcaStrategy/DsfStrategy: Deploy is not disabled while handleDeploy awaits its own wallet chain switch"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 339,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/339",
+      "title": "render-component: the wagmi-core stub lacks hydrate, so no component importing svelte-wagmi renders"
+    },
     {
       "repo": "rainlanguage/rainix",
       "number": 402,
@@ -6980,7 +6992,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 129,
+    "unvetted": 128,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6991,18 +7003,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 254,
+    "totalProducerPrs": 253,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 739,
+    "uncoveredIssues": 742,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 276.4,
-      "medianDays": 108.1,
-      "oldestDays": 1216.0
+      "meanDays": 274.0,
+      "medianDays": 108.2,
+      "oldestDays": 1211.8
     }
   }
 }
