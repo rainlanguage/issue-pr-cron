@@ -45068,7 +45068,7 @@ export const switchChain = async () => ({});
 export const switchNetwork = async () => {};
 export const watchAccount = () => () => {};
 export const watchChainId = () => () => {};
-export const createConfig = () => ({});
+export const createConfig = () => ({ getClient: () => ({}), chains: [], state: { chainId: 0 } });
 export const http = () => ({});
 export const fallback = () => ({});
 // Imported by the `wagmi` package that `/orderbook` pulls into the bundle; a stub that
