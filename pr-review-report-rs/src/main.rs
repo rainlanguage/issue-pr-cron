@@ -45091,6 +45091,7 @@ export const watchContractEvent = () => () => {};
 export const watchPendingTransactions = () => () => {};
 export const watchPublicClient = () => () => {};
 export class BaseError extends Error {}
+export const createConnector = (fn) => fn;
 "#;
 
 const STUB_BALANCES_STORE: &str = r#"// Tool-owned stub — see RENDER_STUBS in pr-review-report.
