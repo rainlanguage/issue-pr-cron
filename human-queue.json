@@ -2482,6 +2482,12 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rainix",
+      "number": 402,
+      "url": "https://github.com/rainlanguage/rainix/issues/402",
+      "title": "comment-loc-cap: script/ is uncounted, and one aggregate lets test subsidise src"
+    },
+    {
       "repo": "rainlanguage/rain.deploy",
       "number": 250,
       "url": "https://github.com/rainlanguage/rain.deploy/issues/250",
@@ -6975,16 +6981,16 @@
     "leaks": 0,
     "totalProducerPrs": 248,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 742,
+    "uncoveredIssues": 743,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 976
+    "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 279.2,
-      "medianDays": 108.0,
-      "oldestDays": 1252.8
+      "meanDays": 278.9,
+      "medianDays": 108.1,
+      "oldestDays": 1252.9
     }
   }
 }
