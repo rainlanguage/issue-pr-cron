@@ -840,3 +840,4 @@
 {"ts":"2026-10-02T15:23:00Z","observedAt":"2026-10-02T15:32:44Z","kind":"pr","repo":"rainlanguage/rainlang.interface","number":145}
 {"ts":"2026-10-03T13:50:55Z","observedAt":"2026-10-03T14:32:21Z","kind":"pr","repo":"rainlanguage/rain.lib.leakybucket","number":122}
 {"ts":"2026-10-03T14:11:30Z","observedAt":"2026-10-03T14:32:21Z","kind":"pr","repo":"rainlanguage/rain.lib.leakybucket","number":123}
+{"ts":"2026-10-03T15:38:47Z","observedAt":"2026-10-03T16:31:56Z","kind":"pr","repo":"rainlanguage/rain.deploy","number":251}

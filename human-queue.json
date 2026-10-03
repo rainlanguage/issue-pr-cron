@@ -892,6 +892,12 @@
         "count": 129,
         "prs": [
           {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 186,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/186",
+            "title": "fix: read the grant map from the overload that holds it"
+          },
+          {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 341,
             "url": "https://github.com/rainlanguage/issue-pr-cron/pull/341",
@@ -908,12 +914,6 @@
             "number": 124,
             "url": "https://github.com/rainlanguage/rain.lib.leakybucket/pull/124",
             "title": "Export settle so a leakRate change is not retroactive"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 251,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/251",
-            "title": "fix: derive the DeploySuite import path so consumers can generate suites libs"
           },
           {
             "repo": "cyclofinance/cyclo.sol",
