@@ -341,7 +341,7 @@
         "repo": "cyclofinance/cyclo.site",
         "number": 406,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/406",
-        "title": "fix: use FRONTEND_PYTH_MAX_AGE_SECONDS (5 min) for footer Pyth display call (#318)"
+        "title": "fix(store): forward the vault oracle's I_STALE_AFTER as the footer Pyth max age, drop STALE_PERIOD (#318)"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -365,7 +365,7 @@
         "repo": "cyclofinance/cyclo.site",
         "number": 400,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/400",
-        "title": "fix: receipt modal reactive bindings, balance key, and chain guard (#353, #355, #357)"
+        "title": "test(receipt): swap, undefined signer, and wrong-network coverage for ReceiptModal (#353, #355, #357)"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -889,8 +889,14 @@
         ]
       },
       "un-vetted": {
-        "count": 128,
+        "count": 129,
         "prs": [
+          {
+            "repo": "rainlanguage/issue-pr-cron",
+            "number": 341,
+            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/341",
+            "title": "fix(render-component): stub every @wagmi/core name the bundled wagmi package imports"
+          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 252,
@@ -1917,7 +1923,7 @@
             "repo": "cyclofinance/cyclo.site",
             "number": 406,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/406",
-            "title": "fix: use FRONTEND_PYTH_MAX_AGE_SECONDS (5 min) for footer Pyth display call (#318)"
+            "title": "fix(store): forward the vault oracle's I_STALE_AFTER as the footer Pyth max age, drop STALE_PERIOD (#318)"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1941,7 +1947,7 @@
             "repo": "cyclofinance/cyclo.site",
             "number": 400,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/400",
-            "title": "fix: receipt modal reactive bindings, balance key, and chain guard (#353, #355, #357)"
+            "title": "test(receipt): swap, undefined signer, and wrong-network coverage for ReceiptModal (#353, #355, #357)"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -2513,6 +2519,30 @@
   "uncoveredIssues": [
     {
       "repo": "cyclofinance/cyclo.site",
+      "number": 447,
+      "url": "https://github.com/cyclofinance/cyclo.site/issues/447",
+      "title": "Remove rewards page."
+    },
+    {
+      "repo": "cyclofinance/cyclo.site",
+      "number": 446,
+      "url": "https://github.com/cyclofinance/cyclo.site/issues/446",
+      "title": "DsfStrategy: the Next Trade Multiplier validator reports \"Period must be greater than 0\""
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 340,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/340",
+      "title": "pr-review-report await reports settled as soon as one check fails while the others are still pending"
+    },
+    {
+      "repo": "cyclofinance/cyclo.site",
+      "number": 445,
+      "url": "https://github.com/cyclofinance/cyclo.site/issues/445",
+      "title": "blockNumberStore keeps the previous chain's block as the block tag until the first successful poll after a chain switch"
+    },
+    {
+      "repo": "cyclofinance/cyclo.site",
       "number": 444,
       "url": "https://github.com/cyclofinance/cyclo.site/issues/444",
       "title": "Footer lock price ignores the Pyth confidence interval the vault's oracle subtracts"
@@ -2522,12 +2552,6 @@
       "number": 443,
       "url": "https://github.com/cyclofinance/cyclo.site/issues/443",
       "title": "DcaStrategy/DsfStrategy: Deploy is not disabled while handleDeploy awaits its own wallet chain switch"
-    },
-    {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 339,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/339",
-      "title": "render-component: the wagmi-core stub lacks hydrate, so no component importing svelte-wagmi renders"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -4448,12 +4472,6 @@
       "number": 261,
       "url": "https://github.com/rainlanguage/rainix/issues/261",
       "title": "rainix-static: allowlist file extensions at the repo level"
-    },
-    {
-      "repo": "cyclofinance/cyclo.site",
-      "number": 420,
-      "url": "https://github.com/cyclofinance/cyclo.site/issues/420",
-      "title": "sanitizeHref lets protocol-relative URLs (//host) through as relative — open-redirect vector"
     },
     {
       "repo": "S01-Issuer/st0x.deploy",
@@ -6944,24 +6962,6 @@
       "number": 148,
       "url": "https://github.com/rainlanguage/raindex/issues/148",
       "title": "Call local Parser in addOrder functions"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 142,
-      "url": "https://github.com/rainlanguage/raindex/issues/142",
-      "title": "Transaction status notice should last until the subgraph includes the submitted transaction"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 102,
-      "url": "https://github.com/rainlanguage/raindex/issues/102",
-      "title": "subgraph query integration tests"
-    },
-    {
-      "repo": "rainlanguage/dotrain",
-      "number": 61,
-      "url": "https://github.com/rainlanguage/dotrain/issues/61",
-      "title": "fuzzing all the regexes against expectations"
     }
   ],
   "archivedRepoPrs": [
@@ -6992,7 +6992,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 128,
+    "unvetted": 129,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -7003,18 +7003,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 253,
+    "totalProducerPrs": 254,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 742,
+    "uncoveredIssues": 741,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 274.0,
-      "medianDays": 108.2,
-      "oldestDays": 1211.8
+      "meanDays": 269.8,
+      "medianDays": 104.9,
+      "oldestDays": 977.9
     }
   }
 }
