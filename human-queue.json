@@ -2482,6 +2482,12 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 250,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/250",
+      "title": "A consumer deploying to a subset of supportedNetworks() cannot bind RainDeployVerify"
+    },
+    {
       "repo": "rainlanguage/rainlang.interface",
       "number": 147,
       "url": "https://github.com/rainlanguage/rainlang.interface/issues/147",
@@ -6969,14 +6975,14 @@
     "leaks": 0,
     "totalProducerPrs": 248,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 741,
+    "uncoveredIssues": 742,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 975
+    "openIssues": 976
   },
   "ages": {
     "openIssues": {
-      "meanDays": 279.4,
+      "meanDays": 279.2,
       "medianDays": 108.0,
       "oldestDays": 1252.8
     }
