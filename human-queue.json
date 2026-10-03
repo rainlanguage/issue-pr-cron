@@ -889,25 +889,13 @@
         ]
       },
       "un-vetted": {
-        "count": 129,
+        "count": 127,
         "prs": [
-          {
-            "repo": "rainlanguage/rain-org-health",
-            "number": 186,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/186",
-            "title": "fix: cover the governance migration on the Deployments page"
-          },
           {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 341,
             "url": "https://github.com/rainlanguage/issue-pr-cron/pull/341",
             "title": "fix(render-component): stub every @wagmi/core name the bundled wagmi package imports"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 252,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/252",
-            "title": "fix: fit the released-suites writer on the paris stack"
           },
           {
             "repo": "rainlanguage/rain.lib.leakybucket",
@@ -2517,6 +2505,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "cyclofinance/cyclo.sol",
+      "number": 58,
+      "url": "https://github.com/cyclofinance/cyclo.sol/issues/58",
+      "title": "Delete script/LibReleasedSuitesLibParis.sol once the repo leaves evm_version paris"
+    },
     {
       "repo": "cyclofinance/cyclo.site",
       "number": 448,
@@ -5182,6 +5176,12 @@
       "title": "[A01-5] Migrate cyclo.site data-fetching to @tanstack/svelte-query (fixes refreshBalances race + status flicker)"
     },
     {
+      "repo": "cyclofinance/cyclo.site",
+      "number": 299,
+      "url": "https://github.com/cyclofinance/cyclo.site/issues/299",
+      "title": "[A01-3] [MEDIUM] env.example missing PUBLIC_ETHERSCAN_API_KEY required by CI"
+    },
+    {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 98,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/98",
@@ -6962,12 +6962,6 @@
       "number": 133,
       "url": "https://github.com/rainlanguage/rainlang/issues/133",
       "title": "saturating math"
-    },
-    {
-      "repo": "rainlanguage/rain.cli",
-      "number": 6,
-      "url": "https://github.com/rainlanguage/rain.cli/issues/6",
-      "title": "use current metadata cli at https://crates.io/crates/rain-metadata"
     }
   ],
   "archivedRepoPrs": [
@@ -6998,7 +6992,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 129,
+    "unvetted": 127,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -7009,18 +7003,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 254,
+    "totalProducerPrs": 252,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 742,
+    "uncoveredIssues": 743,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 268.9,
-      "medianDays": 101.6,
-      "oldestDays": 977.0
+      "meanDays": 267.9,
+      "medianDays": 100.3,
+      "oldestDays": 973.3
     }
   }
 }
