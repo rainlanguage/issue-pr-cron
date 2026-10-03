@@ -45068,8 +45068,30 @@ export const switchChain = async () => ({});
 export const switchNetwork = async () => {};
 export const watchAccount = () => () => {};
 export const watchChainId = () => () => {};
-export const createConfig = () => ({});
+export const createConfig = () => ({ getClient: () => ({}), chains: [], state: { chainId: 0 } });
 export const http = () => ({});
+export const fallback = () => ({});
+// Imported by the `wagmi` package that `/orderbook` pulls into the bundle; a stub that
+// lacks it fails the whole render before the component mounts (issue-pr-cron#339).
+export const hydrate = () => ({ onMount: async () => {} });
+export const reconnect = async () => [];
+export const disconnect = async () => {};
+export const getBlock = async () => ({ number: 0n, timestamp: 0n });
+export const getChainId = () => 0;
+export const getConnections = () => [];
+export const getConnectors = () => [];
+export const getChains = () => [];
+export const getClient = () => ({});
+export const watchBlockNumber = () => () => {};
+export const watchBlocks = () => () => {};
+export const watchClient = () => () => {};
+export const watchConnections = () => () => {};
+export const watchConnectors = () => () => {};
+export const watchContractEvent = () => () => {};
+export const watchPendingTransactions = () => () => {};
+export const watchPublicClient = () => () => {};
+export class BaseError extends Error {}
+export const createConnector = (fn) => fn;
 "#;
 
 const STUB_BALANCES_STORE: &str = r#"// Tool-owned stub — see RENDER_STUBS in pr-review-report.
