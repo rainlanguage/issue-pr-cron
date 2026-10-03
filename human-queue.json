@@ -889,8 +889,14 @@
         ]
       },
       "un-vetted": {
-        "count": 127,
+        "count": 128,
         "prs": [
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 187,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/187",
+            "title": "fix: a timelock-owned beacon is governed, and read the three unread chains"
+          },
           {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 341,
@@ -6992,7 +6998,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 127,
+    "unvetted": 128,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -7003,7 +7009,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 252,
+    "totalProducerPrs": 253,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 743,
     "designPresentable": 7,
@@ -7012,9 +7018,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 266.9,
+      "meanDays": 267.0,
       "medianDays": 100.3,
-      "oldestDays": 973.3
+      "oldestDays": 973.4
     }
   }
 }
