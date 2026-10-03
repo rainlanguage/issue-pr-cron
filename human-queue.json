@@ -2506,6 +2506,12 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 407,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/407",
+      "title": "No released implementation for the in-use wrapped-token-vault beacon: six contracts have unreleased source drift"
+    },
+    {
       "repo": "cyclofinance/cyclo.sol",
       "number": 58,
       "url": "https://github.com/cyclofinance/cyclo.sol/issues/58",
@@ -6956,12 +6962,6 @@
       "number": 135,
       "url": "https://github.com/rainlanguage/rainlang/issues/135",
       "title": "rounding direction in math"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 133,
-      "url": "https://github.com/rainlanguage/rainlang/issues/133",
-      "title": "saturating math"
     }
   ],
   "archivedRepoPrs": [
@@ -7012,7 +7012,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 267.9,
+      "meanDays": 266.9,
       "medianDays": 100.3,
       "oldestDays": 973.3
     }
