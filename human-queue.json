@@ -889,8 +889,14 @@
         ]
       },
       "un-vetted": {
-        "count": 123,
+        "count": 124,
         "prs": [
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 442,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/442",
+            "title": "chore: drop the cyclo.sol submodule, commit the vault ABI from the verified implementation"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 286,
@@ -2481,6 +2487,18 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 120,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/120",
+      "title": "README says the amount headroomAt names always fits, but fill refuses zero headroom"
+    },
+    {
+      "repo": "rainlanguage/rain.lib.leakybucket",
+      "number": 119,
+      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/119",
+      "title": "Leak rate changes apply retroactively to the time since the last checkpoint"
+    },
     {
       "repo": "rainlanguage/rainix",
       "number": 402,
@@ -4568,12 +4586,6 @@
       "number": 54,
       "url": "https://github.com/cyclofinance/cyclo.sol/issues/54",
       "title": "De-submodule: lib/ethgild + lib/rain.extrospection to soldeer"
-    },
-    {
-      "repo": "cyclofinance/cyclo.site",
-      "number": 411,
-      "url": "https://github.com/cyclofinance/cyclo.site/issues/411",
-      "title": "De-submodule: replace the cyclo.sol submodule"
     },
     {
       "repo": "rainlanguage/issue-pr-cron",
@@ -6932,12 +6944,6 @@
       "number": 61,
       "url": "https://github.com/rainlanguage/dotrain/issues/61",
       "title": "fuzzing all the regexes against expectations"
-    },
-    {
-      "repo": "rainlanguage/rain-svelte-components",
-      "number": 63,
-      "url": "https://github.com/rainlanguage/rain-svelte-components/issues/63",
-      "title": "Bump Rainlang and the extension for the parser"
     }
   ],
   "archivedRepoPrs": [
@@ -6968,7 +6974,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 123,
+    "unvetted": 124,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -6979,7 +6985,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 248,
+    "totalProducerPrs": 249,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 743,
     "designPresentable": 7,
@@ -6988,9 +6994,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 278.9,
+      "meanDays": 276.4,
       "medianDays": 108.1,
-      "oldestDays": 1252.9
+      "oldestDays": 1216.0
     }
   }
 }
