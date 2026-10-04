@@ -907,7 +907,7 @@
             "repo": "cyclofinance/cyclo.sol",
             "number": 57,
             "url": "https://github.com/cyclofinance/cyclo.sol/pull/57",
-            "title": "chore: adopt rain-deploy 0.1.11 and its deploy-repo conventions"
+            "title": "feat: record the legacy bytecode and adopt rain-deploy 0.1.11"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -2506,12 +2506,6 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
-      "repo": "rainlanguage/rain.lib.leakybucket",
-      "number": 125,
-      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/125",
-      "title": "A checkpoint over a leak below the level's last digit takes a whole digit off the level, which is the permissive direction"
-    },
-    {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 407,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/407",
@@ -2636,12 +2630,6 @@
       "number": 1,
       "url": "https://github.com/S01-Issuer/st0x.attest/issues/1",
       "title": "The Rust attestation binary"
-    },
-    {
-      "repo": "rainlanguage/rain.lib.leakybucket",
-      "number": 115,
-      "url": "https://github.com/rainlanguage/rain.lib.leakybucket/issues/115",
-      "title": "Move the bucket to Rain Floats, and reject negative values"
     },
     {
       "repo": "S01-Issuer/st0x.deploy",
@@ -6962,6 +6950,18 @@
       "number": 137,
       "url": "https://github.com/rainlanguage/rainlang/issues/137",
       "title": "LHS parse substitutions"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 135,
+      "url": "https://github.com/rainlanguage/rainlang/issues/135",
+      "title": "rounding direction in math"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 133,
+      "url": "https://github.com/rainlanguage/rainlang/issues/133",
+      "title": "saturating math"
     }
   ],
   "archivedRepoPrs": [
@@ -7012,8 +7012,8 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 266.5,
-      "medianDays": 100.8,
+      "meanDays": 268.5,
+      "medianDays": 101.0,
       "oldestDays": 973.9
     }
   }
