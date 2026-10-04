@@ -889,8 +889,26 @@
         ]
       },
       "un-vetted": {
-        "count": 126,
+        "count": 129,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.lib.leakybucket",
+            "number": 126,
+            "url": "https://github.com/rainlanguage/rain.lib.leakybucket/pull/126",
+            "title": "deps: rain-math-float 0.2.5, forge-std 1.17.0"
+          },
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 192,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/192",
+            "title": "A Safe that kept an admin role is a violated expectation"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 408,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/408",
+            "title": "Prove the governance loop against post-migration chain state"
+          },
           {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 341,
@@ -6992,7 +7010,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 126,
+    "unvetted": 129,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -7003,7 +7021,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 251,
+    "totalProducerPrs": 254,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 744,
     "designPresentable": 7,
@@ -7012,8 +7030,8 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 269.7,
-      "medianDays": 102.5,
+      "meanDays": 269.8,
+      "medianDays": 102.6,
       "oldestDays": 977.9
     }
   }
