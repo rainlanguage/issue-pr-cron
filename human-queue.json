@@ -2519,6 +2519,12 @@
   "uncoveredIssues": [
     {
       "repo": "S01-Issuer/st0x.deploy",
+      "number": 410,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/410",
+      "title": "main is 62 tests red: the invariant surface still asserts pre-timelock-migration ownership"
+    },
+    {
+      "repo": "S01-Issuer/st0x.deploy",
       "number": 409,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/409",
       "title": "Subgraph for governance ownership + roles: the migration target set cannot be verified as complete on Base"
@@ -6974,12 +6980,6 @@
       "number": 135,
       "url": "https://github.com/rainlanguage/rainlang/issues/135",
       "title": "rounding direction in math"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 133,
-      "url": "https://github.com/rainlanguage/rainlang/issues/133",
-      "title": "saturating math"
     }
   ],
   "archivedRepoPrs": [
@@ -7030,9 +7030,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 268.9,
-      "medianDays": 101.4,
-      "oldestDays": 974.3
+      "meanDays": 268.0,
+      "medianDays": 101.3,
+      "oldestDays": 974.4
     }
   }
 }
