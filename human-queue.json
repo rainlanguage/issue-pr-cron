@@ -2519,6 +2519,12 @@
   "uncoveredIssues": [
     {
       "repo": "S01-Issuer/st0x.deploy",
+      "number": 409,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/409",
+      "title": "Subgraph for governance ownership + roles: the migration target set cannot be verified as complete on Base"
+    },
+    {
+      "repo": "S01-Issuer/st0x.deploy",
       "number": 407,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/407",
       "title": "No released implementation for the in-use wrapped-token-vault beacon: six contracts have unreleased source drift"
@@ -6974,12 +6980,6 @@
       "number": 133,
       "url": "https://github.com/rainlanguage/rainlang/issues/133",
       "title": "saturating math"
-    },
-    {
-      "repo": "rainlanguage/rain.cli",
-      "number": 6,
-      "url": "https://github.com/rainlanguage/rain.cli/issues/6",
-      "title": "use current metadata cli at https://crates.io/crates/rain-metadata"
     }
   ],
   "archivedRepoPrs": [
@@ -7030,9 +7030,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 269.9,
-      "medianDays": 102.7,
-      "oldestDays": 978.1
+      "meanDays": 268.9,
+      "medianDays": 101.4,
+      "oldestDays": 974.3
     }
   }
 }
