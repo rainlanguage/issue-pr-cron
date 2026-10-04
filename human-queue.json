@@ -892,16 +892,16 @@
         "count": 129,
         "prs": [
           {
+            "repo": "rainlanguage/rain.factory.deploy",
+            "number": 48,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/48",
+            "title": "feat: record the legacy ICloneableFactoryV2 CloneFactory bytecode"
+          },
+          {
             "repo": "rainlanguage/rain.lib.leakybucket",
             "number": 126,
             "url": "https://github.com/rainlanguage/rain.lib.leakybucket/pull/126",
             "title": "deps: rain-math-float 0.2.5, forge-std 1.17.0"
-          },
-          {
-            "repo": "rainlanguage/rain-org-health",
-            "number": 192,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/192",
-            "title": "A Safe that kept an admin role is a violated expectation"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -7032,7 +7032,7 @@
     "openIssues": {
       "meanDays": 269.8,
       "medianDays": 102.6,
-      "oldestDays": 977.9
+      "oldestDays": 978.0
     }
   }
 }
