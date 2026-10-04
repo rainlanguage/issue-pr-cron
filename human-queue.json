@@ -889,19 +889,13 @@
         ]
       },
       "un-vetted": {
-        "count": 127,
+        "count": 126,
         "prs": [
           {
             "repo": "rainlanguage/issue-pr-cron",
             "number": 341,
             "url": "https://github.com/rainlanguage/issue-pr-cron/pull/341",
             "title": "fix(render-component): stub every @wagmi/core name the bundled wagmi package imports"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.leakybucket",
-            "number": 124,
-            "url": "https://github.com/rainlanguage/rain.lib.leakybucket/pull/124",
-            "title": "Export settle so a leakRate change is not retroactive"
           },
           {
             "repo": "cyclofinance/cyclo.sol",
@@ -6962,6 +6956,12 @@
       "number": 133,
       "url": "https://github.com/rainlanguage/rainlang/issues/133",
       "title": "saturating math"
+    },
+    {
+      "repo": "rainlanguage/rain.cli",
+      "number": 6,
+      "url": "https://github.com/rainlanguage/rain.cli/issues/6",
+      "title": "use current metadata cli at https://crates.io/crates/rain-metadata"
     }
   ],
   "archivedRepoPrs": [
@@ -6992,7 +6992,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 127,
+    "unvetted": 126,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -7003,18 +7003,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 252,
+    "totalProducerPrs": 251,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 743,
+    "uncoveredIssues": 744,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 268.5,
-      "medianDays": 101.0,
-      "oldestDays": 973.9
+      "meanDays": 269.6,
+      "medianDays": 102.3,
+      "oldestDays": 977.7
     }
   }
 }
