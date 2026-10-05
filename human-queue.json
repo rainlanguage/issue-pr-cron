@@ -827,15 +827,15 @@
         "prs": [
           {
             "repo": "rainlanguage/rain.math.float",
-            "number": 304,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/304",
-            "title": "packLossy: lift the coefficient at the exponent ceiling"
+            "number": 307,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/307",
+            "title": "mul: revert ExponentOverflow when the exponent rises above type(int256).max"
           },
           {
             "repo": "rainlanguage/rain.math.float",
-            "number": 302,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/302",
-            "title": "mantissa4: shed below -80 so pow10 interpolates at the right position"
+            "number": 304,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/304",
+            "title": "packLossy: lift the coefficient at the exponent ceiling"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -2471,15 +2471,21 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 305,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/305",
-      "title": "LibDecimalFloatImplementation.mul panics 0x11 when the exponent sum overflows above type(int256).max"
+      "number": 306,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/306",
+      "title": "Reduce gas of the fixed-point log10/pow10/pow/sqrt without losing precision"
     },
     {
       "repo": "rainlanguage/rain.math.float",
       "number": 303,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/303",
       "title": "log10 and pow10 are accurate to ~1e-4: give them pow's fixed-point precision"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 298,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/298",
+      "title": "mantissa4 below exponent -80 is correct only because antilog entries 0 and 1 are equal"
     },
     {
       "repo": "rainlanguage/rain.deploy",
@@ -6879,16 +6885,16 @@
     "leaks": 0,
     "totalProducerPrs": 253,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 728,
+    "uncoveredIssues": 729,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 968
+    "openIssues": 969
   },
   "ages": {
     "openIssues": {
-      "meanDays": 282.1,
+      "meanDays": 281.9,
       "medianDays": 110.4,
-      "oldestDays": 1715.9
+      "oldestDays": 1716.0
     }
   }
 }
