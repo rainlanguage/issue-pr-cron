@@ -883,14 +883,8 @@
         ]
       },
       "un-vetted": {
-        "count": 129,
+        "count": 128,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 254,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/254",
-            "title": "Stamp every address registry binding with the time it was bound"
-          },
           {
             "repo": "rainlanguage/rain.lib.leakybucket",
             "number": 126,
@@ -2510,12 +2504,6 @@
       "number": 256,
       "url": "https://github.com/rainlanguage/rain.deploy/issues/256",
       "title": "resolveSafe equips the point-of-use read that IAddressRegistryV1 tells consumers MUST NOT happen"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 255,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/255",
-      "title": "AddressRegistry: a binding's moment is not monotonic, so a rebind on a clock-regressing chain can read as older than the binding it replaced"
     },
     {
       "repo": "S01-Issuer/st0x.deploy",
@@ -6968,6 +6956,18 @@
       "number": 138,
       "url": "https://github.com/rainlanguage/rainlang/issues/138",
       "title": "calldata eval rather than onchain deploys"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 137,
+      "url": "https://github.com/rainlanguage/rainlang/issues/137",
+      "title": "LHS parse substitutions"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 135,
+      "url": "https://github.com/rainlanguage/rainlang/issues/135",
+      "title": "rounding direction in math"
     }
   ],
   "archivedRepoPrs": [
@@ -6998,7 +6998,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 129,
+    "unvetted": 128,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 99,
@@ -7009,18 +7009,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 253,
+    "totalProducerPrs": 252,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 744,
+    "uncoveredIssues": 745,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 266.4,
-      "medianDays": 100.5,
-      "oldestDays": 975.0
+      "meanDays": 268.5,
+      "medianDays": 102.0,
+      "oldestDays": 975.1
     }
   }
 }
