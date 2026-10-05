@@ -2500,12 +2500,6 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 256,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/256",
-      "title": "resolveSafe equips the point-of-use read that IAddressRegistryV1 tells consumers MUST NOT happen"
-    },
-    {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 411,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/411",
@@ -2582,12 +2576,6 @@
       "number": 402,
       "url": "https://github.com/rainlanguage/rainix/issues/402",
       "title": "comment-loc-cap: script/ is uncounted, and one aggregate lets test subsidise src"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 250,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/250",
-      "title": "A consumer deploying to a subset of supportedNetworks() cannot bind RainDeployVerify"
     },
     {
       "repo": "rainlanguage/rainlang.interface",
@@ -2776,12 +2764,6 @@
       "title": "Add script/codegen-manifest.txt: git-clean goes red when rainlanguage/rainix#392 merges"
     },
     {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 245,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/245",
-      "title": "Add script/codegen-manifest.txt: git-clean goes red when rainlanguage/rainix#392 merges"
-    },
-    {
       "repo": "rainlanguage/rain.extrospection",
       "number": 157,
       "url": "https://github.com/rainlanguage/rain.extrospection/issues/157",
@@ -2858,54 +2840,6 @@
       "number": 244,
       "url": "https://github.com/rainlanguage/rain.deploy/issues/244",
       "title": "Candidates with no compiler artifact cannot be expressed after #242"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 243,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/243",
-      "title": "Track the #242 consumer migration: 7 repos, 17 candidates, 2 that #242 cannot express"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 2883,
-      "url": "https://github.com/rainlanguage/raindex/issues/2883",
-      "title": "Migrate to the compiler-derived candidate source anchor, and answer the no-artifact candidate: rain-deploy removes DeployCandidate.sourceCreationCode"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float.deploy",
-      "number": 27,
-      "url": "https://github.com/rainlanguage/rain.math.float.deploy/issues/27",
-      "title": "Migrate to the compiler-derived candidate source anchor, and answer the no-artifact candidate: rain-deploy removes DeployCandidate.sourceCreationCode"
-    },
-    {
-      "repo": "rainlanguage/rainlang.deploy",
-      "number": 8,
-      "url": "https://github.com/rainlanguage/rainlang.deploy/issues/8",
-      "title": "Migrate to the compiler-derived candidate source anchor: rain-deploy removes DeployCandidate.sourceCreationCode"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection.deploy",
-      "number": 10,
-      "url": "https://github.com/rainlanguage/rain.extrospection.deploy/issues/10",
-      "title": "Migrate to the compiler-derived candidate source anchor: rain-deploy removes DeployCandidate.sourceCreationCode"
-    },
-    {
-      "repo": "rainlanguage/rain.tofu.erc20-decimals.deploy",
-      "number": 8,
-      "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals.deploy/issues/8",
-      "title": "Migrate to the compiler-derived candidate source anchor: rain-deploy removes DeployCandidate.sourceCreationCode"
-    },
-    {
-      "repo": "rainlanguage/rain.metadata.deploy",
-      "number": 13,
-      "url": "https://github.com/rainlanguage/rain.metadata.deploy/issues/13",
-      "title": "Migrate to the compiler-derived candidate source anchor: rain-deploy removes DeployCandidate.sourceCreationCode"
-    },
-    {
-      "repo": "rainlanguage/rain.factory.deploy",
-      "number": 44,
-      "url": "https://github.com/rainlanguage/rain.factory.deploy/issues/44",
-      "title": "Migrate to the compiler-derived candidate source anchor: rain-deploy removes DeployCandidate.sourceCreationCode"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -6968,6 +6902,48 @@
       "number": 135,
       "url": "https://github.com/rainlanguage/rainlang/issues/135",
       "title": "rounding direction in math"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 133,
+      "url": "https://github.com/rainlanguage/rainlang/issues/133",
+      "title": "saturating math"
+    },
+    {
+      "repo": "rainlanguage/rain.cli",
+      "number": 6,
+      "url": "https://github.com/rainlanguage/rain.cli/issues/6",
+      "title": "use current metadata cli at https://crates.io/crates/rain-metadata"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 148,
+      "url": "https://github.com/rainlanguage/raindex/issues/148",
+      "title": "Call local Parser in addOrder functions"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 142,
+      "url": "https://github.com/rainlanguage/raindex/issues/142",
+      "title": "Transaction status notice should last until the subgraph includes the submitted transaction"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 102,
+      "url": "https://github.com/rainlanguage/raindex/issues/102",
+      "title": "subgraph query integration tests"
+    },
+    {
+      "repo": "rainlanguage/dotrain",
+      "number": 61,
+      "url": "https://github.com/rainlanguage/dotrain/issues/61",
+      "title": "fuzzing all the regexes against expectations"
+    },
+    {
+      "repo": "rainlanguage/rain-svelte-components",
+      "number": 63,
+      "url": "https://github.com/rainlanguage/rain-svelte-components/issues/63",
+      "title": "Bump Rainlang and the extension for the parser"
     }
   ],
   "archivedRepoPrs": [
@@ -7011,16 +6987,16 @@
     "leaks": 0,
     "totalProducerPrs": 252,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 745,
+    "uncoveredIssues": 741,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 977
+    "openIssues": 976
   },
   "ages": {
     "openIssues": {
-      "meanDays": 268.5,
-      "medianDays": 102.0,
-      "oldestDays": 975.1
+      "meanDays": 281.0,
+      "medianDays": 110.1,
+      "oldestDays": 1255.0
     }
   }
 }
