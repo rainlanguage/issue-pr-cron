@@ -856,3 +856,5 @@
 {"ts":"2026-10-05T15:33:56Z","observedAt":"2026-10-05T16:32:07Z","kind":"pr","repo":"rainlanguage/rainix","number":404}
 {"ts":"2026-10-05T16:34:19Z","observedAt":"2026-10-05T17:33:00Z","kind":"pr","repo":"rainlanguage/rain.math.float","number":259}
 {"ts":"2026-10-05T16:36:45Z","observedAt":"2026-10-05T17:33:00Z","kind":"pr","repo":"rainlanguage/rain.math.float","number":287}
+{"ts":"2026-10-05T18:05:58Z","observedAt":"2026-10-05T18:31:17Z","kind":"pr","repo":"rainlanguage/rain.deploy","number":260}
+{"ts":"2026-10-05T17:45:50Z","observedAt":"2026-10-05T18:31:17Z","kind":"pr","repo":"rainlanguage/rain.math.float","number":293}

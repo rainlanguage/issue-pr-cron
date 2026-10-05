@@ -823,13 +823,25 @@
         ]
       },
       "un-vetted": {
-        "count": 132,
+        "count": 133,
         "prs": [
           {
             "repo": "rainlanguage/rain.math.float",
-            "number": 293,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/293",
-            "title": "div: maximize an unfull numerator instead of reverting"
+            "number": 299,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/299",
+            "title": "Comma thousands separators in parsing and formatting"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 297,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/297",
+            "title": "pow: fixed point fractional leg, 4 figures to ~35 (#92, #148)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 294,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/294",
+            "title": "Derive the small log/antilog tables as published mean differences"
           },
           {
             "repo": "rainlanguage/rain.math.float.deploy",
@@ -848,12 +860,6 @@
             "number": 412,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/412",
             "title": "Give Robinhood an [etherscan] entry pointing at Blockscout"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 260,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/260",
-            "title": "Let a candidate no compiler produces say so"
           },
           {
             "repo": "rainlanguage/rain.lib.leakybucket",
@@ -2451,6 +2457,18 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 298,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/298",
+      "title": "mantissa4 below exponent -80 is correct only because antilog entries 0 and 1 are equal"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 296,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/296",
+      "title": "LibDecimalFloatImplementation.mul panics 0x11 when the exponent sum falls below type(int256).min"
+    },
     {
       "repo": "rainlanguage/rain.math.float",
       "number": 292,
@@ -5164,12 +5182,6 @@
       "title": "Vault detail page intermittently fails to load (v6.raindex.finance)"
     },
     {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 177,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/177",
-      "title": "Investigate exact derivation of log/antilog small table values"
-    },
-    {
       "repo": "rainlanguage/rainlang",
       "number": 434,
       "url": "https://github.com/rainlanguage/rainlang/issues/434",
@@ -5368,24 +5380,6 @@
       "title": "Generic pyth word for any feed id."
     },
     {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 151,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/151",
-      "title": "comma support in parsing and formatting"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 149,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/149",
-      "title": "handle exponent underflow better?"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 148,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/148",
-      "title": "check pow precision for very small but positive b in a^b"
-    },
-    {
       "repo": "S01-Issuer/Albion-issuance-site",
       "number": 89,
       "url": "https://github.com/S01-Issuer/Albion-issuance-site/issues/89",
@@ -5444,12 +5438,6 @@
       "number": 2051,
       "url": "https://github.com/rainlanguage/raindex/issues/2051",
       "title": "Add version dropdown to SDK docs website"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 92,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/92",
-      "title": "support more precise interpolation for pow"
     },
     {
       "repo": "rainlanguage/raindex",
@@ -6884,7 +6872,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 132,
+    "unvetted": 133,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 97,
@@ -6895,18 +6883,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 250,
+    "totalProducerPrs": 251,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 734,
+    "uncoveredIssues": 731,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 969
+    "openIssues": 968
   },
   "ages": {
     "openIssues": {
-      "meanDays": 282.9,
+      "meanDays": 282.5,
       "medianDays": 110.3,
-      "oldestDays": 1715.8
+      "oldestDays": 1715.9
     }
   }
 }
