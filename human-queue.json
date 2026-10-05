@@ -692,12 +692,6 @@
         "title": "Strip RPC URLs from generated dotrain to prevent API token leak (#2165)"
       },
       {
-        "repo": "rainlanguage/rain.math.float",
-        "number": 237,
-        "url": "https://github.com/rainlanguage/rain.math.float/pull/237",
-        "title": "Add canonicalize(Float) -> Float for byte-equivalence use cases"
-      },
-      {
         "repo": "rainlanguage/raindex",
         "number": 2702,
         "url": "https://github.com/rainlanguage/raindex/pull/2702",
@@ -919,7 +913,7 @@
             "repo": "cyclofinance/cyclo.sol",
             "number": 57,
             "url": "https://github.com/cyclofinance/cyclo.sol/pull/57",
-            "title": "feat: record the legacy bytecode and adopt rain-deploy 0.1.11"
+            "title": "feat: record the production bytecode as rain-deploy snapshots"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1731,7 +1725,7 @@
         }
       },
       "ai:needs-work": {
-        "count": 100,
+        "count": 99,
         "prs": [
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -2272,12 +2266,6 @@
             "number": 2719,
             "url": "https://github.com/rainlanguage/raindex/pull/2719",
             "title": "Strip RPC URLs from generated dotrain to prevent API token leak (#2165)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 237,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/237",
-            "title": "Add canonicalize(Float) -> Float for byte-equivalence use cases"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -6974,6 +6962,12 @@
       "number": 137,
       "url": "https://github.com/rainlanguage/rainlang/issues/137",
       "title": "LHS parse substitutions"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 135,
+      "url": "https://github.com/rainlanguage/rainlang/issues/135",
+      "title": "rounding direction in math"
     }
   ],
   "archivedRepoPrs": [
@@ -7007,7 +7001,7 @@
     "unvetted": 129,
     "blockedOn": 16,
     "ready": 1,
-    "needsWork": 100,
+    "needsWork": 99,
     "relink": 0,
     "design": 7,
     "blockedInfra": 0,
@@ -7015,17 +7009,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 254,
+    "totalProducerPrs": 253,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 743,
+    "uncoveredIssues": 744,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 267.4,
-      "medianDays": 101.7,
+      "meanDays": 268.3,
+      "medianDays": 101.8,
       "oldestDays": 974.8
     }
   }
