@@ -883,8 +883,20 @@
         ]
       },
       "un-vetted": {
-        "count": 131,
+        "count": 133,
         "prs": [
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 404,
+            "url": "https://github.com/rainlanguage/rainix/pull/404",
+            "title": "Try the fork RPC a suite can carry before the one it cannot"
+          },
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 403,
+            "url": "https://github.com/rainlanguage/rainix/pull/403",
+            "title": "Cap comment lines per bucket, with test split out from src"
+          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 262,
@@ -6974,7 +6986,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 131,
+    "unvetted": 133,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 99,
@@ -6985,7 +6997,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 255,
+    "totalProducerPrs": 257,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 738,
     "designPresentable": 7,
