@@ -889,8 +889,14 @@
         ]
       },
       "un-vetted": {
-        "count": 128,
+        "count": 129,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 254,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/254",
+            "title": "Stamp every address registry binding with the time it was bound"
+          },
           {
             "repo": "rainlanguage/rain.lib.leakybucket",
             "number": 126,
@@ -2618,12 +2624,6 @@
       "number": 357,
       "url": "https://github.com/S01-Issuer/s01.ops/issues/357",
       "title": "Data room review, part 2 input: the Albion data room in full (screens, rooms, access, features, design, stack)"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 249,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/249",
-      "title": "AddressRegistry: a rebind is resolvable in the same block, so a dormant root compromise can be timed to a consumer's upgrade"
     },
     {
       "repo": "rainlanguage/rainlang.interface",
@@ -7004,7 +7004,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 128,
+    "unvetted": 129,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -7015,16 +7015,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 253,
+    "totalProducerPrs": 254,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 744,
+    "uncoveredIssues": 743,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 267.3,
+      "meanDays": 267.4,
       "medianDays": 101.7,
       "oldestDays": 974.8
     }
