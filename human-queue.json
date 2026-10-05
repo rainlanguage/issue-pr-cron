@@ -303,12 +303,6 @@
       },
       {
         "repo": "cyclofinance/cyclo.site",
-        "number": 408,
-        "url": "https://github.com/cyclofinance/cyclo.site/pull/408",
-        "title": "chore: remove the rewards feature"
-      },
-      {
-        "repo": "cyclofinance/cyclo.site",
         "number": 407,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/407",
         "title": "fix: reactive mappedReceipts and safe readableBalance in ReceiptsTable (#358, #360)"
@@ -827,6 +821,12 @@
         "prs": [
           {
             "repo": "rainlanguage/rain.math.float",
+            "number": 309,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/309",
+            "title": "Gas: cheaper fixed-point log10/pow10/pow/sqrt without losing precision (#306)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
             "number": 307,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/307",
             "title": "mul: revert ExponentOverflow when the exponent rises above type(int256).max"
@@ -848,12 +848,6 @@
             "number": 297,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/297",
             "title": "pow: fixed point fractional leg, 4 figures to ~35 (#92, #148)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 294,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/294",
-            "title": "Derive the small log/antilog tables as published mean differences"
           },
           {
             "repo": "rainlanguage/rain.math.float.deploy",
@@ -1701,7 +1695,7 @@
         }
       },
       "ai:needs-work": {
-        "count": 97,
+        "count": 96,
         "prs": [
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -1876,12 +1870,6 @@
             "number": 409,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/409",
             "title": "fix(component): validate tokenId and surface previewRedeem errors (#359)"
-          },
-          {
-            "repo": "cyclofinance/cyclo.site",
-            "number": 408,
-            "url": "https://github.com/cyclofinance/cyclo.site/pull/408",
-            "title": "chore: remove the rewards feature"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -2469,6 +2457,18 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 310,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/310",
+      "title": "Gas: core arithmetic, packing and comparison hot spots"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 308,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/308",
+      "title": "Approximate functions' correctness rests on fuzz-calibrated margins, not proven error bounds"
+    },
     {
       "repo": "rainlanguage/rain.math.float",
       "number": 306,
@@ -6875,7 +6875,7 @@
     "unvetted": 135,
     "blockedOn": 12,
     "ready": 1,
-    "needsWork": 97,
+    "needsWork": 96,
     "relink": 0,
     "design": 7,
     "blockedInfra": 0,
@@ -6883,17 +6883,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 253,
+    "totalProducerPrs": 252,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 729,
+    "uncoveredIssues": 731,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 969
+    "openIssues": 967
   },
   "ages": {
     "openIssues": {
       "meanDays": 281.9,
-      "medianDays": 110.4,
+      "medianDays": 110.5,
       "oldestDays": 1716.0
     }
   }
