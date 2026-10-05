@@ -2,12 +2,6 @@
   "states": {
     "ai:blocked-on": [
       {
-        "repo": "rainlanguage/rain.math.float",
-        "number": 259,
-        "url": "https://github.com/rainlanguage/rain.math.float/pull/259",
-        "title": "chore: remove submodule-era residue (dead foundry.lock, .gitmodules and root lib/ references)"
-      },
-      {
         "repo": "rainlanguage/raindex",
         "number": 2831,
         "url": "https://github.com/rainlanguage/raindex/pull/2831",
@@ -752,14 +746,8 @@
   "lanes": {
     "vet-lifecycle": {
       "ai:blocked-on": {
-        "count": 13,
+        "count": 12,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 259,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/259",
-            "title": "chore: remove submodule-era residue (dead foundry.lock, .gitmodules and root lib/ references)"
-          },
           {
             "repo": "rainlanguage/raindex",
             "number": 2831,
@@ -835,13 +823,13 @@
         ]
       },
       "un-vetted": {
-        "count": 133,
+        "count": 132,
         "prs": [
           {
             "repo": "rainlanguage/rain.math.float",
-            "number": 287,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/287",
-            "title": "test: assert eq's known equal pairs are eq"
+            "number": 293,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/293",
+            "title": "div: maximize an unfull numerator instead of reverting"
           },
           {
             "repo": "rainlanguage/rain.math.float.deploy",
@@ -896,12 +884,6 @@
             "number": 442,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/442",
             "title": "chore: drop the cyclo.sol submodule, commit the vault ABI from the verified implementation"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 286,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/286",
-            "title": "fix: pow checks mul's exponent precondition in the squaring loop (#276)"
           },
           {
             "repo": "rainlanguage/rain.extrospection.deploy",
@@ -2470,6 +2452,18 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 292,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/292",
+      "title": "div keeps one digit fewer for a full numerator at exponent type(int256).min than for the same ratio at a shifted exponent"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 291,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/291",
+      "title": "div reverts MaximizeOverflow for a divisor of ±1 at exponent type(int256).min even when the quotient is representable"
+    },
+    {
       "repo": "rainlanguage/rain.deploy",
       "number": 264,
       "url": "https://github.com/rainlanguage/rain.deploy/issues/264",
@@ -3028,12 +3022,6 @@
       "title": "Pragma keyword fuzz tests draw their random char via charFromMask on complement masks, so every run tests exactly NUL"
     },
     {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 272,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/272",
-      "title": "Coefficient and exponent signs use skip-many for an optional-single dash: multi-dash input is rejected only by accidental arithmetic wrap, with a misleading overflow selector"
-    },
-    {
       "repo": "rainlanguage/rainlang",
       "number": 566,
       "url": "https://github.com/rainlanguage/rainlang/issues/566",
@@ -3124,9 +3112,9 @@
       "title": "rainix-autopublish pushes the version bump before publishing, so a failed publish permanently advances the version"
     },
     {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 269,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/269",
+      "repo": "rainlanguage/rain.math.float.deploy",
+      "number": 37,
+      "url": "https://github.com/rainlanguage/rain.math.float.deploy/issues/37",
       "title": "DecimalFloat was never deployed at its currently pinned address: 5 red testProdDeployment* tests need an on-chain deploy, not a code change"
     },
     {
@@ -3152,12 +3140,6 @@
       "number": 91,
       "url": "https://github.com/rainlanguage/claude-audit-skills/issues/91",
       "title": "Flag release-process docs restated in per-repo docs (second source of truth vs the shared reusable)"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 262,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/262",
-      "title": "Split rain.math.float into a library half and a new rain.math.float.deploy"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -3331,12 +3313,6 @@
       "repo": "rainlanguage/raindex",
       "number": 2836,
       "url": "https://github.com/rainlanguage/raindex/issues/2836",
-      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 260,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/260",
       "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
     },
     {
@@ -3590,12 +3566,6 @@
       "number": 552,
       "url": "https://github.com/rainlanguage/rainlang/issues/552",
       "title": "Split deploy half out of rainlang (rainix#296)"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 257,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/257",
-      "title": "Split deploy half out of rain.math.float (rainix#296)"
     },
     {
       "repo": "rainlanguage/rain.flare",
@@ -4210,12 +4180,6 @@
       "title": "Convert BuildPointers to the shared LibSnapshot (drop the local deployTag/freezeSnapshot copy)"
     },
     {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 252,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/252",
-      "title": "Migrate deploy constants to the per-version snapshot canon (src/generated/<tag>/), retiring the flat *_0_1_1 model + its FFI/registry test"
-    },
-    {
       "repo": "rainlanguage/rainix",
       "number": 271,
       "url": "https://github.com/rainlanguage/rainix/issues/271",
@@ -4768,9 +4732,9 @@
       "title": "Unify getrandom to 0.4 across the wasm dependency graph"
     },
     {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 227,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/227",
+      "repo": "rainlanguage/rain.math.float.deploy",
+      "number": 38,
+      "url": "https://github.com/rainlanguage/rain.math.float.deploy/issues/38",
       "title": "Package Release fails at npm publish: @rainlanguage/float 404 (scoped package never created)"
     },
     {
@@ -4796,12 +4760,6 @@
       "number": 183,
       "url": "https://github.com/rainlanguage/rainix/issues/183",
       "title": "Pinned nixpkgs ships tailscale 1.98.0 — broken MagicDNS on Linux"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 224,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/224",
-      "title": "ci: @rainlanguage/float npm publish fails with 404 Not Found"
     },
     {
       "repo": "rainlanguage/rainlang",
@@ -5428,12 +5386,6 @@
       "title": "check pow precision for very small but positive b in a^b"
     },
     {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 131,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/131",
-      "title": "handle the case of fullA = false in div without erroring"
-    },
-    {
       "repo": "S01-Issuer/Albion-issuance-site",
       "number": 89,
       "url": "https://github.com/S01-Issuer/Albion-issuance-site/issues/89",
@@ -5504,12 +5456,6 @@
       "number": 2049,
       "url": "https://github.com/rainlanguage/raindex/issues/2049",
       "title": "Track Schwab fill prices"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 88,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/88",
-      "title": "support negative base in pow for integer exponent"
     },
     {
       "repo": "rainlanguage/raindex",
@@ -6938,8 +6884,8 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 133,
-    "blockedOn": 13,
+    "unvetted": 132,
+    "blockedOn": 12,
     "ready": 1,
     "needsWork": 97,
     "relink": 0,
@@ -6949,18 +6895,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 252,
+    "totalProducerPrs": 250,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 740,
+    "uncoveredIssues": 734,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 975
+    "openIssues": 969
   },
   "ages": {
     "openIssues": {
-      "meanDays": 280.3,
+      "meanDays": 282.9,
       "medianDays": 110.3,
-      "oldestDays": 1255.1
+      "oldestDays": 1715.8
     }
   }
 }
