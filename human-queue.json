@@ -593,7 +593,7 @@
         "repo": "rainlanguage/rain.math.float",
         "number": 244,
         "url": "https://github.com/rainlanguage/rain.math.float/pull/244",
-        "title": "fix: guard mul() exponent-sum overflow, surface as ExponentOverflow"
+        "title": "fix: pow's squaring loop reverts typed instead of panicking"
       },
       {
         "repo": "rainlanguage/raindex",
@@ -2169,7 +2169,7 @@
             "repo": "rainlanguage/rain.math.float",
             "number": 244,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/244",
-            "title": "fix: guard mul() exponent-sum overflow, surface as ExponentOverflow"
+            "title": "fix: pow's squaring loop reverts typed instead of panicking"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -2505,6 +2505,18 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 256,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/256",
+      "title": "resolveSafe equips the point-of-use read that IAddressRegistryV1 tells consumers MUST NOT happen"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 255,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/255",
+      "title": "AddressRegistry: a binding's moment is not monotonic, so a rebind on a clock-regressing chain can read as older than the binding it replaced"
+    },
     {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 411,
@@ -6956,18 +6968,6 @@
       "number": 138,
       "url": "https://github.com/rainlanguage/rainlang/issues/138",
       "title": "calldata eval rather than onchain deploys"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 137,
-      "url": "https://github.com/rainlanguage/rainlang/issues/137",
-      "title": "LHS parse substitutions"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 135,
-      "url": "https://github.com/rainlanguage/rainlang/issues/135",
-      "title": "rounding direction in math"
     }
   ],
   "archivedRepoPrs": [
@@ -7018,8 +7018,8 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 268.4,
-      "medianDays": 101.9,
+      "meanDays": 266.4,
+      "medianDays": 100.5,
       "oldestDays": 975.0
     }
   }
