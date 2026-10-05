@@ -889,14 +889,8 @@
         ]
       },
       "un-vetted": {
-        "count": 129,
+        "count": 128,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.factory.deploy",
-            "number": 48,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/48",
-            "title": "feat: record the legacy ICloneableFactoryV2 CloneFactory bytecode"
-          },
           {
             "repo": "rainlanguage/rain.lib.leakybucket",
             "number": 126,
@@ -2517,6 +2511,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 411,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/411",
+      "title": "New token deploys still hand ownership to the Safe, re-opening the timelock gap on every token"
+    },
     {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 410,
@@ -6974,12 +6974,6 @@
       "number": 137,
       "url": "https://github.com/rainlanguage/rainlang/issues/137",
       "title": "LHS parse substitutions"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 135,
-      "url": "https://github.com/rainlanguage/rainlang/issues/135",
-      "title": "rounding direction in math"
     }
   ],
   "archivedRepoPrs": [
@@ -7010,7 +7004,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 129,
+    "unvetted": 128,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 100,
@@ -7021,7 +7015,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 254,
+    "totalProducerPrs": 253,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 744,
     "designPresentable": 7,
@@ -7030,9 +7024,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 268.3,
-      "medianDays": 101.6,
-      "oldestDays": 974.7
+      "meanDays": 267.3,
+      "medianDays": 101.7,
+      "oldestDays": 974.8
     }
   }
 }
