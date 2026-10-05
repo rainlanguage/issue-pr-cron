@@ -56,24 +56,6 @@
         "title": "test(dia): exercise StaleDiaPrice revert path in LibDia.getPriceNoOlderThan"
       },
       {
-        "repo": "rainlanguage/rain.math.float",
-        "number": 255,
-        "url": "https://github.com/rainlanguage/rain.math.float/pull/255",
-        "title": "fix(test): correct testEqXEqY exponent assertion for negative coefficients"
-      },
-      {
-        "repo": "rainlanguage/rain.math.float",
-        "number": 253,
-        "url": "https://github.com/rainlanguage/rain.math.float/pull/253",
-        "title": "refactor(deploy): migrate deploy constants to the per-version snapshot canon"
-      },
-      {
-        "repo": "rainlanguage/rain.math.float",
-        "number": 248,
-        "url": "https://github.com/rainlanguage/rain.math.float/pull/248",
-        "title": "feat(parse): accept explicit + sign in e-notation exponent"
-      },
-      {
         "repo": "rainlanguage/rain.flare",
         "number": 170,
         "url": "https://github.com/rainlanguage/rain.flare/pull/170",
@@ -572,12 +554,6 @@
         "title": "docs(natspec): document floor-rounding direction in convert* words"
       },
       {
-        "repo": "rainlanguage/rain.math.float",
-        "number": 245,
-        "url": "https://github.com/rainlanguage/rain.math.float/pull/245",
-        "title": "Guard displayExponent overflow in _toScientific (#185)"
-      },
-      {
         "repo": "rainlanguage/raindex",
         "number": 2779,
         "url": "https://github.com/rainlanguage/raindex/pull/2779",
@@ -588,12 +564,6 @@
         "number": 2778,
         "url": "https://github.com/rainlanguage/raindex/pull/2778",
         "title": "fix: mask signer row operand to low byte"
-      },
-      {
-        "repo": "rainlanguage/rain.math.float",
-        "number": 244,
-        "url": "https://github.com/rainlanguage/rain.math.float/pull/244",
-        "title": "fix: pow's squaring loop reverts typed instead of panicking"
       },
       {
         "repo": "rainlanguage/raindex",
@@ -782,7 +752,7 @@
   "lanes": {
     "vet-lifecycle": {
       "ai:blocked-on": {
-        "count": 16,
+        "count": 13,
         "prs": [
           {
             "repo": "rainlanguage/rain.math.float",
@@ -839,24 +809,6 @@
             "title": "test(dia): exercise StaleDiaPrice revert path in LibDia.getPriceNoOlderThan"
           },
           {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 255,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/255",
-            "title": "fix(test): correct testEqXEqY exponent assertion for negative coefficients"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 253,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/253",
-            "title": "refactor(deploy): migrate deploy constants to the per-version snapshot canon"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 248,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/248",
-            "title": "feat(parse): accept explicit + sign in e-notation exponent"
-          },
-          {
             "repo": "rainlanguage/rain.flare",
             "number": 170,
             "url": "https://github.com/rainlanguage/rain.flare/pull/170",
@@ -886,16 +838,16 @@
         "count": 133,
         "prs": [
           {
-            "repo": "rainlanguage/rainix",
-            "number": 404,
-            "url": "https://github.com/rainlanguage/rainix/pull/404",
-            "title": "Try the fork RPC a suite can carry before the one it cannot"
+            "repo": "rainlanguage/rain.math.float",
+            "number": 287,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/287",
+            "title": "test: assert eq's known equal pairs are eq"
           },
           {
-            "repo": "rainlanguage/rainix",
-            "number": 403,
-            "url": "https://github.com/rainlanguage/rainix/pull/403",
-            "title": "Cap comment lines per bucket, with test split out from src"
+            "repo": "rainlanguage/rain.math.float.deploy",
+            "number": 36,
+            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/36",
+            "title": "Add Float macro and serde crates"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -1749,7 +1701,7 @@
         }
       },
       "ai:needs-work": {
-        "count": 99,
+        "count": 97,
         "prs": [
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -2172,12 +2124,6 @@
             "title": "docs(natspec): document floor-rounding direction in convert* words"
           },
           {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 245,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/245",
-            "title": "Guard displayExponent overflow in _toScientific (#185)"
-          },
-          {
             "repo": "rainlanguage/raindex",
             "number": 2779,
             "url": "https://github.com/rainlanguage/raindex/pull/2779",
@@ -2188,12 +2134,6 @@
             "number": 2778,
             "url": "https://github.com/rainlanguage/raindex/pull/2778",
             "title": "fix: mask signer row operand to low byte"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 244,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/244",
-            "title": "fix: pow's squaring loop reverts typed instead of panicking"
           },
           {
             "repo": "rainlanguage/raindex",
@@ -2529,6 +2469,18 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 264,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/264",
+      "title": "L01: checkResolvedAddressesOnNetworks forks fresh, so same-script verification fails a first-time deploy"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 263,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/263",
+      "title": "Protofire audit report (upload here)"
+    },
     {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 411,
@@ -4256,6 +4208,12 @@
       "number": 2809,
       "url": "https://github.com/rainlanguage/raindex/issues/2809",
       "title": "Convert BuildPointers to the shared LibSnapshot (drop the local deployTag/freezeSnapshot copy)"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 252,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/252",
+      "title": "Migrate deploy constants to the per-version snapshot canon (src/generated/<tag>/), retiring the flat *_0_1_1 model + its FFI/registry test"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -6340,12 +6298,6 @@
       "title": "support negative numbers"
     },
     {
-      "repo": "rainlanguage/rainlang",
-      "number": 214,
-      "url": "https://github.com/rainlanguage/rainlang/issues/214",
-      "title": "support `+` for exponents like `1.0e+2` to match negative"
-    },
-    {
       "repo": "rainlanguage/rain.solver",
       "number": 64,
       "url": "https://github.com/rainlanguage/rain.solver/issues/64",
@@ -6987,9 +6939,9 @@
   "leaks": [],
   "counts": {
     "unvetted": 133,
-    "blockedOn": 16,
+    "blockedOn": 13,
     "ready": 1,
-    "needsWork": 99,
+    "needsWork": 97,
     "relink": 0,
     "design": 7,
     "blockedInfra": 0,
@@ -6997,18 +6949,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 257,
+    "totalProducerPrs": 252,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 738,
+    "uncoveredIssues": 740,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 975
   },
   "ages": {
     "openIssues": {
-      "meanDays": 281.3,
-      "medianDays": 110.2,
-      "oldestDays": 1255.0
+      "meanDays": 280.3,
+      "medianDays": 110.3,
+      "oldestDays": 1255.1
     }
   }
 }
