@@ -823,13 +823,25 @@
         ]
       },
       "un-vetted": {
-        "count": 133,
+        "count": 135,
         "prs": [
           {
             "repo": "rainlanguage/rain.math.float",
-            "number": 299,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/299",
-            "title": "Comma thousands separators in parsing and formatting"
+            "number": 304,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/304",
+            "title": "packLossy: lift the coefficient at the exponent ceiling"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 302,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/302",
+            "title": "mantissa4: shed below -80 so pow10 interpolates at the right position"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 301,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/301",
+            "title": "div: divide by ±1 and keep every numerator digit at the exponent floor"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -2459,27 +2471,15 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 298,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/298",
-      "title": "mantissa4 below exponent -80 is correct only because antilog entries 0 and 1 are equal"
+      "number": 305,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/305",
+      "title": "LibDecimalFloatImplementation.mul panics 0x11 when the exponent sum overflows above type(int256).max"
     },
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 296,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/296",
-      "title": "LibDecimalFloatImplementation.mul panics 0x11 when the exponent sum falls below type(int256).min"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 292,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/292",
-      "title": "div keeps one digit fewer for a full numerator at exponent type(int256).min than for the same ratio at a shifted exponent"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 291,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/291",
-      "title": "div reverts MaximizeOverflow for a divisor of ±1 at exponent type(int256).min even when the quotient is representable"
+      "number": 303,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/303",
+      "title": "log10 and pow10 are accurate to ~1e-4: give them pow's fixed-point precision"
     },
     {
       "repo": "rainlanguage/rain.deploy",
@@ -2606,12 +2606,6 @@
       "number": 143,
       "url": "https://github.com/rainlanguage/rainlang.interface/issues/143",
       "title": "buildParseMetaV2 can write one item past the end of the items region"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 285,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/285",
-      "title": "packLossy reverts at the exponent ceiling for values it could represent by lifting the coefficient"
     },
     {
       "repo": "S01-Issuer/st0x.attest",
@@ -6872,7 +6866,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 133,
+    "unvetted": 135,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 97,
@@ -6883,17 +6877,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 251,
+    "totalProducerPrs": 253,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 731,
+    "uncoveredIssues": 728,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 968
   },
   "ages": {
     "openIssues": {
-      "meanDays": 282.5,
-      "medianDays": 110.3,
+      "meanDays": 282.1,
+      "medianDays": 110.4,
       "oldestDays": 1715.9
     }
   }
