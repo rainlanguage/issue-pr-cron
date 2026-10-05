@@ -883,8 +883,26 @@
         ]
       },
       "un-vetted": {
-        "count": 128,
+        "count": 131,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 262,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/262",
+            "title": "Etch a suite's declared dependencies for the derivation"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 412,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/412",
+            "title": "Give Robinhood an [etherscan] entry pointing at Blockscout"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 260,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/260",
+            "title": "Let a candidate no compiler produces say so"
+          },
           {
             "repo": "rainlanguage/rain.lib.leakybucket",
             "number": 126,
@@ -2638,18 +2656,6 @@
       "title": "Move the mint caps onto the leaky bucket struct API once 0.2.0 publishes"
     },
     {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 247,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/247",
-      "title": "deriveDeployment runs a suite with none of its dependencies on chain, so constructors that need a dependency's code revert"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 246,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/246",
-      "title": "Verification is hardwired to supportedNetworks(), so a consumer that deploys to a subset cannot bind RainDeployVerify"
-    },
-    {
       "repo": "rainlanguage/rainix",
       "number": 395,
       "url": "https://github.com/rainlanguage/rainix/issues/395",
@@ -2834,12 +2840,6 @@
       "number": 146,
       "url": "https://github.com/rainlanguage/rain.extrospection/issues/146",
       "title": "[A01] [MEDIUM] Every command in CLAUDE.md's Build & Test section names a rainix task that no longer exists at the pinned rev"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 244,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/244",
-      "title": "Candidates with no compiler artifact cannot be expressed after #242"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -6974,7 +6974,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 128,
+    "unvetted": 131,
     "blockedOn": 16,
     "ready": 1,
     "needsWork": 99,
@@ -6985,17 +6985,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 252,
+    "totalProducerPrs": 255,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 741,
+    "uncoveredIssues": 738,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 976
+    "openIssues": 975
   },
   "ages": {
     "openIssues": {
-      "meanDays": 281.0,
-      "medianDays": 110.1,
+      "meanDays": 281.3,
+      "medianDays": 110.2,
       "oldestDays": 1255.0
     }
   }
