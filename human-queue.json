@@ -2465,6 +2465,12 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rain.math.float",
+      "number": 311,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/311",
+      "title": "log10Ratio relative reverts MulDivOverflow for inputs its NatSpec admits"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
       "number": 310,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/310",
       "title": "Gas: core arithmetic, packing and comparison hot spots"
@@ -6885,15 +6891,15 @@
     "leaks": 0,
     "totalProducerPrs": 253,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 730,
+    "uncoveredIssues": 731,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 967
+    "openIssues": 968
   },
   "ages": {
     "openIssues": {
-      "meanDays": 282.4,
-      "medianDays": 110.9,
+      "meanDays": 282.1,
+      "medianDays": 111.0,
       "oldestDays": 1716.5
     }
   }
