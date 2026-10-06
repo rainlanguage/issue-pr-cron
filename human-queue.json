@@ -817,8 +817,14 @@
         ]
       },
       "un-vetted": {
-        "count": 135,
+        "count": 136,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 267,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/267",
+            "title": "release: rain-deploy 0.1.14"
+          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 266,
@@ -847,7 +853,7 @@
             "repo": "rainlanguage/rain.math.float",
             "number": 318,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/318",
-            "title": "Exact reference fuzz over the full Float range (replaces the f64 comparison)"
+            "title": "Exact reference fuzz over the full Float range, transcendentals included"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -2468,12 +2474,6 @@
       "number": 325,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/325",
       "title": "Implementation mul reverts Panic(0x11), not ExponentOverflow, when the product exponent passes int256.max"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 316,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/316",
-      "title": "Rust differential fuzz uses f64 (≈16 digits, |c|≤1e15, e∈[-15,15]); replace with an exact reference over the full Float range"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -6878,7 +6878,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 135,
+    "unvetted": 136,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -6889,9 +6889,9 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 252,
+    "totalProducerPrs": 253,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 732,
+    "uncoveredIssues": 731,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 962
@@ -6899,7 +6899,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 283.4,
-      "medianDays": 111.3,
+      "medianDays": 111.4,
       "oldestDays": 1716.9
     }
   }
