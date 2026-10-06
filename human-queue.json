@@ -2465,24 +2465,6 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 314,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/314",
-      "title": "roundSignificant wraps its exponent at int256.max and reverts at int256.min"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 313,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/313",
-      "title": "pow(a, 1) reverts ExponentOverflow for a representable a at the top of the range"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 312,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/312",
-      "title": "pow(±1, b) reverts for |b| >= 1e77 instead of returning ±1"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
       "number": 311,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/311",
       "title": "log10Ratio relative reverts MulDivOverflow for inputs its NatSpec admits"
@@ -6909,15 +6891,15 @@
     "leaks": 0,
     "totalProducerPrs": 253,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 734,
+    "uncoveredIssues": 731,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 971
+    "openIssues": 968
   },
   "ages": {
     "openIssues": {
-      "meanDays": 281.3,
-      "medianDays": 111.0,
+      "meanDays": 282.2,
+      "medianDays": 111.1,
       "oldestDays": 1716.6
     }
   }
