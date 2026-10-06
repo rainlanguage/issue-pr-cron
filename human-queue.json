@@ -821,6 +821,12 @@
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
+            "number": 266,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/266",
+            "title": "ci: drop the networks input rainix no longer declares from manual sol verify"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
             "number": 265,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/265",
             "title": "Split simulation verification from confirmed-deployment verification"
@@ -854,12 +860,6 @@
             "number": 309,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/309",
             "title": "Gas: cheaper fixed-point log10/pow10/pow/sqrt without losing precision (#306)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 307,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/307",
-            "title": "mul: revert ExponentOverflow when the exponent rises above type(int256).max"
           },
           {
             "repo": "rainlanguage/rain.math.float.deploy",
@@ -2457,6 +2457,18 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 326,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/326",
+      "title": "testNegationReversesOrder fails: minus of an int224.min coefficient does not reverse order"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 325,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/325",
+      "title": "Implementation mul reverts Panic(0x11), not ExponentOverflow, when the product exponent passes int256.max"
+    },
     {
       "repo": "rainlanguage/rain.math.float",
       "number": 316,
@@ -6879,16 +6891,16 @@
     "leaks": 0,
     "totalProducerPrs": 252,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 730,
+    "uncoveredIssues": 732,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 961
+    "openIssues": 962
   },
   "ages": {
     "openIssues": {
-      "meanDays": 283.6,
+      "meanDays": 283.4,
       "medianDays": 111.3,
-      "oldestDays": 1716.8
+      "oldestDays": 1716.9
     }
   }
 }
