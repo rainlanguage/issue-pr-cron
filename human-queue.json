@@ -820,16 +820,16 @@
         "count": 135,
         "prs": [
           {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 265,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/265",
+            "title": "Split simulation verification from confirmed-deployment verification"
+          },
+          {
             "repo": "rainlanguage/rain.math.float",
             "number": 323,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/323",
             "title": "div: ExponentOverflow, not Panic, for int256.min over a negative power of ten at int256.max (#320)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 322,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/322",
-            "title": "Format by threshold in the library without materialising abs"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -2486,12 +2486,6 @@
       "number": 298,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/298",
       "title": "mantissa4 below exponent -80 is correct only because antilog entries 0 and 1 are equal"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 264,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/264",
-      "title": "L01: checkResolvedAddressesOnNetworks forks fresh, so same-script verification fails a first-time deploy"
     },
     {
       "repo": "rainlanguage/rain.deploy",
@@ -6885,14 +6879,14 @@
     "leaks": 0,
     "totalProducerPrs": 252,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 731,
+    "uncoveredIssues": 730,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 962
+    "openIssues": 961
   },
   "ages": {
     "openIssues": {
-      "meanDays": 283.3,
+      "meanDays": 283.6,
       "medianDays": 111.3,
       "oldestDays": 1716.8
     }
