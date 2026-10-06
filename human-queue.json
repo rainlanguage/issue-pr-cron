@@ -817,7 +817,7 @@
         ]
       },
       "un-vetted": {
-        "count": 136,
+        "count": 135,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -860,12 +860,6 @@
             "number": 317,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/317",
             "title": "Derive exact expected errors from an independent oracle"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 309,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/309",
-            "title": "Gas: cheaper fixed-point log10/pow10/pow/sqrt without losing precision (#306)"
           },
           {
             "repo": "rainlanguage/rain.math.float.deploy",
@@ -6878,7 +6872,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 136,
+    "unvetted": 135,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -6889,7 +6883,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 253,
+    "totalProducerPrs": 252,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 731,
     "designPresentable": 7,
@@ -6898,9 +6892,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 283.4,
+      "meanDays": 283.5,
       "medianDays": 111.4,
-      "oldestDays": 1716.9
+      "oldestDays": 1717.0
     }
   }
 }
