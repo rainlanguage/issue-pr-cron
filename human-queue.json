@@ -817,7 +817,7 @@
         ]
       },
       "un-vetted": {
-        "count": 136,
+        "count": 134,
         "prs": [
           {
             "repo": "rainlanguage/rain.math.float",
@@ -850,22 +850,10 @@
             "title": "packLossy: lift the coefficient at the exponent ceiling"
           },
           {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 297,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/297",
-            "title": "pow: fixed point fractional leg, 4 figures to ~35 (#92, #148)"
-          },
-          {
             "repo": "rainlanguage/rain.math.float.deploy",
             "number": 36,
             "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/36",
             "title": "Add Float macro and serde crates"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 262,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/262",
-            "title": "Etch a suite's declared dependencies for the derivation"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -2465,6 +2453,18 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rain.math.float",
+      "number": 320,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/320",
+      "title": "Two implementation div fuzz tests fail on main for an int256.min coefficient"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 319,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/319",
+      "title": "format(Float) reverts ExponentOverflow for int224.min at the int32.max exponent instead of formatting it"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
       "number": 316,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/316",
       "title": "Rust differential fuzz uses f64 (≈16 digits, |c|≤1e15, e∈[-15,15]); replace with an exact reference over the full Float range"
@@ -2486,12 +2486,6 @@
       "number": 306,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/306",
       "title": "Reduce gas of the fixed-point log10/pow10/pow/sqrt without losing precision"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 303,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/303",
-      "title": "log10 and pow10 are accurate to ~1e-4: give them pow's fixed-point precision"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -6884,7 +6878,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 136,
+    "unvetted": 134,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -6895,18 +6889,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 253,
+    "totalProducerPrs": 251,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 732,
+    "uncoveredIssues": 733,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 967
+    "openIssues": 964
   },
   "ages": {
     "openIssues": {
-      "meanDays": 282.6,
+      "meanDays": 282.7,
       "medianDays": 111.2,
-      "oldestDays": 1716.7
+      "oldestDays": 1716.8
     }
   }
 }
