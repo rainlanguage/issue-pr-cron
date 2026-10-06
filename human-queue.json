@@ -817,8 +817,14 @@
         ]
       },
       "un-vetted": {
-        "count": 135,
+        "count": 136,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 328,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/328",
+            "title": "parse: an all-zero fraction parses exactly as no fraction"
+          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 267,
@@ -6872,7 +6878,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 135,
+    "unvetted": 136,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -6883,17 +6889,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 252,
+    "totalProducerPrs": 253,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 731,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 962
+    "openIssues": 963
   },
   "ages": {
     "openIssues": {
-      "meanDays": 283.5,
-      "medianDays": 111.4,
+      "meanDays": 283.2,
+      "medianDays": 111.5,
       "oldestDays": 1717.0
     }
   }
