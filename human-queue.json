@@ -817,8 +817,14 @@
         ]
       },
       "un-vetted": {
-        "count": 135,
+        "count": 136,
         "prs": [
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 405,
+            "url": "https://github.com/rainlanguage/rainix/pull/405",
+            "title": "Try the hyperevm endpoint that survives repeated forks first"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 309,
@@ -2462,12 +2468,6 @@
       "number": 310,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/310",
       "title": "Gas: core arithmetic, packing and comparison hot spots"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 308,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/308",
-      "title": "Approximate functions' correctness rests on fuzz-calibrated margins, not proven error bounds"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -6872,7 +6872,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 135,
+    "unvetted": 136,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -6883,9 +6883,9 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 252,
+    "totalProducerPrs": 253,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 731,
+    "uncoveredIssues": 730,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 967
@@ -6893,7 +6893,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 282.3,
-      "medianDays": 110.8,
+      "medianDays": 110.9,
       "oldestDays": 1716.4
     }
   }
