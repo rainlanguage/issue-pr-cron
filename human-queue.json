@@ -820,10 +820,16 @@
         "count": 136,
         "prs": [
           {
-            "repo": "rainlanguage/rainix",
-            "number": 405,
-            "url": "https://github.com/rainlanguage/rainix/pull/405",
-            "title": "Try the hyperevm endpoint that survives repeated forks first"
+            "repo": "rainlanguage/rain.math.float",
+            "number": 318,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/318",
+            "title": "Exact reference fuzz over the full Float range (replaces the f64 comparison)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 317,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/317",
+            "title": "Derive exact expected errors from an independent oracle"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -842,12 +848,6 @@
             "number": 304,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/304",
             "title": "packLossy: lift the coefficient at the exponent ceiling"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 301,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/301",
-            "title": "div: divide by ±1 and keep every numerator digit at the exponent floor"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -2463,6 +2463,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 316,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/316",
+      "title": "Rust differential fuzz uses f64 (≈16 digits, |c|≤1e15, e∈[-15,15]); replace with an exact reference over the full Float range"
+    },
     {
       "repo": "rainlanguage/rain.math.float",
       "number": 311,
@@ -6891,15 +6897,15 @@
     "leaks": 0,
     "totalProducerPrs": 253,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 731,
+    "uncoveredIssues": 732,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 968
+    "openIssues": 967
   },
   "ages": {
     "openIssues": {
-      "meanDays": 282.3,
-      "medianDays": 111.1,
+      "meanDays": 282.6,
+      "medianDays": 111.2,
       "oldestDays": 1716.7
     }
   }
