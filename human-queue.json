@@ -817,8 +817,26 @@
         ]
       },
       "un-vetted": {
-        "count": 134,
+        "count": 135,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 323,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/323",
+            "title": "div: ExponentOverflow, not Panic, for int256.min over a negative power of ten at int256.max (#320)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 322,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/322",
+            "title": "Format by threshold in the library without materialising abs"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 321,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/321",
+            "title": "Gas: maximize, mul and packLossy without touching the packed path"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 318,
@@ -842,12 +860,6 @@
             "number": 307,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/307",
             "title": "mul: revert ExponentOverflow when the exponent rises above type(int256).max"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 304,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/304",
-            "title": "packLossy: lift the coefficient at the exponent ceiling"
           },
           {
             "repo": "rainlanguage/rain.math.float.deploy",
@@ -1388,12 +1400,6 @@
             "number": 391,
             "url": "https://github.com/rainlanguage/rainix/pull/391",
             "title": "Install the staged config from rainix, not from a script in every consumer"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 237,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/237",
-            "title": "Generate the network config from the roster instead of comparing it"
           },
           {
             "repo": "rainlanguage/rain-org-health",
@@ -2451,18 +2457,6 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 320,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/320",
-      "title": "Two implementation div fuzz tests fail on main for an int256.min coefficient"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 319,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/319",
-      "title": "format(Float) reverts ExponentOverflow for int224.min at the int32.max exponent instead of formatting it"
-    },
     {
       "repo": "rainlanguage/rain.math.float",
       "number": 316,
@@ -6878,7 +6872,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 134,
+    "unvetted": 135,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -6889,17 +6883,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 251,
+    "totalProducerPrs": 252,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 733,
+    "uncoveredIssues": 731,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 964
+    "openIssues": 962
   },
   "ages": {
     "openIssues": {
-      "meanDays": 282.7,
-      "medianDays": 111.2,
+      "meanDays": 283.3,
+      "medianDays": 111.3,
       "oldestDays": 1716.8
     }
   }
