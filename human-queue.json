@@ -817,8 +817,26 @@
         ]
       },
       "un-vetted": {
-        "count": 135,
+        "count": 138,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 351,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/351",
+            "title": "Document add/sub rounding; oracles apply the rule to the exact sum"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 429,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/429",
+            "title": "Deploy the EU assets authoriser as a clone with its own minter"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 428,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/428",
+            "title": "Subgraph: index RBAC and ownership changes across the deployment networks"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 338,
@@ -2458,6 +2476,18 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 270,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/270",
+      "title": "No story for factory clones: consumers hand-roll the candidate and the broadcast"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 268,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/268",
+      "title": "LibICloneableFactoryV4: expose cloneRuntimeCode alongside cloneCreationCode"
+    },
+    {
       "repo": "rainlanguage/rain.math.float",
       "number": 350,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/350",
@@ -2486,12 +2516,6 @@
       "number": 346,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/346",
       "title": "Restore the integer-decimal sqrt lost in #309's rebase (~15k gas per sqrt)"
-    },
-    {
-      "repo": "S01-Issuer/st0x.deploy",
-      "number": 427,
-      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/427",
-      "title": "Subgraph: index RBAC changes so role holders are queryable"
     },
     {
       "repo": "rainlanguage/rain.math.float.deploy",
@@ -2528,12 +2552,6 @@
       "number": 341,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/341",
       "title": "parseDecimalFloat rejects representable literals past int256 integer part (e.g. 1e77 written out)"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 340,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/340",
-      "title": "Mixed-sign add/sub rounds away from zero; oracles copy the alignment"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -2585,12 +2603,6 @@
     },
     {
       "repo": "S01-Issuer/s01.ops",
-      "number": 461,
-      "url": "https://github.com/S01-Issuer/s01.ops/issues/461",
-      "title": "[4ts] The three access sets: DA's decisions"
-    },
-    {
-      "repo": "S01-Issuer/s01.ops",
       "number": 460,
       "url": "https://github.com/S01-Issuer/s01.ops/issues/460",
       "title": "[4ts] Start-here order, what-changed log, Q&A box, preview teaser"
@@ -2630,12 +2642,6 @@
       "number": 452,
       "url": "https://github.com/S01-Issuer/s01.ops/issues/452",
       "title": "[4ts fix 12] Governance basics"
-    },
-    {
-      "repo": "S01-Issuer/s01.ops",
-      "number": 451,
-      "url": "https://github.com/S01-Issuer/s01.ops/issues/451",
-      "title": "[4ts fix 10] Deck v21"
     },
     {
       "repo": "S01-Issuer/s01.ops",
@@ -6998,7 +7004,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 135,
+    "unvetted": 138,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7009,9 +7015,9 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 252,
+    "totalProducerPrs": 255,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 752,
+    "uncoveredIssues": 750,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
