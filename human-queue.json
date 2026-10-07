@@ -6894,12 +6894,12 @@
     "uncoveredIssues": 731,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 963
+    "openIssues": 962
   },
   "ages": {
     "openIssues": {
-      "meanDays": 283.7,
-      "medianDays": 111.9,
+      "meanDays": 284.0,
+      "medianDays": 112.0,
       "oldestDays": 1717.5
     }
   }
