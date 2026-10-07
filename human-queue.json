@@ -817,13 +817,49 @@
         ]
       },
       "un-vetted": {
-        "count": 142,
+        "count": 148,
         "prs": [
           {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 358,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/358",
+            "title": "Integer sqrt with a low-word residual check; pow routes b = n + 1/2 through it"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 357,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/357",
+            "title": "log10Ratio: scale the relative difference by a power-of-ten cascade, not maximizeFull"
+          },
+          {
             "repo": "S01-Issuer/st0x.deploy",
-            "number": 431,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/431",
-            "title": "Register the EU authoriser deploy in the broadcast dropdown"
+            "number": 439,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/439",
+            "title": "Switch the EU authoriser prod test on the migration registry"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 356,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/356",
+            "title": "Error choices follow a rule by value (#343); remove CoefficientOverflow"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 355,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/355",
+            "title": "Parse representable literals past int256"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 354,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/354",
+            "title": "Bound the transcendental tests independently of the implementation"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 272,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/272",
+            "title": "Declare and broadcast a factory clone through the same loop as a Zoltu deploy"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -877,7 +913,7 @@
             "repo": "rainlanguage/rain.math.float",
             "number": 336,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/336",
-            "title": "log10Ratio: state the relative domain (a + b >= 1e50) and pin #311"
+            "title": "log10Ratio: revert Log10RatioRelativeSumTooSmall below the relative domain (a + b < 1e50)"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -2500,16 +2536,22 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 435,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/435",
+      "title": "Register the EU authoriser clone addresses in rain-deploy's address registry"
+    },
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 433,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/433",
+      "title": "manual-broadcast's --legacy is per-dispatch, but HyperEVM and Robinhood need opposite values"
+    },
+    {
       "repo": "rainlanguage/rain.factory",
       "number": 269,
       "url": "https://github.com/rainlanguage/rain.factory/issues/269",
       "title": "comment-loc-cap reds rainix-sol/static on main: a spec-on-the-interface repo cannot meet a 2:1 comment:code cap in src"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 270,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/270",
-      "title": "No story for factory clones: consumers hand-roll the candidate and the broadcast"
     },
     {
       "repo": "rainlanguage/rain.factory",
@@ -2530,24 +2572,6 @@
       "title": "Should lossy packing round to the closest Float instead of truncating?"
     },
     {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 348,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/348",
-      "title": "Restore log10Ratio's cascade scaling in place of maximizeFull, lost in #309's rebase"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 347,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/347",
-      "title": "Restore the integer sqrt's low-word residual rounding check (−315 gas, never committed)"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 346,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/346",
-      "title": "Restore the integer-decimal sqrt lost in #309's rebase (~15k gas per sqrt)"
-    },
-    {
       "repo": "rainlanguage/rain.math.float.deploy",
       "number": 40,
       "url": "https://github.com/rainlanguage/rain.math.float.deploy/issues/40",
@@ -2564,24 +2588,6 @@
       "number": 344,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/344",
       "title": "Payload helpers and old-implementation copies are used as value oracles"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 343,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/343",
-      "title": "Oracle error choices follow implementation intermediates, not a documented rule"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 342,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/342",
-      "title": "Solidity error-bound helpers import their constants and units from the implementation"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 341,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/341",
-      "title": "parseDecimalFloat rejects representable literals past int256 integer part (e.g. 1e77 written out)"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -6980,24 +6986,6 @@
       "number": 205,
       "url": "https://github.com/rainlanguage/raindex/issues/205",
       "title": "Take Orders Chart: Token Balances"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 204,
-      "url": "https://github.com/rainlanguage/raindex/issues/204",
-      "title": "Live Chart w/ Polling"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 183,
-      "url": "https://github.com/rainlanguage/raindex/issues/183",
-      "title": "Disable \"Add Order\" button when linting finds problems"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 168,
-      "url": "https://github.com/rainlanguage/raindex/issues/168",
-      "title": "put counterparty desired amount in context"
     }
   ],
   "archivedRepoPrs": [
@@ -7028,7 +7016,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 142,
+    "unvetted": 148,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7039,18 +7027,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 259,
+    "totalProducerPrs": 265,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 750,
+    "uncoveredIssues": 742,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 260.0,
-      "medianDays": 95.2,
-      "oldestDays": 977.4
+      "meanDays": 256.1,
+      "medianDays": 94.9,
+      "oldestDays": 971.9
     }
   }
 }
