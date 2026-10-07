@@ -817,8 +817,20 @@
         ]
       },
       "un-vetted": {
-        "count": 135,
+        "count": 137,
         "prs": [
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 426,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/426",
+            "title": "Bump rain-vats to 0.2.4, with the dependency set it requires"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 338,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/338",
+            "title": "pow/pow10 range errors report the call's input"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 337,
@@ -2458,16 +2470,58 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain.math.float.deploy",
+      "number": 40,
+      "url": "https://github.com/rainlanguage/rain.math.float.deploy/issues/40",
+      "title": "Stop deploying the log-table data contract; the library no longer reads it"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 345,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/345",
+      "title": "library.rs byte-exact lossy pack checks pin the digit-shedding representation"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 344,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/344",
+      "title": "Payload helpers and old-implementation copies are used as value oracles"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 343,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/343",
+      "title": "Oracle error choices follow implementation intermediates, not a documented rule"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 342,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/342",
+      "title": "Solidity error-bound helpers import their constants and units from the implementation"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 341,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/341",
+      "title": "parseDecimalFloat rejects representable literals past int256 integer part (e.g. 1e77 written out)"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 340,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/340",
+      "title": "Mixed-sign add/sub rounds away from zero; oracles copy the alignment"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 339,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/339",
+      "title": "Tracking: test oracles that mirror library algorithms"
+    },
+    {
       "repo": "rainlanguage/rain.math.float",
       "number": 332,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/332",
       "title": "Arithmetic results just past int224 pack below int224.max, so add is not monotone and sub/mul/div disagree with minus"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 329,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/329",
-      "title": "pow and pow10 range errors report an internal intermediate instead of their inputs"
     },
     {
       "repo": "rainlanguage/rain.math.float.deploy",
@@ -6920,42 +6974,6 @@
       "number": 135,
       "url": "https://github.com/rainlanguage/rainlang/issues/135",
       "title": "rounding direction in math"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 133,
-      "url": "https://github.com/rainlanguage/rainlang/issues/133",
-      "title": "saturating math"
-    },
-    {
-      "repo": "rainlanguage/rain.cli",
-      "number": 6,
-      "url": "https://github.com/rainlanguage/rain.cli/issues/6",
-      "title": "use current metadata cli at https://crates.io/crates/rain-metadata"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 148,
-      "url": "https://github.com/rainlanguage/raindex/issues/148",
-      "title": "Call local Parser in addOrder functions"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 142,
-      "url": "https://github.com/rainlanguage/raindex/issues/142",
-      "title": "Transaction status notice should last until the subgraph includes the submitted transaction"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 102,
-      "url": "https://github.com/rainlanguage/raindex/issues/102",
-      "title": "subgraph query integration tests"
-    },
-    {
-      "repo": "rainlanguage/dotrain",
-      "number": 61,
-      "url": "https://github.com/rainlanguage/dotrain/issues/61",
-      "title": "fuzzing all the regexes against expectations"
     }
   ],
   "archivedRepoPrs": [
@@ -6986,7 +7004,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 135,
+    "unvetted": 137,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -6997,18 +7015,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 252,
+    "totalProducerPrs": 254,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 750,
+    "uncoveredIssues": 751,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 274.4,
-      "medianDays": 101.8,
-      "oldestDays": 1219.2
+      "meanDays": 265.9,
+      "medianDays": 95.1,
+      "oldestDays": 977.3
     }
   }
 }
