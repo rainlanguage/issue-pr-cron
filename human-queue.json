@@ -820,6 +820,24 @@
         "count": 134,
         "prs": [
           {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 331,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/331",
+            "title": "Pin #325 mul repros; fuzz mul for any non-ExponentOverflow revert"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 330,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/330",
+            "title": "test: main sheds a digit for every power of ten divisor it cannot lift to 1e75"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 217,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/217",
+            "title": "fix: get forge lint -D warnings green again"
+          },
+          {
             "repo": "rainlanguage/rain.deploy",
             "number": 267,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/267",
@@ -833,27 +851,9 @@
           },
           {
             "repo": "rainlanguage/rain.math.float",
-            "number": 323,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/323",
-            "title": "div: ExponentOverflow, not Panic, for int256.min over a negative power of ten at int256.max (#320)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
             "number": 321,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/321",
             "title": "Gas: maximize, mul and packLossy without touching the packed path"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 318,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/318",
-            "title": "Exact reference fuzz over the full Float range, transcendentals included"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 317,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/317",
-            "title": "Derive exact expected errors from an independent oracle"
           },
           {
             "repo": "rainlanguage/rain.math.float.deploy",
@@ -2452,6 +2452,18 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 329,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/329",
+      "title": "pow and pow10 range errors report an internal intermediate instead of their inputs"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float.deploy",
+      "number": 39,
+      "url": "https://github.com/rainlanguage/rain.math.float.deploy/issues/39",
+      "title": "Test the published rain-math-float crate's Rust API in this repo"
+    },
+    {
       "repo": "S01-Issuer/s01.ops",
       "number": 466,
       "url": "https://github.com/S01-Issuer/s01.ops/issues/466",
@@ -2513,21 +2525,9 @@
     },
     {
       "repo": "S01-Issuer/s01.ops",
-      "number": 456,
-      "url": "https://github.com/S01-Issuer/s01.ops/issues/456",
-      "title": "[4ts] Zip manifest, dashboards and public PDFs in every zip"
-    },
-    {
-      "repo": "S01-Issuer/s01.ops",
       "number": 455,
       "url": "https://github.com/S01-Issuer/s01.ops/issues/455",
       "title": "[4ts fix 15] 4ts v3 reports in the Feedback folder with the engagement disclosure"
-    },
-    {
-      "repo": "S01-Issuer/s01.ops",
-      "number": 454,
-      "url": "https://github.com/S01-Issuer/s01.ops/issues/454",
-      "title": "[4ts fix 14] File hygiene"
     },
     {
       "repo": "S01-Issuer/s01.ops",
@@ -2594,12 +2594,6 @@
       "number": 326,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/326",
       "title": "testNegationReversesOrder fails: minus of an int224.min coefficient does not reverse order"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 325,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/325",
-      "title": "Implementation mul reverts Panic(0x11), not ExponentOverflow, when the product exponent passes int256.max"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -7011,16 +7005,16 @@
     "leaks": 0,
     "totalProducerPrs": 251,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 753,
+    "uncoveredIssues": 752,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 271.8,
-      "medianDays": 99.0,
-      "oldestDays": 995.9
+      "meanDays": 274.3,
+      "medianDays": 101.7,
+      "oldestDays": 1219.1
     }
   }
 }
