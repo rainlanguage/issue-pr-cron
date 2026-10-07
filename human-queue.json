@@ -817,25 +817,19 @@
         ]
       },
       "un-vetted": {
-        "count": 138,
+        "count": 135,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 337,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/337",
+            "title": "Gas: format and parse without the per-digit loops"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 336,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/336",
             "title": "log10Ratio: state the relative domain (a + b >= 1e50) and pin #311"
-          },
-          {
-            "repo": "rainlanguage/rainix",
-            "number": 408,
-            "url": "https://github.com/rainlanguage/rainix/pull/408",
-            "title": "fix(rpc): bring flare's archive_blocks forward off the retired 31_843_105 pin"
-          },
-          {
-            "repo": "rainlanguage/rain.flare",
-            "number": 218,
-            "url": "https://github.com/rainlanguage/rain.flare/pull/218",
-            "title": "test: pin every flare fork test at block 37796420"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -848,18 +842,6 @@
             "number": 333,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/333",
             "title": "minus and abs take int224.max for an int224.min coefficient"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 331,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/331",
-            "title": "Pin #325 mul repros; fuzz mul for any non-ExponentOverflow revert"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 330,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/330",
-            "title": "test: main sheds a digit for every power of ten divisor it cannot lift to 1e75"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -2475,12 +2457,6 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 335,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/335",
-      "title": "testMainEquivalenceDivNearFloor fails for a 76 digit quotient main sheds a digit from at the floor"
-    },
     {
       "repo": "rainlanguage/rain.math.float",
       "number": 332,
@@ -7010,7 +6986,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 138,
+    "unvetted": 135,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7021,18 +6997,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 255,
+    "totalProducerPrs": 252,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 751,
+    "uncoveredIssues": 750,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 271.9,
-      "medianDays": 99.1,
-      "oldestDays": 996.0
+      "meanDays": 274.4,
+      "medianDays": 101.8,
+      "oldestDays": 1219.2
     }
   }
 }
