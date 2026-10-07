@@ -817,19 +817,43 @@
         ]
       },
       "un-vetted": {
-        "count": 138,
+        "count": 142,
         "prs": [
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 431,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/431",
+            "title": "Register the EU authoriser deploy in the broadcast dropdown"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 271,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/271",
+            "title": "Drop the networks input rainix no longer accepts"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 353,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/353",
+            "title": "Value oracles for every operation; lossy pack and parse checks compare values"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 352,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/352",
+            "title": "Gas: inline the log10Ratio and exp10Fixed series multiplies (#306)"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 430,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/430",
+            "title": "Author the Safe bundle that grants the EU authoriser's roles"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 351,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/351",
             "title": "Document add/sub rounding; oracles apply the rule to the exact sum"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 429,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/429",
-            "title": "Deploy the EU assets authoriser as a clone with its own minter"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -2475,6 +2499,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 269,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/269",
+      "title": "comment-loc-cap reds rainix-sol/static on main: a spec-on-the-interface repo cannot meet a 2:1 comment:code cap in src"
+    },
     {
       "repo": "rainlanguage/rain.deploy",
       "number": 270,
@@ -6968,12 +6998,6 @@
       "number": 168,
       "url": "https://github.com/rainlanguage/raindex/issues/168",
       "title": "put counterparty desired amount in context"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 142,
-      "url": "https://github.com/rainlanguage/rainlang/issues/142",
-      "title": "utf8 support for parsing"
     }
   ],
   "archivedRepoPrs": [
@@ -7004,7 +7028,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 138,
+    "unvetted": 142,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7015,7 +7039,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 255,
+    "totalProducerPrs": 259,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 750,
     "designPresentable": 7,
@@ -7024,8 +7048,8 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 261.0,
-      "medianDays": 95.1,
+      "meanDays": 260.0,
+      "medianDays": 95.2,
       "oldestDays": 977.4
     }
   }
