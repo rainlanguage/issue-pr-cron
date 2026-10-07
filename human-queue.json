@@ -817,14 +817,8 @@
         ]
       },
       "un-vetted": {
-        "count": 137,
+        "count": 135,
         "prs": [
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 426,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/426",
-            "title": "Bump rain-vats to 0.2.4, with the dependency set it requires"
-          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 338,
@@ -842,12 +836,6 @@
             "number": 336,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/336",
             "title": "log10Ratio: state the relative domain (a + b >= 1e50) and pin #311"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 334,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/334",
-            "title": "Delete lookupLogTableVal and its tests"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -2469,6 +2457,42 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 350,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/350",
+      "title": "Scope: make every operation round once toward zero"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 349,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/349",
+      "title": "Should lossy packing round to the closest Float instead of truncating?"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 348,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/348",
+      "title": "Restore log10Ratio's cascade scaling in place of maximizeFull, lost in #309's rebase"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 347,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/347",
+      "title": "Restore the integer sqrt's low-word residual rounding check (−315 gas, never committed)"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 346,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/346",
+      "title": "Restore the integer-decimal sqrt lost in #309's rebase (~15k gas per sqrt)"
+    },
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 427,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/427",
+      "title": "Subgraph: index RBAC changes so role holders are queryable"
+    },
     {
       "repo": "rainlanguage/rain.math.float.deploy",
       "number": 40,
@@ -6944,36 +6968,6 @@
       "number": 142,
       "url": "https://github.com/rainlanguage/rainlang/issues/142",
       "title": "utf8 support for parsing"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 141,
-      "url": "https://github.com/rainlanguage/rainlang/issues/141",
-      "title": "some kind of onchain registry (ens?) support for things like well known addresses (e.g. weth)"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 139,
-      "url": "https://github.com/rainlanguage/rainlang/issues/139",
-      "title": "undefined word (requires subsitution)"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 138,
-      "url": "https://github.com/rainlanguage/rainlang/issues/138",
-      "title": "calldata eval rather than onchain deploys"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 137,
-      "url": "https://github.com/rainlanguage/rainlang/issues/137",
-      "title": "LHS parse substitutions"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 135,
-      "url": "https://github.com/rainlanguage/rainlang/issues/135",
-      "title": "rounding direction in math"
     }
   ],
   "archivedRepoPrs": [
@@ -7004,7 +6998,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 137,
+    "unvetted": 135,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7015,18 +7009,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 254,
+    "totalProducerPrs": 252,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 751,
+    "uncoveredIssues": 752,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 265.9,
+      "meanDays": 261.0,
       "medianDays": 95.1,
-      "oldestDays": 977.3
+      "oldestDays": 977.4
     }
   }
 }
