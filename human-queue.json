@@ -817,8 +817,38 @@
         ]
       },
       "un-vetted": {
-        "count": 134,
+        "count": 138,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 336,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/336",
+            "title": "log10Ratio: state the relative domain (a + b >= 1e50) and pin #311"
+          },
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 408,
+            "url": "https://github.com/rainlanguage/rainix/pull/408",
+            "title": "fix(rpc): bring flare's archive_blocks forward off the retired 31_843_105 pin"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 218,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/218",
+            "title": "test: pin every flare fork test at block 37796420"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 334,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/334",
+            "title": "Delete lookupLogTableVal and its tests"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 333,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/333",
+            "title": "minus and abs take int224.max for an int224.min coefficient"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 331,
@@ -830,12 +860,6 @@
             "number": 330,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/330",
             "title": "test: main sheds a digit for every power of ten divisor it cannot lift to 1e75"
-          },
-          {
-            "repo": "rainlanguage/rain.flare",
-            "number": 217,
-            "url": "https://github.com/rainlanguage/rain.flare/pull/217",
-            "title": "fix: get forge lint -D warnings green again"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -2453,6 +2477,18 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rain.math.float",
+      "number": 335,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/335",
+      "title": "testMainEquivalenceDivNearFloor fails for a 76 digit quotient main sheds a digit from at the floor"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 332,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/332",
+      "title": "Arithmetic results just past int224 pack below int224.max, so add is not monotone and sub/mul/div disagree with minus"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
       "number": 329,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/329",
       "title": "pow and pow10 range errors report an internal intermediate instead of their inputs"
@@ -2591,18 +2627,6 @@
     },
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 326,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/326",
-      "title": "testNegationReversesOrder fails: minus of an int224.min coefficient does not reverse order"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 311,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/311",
-      "title": "log10Ratio relative reverts MulDivOverflow for inputs its NatSpec admits"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
       "number": 310,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/310",
       "title": "Gas: core arithmetic, packing and comparison hot spots"
@@ -2612,12 +2636,6 @@
       "number": 306,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/306",
       "title": "Reduce gas of the fixed-point log10/pow10/pow/sqrt without losing precision"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 298,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/298",
-      "title": "mantissa4 below exponent -80 is correct only because antilog entries 0 and 1 are equal"
     },
     {
       "repo": "rainlanguage/rain.deploy",
@@ -6992,7 +7010,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 134,
+    "unvetted": 138,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7003,18 +7021,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 251,
+    "totalProducerPrs": 255,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 752,
+    "uncoveredIssues": 751,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 274.3,
-      "medianDays": 101.7,
-      "oldestDays": 1219.1
+      "meanDays": 271.9,
+      "medianDays": 99.1,
+      "oldestDays": 996.0
     }
   }
 }
