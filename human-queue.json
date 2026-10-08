@@ -820,6 +820,12 @@
         "count": 147,
         "prs": [
           {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 444,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/444",
+            "title": "Give the EU authoriser an additional certifier"
+          },
+          {
             "repo": "rainlanguage/rain.math.float",
             "number": 358,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/358",
@@ -908,12 +914,6 @@
             "number": 336,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/336",
             "title": "log10Ratio: revert Log10RatioRelativeSumTooSmall below the relative domain (a + b < 1e50)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 333,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/333",
-            "title": "packLossy: round toward zero to the closest representable Float"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -2570,18 +2570,6 @@
       "number": 40,
       "url": "https://github.com/rainlanguage/rain.math.float.deploy/issues/40",
       "title": "Stop deploying the log-table data contract; the library no longer reads it"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 345,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/345",
-      "title": "library.rs byte-exact lossy pack checks pin the digit-shedding representation"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 344,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/344",
-      "title": "Payload helpers and old-implementation copies are used as value oracles"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -6980,6 +6968,12 @@
       "number": 204,
       "url": "https://github.com/rainlanguage/raindex/issues/204",
       "title": "Live Chart w/ Polling"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 183,
+      "url": "https://github.com/rainlanguage/raindex/issues/183",
+      "title": "Disable \"Add Order\" button when linting finds problems"
     }
   ],
   "archivedRepoPrs": [
@@ -7023,16 +7017,16 @@
     "leaks": 0,
     "totalProducerPrs": 264,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 742,
+    "uncoveredIssues": 741,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 257.5,
-      "medianDays": 95.3,
-      "oldestDays": 972.2
+      "meanDays": 259.5,
+      "medianDays": 95.6,
+      "oldestDays": 974.6
     }
   }
 }
