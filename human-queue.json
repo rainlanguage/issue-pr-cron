@@ -817,14 +817,8 @@
         ]
       },
       "un-vetted": {
-        "count": 147,
+        "count": 145,
         "prs": [
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 444,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/444",
-            "title": "Give the EU authoriser an additional certifier"
-          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 358,
@@ -908,12 +902,6 @@
             "number": 337,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/337",
             "title": "Gas: format and parse without the per-digit loops"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 336,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/336",
-            "title": "log10Ratio: revert Log10RatioRelativeSumTooSmall below the relative domain (a + b < 1e50)"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -6974,6 +6962,12 @@
       "number": 183,
       "url": "https://github.com/rainlanguage/raindex/issues/183",
       "title": "Disable \"Add Order\" button when linting finds problems"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 168,
+      "url": "https://github.com/rainlanguage/raindex/issues/168",
+      "title": "put counterparty desired amount in context"
     }
   ],
   "archivedRepoPrs": [
@@ -7004,7 +6998,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 147,
+    "unvetted": 145,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7015,18 +7009,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 264,
+    "totalProducerPrs": 262,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 741,
+    "uncoveredIssues": 742,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 259.5,
-      "medianDays": 95.6,
-      "oldestDays": 974.6
+      "meanDays": 260.5,
+      "medianDays": 95.7,
+      "oldestDays": 977.9
     }
   }
 }
