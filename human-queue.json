@@ -817,7 +817,7 @@
         ]
       },
       "un-vetted": {
-        "count": 148,
+        "count": 147,
         "prs": [
           {
             "repo": "rainlanguage/rain.math.float",
@@ -880,12 +880,6 @@
             "title": "Gas: inline the log10Ratio and exp10Fixed series multiplies (#306)"
           },
           {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 430,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/430",
-            "title": "Author the Safe bundle that grants the EU authoriser's roles"
-          },
-          {
             "repo": "rainlanguage/rain.math.float",
             "number": 351,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/351",
@@ -919,7 +913,7 @@
             "repo": "rainlanguage/rain.math.float",
             "number": 333,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/333",
-            "title": "minus and abs take int224.max for an int224.min coefficient"
+            "title": "packLossy: round toward zero to the closest representable Float"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -2594,12 +2588,6 @@
       "number": 339,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/339",
       "title": "Tracking: test oracles that mirror library algorithms"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 332,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/332",
-      "title": "Arithmetic results just past int224 pack below int224.max, so add is not monotone and sub/mul/div disagree with minus"
     },
     {
       "repo": "rainlanguage/rain.math.float.deploy",
@@ -6986,6 +6974,12 @@
       "number": 205,
       "url": "https://github.com/rainlanguage/raindex/issues/205",
       "title": "Take Orders Chart: Token Balances"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 204,
+      "url": "https://github.com/rainlanguage/raindex/issues/204",
+      "title": "Live Chart w/ Polling"
     }
   ],
   "archivedRepoPrs": [
@@ -7016,7 +7010,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 148,
+    "unvetted": 147,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7027,7 +7021,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 265,
+    "totalProducerPrs": 264,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 742,
     "designPresentable": 7,
@@ -7036,7 +7030,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 256.1,
+      "meanDays": 257.1,
       "medianDays": 94.9,
       "oldestDays": 971.9
     }
