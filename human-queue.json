@@ -817,8 +817,26 @@
         ]
       },
       "un-vetted": {
-        "count": 153,
+        "count": 150,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 420,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/420",
+            "title": "test: kill pow mutants M1 and M3 in the crate; M2 and M4 are equivalent (#402)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 418,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/418",
+            "title": "test: check implementation algebraic properties against exact oracles (#369)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 416,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/416",
+            "title": "test: compare pow's bound exactly when it reaches the exponent floor"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 449,
@@ -827,21 +845,9 @@
           },
           {
             "repo": "rainlanguage/rain.math.float",
-            "number": 413,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/413",
-            "title": "log10Ratio tests: replace implementation-output pins with the NatSpec's one-sided bounds"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
             "number": 411,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/411",
             "title": "Check pow10 and log10 against the oracle, not the unrounded functions"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 410,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/410",
-            "title": "test: sqrt oracles from exact arithmetic, not the library's own"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -857,39 +863,15 @@
           },
           {
             "repo": "rainlanguage/rain.math.float",
-            "number": 404,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/404",
-            "title": "test: floor/ceil compare by exact value (#381)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
             "number": 403,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/403",
             "title": "test: replace no-value tests with exact oracles (#370)"
           },
           {
             "repo": "rainlanguage/rain.math.float",
-            "number": 401,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/401",
-            "title": "test: derive pow exactness from exact maths, for every b"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 400,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/400",
-            "title": "test: decide pow and pow10 range outcomes in exact maths (#373)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
             "number": 398,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/398",
             "title": "test: check formatting against an independent rendering"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 393,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/393",
-            "title": "test: exact oracles for near-floor mul/div tests (#366)"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -2569,7 +2551,7 @@
       "repo": "rainlanguage/rain.math.float",
       "number": 415,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/415",
-      "title": "log10Ratio: prove a tighter relative lower error bound"
+      "title": "log10Ratio and exp10Fixed: prove tighter error bounds"
     },
     {
       "repo": "S01-Issuer/st0x.deploy",
@@ -2588,18 +2570,6 @@
       "number": 407,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/407",
       "title": "test: one exact reference library for every operation"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 402,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/402",
-      "title": "test: four pow mutants survive every suite"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 395,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/395",
-      "title": "test: exact_pow oracle panics (terms beyond 400 digits) for base next to 1 with a huge exponent"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -2627,33 +2597,9 @@
     },
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 369,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/369",
-      "title": "test: algebraic properties checked only through the library's own comparator"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
       "number": 368,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/368",
       "title": "test: equivalence-only coverage for implementation div, add, sub and inv"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 366,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/366",
-      "title": "test: near-floor tests compare the library with itself on shifted operands"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 365,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/365",
-      "title": "test: testExp10FixedAllSteps pins the implementation's floored steps, not 10^x"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 363,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/363",
-      "title": "test: sub and minus are tested against the library's own add and sub"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -7016,6 +6962,42 @@
       "number": 274,
       "url": "https://github.com/rainlanguage/raindex/issues/274",
       "title": "Include token symbol & transaction hash in transaction status notice"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 273,
+      "url": "https://github.com/rainlanguage/raindex/issues/273",
+      "title": "add a button to generate a random vaultid on the deposit modal"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 272,
+      "url": "https://github.com/rainlanguage/raindex/issues/272",
+      "title": "Transaction failure destroys the entry form: deposit/withdraw/withdraw-all/take-order modals close and clear on error"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 269,
+      "url": "https://github.com/rainlanguage/raindex/issues/269",
+      "title": "cancel in-progress transactions"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 262,
+      "url": "https://github.com/rainlanguage/raindex/issues/262",
+      "title": "Round values in order takes table -- show full value on hover"
+    },
+    {
+      "repo": "rainlanguage/forker",
+      "number": 3,
+      "url": "https://github.com/rainlanguage/forker/issues/3",
+      "title": "Make cache expiration configurable or default to never expire"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 236,
+      "url": "https://github.com/rainlanguage/raindex/issues/236",
+      "title": "Standardize CLI output method with other rain clis"
     }
   ],
   "archivedRepoPrs": [
@@ -7046,7 +7028,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 153,
+    "unvetted": 150,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7057,18 +7039,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 270,
+    "totalProducerPrs": 267,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 742,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 979
+    "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 243.4,
-      "medianDays": 94.3,
-      "oldestDays": 966.0
+      "meanDays": 249.9,
+      "medianDays": 96.3,
+      "oldestDays": 968.1
     }
   }
 }
