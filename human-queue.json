@@ -817,8 +817,20 @@
         ]
       },
       "un-vetted": {
-        "count": 142,
+        "count": 143,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 360,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/360",
+            "title": "docs: explain the maths in log10Reduce, div, roundSignificant and scaleUp"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 446,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/446",
+            "title": "Fix the chain-with-no-pin test for the lib's error"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 358,
@@ -872,12 +884,6 @@
             "number": 428,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/428",
             "title": "Subgraph: index RBAC and ownership changes across the deployment networks"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 338,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/338",
-            "title": "pow/pow10 range errors report the call's input"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -2499,6 +2505,174 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 388,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/388",
+      "title": "test: testPowExactlyAtTheOverflowThreshold's input is not exactly at the threshold"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 387,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/387",
+      "title": "test: testPowCarryShedsTheUnrounded pins a return where exact maths overflows"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 386,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/386",
+      "title": "test: pow10/log10 rounding tests use the unrounded function as their own oracle"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 385,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/385",
+      "title": "test: log10Ratio tests pin implementation output past the proven accuracy"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 384,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/384",
+      "title": "test: low-severity oracles built from implementation constants or the implementation itself"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 383,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/383",
+      "title": "test: sqrt error and round-trip checks use the library's own arithmetic"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 382,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/382",
+      "title": "test: lossless conversion and pack threshold tests use sibling library functions as oracle"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 381,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/381",
+      "title": "test: floor/ceil compare via Implementation.eq and pin undocumented representations"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 380,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/380",
+      "title": "test: agree's cliff and refusal are checked against the implementation"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 379,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/379",
+      "title": "test: pow tests take expected values from the library's inv and roundSignificant"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 378,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/378",
+      "title": "test: pow exactness is only required for small denominators"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 377,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/377",
+      "title": "test: test_inv_prod accepts a·inv(a) above 1"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 376,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/376",
+      "title": "test: format refusal rules are copied from undocumented code guards"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 375,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/375",
+      "title": "test: parse error choice for literals past int256 mirrors the parser's internal steps"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 374,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/374",
+      "title": "test: divParts/invParts replay div's precision steps; div/inv/sub packed fuzzes have no independent value check"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 373,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/373",
+      "title": "test: LibTestPowRange decides pass/fail with the library under test"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 372,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/372",
+      "title": "test: formatting is only checked against parse, never against an independent rendering"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 371,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/371",
+      "title": "test: testParsePacked's oracle is the library's own inline parse plus packLossy"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 370,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/370",
+      "title": "test: tests that assert nothing beyond not reverting"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 369,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/369",
+      "title": "test: algebraic properties checked only through the library's own comparator"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 368,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/368",
+      "title": "test: equivalence-only coverage for implementation div, add, sub and inv"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 367,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/367",
+      "title": "test: withTargetExponent tests require a revert for 0 when the gap is 77 or more"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 366,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/366",
+      "title": "test: near-floor tests compare the library with itself on shifted operands"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 365,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/365",
+      "title": "test: testExp10FixedAllSteps pins the implementation's floored steps, not 10^x"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 364,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/364",
+      "title": "test: testOverflowChecks tests a copy of add's internals, never add"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 363,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/363",
+      "title": "test: sub and minus are tested against the library's own add and sub"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 362,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/362",
+      "title": "test: testMulNotRevertAnyExpectation checks mul against mulSlow, a replay of mul"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 361,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/361",
+      "title": "test: testInvReference compares inv with div, which is the same code"
+    },
     {
       "repo": "rainlanguage/rain.math.float",
       "number": 359,
@@ -6830,150 +7004,6 @@
       "number": 291,
       "url": "https://github.com/rainlanguage/raindex/issues/291",
       "title": "tauri invoke awaits should time out"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 288,
-      "url": "https://github.com/rainlanguage/raindex/issues/288",
-      "title": "move derivation index field before address field"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 284,
-      "url": "https://github.com/rainlanguage/raindex/issues/284",
-      "title": "Fetch token decimals in input field"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 280,
-      "url": "https://github.com/rainlanguage/raindex/issues/280",
-      "title": "Help page content: Ledger Issues"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 276,
-      "url": "https://github.com/rainlanguage/raindex/issues/276",
-      "title": "Universal mac binaries"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 274,
-      "url": "https://github.com/rainlanguage/raindex/issues/274",
-      "title": "Include token symbol & transaction hash in transaction status notice"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 273,
-      "url": "https://github.com/rainlanguage/raindex/issues/273",
-      "title": "add a button to generate a random vaultid on the deposit modal"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 272,
-      "url": "https://github.com/rainlanguage/raindex/issues/272",
-      "title": "Transaction failure destroys the entry form: deposit/withdraw/withdraw-all/take-order modals close and clear on error"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 269,
-      "url": "https://github.com/rainlanguage/raindex/issues/269",
-      "title": "cancel in-progress transactions"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 262,
-      "url": "https://github.com/rainlanguage/raindex/issues/262",
-      "title": "Round values in order takes table -- show full value on hover"
-    },
-    {
-      "repo": "rainlanguage/forker",
-      "number": 3,
-      "url": "https://github.com/rainlanguage/forker/issues/3",
-      "title": "Make cache expiration configurable or default to never expire"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 236,
-      "url": "https://github.com/rainlanguage/raindex/issues/236",
-      "title": "Standardize CLI output method with other rain clis"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 235,
-      "url": "https://github.com/rainlanguage/raindex/issues/235",
-      "title": "Merge clears & takes into single chart / table"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 218,
-      "url": "https://github.com/rainlanguage/raindex/issues/218",
-      "title": "Frontmatter rebindings parse errors"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 212,
-      "url": "https://github.com/rainlanguage/raindex/issues/212",
-      "title": "Token detail page"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 211,
-      "url": "https://github.com/rainlanguage/raindex/issues/211",
-      "title": "make it impossible to close the diagnostics panel, or very easy to bring it back if it is closed"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 208,
-      "url": "https://github.com/rainlanguage/raindex/issues/208",
-      "title": "Link to orderbook in block explorer"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 206,
-      "url": "https://github.com/rainlanguage/raindex/issues/206",
-      "title": "Take Order Chart: number of transactions"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 205,
-      "url": "https://github.com/rainlanguage/raindex/issues/205",
-      "title": "Take Orders Chart: Token Balances"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 204,
-      "url": "https://github.com/rainlanguage/raindex/issues/204",
-      "title": "Live Chart w/ Polling"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 183,
-      "url": "https://github.com/rainlanguage/raindex/issues/183",
-      "title": "Disable \"Add Order\" button when linting finds problems"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 168,
-      "url": "https://github.com/rainlanguage/raindex/issues/168",
-      "title": "put counterparty desired amount in context"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 142,
-      "url": "https://github.com/rainlanguage/rainlang/issues/142",
-      "title": "utf8 support for parsing"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 141,
-      "url": "https://github.com/rainlanguage/rainlang/issues/141",
-      "title": "some kind of onchain registry (ens?) support for things like well known addresses (e.g. weth)"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 139,
-      "url": "https://github.com/rainlanguage/rainlang/issues/139",
-      "title": "undefined word (requires subsitution)"
     }
   ],
   "archivedRepoPrs": [
@@ -7004,7 +7034,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 142,
+    "unvetted": 143,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7015,18 +7045,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 259,
+    "totalProducerPrs": 260,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 746,
+    "uncoveredIssues": 750,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 977
+    "openIssues": 979
   },
   "ages": {
     "openIssues": {
-      "meanDays": 264.5,
-      "medianDays": 96.7,
-      "oldestDays": 979.0
+      "meanDays": 238.3,
+      "medianDays": 93.5,
+      "oldestDays": 965.7
     }
   }
 }
