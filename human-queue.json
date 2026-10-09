@@ -817,7 +817,7 @@
         ]
       },
       "un-vetted": {
-        "count": 145,
+        "count": 142,
         "prs": [
           {
             "repo": "rainlanguage/rain.math.float",
@@ -836,18 +836,6 @@
             "number": 439,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/439",
             "title": "Switch the EU authoriser prod test on the migration registry"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 356,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/356",
-            "title": "Error choices follow a rule by value (#343); remove CoefficientOverflow"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 355,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/355",
-            "title": "Parse representable literals past int256"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -878,12 +866,6 @@
             "number": 352,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/352",
             "title": "Gas: inline the log10Ratio and exp10Fixed series multiplies (#306)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 351,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/351",
-            "title": "Document add/sub rounding; oracles apply the rule to the exact sum"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -2517,6 +2499,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 359,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/359",
+      "title": "sqrt: a centred Newton seed may save one iteration"
+    },
     {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 435,
@@ -6968,6 +6956,18 @@
       "number": 168,
       "url": "https://github.com/rainlanguage/raindex/issues/168",
       "title": "put counterparty desired amount in context"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 142,
+      "url": "https://github.com/rainlanguage/rainlang/issues/142",
+      "title": "utf8 support for parsing"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 141,
+      "url": "https://github.com/rainlanguage/rainlang/issues/141",
+      "title": "some kind of onchain registry (ens?) support for things like well known addresses (e.g. weth)"
     }
   ],
   "archivedRepoPrs": [
@@ -6998,7 +6998,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 145,
+    "unvetted": 142,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7009,18 +7009,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 262,
+    "totalProducerPrs": 259,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 742,
+    "uncoveredIssues": 745,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 261.5,
+      "meanDays": 263.5,
       "medianDays": 96.6,
-      "oldestDays": 978.8
+      "oldestDays": 978.9
     }
   }
 }
