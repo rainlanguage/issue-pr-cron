@@ -817,8 +817,68 @@
         ]
       },
       "un-vetted": {
-        "count": 150,
+        "count": 157,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 413,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/413",
+            "title": "log10Ratio tests: replace implementation-output pins with the NatSpec's one-sided bounds"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 412,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/412",
+            "title": "test: agree cliff and refusal against add's documented rule (#380)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 411,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/411",
+            "title": "Check pow10 and log10 against the oracle, not the unrounded functions"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 410,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/410",
+            "title": "test: sqrt oracles from exact arithmetic, not the library's own"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 409,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/409",
+            "title": "test: pow oracles from exact maths, not inv/roundSignificant"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 408,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/408",
+            "title": "test: independent oracles for lossless conversion and pack threshold tests"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 406,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/406",
+            "title": "test: pow overflow threshold tested either side at bc-verified inputs"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 405,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/405",
+            "title": "test: exact oracles for min, max and FLOAT_ZERO"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 404,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/404",
+            "title": "test: floor/ceil compare by exact value (#381)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 403,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/403",
+            "title": "test: replace no-value tests with exact oracles (#370)"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 401,
@@ -833,21 +893,9 @@
           },
           {
             "repo": "rainlanguage/rain.math.float",
-            "number": 399,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/399",
-            "title": "withTargetExponent: zero grows to zero; tests use exact int256 bounds"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
             "number": 398,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/398",
             "title": "test: check formatting against an independent rendering"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 397,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/397",
-            "title": "test: drive add's overflow path against the exact oracle"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -872,12 +920,6 @@
             "number": 390,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/390",
             "title": "test: check inv against an exact floor of 1/x, not div"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 389,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/389",
-            "title": "test: check mul against exact mulParts, not the mulSlow replay"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -2549,6 +2591,12 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rain.math.float",
+      "number": 407,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/407",
+      "title": "test: one exact reference library for every operation"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
       "number": 402,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/402",
       "title": "test: four pow mutants survive every suite"
@@ -2564,60 +2612,6 @@
       "number": 394,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/394",
       "title": "add: overflow shed is one unit below the stated rule for int256 operands past Float range"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 388,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/388",
-      "title": "test: testPowExactlyAtTheOverflowThreshold's input is not exactly at the threshold"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 386,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/386",
-      "title": "test: pow10/log10 rounding tests use the unrounded function as their own oracle"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 385,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/385",
-      "title": "test: log10Ratio tests pin implementation output past the proven accuracy"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 384,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/384",
-      "title": "test: low-severity oracles built from implementation constants or the implementation itself"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 383,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/383",
-      "title": "test: sqrt error and round-trip checks use the library's own arithmetic"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 382,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/382",
-      "title": "test: lossless conversion and pack threshold tests use sibling library functions as oracle"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 381,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/381",
-      "title": "test: floor/ceil compare via Implementation.eq and pin undocumented representations"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 380,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/380",
-      "title": "test: agree's cliff and refusal are checked against the implementation"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 379,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/379",
-      "title": "test: pow tests take expected values from the library's inv and roundSignificant"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -2645,12 +2639,6 @@
     },
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 370,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/370",
-      "title": "test: tests that assert nothing beyond not reverting"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
       "number": 369,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/369",
       "title": "test: algebraic properties checked only through the library's own comparator"
@@ -2660,12 +2648,6 @@
       "number": 368,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/368",
       "title": "test: equivalence-only coverage for implementation div, add, sub and inv"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 367,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/367",
-      "title": "test: withTargetExponent tests require a revert for 0 when the gap is 77 or more"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -2690,6 +2672,12 @@
       "number": 363,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/363",
       "title": "test: sub and minus are tested against the library's own add and sub"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 361,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/361",
+      "title": "test: testInvReference compares inv with div, which is the same code"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -7022,6 +7010,18 @@
       "number": 291,
       "url": "https://github.com/rainlanguage/raindex/issues/291",
       "title": "tauri invoke awaits should time out"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 288,
+      "url": "https://github.com/rainlanguage/raindex/issues/288",
+      "title": "move derivation index field before address field"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 284,
+      "url": "https://github.com/rainlanguage/raindex/issues/284",
+      "title": "Fetch token decimals in input field"
     }
   ],
   "archivedRepoPrs": [
@@ -7052,7 +7052,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 150,
+    "unvetted": 157,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7063,18 +7063,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 267,
+    "totalProducerPrs": 274,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 746,
+    "uncoveredIssues": 739,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 979
   },
   "ages": {
     "openIssues": {
-      "meanDays": 238.4,
-      "medianDays": 93.7,
-      "oldestDays": 965.8
+      "meanDays": 240.4,
+      "medianDays": 93.8,
+      "oldestDays": 965.9
     }
   }
 }
