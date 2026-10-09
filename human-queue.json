@@ -6968,6 +6968,12 @@
       "number": 141,
       "url": "https://github.com/rainlanguage/rainlang/issues/141",
       "title": "some kind of onchain registry (ens?) support for things like well known addresses (e.g. weth)"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 139,
+      "url": "https://github.com/rainlanguage/rainlang/issues/139",
+      "title": "undefined word (requires subsitution)"
     }
   ],
   "archivedRepoPrs": [
@@ -7011,16 +7017,16 @@
     "leaks": 0,
     "totalProducerPrs": 259,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 745,
+    "uncoveredIssues": 746,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 263.5,
-      "medianDays": 96.6,
-      "oldestDays": 978.9
+      "meanDays": 264.5,
+      "medianDays": 96.7,
+      "oldestDays": 979.0
     }
   }
 }
