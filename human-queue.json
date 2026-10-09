@@ -817,7 +817,7 @@
         ]
       },
       "un-vetted": {
-        "count": 156,
+        "count": 153,
         "prs": [
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -827,21 +827,9 @@
           },
           {
             "repo": "rainlanguage/rain.math.float",
-            "number": 414,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/414",
-            "title": "add: keep the operands' carry when the sum overflows int256 (#394)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
             "number": 413,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/413",
             "title": "log10Ratio tests: replace implementation-output pins with the NatSpec's one-sided bounds"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 412,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/412",
-            "title": "test: agree cliff and refusal against add's documented rule (#380)"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -860,12 +848,6 @@
             "number": 409,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/409",
             "title": "test: pow oracles from exact maths, not inv/roundSignificant"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 408,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/408",
-            "title": "test: independent oracles for lossless conversion and pack threshold tests"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -2584,6 +2566,12 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 415,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/415",
+      "title": "log10Ratio: prove a tighter relative lower error bound"
+    },
+    {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 448,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/448",
@@ -2660,12 +2648,6 @@
       "number": 365,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/365",
       "title": "test: testExp10FixedAllSteps pins the implementation's floored steps, not 10^x"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 364,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/364",
-      "title": "test: testOverflowChecks tests a copy of add's internals, never add"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -7016,6 +6998,24 @@
       "number": 284,
       "url": "https://github.com/rainlanguage/raindex/issues/284",
       "title": "Fetch token decimals in input field"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 280,
+      "url": "https://github.com/rainlanguage/raindex/issues/280",
+      "title": "Help page content: Ledger Issues"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 276,
+      "url": "https://github.com/rainlanguage/raindex/issues/276",
+      "title": "Universal mac binaries"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 274,
+      "url": "https://github.com/rainlanguage/raindex/issues/274",
+      "title": "Include token symbol & transaction hash in transaction status notice"
     }
   ],
   "archivedRepoPrs": [
@@ -7046,7 +7046,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 156,
+    "unvetted": 153,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7057,18 +7057,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 273,
+    "totalProducerPrs": 270,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 739,
+    "uncoveredIssues": 742,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 979
   },
   "ages": {
     "openIssues": {
-      "meanDays": 240.4,
-      "medianDays": 93.9,
-      "oldestDays": 965.9
+      "meanDays": 243.4,
+      "medianDays": 94.3,
+      "oldestDays": 966.0
     }
   }
 }
