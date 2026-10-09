@@ -817,14 +817,8 @@
         ]
       },
       "un-vetted": {
-        "count": 143,
+        "count": 142,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 360,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/360",
-            "title": "docs: explain the maths in log10Reduce, div, roundSignificant and scaleUp"
-          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 446,
@@ -7034,7 +7028,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 143,
+    "unvetted": 142,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7045,7 +7039,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 260,
+    "totalProducerPrs": 259,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 750,
     "designPresentable": 7,
@@ -7055,7 +7049,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 238.3,
-      "medianDays": 93.5,
+      "medianDays": 93.6,
       "oldestDays": 965.7
     }
   }
