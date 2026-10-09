@@ -821,15 +821,15 @@
         "prs": [
           {
             "repo": "rainlanguage/rain.math.float",
-            "number": 420,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/420",
-            "title": "test: kill pow mutants M1 and M3 in the crate; M2 and M4 are equivalent (#402)"
+            "number": 421,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/421",
+            "title": "div/inv: keep the exact digit below the floor, inline the pack, report the call's input"
           },
           {
             "repo": "rainlanguage/rain.math.float",
-            "number": 418,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/418",
-            "title": "test: check implementation algebraic properties against exact oracles (#369)"
+            "number": 420,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/420",
+            "title": "test: kill pow mutants M1 and M3 in the crate; M2 and M4 are equivalent (#402)"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -6998,6 +6998,12 @@
       "number": 236,
       "url": "https://github.com/rainlanguage/raindex/issues/236",
       "title": "Standardize CLI output method with other rain clis"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 235,
+      "url": "https://github.com/rainlanguage/raindex/issues/235",
+      "title": "Merge clears & takes into single chart / table"
     }
   ],
   "archivedRepoPrs": [
@@ -7041,15 +7047,15 @@
     "leaks": 0,
     "totalProducerPrs": 267,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 742,
+    "uncoveredIssues": 743,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 249.9,
-      "medianDays": 96.3,
+      "meanDays": 250.9,
+      "medianDays": 96.5,
       "oldestDays": 968.1
     }
   }
