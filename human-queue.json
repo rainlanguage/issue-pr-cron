@@ -817,19 +817,19 @@
         ]
       },
       "un-vetted": {
-        "count": 142,
+        "count": 141,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 389,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/389",
+            "title": "test: check mul against exact mulParts, not the mulSlow replay"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 446,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/446",
             "title": "Fix the chain-with-no-pin test for the lib's error"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 358,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/358",
-            "title": "Integer sqrt with a low-word residual check; pow routes b = n + 1/2 through it"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -896,12 +896,6 @@
             "number": 266,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/266",
             "title": "ci: drop the networks input rainix no longer declares from manual sol verify"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 321,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/321",
-            "title": "Gas: maximize, mul and packLossy without touching the packed path"
           },
           {
             "repo": "rainlanguage/rain.math.float.deploy",
@@ -2507,12 +2501,6 @@
     },
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 387,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/387",
-      "title": "test: testPowCarryShedsTheUnrounded pins a return where exact maths overflows"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
       "number": 386,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/386",
       "title": "test: pow10/log10 rounding tests use the unrounded function as their own oracle"
@@ -2654,12 +2642,6 @@
       "number": 363,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/363",
       "title": "test: sub and minus are tested against the library's own add and sub"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 362,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/362",
-      "title": "test: testMulNotRevertAnyExpectation checks mul against mulSlow, a replay of mul"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -6998,6 +6980,24 @@
       "number": 291,
       "url": "https://github.com/rainlanguage/raindex/issues/291",
       "title": "tauri invoke awaits should time out"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 288,
+      "url": "https://github.com/rainlanguage/raindex/issues/288",
+      "title": "move derivation index field before address field"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 284,
+      "url": "https://github.com/rainlanguage/raindex/issues/284",
+      "title": "Fetch token decimals in input field"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 280,
+      "url": "https://github.com/rainlanguage/raindex/issues/280",
+      "title": "Help page content: Ledger Issues"
     }
   ],
   "archivedRepoPrs": [
@@ -7028,7 +7028,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 142,
+    "unvetted": 141,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7039,18 +7039,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 259,
+    "totalProducerPrs": 258,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 750,
+    "uncoveredIssues": 751,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 979
   },
   "ages": {
     "openIssues": {
-      "meanDays": 238.3,
-      "medianDays": 93.6,
-      "oldestDays": 965.7
+      "meanDays": 241.3,
+      "medianDays": 93.7,
+      "oldestDays": 965.8
     }
   }
 }
