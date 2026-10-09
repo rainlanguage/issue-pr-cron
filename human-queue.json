@@ -817,8 +817,62 @@
         ]
       },
       "un-vetted": {
-        "count": 141,
+        "count": 150,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 401,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/401",
+            "title": "test: derive pow exactness from exact maths, for every b"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 400,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/400",
+            "title": "test: decide pow and pow10 range outcomes in exact maths (#373)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 399,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/399",
+            "title": "withTargetExponent: zero grows to zero; tests use exact int256 bounds"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 398,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/398",
+            "title": "test: check formatting against an independent rendering"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 397,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/397",
+            "title": "test: drive add's overflow path against the exact oracle"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 396,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/396",
+            "title": "test: a * inv(a) against the exact two-truncation bound"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 393,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/393",
+            "title": "test: exact oracles for near-floor mul/div tests (#366)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 392,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/392",
+            "title": "test: div/inv/sub packed fuzzes check exact oracles (#374)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 390,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/390",
+            "title": "test: check inv against an exact floor of 1/x, not div"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 389,
@@ -2495,6 +2549,24 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rain.math.float",
+      "number": 402,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/402",
+      "title": "test: four pow mutants survive every suite"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 395,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/395",
+      "title": "test: exact_pow oracle panics (terms beyond 400 digits) for base next to 1 with a huge exponent"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 394,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/394",
+      "title": "add: overflow shed is one unit below the stated rule for int256 operands past Float range"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
       "number": 388,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/388",
       "title": "test: testPowExactlyAtTheOverflowThreshold's input is not exactly at the threshold"
@@ -2549,18 +2621,6 @@
     },
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 378,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/378",
-      "title": "test: pow exactness is only required for small denominators"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 377,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/377",
-      "title": "test: test_inv_prod accepts a·inv(a) above 1"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
       "number": 376,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/376",
       "title": "test: format refusal rules are copied from undocumented code guards"
@@ -2576,18 +2636,6 @@
       "number": 374,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/374",
       "title": "test: divParts/invParts replay div's precision steps; div/inv/sub packed fuzzes have no independent value check"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 373,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/373",
-      "title": "test: LibTestPowRange decides pass/fail with the library under test"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 372,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/372",
-      "title": "test: formatting is only checked against parse, never against an independent rendering"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -2642,12 +2690,6 @@
       "number": 363,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/363",
       "title": "test: sub and minus are tested against the library's own add and sub"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 361,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/361",
-      "title": "test: testInvReference compares inv with div, which is the same code"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -6980,24 +7022,6 @@
       "number": 291,
       "url": "https://github.com/rainlanguage/raindex/issues/291",
       "title": "tauri invoke awaits should time out"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 288,
-      "url": "https://github.com/rainlanguage/raindex/issues/288",
-      "title": "move derivation index field before address field"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 284,
-      "url": "https://github.com/rainlanguage/raindex/issues/284",
-      "title": "Fetch token decimals in input field"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 280,
-      "url": "https://github.com/rainlanguage/raindex/issues/280",
-      "title": "Help page content: Ledger Issues"
     }
   ],
   "archivedRepoPrs": [
@@ -7028,7 +7052,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 141,
+    "unvetted": 150,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7039,16 +7063,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 258,
+    "totalProducerPrs": 267,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 751,
+    "uncoveredIssues": 746,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 979
   },
   "ages": {
     "openIssues": {
-      "meanDays": 241.3,
+      "meanDays": 238.4,
       "medianDays": 93.7,
       "oldestDays": 965.8
     }
