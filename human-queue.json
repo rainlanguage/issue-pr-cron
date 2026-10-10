@@ -817,7 +817,7 @@
         ]
       },
       "un-vetted": {
-        "count": 150,
+        "count": 147,
         "prs": [
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -830,18 +830,6 @@
             "number": 421,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/421",
             "title": "div/inv: keep the exact digit below the floor, inline the pack, report the call's input"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 420,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/420",
-            "title": "test: kill pow mutants M1 and M3 in the crate; M2 and M4 are equivalent (#402)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 416,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/416",
-            "title": "test: compare pow's bound exactly when it reaches the exponent floor"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -860,12 +848,6 @@
             "number": 409,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/409",
             "title": "test: pow oracles from exact maths, not inv/roundSignificant"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 406,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/406",
-            "title": "test: pow overflow threshold tested either side at bc-verified inputs"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -2762,12 +2744,6 @@
       "number": 444,
       "url": "https://github.com/S01-Issuer/s01.ops/issues/444",
       "title": "[4ts fix 1] Executed Final Terms and Token Terms for every live token"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 310,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/310",
-      "title": "Gas: core arithmetic, packing and comparison hot spots"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -6992,6 +6968,24 @@
       "number": 235,
       "url": "https://github.com/rainlanguage/raindex/issues/235",
       "title": "Merge clears & takes into single chart / table"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 218,
+      "url": "https://github.com/rainlanguage/raindex/issues/218",
+      "title": "Frontmatter rebindings parse errors"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 212,
+      "url": "https://github.com/rainlanguage/raindex/issues/212",
+      "title": "Token detail page"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 211,
+      "url": "https://github.com/rainlanguage/raindex/issues/211",
+      "title": "make it impossible to close the diagnostics panel, or very easy to bring it back if it is closed"
     }
   ],
   "archivedRepoPrs": [
@@ -7022,7 +7016,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 150,
+    "unvetted": 147,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7033,18 +7027,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 267,
+    "totalProducerPrs": 264,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 741,
+    "uncoveredIssues": 743,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 252.6,
-      "medianDays": 97.2,
-      "oldestDays": 970.3
+      "meanDays": 255.7,
+      "medianDays": 97.5,
+      "oldestDays": 974.4
     }
   }
 }
