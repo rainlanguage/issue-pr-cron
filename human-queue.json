@@ -820,6 +820,12 @@
         "count": 150,
         "prs": [
           {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 450,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/450",
+            "title": "Fix the two audit findings against the subgraph"
+          },
+          {
             "repo": "rainlanguage/rain.math.float",
             "number": 421,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/421",
@@ -926,12 +932,6 @@
             "number": 352,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/352",
             "title": "Gas: inline the log10Ratio and exp10Fixed series multiplies (#306)"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 428,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/428",
-            "title": "Subgraph: index RBAC and ownership changes across the deployment networks"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -2552,18 +2552,6 @@
       "number": 415,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/415",
       "title": "log10Ratio and exp10Fixed: prove tighter error bounds"
-    },
-    {
-      "repo": "S01-Issuer/st0x.deploy",
-      "number": 448,
-      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/448",
-      "title": "Subgraph: createDiscoveredContract treats a row created from a log as an earlier discovery, skipping the template"
-    },
-    {
-      "repo": "S01-Issuer/st0x.deploy",
-      "number": 447,
-      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/447",
-      "title": "Subgraph: Role.holders can contain an account that never held the role"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -7047,16 +7035,16 @@
     "leaks": 0,
     "totalProducerPrs": 267,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 743,
+    "uncoveredIssues": 741,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 251.6,
+      "meanDays": 252.6,
       "medianDays": 97.2,
-      "oldestDays": 968.8
+      "oldestDays": 970.3
     }
   }
 }
