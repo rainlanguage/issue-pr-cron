@@ -817,7 +817,7 @@
         ]
       },
       "un-vetted": {
-        "count": 147,
+        "count": 143,
         "prs": [
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -836,30 +836,6 @@
             "number": 449,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/449",
             "title": "Record the subgraph mutation scan"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 411,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/411",
-            "title": "Check pow10 and log10 against the oracle, not the unrounded functions"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 409,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/409",
-            "title": "test: pow oracles from exact maths, not inv/roundSignificant"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 403,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/403",
-            "title": "test: replace no-value tests with exact oracles (#370)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 398,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/398",
-            "title": "test: check formatting against an independent rendering"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -6986,6 +6962,30 @@
       "number": 211,
       "url": "https://github.com/rainlanguage/raindex/issues/211",
       "title": "make it impossible to close the diagnostics panel, or very easy to bring it back if it is closed"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 208,
+      "url": "https://github.com/rainlanguage/raindex/issues/208",
+      "title": "Link to orderbook in block explorer"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 206,
+      "url": "https://github.com/rainlanguage/raindex/issues/206",
+      "title": "Take Order Chart: number of transactions"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 205,
+      "url": "https://github.com/rainlanguage/raindex/issues/205",
+      "title": "Take Orders Chart: Token Balances"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 204,
+      "url": "https://github.com/rainlanguage/raindex/issues/204",
+      "title": "Live Chart w/ Polling"
     }
   ],
   "archivedRepoPrs": [
@@ -7016,7 +7016,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 147,
+    "unvetted": 143,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7027,18 +7027,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 264,
+    "totalProducerPrs": 260,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 743,
+    "uncoveredIssues": 747,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 255.7,
+      "meanDays": 259.7,
       "medianDays": 97.5,
-      "oldestDays": 974.4
+      "oldestDays": 974.5
     }
   }
 }
