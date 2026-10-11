@@ -817,8 +817,38 @@
         ]
       },
       "un-vetted": {
-        "count": 136,
+        "count": 141,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 445,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/445",
+            "title": "Halmos proofs: add/sub rounding and series equivalence"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 444,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/444",
+            "title": "Differential fuzz vs dashu-float"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 443,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/443",
+            "title": "Spec: arithmetic rules for sign-off"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 442,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/442",
+            "title": "Mutation coverage: LDF-packLossy-shed"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 441,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/441",
+            "title": "Mutation coverage: PARSE-digitsExponent"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 451,
@@ -2463,6 +2493,24 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 440,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/440",
+      "title": "Symbolic proofs for add/sub cancellation and the assembly series"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 439,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/439",
+      "title": "Differential fuzz against an independent arbitrary-precision decimal library"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 438,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/438",
+      "title": "Write the arithmetic rules as a spec for human sign-off"
+    },
     {
       "repo": "rainlanguage/rain.deploy",
       "number": 274,
@@ -6944,24 +6992,6 @@
       "number": 148,
       "url": "https://github.com/rainlanguage/raindex/issues/148",
       "title": "Call local Parser in addOrder functions"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 142,
-      "url": "https://github.com/rainlanguage/raindex/issues/142",
-      "title": "Transaction status notice should last until the subgraph includes the submitted transaction"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 102,
-      "url": "https://github.com/rainlanguage/raindex/issues/102",
-      "title": "subgraph query integration tests"
-    },
-    {
-      "repo": "rainlanguage/dotrain",
-      "number": 61,
-      "url": "https://github.com/rainlanguage/dotrain/issues/61",
-      "title": "fuzzing all the regexes against expectations"
     }
   ],
   "archivedRepoPrs": [
@@ -6992,7 +7022,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 136,
+    "unvetted": 141,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7003,7 +7033,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 253,
+    "totalProducerPrs": 258,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 750,
     "designPresentable": 7,
@@ -7012,9 +7042,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 276.0,
-      "medianDays": 103.2,
-      "oldestDays": 1000.1
+      "meanDays": 273.0,
+      "medianDays": 99.3,
+      "oldestDays": 986.1
     }
   }
 }
