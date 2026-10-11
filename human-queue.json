@@ -817,8 +817,26 @@
         ]
       },
       "un-vetted": {
-        "count": 140,
+        "count": 142,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 275,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/275",
+            "title": "Ledger-signed AddressRegistry registration script"
+          },
+          {
+            "repo": "rainlanguage/rainlang",
+            "number": 594,
+            "url": "https://github.com/rainlanguage/rainlang/pull/594",
+            "title": "deps: st0x.deploy main's set (blocked-by rainlang-interface 0.2.13, rain-math-float-deploy 0.1.4)"
+          },
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 410,
+            "url": "https://github.com/rainlanguage/rainix/pull/410",
+            "title": "snapshots-append-only: a snapshot's DEPENDENCIES is not frozen"
+          },
           {
             "repo": "rainlanguage/rain.math.float.deploy",
             "number": 41,
@@ -836,12 +854,6 @@
             "number": 148,
             "url": "https://github.com/rainlanguage/rainlang.interface/pull/148",
             "title": "test: conform fuzzed bytecode to the header widths; trim duplicated deprecated NatSpec (fixes main red)"
-          },
-          {
-            "repo": "rainlanguage/rainix",
-            "number": 409,
-            "url": "https://github.com/rainlanguage/rainix/pull/409",
-            "title": "snapshots-append-only: freeze a snapshot's bytes, not its filename"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -907,7 +919,7 @@
             "repo": "rainlanguage/rain.lib.leakybucket",
             "number": 126,
             "url": "https://github.com/rainlanguage/rain.lib.leakybucket/pull/126",
-            "title": "deps: rain-math-float 0.2.5, forge-std 1.17.0"
+            "title": "deps: rain-math-float 0.2.22, forge-std 1.17.0"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -2494,12 +2506,6 @@
       "title": "No story for upgradeable beacons: consumers hand-roll the beacon invariants"
     },
     {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 273,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/273",
-      "title": "Ledger-signed script for root to bind AddressRegistry names"
-    },
-    {
       "repo": "rainlanguage/rain.math.float",
       "number": 415,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/415",
@@ -2510,18 +2516,6 @@
       "number": 407,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/407",
       "title": "test: one exact reference library for every operation"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 375,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/375",
-      "title": "test: parse error choice for literals past int256 mirrors the parser's internal steps"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 371,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/371",
-      "title": "test: testParsePacked's oracle is the library's own inline parse plus packLossy"
     },
     {
       "repo": "S01-Issuer/st0x.deploy",
@@ -6968,6 +6962,18 @@
       "number": 168,
       "url": "https://github.com/rainlanguage/raindex/issues/168",
       "title": "put counterparty desired amount in context"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 142,
+      "url": "https://github.com/rainlanguage/rainlang/issues/142",
+      "title": "utf8 support for parsing"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 141,
+      "url": "https://github.com/rainlanguage/rainlang/issues/141",
+      "title": "some kind of onchain registry (ens?) support for things like well known addresses (e.g. weth)"
     }
   ],
   "archivedRepoPrs": [
@@ -6998,7 +7004,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 140,
+    "unvetted": 142,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7009,18 +7015,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 257,
+    "totalProducerPrs": 259,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 747,
+    "uncoveredIssues": 746,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 263.8,
-      "medianDays": 98.9,
-      "oldestDays": 981.2
+      "meanDays": 265.8,
+      "medianDays": 99.0,
+      "oldestDays": 981.3
     }
   }
 }
