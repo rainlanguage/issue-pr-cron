@@ -817,19 +817,37 @@
         ]
       },
       "un-vetted": {
-        "count": 141,
+        "count": 140,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float.deploy",
+            "number": 41,
+            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/41",
+            "title": "deps: st0x.deploy set (float 0.2.22, rain-deploy 0.1.15, forge-std 1.17.0, OZ 5.7.0, codegen 0.1.39)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 432,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/432",
+            "title": "sqrt: per-parity linear Newton seed, four steps instead of seven"
+          },
+          {
+            "repo": "rainlanguage/rainlang.interface",
+            "number": 148,
+            "url": "https://github.com/rainlanguage/rainlang.interface/pull/148",
+            "title": "test: conform fuzzed bytecode to the header widths; trim duplicated deprecated NatSpec (fixes main red)"
+          },
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 409,
+            "url": "https://github.com/rainlanguage/rainix/pull/409",
+            "title": "snapshots-append-only: freeze a snapshot's bytes, not its filename"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 430,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/430",
             "title": "Fuzz each function over its full typed domain"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 429,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/429",
-            "title": "Name a revert outside each implementation helper's input range (#422)"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -862,40 +880,16 @@
             "title": "Switch the EU authoriser prod test on the migration registry"
           },
           {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 354,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/354",
-            "title": "Bound the transcendental tests independently of the implementation"
-          },
-          {
             "repo": "rainlanguage/rain.deploy",
             "number": 272,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/272",
             "title": "Declare and broadcast a factory clone through the same loop as a Zoltu deploy"
           },
           {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 271,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/271",
-            "title": "Drop the networks input rainix no longer accepts"
-          },
-          {
             "repo": "rainlanguage/rain.math.float",
             "number": 352,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/352",
             "title": "Gas: inline the log10Ratio and exp10Fixed series multiplies (#306)"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 267,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/267",
-            "title": "release: rain-deploy 0.1.14"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 266,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/266",
-            "title": "ci: drop the networks input rainix no longer declares from manual sol verify"
           },
           {
             "repo": "rainlanguage/rain.math.float.deploy",
@@ -2494,6 +2488,18 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 274,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/274",
+      "title": "No story for upgradeable beacons: consumers hand-roll the beacon invariants"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 273,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/273",
+      "title": "Ledger-signed script for root to bind AddressRegistry names"
+    },
+    {
       "repo": "rainlanguage/rain.math.float",
       "number": 415,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/415",
@@ -2516,18 +2522,6 @@
       "number": 371,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/371",
       "title": "test: testParsePacked's oracle is the library's own inline parse plus packLossy"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 368,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/368",
-      "title": "test: equivalence-only coverage for implementation div, add, sub and inv"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 359,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/359",
-      "title": "sqrt: a centred Newton seed may save one iteration"
     },
     {
       "repo": "S01-Issuer/st0x.deploy",
@@ -7004,7 +6998,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 141,
+    "unvetted": 140,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7015,7 +7009,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 258,
+    "totalProducerPrs": 257,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 747,
     "designPresentable": 7,
@@ -7024,9 +7018,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 263.7,
+      "meanDays": 263.8,
       "medianDays": 98.9,
-      "oldestDays": 981.1
+      "oldestDays": 981.2
     }
   }
 }
