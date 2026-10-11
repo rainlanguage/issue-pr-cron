@@ -817,8 +817,14 @@
         ]
       },
       "un-vetted": {
-        "count": 142,
+        "count": 143,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 447,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/447",
+            "title": "Mutation coverage: IMPL-scaleUp"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 446,
@@ -2499,6 +2505,72 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 458,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/458",
+      "title": "div spill-overflow early return (exponentB > int256.max - adjustExponent) is indistinguishable from the u > 76 zero return: M06/M08 are equivalent mutants"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 457,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/457",
+      "title": "mul ceiling margin budgets a lift of 77 + 1 = 78, but the reachable combined lift is 77"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 456,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/456",
+      "title": "log10Ratio relative with b = 0 and a + b below 1e50 reverts Log10RatioRelativeSumTooSmall, not the documented Log10RatioOutOfRange"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 455,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/455",
+      "title": "testMulRevertsOnlyExponentOverflowEdges runs out of gas, so the main test job is red"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 454,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/454",
+      "title": "Committed .gas-snapshot does not match the current test suite (lists removed maximize tests, omits current ones)"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 453,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/453",
+      "title": "toDecimalString allocates one word past the end of every formatted string (_toScientific / _toNonScientific)"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 452,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/452",
+      "title": "packLossy saturates (2^223+1)e int32.max to FLOAT_MAX but reverts ExponentOverflow on (2^223+2)e int32.max, where the NatSpec rule saturates and the README rule reverts both"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 451,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/451",
+      "title": "sqrt reverts SqrtOutOfRange near type(int256).min exponents even though the root is representable"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 450,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/450",
+      "title": "packLossless reverts LossyConversionToFloat, not ExponentOverflow, for values just past FLOAT_MAX / FLOAT_MIN at the exponent ceiling"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 449,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/449",
+      "title": "Non-scientific format cap depends on the Float's representation, not its value"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 448,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/448",
+      "title": "testFormatCanonicalAcrossRepresentationsShifted fails above ~35k fuzz runs: vm.assume(base != 0) rejects ~65% of inputs"
+    },
     {
       "repo": "rainlanguage/rain.math.float",
       "number": 440,
@@ -6932,72 +7004,6 @@
       "number": 204,
       "url": "https://github.com/rainlanguage/raindex/issues/204",
       "title": "Live Chart w/ Polling"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 183,
-      "url": "https://github.com/rainlanguage/raindex/issues/183",
-      "title": "Disable \"Add Order\" button when linting finds problems"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 168,
-      "url": "https://github.com/rainlanguage/raindex/issues/168",
-      "title": "put counterparty desired amount in context"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 142,
-      "url": "https://github.com/rainlanguage/rainlang/issues/142",
-      "title": "utf8 support for parsing"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 141,
-      "url": "https://github.com/rainlanguage/rainlang/issues/141",
-      "title": "some kind of onchain registry (ens?) support for things like well known addresses (e.g. weth)"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 139,
-      "url": "https://github.com/rainlanguage/rainlang/issues/139",
-      "title": "undefined word (requires subsitution)"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 138,
-      "url": "https://github.com/rainlanguage/rainlang/issues/138",
-      "title": "calldata eval rather than onchain deploys"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 137,
-      "url": "https://github.com/rainlanguage/rainlang/issues/137",
-      "title": "LHS parse substitutions"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 135,
-      "url": "https://github.com/rainlanguage/rainlang/issues/135",
-      "title": "rounding direction in math"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 133,
-      "url": "https://github.com/rainlanguage/rainlang/issues/133",
-      "title": "saturating math"
-    },
-    {
-      "repo": "rainlanguage/rain.cli",
-      "number": 6,
-      "url": "https://github.com/rainlanguage/rain.cli/issues/6",
-      "title": "use current metadata cli at https://crates.io/crates/rain-metadata"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 148,
-      "url": "https://github.com/rainlanguage/raindex/issues/148",
-      "title": "Call local Parser in addOrder functions"
     }
   ],
   "archivedRepoPrs": [
@@ -7028,7 +7034,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 142,
+    "unvetted": 143,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7039,7 +7045,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 259,
+    "totalProducerPrs": 260,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 750,
     "designPresentable": 7,
@@ -7048,9 +7054,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 273.0,
-      "medianDays": 99.3,
-      "oldestDays": 986.2
+      "meanDays": 262.0,
+      "medianDays": 98.9,
+      "oldestDays": 978.1
     }
   }
 }
