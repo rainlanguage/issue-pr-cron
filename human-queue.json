@@ -817,25 +817,13 @@
         ]
       },
       "un-vetted": {
-        "count": 141,
+        "count": 139,
         "prs": [
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 428,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/428",
             "title": "pow: bound large b near a = 1 by N min(K1, K2 d)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 427,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/427",
-            "title": "Format every Float"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 426,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/426",
-            "title": "Delete mulDivPow10 and the unused exponent constants; fix the int224 figure in parse"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -6974,6 +6962,18 @@
       "number": 204,
       "url": "https://github.com/rainlanguage/raindex/issues/204",
       "title": "Live Chart w/ Polling"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 183,
+      "url": "https://github.com/rainlanguage/raindex/issues/183",
+      "title": "Disable \"Add Order\" button when linting finds problems"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 168,
+      "url": "https://github.com/rainlanguage/raindex/issues/168",
+      "title": "put counterparty desired amount in context"
     }
   ],
   "archivedRepoPrs": [
@@ -7004,7 +7004,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 141,
+    "unvetted": 139,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7015,18 +7015,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 258,
+    "totalProducerPrs": 256,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 747,
+    "uncoveredIssues": 749,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 261.6,
-      "medianDays": 98.5,
-      "oldestDays": 977.7
+      "meanDays": 263.6,
+      "medianDays": 98.8,
+      "oldestDays": 981.1
     }
   }
 }
