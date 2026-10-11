@@ -817,8 +817,26 @@
         ]
       },
       "un-vetted": {
-        "count": 142,
+        "count": 139,
         "prs": [
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 451,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/451",
+            "title": "Bump dependencies to their latest releases (float 0.2.45)"
+          },
+          {
+            "repo": "rainlanguage/rain.vats",
+            "number": 344,
+            "url": "https://github.com/rainlanguage/rain.vats/pull/344",
+            "title": "Bump rain-math-float to 0.2.45"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.leakybucket",
+            "number": 127,
+            "url": "https://github.com/rainlanguage/rain.lib.leakybucket/pull/127",
+            "title": "deps: rain-math-float 0.2.22 -> 0.2.45"
+          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 275,
@@ -832,40 +850,16 @@
             "title": "deps: st0x.deploy main's set (blocked-by rainlang-interface 0.2.13, rain-math-float-deploy 0.1.4)"
           },
           {
-            "repo": "rainlanguage/rainix",
-            "number": 410,
-            "url": "https://github.com/rainlanguage/rainix/pull/410",
-            "title": "snapshots-append-only: a snapshot's DEPENDENCIES is not frozen"
-          },
-          {
             "repo": "rainlanguage/rain.math.float.deploy",
             "number": 41,
             "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/41",
-            "title": "deps: st0x.deploy set (float 0.2.22, rain-deploy 0.1.15, forge-std 1.17.0, OZ 5.7.0, codegen 0.1.39)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 432,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/432",
-            "title": "sqrt: per-parity linear Newton seed, four steps instead of seven"
-          },
-          {
-            "repo": "rainlanguage/rainlang.interface",
-            "number": 148,
-            "url": "https://github.com/rainlanguage/rainlang.interface/pull/148",
-            "title": "test: conform fuzzed bytecode to the header widths; trim duplicated deprecated NatSpec (fixes main red)"
+            "title": "deps: rain-math-float 0.2.45 (latest everywhere); delete the log tables"
           },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 430,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/430",
             "title": "Fuzz each function over its full typed domain"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 428,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/428",
-            "title": "pow: bound large b near a = 1 by N min(K1, K2 d)"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -898,12 +892,6 @@
             "title": "Declare and broadcast a factory clone through the same loop as a Zoltu deploy"
           },
           {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 352,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/352",
-            "title": "Gas: inline the log10Ratio and exp10Fixed series multiplies (#306)"
-          },
-          {
             "repo": "rainlanguage/rain.math.float.deploy",
             "number": 36,
             "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/36",
@@ -914,12 +902,6 @@
             "number": 412,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/412",
             "title": "Give Robinhood an [etherscan] entry pointing at Blockscout"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.leakybucket",
-            "number": 126,
-            "url": "https://github.com/rainlanguage/rain.lib.leakybucket/pull/126",
-            "title": "deps: rain-math-float 0.2.22, forge-std 1.17.0"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -2546,12 +2528,6 @@
       "number": 350,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/350",
       "title": "Scope: make every operation round once toward zero"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 349,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/349",
-      "title": "Should lossy packing round to the closest Float instead of truncating?"
     },
     {
       "repo": "rainlanguage/rain.math.float.deploy",
@@ -6974,6 +6950,24 @@
       "number": 141,
       "url": "https://github.com/rainlanguage/rainlang/issues/141",
       "title": "some kind of onchain registry (ens?) support for things like well known addresses (e.g. weth)"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 139,
+      "url": "https://github.com/rainlanguage/rainlang/issues/139",
+      "title": "undefined word (requires subsitution)"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 138,
+      "url": "https://github.com/rainlanguage/rainlang/issues/138",
+      "title": "calldata eval rather than onchain deploys"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 137,
+      "url": "https://github.com/rainlanguage/rainlang/issues/137",
+      "title": "LHS parse substitutions"
     }
   ],
   "archivedRepoPrs": [
@@ -7004,7 +6998,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 142,
+    "unvetted": 139,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7015,16 +7009,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 259,
+    "totalProducerPrs": 256,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 746,
+    "uncoveredIssues": 748,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 265.8,
+      "meanDays": 268.9,
       "medianDays": 99.0,
       "oldestDays": 981.3
     }
