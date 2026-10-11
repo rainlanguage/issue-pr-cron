@@ -821,6 +821,12 @@
         "prs": [
           {
             "repo": "rainlanguage/rain.math.float",
+            "number": 428,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/428",
+            "title": "pow: bound large b near a = 1 by N min(K1, K2 d)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
             "number": 427,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/427",
             "title": "Format every Float"
@@ -836,12 +842,6 @@
             "number": 450,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/450",
             "title": "Fix the two audit findings against the subgraph"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 421,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/421",
-            "title": "div/inv: keep the exact digit below the floor, inline the pack, report the call's input"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -2498,12 +2498,6 @@
       "number": 425,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/425",
       "title": "Tests: fuzz each function over its full typed domain"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 424,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/424",
-      "title": "pow: test and tighten the error bound for large |b| near a = 1"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -7023,7 +7017,7 @@
     "leaks": 0,
     "totalProducerPrs": 258,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 748,
+    "uncoveredIssues": 747,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
@@ -7031,8 +7025,8 @@
   "ages": {
     "openIssues": {
       "meanDays": 261.6,
-      "medianDays": 98.4,
-      "oldestDays": 977.6
+      "medianDays": 98.5,
+      "oldestDays": 977.7
     }
   }
 }
