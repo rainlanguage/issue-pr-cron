@@ -817,25 +817,13 @@
         ]
       },
       "un-vetted": {
-        "count": 139,
+        "count": 136,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 435,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/435",
-            "title": "Prove tighter exp10Fixed, pow10 and log10Ratio error bounds"
-          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 451,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/451",
             "title": "Bump dependencies to their latest releases (float 0.2.45)"
-          },
-          {
-            "repo": "rainlanguage/rain.vats",
-            "number": 344,
-            "url": "https://github.com/rainlanguage/rain.vats/pull/344",
-            "title": "Bump rain-math-float to 0.2.45"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -854,12 +842,6 @@
             "number": 41,
             "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/41",
             "title": "deps: rain-math-float 0.2.45 (latest everywhere); delete the log tables"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 430,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/430",
-            "title": "Fuzz each function over its full typed domain"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -2486,12 +2468,6 @@
       "number": 274,
       "url": "https://github.com/rainlanguage/rain.deploy/issues/274",
       "title": "No story for upgradeable beacons: consumers hand-roll the beacon invariants"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 407,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/407",
-      "title": "test: one exact reference library for every operation"
     },
     {
       "repo": "S01-Issuer/st0x.deploy",
@@ -6962,6 +6938,30 @@
       "number": 6,
       "url": "https://github.com/rainlanguage/rain.cli/issues/6",
       "title": "use current metadata cli at https://crates.io/crates/rain-metadata"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 148,
+      "url": "https://github.com/rainlanguage/raindex/issues/148",
+      "title": "Call local Parser in addOrder functions"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 142,
+      "url": "https://github.com/rainlanguage/raindex/issues/142",
+      "title": "Transaction status notice should last until the subgraph includes the submitted transaction"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 102,
+      "url": "https://github.com/rainlanguage/raindex/issues/102",
+      "title": "subgraph query integration tests"
+    },
+    {
+      "repo": "rainlanguage/dotrain",
+      "number": 61,
+      "url": "https://github.com/rainlanguage/dotrain/issues/61",
+      "title": "fuzzing all the regexes against expectations"
     }
   ],
   "archivedRepoPrs": [
@@ -6992,7 +6992,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 139,
+    "unvetted": 136,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7003,18 +7003,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 256,
+    "totalProducerPrs": 253,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 747,
+    "uncoveredIssues": 750,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 271.9,
-      "medianDays": 99.1,
-      "oldestDays": 985.1
+      "meanDays": 276.0,
+      "medianDays": 103.2,
+      "oldestDays": 1000.1
     }
   }
 }
