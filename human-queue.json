@@ -7036,8 +7036,8 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 260.1,
-      "medianDays": 97.9,
+      "meanDays": 260.2,
+      "medianDays": 98.0,
       "oldestDays": 974.9
     }
   }
