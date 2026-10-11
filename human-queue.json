@@ -841,7 +841,7 @@
             "repo": "rainlanguage/rain.math.float",
             "number": 392,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/392",
-            "title": "test: div/inv/sub packed fuzzes check exact oracles (#374)"
+            "title": "test: sub packed fuzz checks the exact sum rule (#374)"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -2528,12 +2528,6 @@
       "number": 375,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/375",
       "title": "test: parse error choice for literals past int256 mirrors the parser's internal steps"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 374,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/374",
-      "title": "test: divParts/invParts replay div's precision steps; div/inv/sub packed fuzzes have no independent value check"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -7029,7 +7023,7 @@
     "leaks": 0,
     "totalProducerPrs": 260,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 747,
+    "uncoveredIssues": 746,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
@@ -7037,7 +7031,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 260.4,
-      "medianDays": 98.2,
+      "medianDays": 98.3,
       "oldestDays": 975.2
     }
   }
