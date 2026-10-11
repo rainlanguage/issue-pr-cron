@@ -935,3 +935,4 @@
 {"ts":"2026-10-11T17:56:25Z","observedAt":"2026-10-11T18:32:05Z","kind":"pr","repo":"rainlanguage/rain.math.float","number":432}
 {"ts":"2026-10-11T18:00:11Z","observedAt":"2026-10-11T18:32:05Z","kind":"pr","repo":"rainlanguage/rainix","number":410}
 {"ts":"2026-10-11T17:46:27Z","observedAt":"2026-10-11T18:32:05Z","kind":"pr","repo":"rainlanguage/rainlang.interface","number":148}
+{"ts":"2026-10-11T19:02:34Z","observedAt":"2026-10-11T19:31:45Z","kind":"pr","repo":"rainlanguage/rain.lib.leakybucket","number":127}
