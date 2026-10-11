@@ -817,8 +817,20 @@
         ]
       },
       "un-vetted": {
-        "count": 139,
+        "count": 141,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 430,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/430",
+            "title": "Fuzz each function over its full typed domain"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 429,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/429",
+            "title": "Name a revert outside each implementation helper's input range (#422)"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 428,
@@ -2481,18 +2493,6 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 425,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/425",
-      "title": "Tests: fuzz each function over its full typed domain"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 422,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/422",
-      "title": "Implementation helpers: name a revert outside each stated input range"
-    },
     {
       "repo": "rainlanguage/rain.math.float",
       "number": 415,
@@ -7004,7 +7004,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 139,
+    "unvetted": 141,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7015,16 +7015,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 256,
+    "totalProducerPrs": 258,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 749,
+    "uncoveredIssues": 747,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 263.6,
+      "meanDays": 263.7,
       "medianDays": 98.8,
       "oldestDays": 981.1
     }
