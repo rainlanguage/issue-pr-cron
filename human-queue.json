@@ -817,8 +817,20 @@
         ]
       },
       "un-vetted": {
-        "count": 150,
+        "count": 152,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 471,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/471",
+            "title": "Mutation coverage: IMPL-log10Reduce"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 470,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/470",
+            "title": "Mutation coverage: FMT-stripTrailingZeros, LDF-log10Sqrt-wrappers"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 469,
@@ -7082,7 +7094,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 150,
+    "unvetted": 152,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7093,7 +7105,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 267,
+    "totalProducerPrs": 269,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 751,
     "designPresentable": 7,
@@ -7102,8 +7114,8 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 258.1,
-      "medianDays": 99.0,
+      "meanDays": 258.2,
+      "medianDays": 99.1,
       "oldestDays": 976.0
     }
   }
