@@ -817,8 +817,20 @@
         ]
       },
       "un-vetted": {
-        "count": 148,
+        "count": 150,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 469,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/469",
+            "title": "Mutation coverage: IMPL-log10Ratio"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 468,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/468",
+            "title": "Mutation coverage: IMPL-exp10Fixed"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 467,
@@ -7070,7 +7082,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 148,
+    "unvetted": 150,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7081,7 +7093,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 265,
+    "totalProducerPrs": 267,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 751,
     "designPresentable": 7,
@@ -7092,7 +7104,7 @@
     "openIssues": {
       "meanDays": 258.1,
       "medianDays": 99.0,
-      "oldestDays": 975.9
+      "oldestDays": 976.0
     }
   }
 }
