@@ -2579,6 +2579,78 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rain.math.float",
+      "number": 486,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/486",
+      "title": "mulDiv gives two different errors for a zero denominator, depending on the size of x*y"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 485,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/485",
+      "title": "log10Unrounded at exactly 1.001 misses the 3.11e-49 relative bound for inputs \"within a factor 1.001\" of a power of ten (strict `< 1.001e75` edge)"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 484,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/484",
+      "title": "log10Unrounded loses its documented 3.11e-49 relative precision for inputs in [1/1.001, 0.9999) of a power of ten"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 483,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/483",
+      "title": "log10Unrounded's checkAbsolute accepts the wrong neighbouring integer near the int256 limits, and panics when the characteristic is int256.min"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 482,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/482",
+      "title": "log10Unrounded comment says the maximize shortfall is at most 75, but maximize returns 76"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 481,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/481",
+      "title": "agree returns true for any pair passed as lowest > highest, however far apart the values are"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 480,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/480",
+      "title": "frac NatSpec does not state its sign convention: frac of a negative non-integer is negative (x - trunc(x)), not in [0,1)"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 479,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/479",
+      "title": "floor NatSpec says \"Smallest integer value less than or equal to the float\", but floor returns the greatest such integer"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 478,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/478",
+      "title": "testDivPacked and testInvMem take their byte-exact expected Float from the library's own packLossy, so a packLossy representation bug passes them"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 477,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/477",
+      "title": "mul NatSpec does not state that it rounds toward zero or what its range errors carry, and quotes a spec whose rounding is to nearest"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 476,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/476",
+      "title": "A one-unit change in POW_FIXED_LN10 is caught only by equivalence copies, and a change to the constant's definition is caught by no test"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 475,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/475",
+      "title": "log10Ratio: the lt(mm, prod0) borrow in the z^4 and z^6 in-place multiplies can never fire for any in-domain z, so no test can pin it"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
       "number": 462,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/462",
       "title": "Implementation sub(x, x) reverts ExponentOverflow for x = (int256.min, int256.max) instead of returning zero"
@@ -7028,60 +7100,6 @@
       "number": 272,
       "url": "https://github.com/rainlanguage/raindex/issues/272",
       "title": "Transaction failure destroys the entry form: deposit/withdraw/withdraw-all/take-order modals close and clear on error"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 269,
-      "url": "https://github.com/rainlanguage/raindex/issues/269",
-      "title": "cancel in-progress transactions"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 262,
-      "url": "https://github.com/rainlanguage/raindex/issues/262",
-      "title": "Round values in order takes table -- show full value on hover"
-    },
-    {
-      "repo": "rainlanguage/forker",
-      "number": 3,
-      "url": "https://github.com/rainlanguage/forker/issues/3",
-      "title": "Make cache expiration configurable or default to never expire"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 236,
-      "url": "https://github.com/rainlanguage/raindex/issues/236",
-      "title": "Standardize CLI output method with other rain clis"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 235,
-      "url": "https://github.com/rainlanguage/raindex/issues/235",
-      "title": "Merge clears & takes into single chart / table"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 218,
-      "url": "https://github.com/rainlanguage/raindex/issues/218",
-      "title": "Frontmatter rebindings parse errors"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 212,
-      "url": "https://github.com/rainlanguage/raindex/issues/212",
-      "title": "Token detail page"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 211,
-      "url": "https://github.com/rainlanguage/raindex/issues/211",
-      "title": "make it impossible to close the diagnostics panel, or very easy to bring it back if it is closed"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 208,
-      "url": "https://github.com/rainlanguage/raindex/issues/208",
-      "title": "Link to orderbook in block explorer"
     }
   ],
   "archivedRepoPrs": [
@@ -7125,16 +7143,16 @@
     "leaks": 0,
     "totalProducerPrs": 272,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 751,
+    "uncoveredIssues": 754,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 977
+    "openIssues": 979
   },
   "ages": {
     "openIssues": {
-      "meanDays": 258.3,
-      "medianDays": 99.2,
-      "oldestDays": 976.1
+      "meanDays": 247.9,
+      "medianDays": 98.0,
+      "oldestDays": 968.6
     }
   }
 }
