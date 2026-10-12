@@ -817,8 +817,14 @@
         ]
       },
       "un-vetted": {
-        "count": 152,
+        "count": 153,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 472,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/472",
+            "title": "Mutation coverage: IMPL-log10Unrounded"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 471,
@@ -7094,7 +7100,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 152,
+    "unvetted": 153,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7105,7 +7111,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 269,
+    "totalProducerPrs": 270,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 751,
     "designPresentable": 7,
@@ -7116,7 +7122,7 @@
     "openIssues": {
       "meanDays": 258.2,
       "medianDays": 99.1,
-      "oldestDays": 976.0
+      "oldestDays": 976.1
     }
   }
 }
