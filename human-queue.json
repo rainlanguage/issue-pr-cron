@@ -817,8 +817,38 @@
         ]
       },
       "un-vetted": {
-        "count": 156,
+        "count": 149,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 501,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/501",
+            "title": "log10Unrounded: relative path at both 1.001 edges and for 77-digit coefficients (#482-#485)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 500,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/500",
+            "title": "log10Ratio: drop dead z^6 borrow term (#475), document b = 0 revert order (#456), pin POW_FIXED_LN10 (#476)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 499,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/499",
+            "title": "mul ceiling margin 77, mul NatSpec, mulDiv zero denominator, div spill guard"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 498,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/498",
+            "title": "agree rejects reversed extremes; exact div/inv oracle; floor and frac NatSpec (#478-#481)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 497,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/497",
+            "title": "sqrt returns the root near int256.min (#451); unreachable zero-mantissa parse returns (#460)"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 496,
@@ -845,81 +875,9 @@
           },
           {
             "repo": "rainlanguage/rain.math.float",
-            "number": 492,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/492",
-            "title": "Format fuzz: non-zero base by construction (#448)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 490,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/490",
-            "title": "Mutation coverage: LDF-fromFixed, LDF-constants"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 489,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/489",
-            "title": "Mutation coverage: LDF-pow10, PARSE-top"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
             "number": 488,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/488",
             "title": "Mutation coverage: PARSE-inline-mantissa"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 487,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/487",
-            "title": "Mutation coverage: PARSE-inline-mantissa"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 474,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/474",
-            "title": "Mutation coverage: LDF-pow-special, LDF-packWrappers"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 473,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/473",
-            "title": "Mutation coverage: PARSE-inline-exponent"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 472,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/472",
-            "title": "Mutation coverage: IMPL-log10Unrounded"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 471,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/471",
-            "title": "Mutation coverage: IMPL-log10Reduce"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 470,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/470",
-            "title": "Mutation coverage: FMT-stripTrailingZeros, LDF-log10Sqrt-wrappers"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 469,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/469",
-            "title": "Mutation coverage: IMPL-log10Ratio"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 468,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/468",
-            "title": "Mutation coverage: IMPL-exp10Fixed"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 467,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/467",
-            "title": "Mutation coverage: IMPL-log10Reduce"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -2585,69 +2543,45 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 486,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/486",
-      "title": "mulDiv gives two different errors for a zero denominator, depending on the size of x*y"
+      "number": 508,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/508",
+      "title": "parseDecimalFloatPastInt256: the MalformedExponentDigits early return and the digitCount == 0 return are unreachable"
     },
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 485,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/485",
-      "title": "log10Unrounded at exactly 1.001 misses the 3.11e-49 relative bound for inputs \"within a factor 1.001\" of a power of ten (strict `< 1.001e75` edge)"
+      "number": 507,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/507",
+      "title": "roundSignificant can return a 42-digit coefficient (1e41) after a carry, so it is not idempotent on its own output"
     },
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 484,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/484",
-      "title": "log10Unrounded loses its documented 3.11e-49 relative precision for inputs in [1/1.001, 0.9999) of a power of ten"
+      "number": 506,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/506",
+      "title": "log10 NatSpec bounds the internal approximation at 1.0037e-50 for every input, but once the characteristic reaches 1e25 the error goes past it"
     },
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 483,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/483",
-      "title": "log10Unrounded's checkAbsolute accepts the wrong neighbouring integer near the int256 limits, and panics when the characteristic is int256.min"
+      "number": 505,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/505",
+      "title": "pow(a, b) is not monotone in b by one ulp where b crosses an exact half (root path vs log10/pow10 leg)"
     },
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 482,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/482",
-      "title": "log10Unrounded comment says the maximize shortfall is at most 75, but maximize returns 76"
+      "number": 504,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/504",
+      "title": "parseDecimalFloat reverts ExponentOverflow for some past-range literals but returns the ExponentOverflow selector for others"
     },
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 481,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/481",
-      "title": "agree returns true for any pair passed as lowest > highest, however far apart the values are"
+      "number": 503,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/503",
+      "title": "FLOAT_PI exceeds pi: it is rounded to nearest, not to the closest Float that does not exceed its magnitude"
     },
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 480,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/480",
-      "title": "frac NatSpec does not state its sign convention: frac of a negative non-integer is negative (x - trunc(x)), not in [0,1)"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 479,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/479",
-      "title": "floor NatSpec says \"Smallest integer value less than or equal to the float\", but floor returns the greatest such integer"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 478,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/478",
-      "title": "testDivPacked and testInvMem take their byte-exact expected Float from the library's own packLossy, so a packLossy representation bug passes them"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 477,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/477",
-      "title": "mul NatSpec does not state that it rounds toward zero or what its range errors carry, and quotes a spec whose rounding is to nearest"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 476,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/476",
-      "title": "A one-unit change in POW_FIXED_LN10 is caught only by equivalence copies, and a change to the constant's definition is caught by no test"
+      "number": 502,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/502",
+      "title": "unabsUnsignedMulOrDivLossy reverts Panic(0x11), not a named ExponentOverflow, when it sheds a digit at exponent == int256.max"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -2657,39 +2591,9 @@
     },
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 460,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/460",
-      "title": "Zero-mantissa returns in readSignificantDigits and parseDecimalFloatPastInt256 are unreachable"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 458,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/458",
-      "title": "div spill-overflow early return (exponentB > int256.max - adjustExponent) is indistinguishable from the u > 76 zero return: M06/M08 are equivalent mutants"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 457,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/457",
-      "title": "mul ceiling margin budgets a lift of 77 + 1 = 78, but the reachable combined lift is 77"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 456,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/456",
-      "title": "log10Ratio relative with b = 0 and a + b below 1e50 reverts Log10RatioRelativeSumTooSmall, not the documented Log10RatioOutOfRange"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
       "number": 452,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/452",
       "title": "packLossy saturates (2^223+1)e int32.max to FLOAT_MAX but reverts ExponentOverflow on (2^223+2)e int32.max, where the NatSpec rule saturates and the README rule reverts both"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 451,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/451",
-      "title": "sqrt reverts SqrtOutOfRange near type(int256).min exponents even though the root is representable"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -7028,42 +6932,6 @@
       "number": 284,
       "url": "https://github.com/rainlanguage/raindex/issues/284",
       "title": "Fetch token decimals in input field"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 280,
-      "url": "https://github.com/rainlanguage/raindex/issues/280",
-      "title": "Help page content: Ledger Issues"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 276,
-      "url": "https://github.com/rainlanguage/raindex/issues/276",
-      "title": "Universal mac binaries"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 274,
-      "url": "https://github.com/rainlanguage/raindex/issues/274",
-      "title": "Include token symbol & transaction hash in transaction status notice"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 273,
-      "url": "https://github.com/rainlanguage/raindex/issues/273",
-      "title": "add a button to generate a random vaultid on the deposit modal"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 272,
-      "url": "https://github.com/rainlanguage/raindex/issues/272",
-      "title": "Transaction failure destroys the entry form: deposit/withdraw/withdraw-all/take-order modals close and clear on error"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 269,
-      "url": "https://github.com/rainlanguage/raindex/issues/269",
-      "title": "cancel in-progress transactions"
     }
   ],
   "archivedRepoPrs": [
@@ -7094,7 +6962,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 156,
+    "unvetted": 149,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7105,18 +6973,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 273,
+    "totalProducerPrs": 266,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 747,
+    "uncoveredIssues": 732,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 979
   },
   "ages": {
     "openIssues": {
-      "meanDays": 249.0,
-      "medianDays": 98.0,
-      "oldestDays": 969.2
+      "meanDays": 243.1,
+      "medianDays": 96.6,
+      "oldestDays": 968.7
     }
   }
 }
