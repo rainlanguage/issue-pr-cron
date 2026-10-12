@@ -817,8 +817,14 @@
         ]
       },
       "un-vetted": {
-        "count": 143,
+        "count": 144,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 463,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/463",
+            "title": "Mutation coverage: FMT-nonScientific"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 447,
@@ -2505,6 +2511,30 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 462,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/462",
+      "title": "Implementation sub(x, x) reverts ExponentOverflow for x = (int256.min, int256.max) instead of returning zero"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 461,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/461",
+      "title": "Implementation sub with an int256.min subtrahend rounds twice: 3 - int256.min is 8 below exact instead of truncated once"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 460,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/460",
+      "title": "Zero-mantissa returns in readSignificantDigits and parseDecimalFloatPastInt256 are unreachable"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 459,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/459",
+      "title": "Implementation sub(-1, max, int256.min, max) reverts ExponentOverflow although the exact difference (int256.max, int256.max) is representable"
+    },
     {
       "repo": "rainlanguage/rain.math.float",
       "number": 458,
@@ -6986,24 +7016,6 @@
       "number": 208,
       "url": "https://github.com/rainlanguage/raindex/issues/208",
       "title": "Link to orderbook in block explorer"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 206,
-      "url": "https://github.com/rainlanguage/raindex/issues/206",
-      "title": "Take Order Chart: number of transactions"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 205,
-      "url": "https://github.com/rainlanguage/raindex/issues/205",
-      "title": "Take Orders Chart: Token Balances"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 204,
-      "url": "https://github.com/rainlanguage/raindex/issues/204",
-      "title": "Live Chart w/ Polling"
     }
   ],
   "archivedRepoPrs": [
@@ -7034,7 +7046,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 143,
+    "unvetted": 144,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7045,18 +7057,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 260,
+    "totalProducerPrs": 261,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 750,
+    "uncoveredIssues": 751,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 262.0,
+      "meanDays": 258.1,
       "medianDays": 98.9,
-      "oldestDays": 978.1
+      "oldestDays": 975.9
     }
   }
 }
