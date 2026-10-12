@@ -817,8 +817,20 @@
         ]
       },
       "un-vetted": {
-        "count": 153,
+        "count": 155,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 474,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/474",
+            "title": "Mutation coverage: LDF-pow-special, LDF-packWrappers"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 473,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/473",
+            "title": "Mutation coverage: PARSE-inline-exponent"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 472,
@@ -7100,7 +7112,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 153,
+    "unvetted": 155,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7111,7 +7123,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 270,
+    "totalProducerPrs": 272,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 751,
     "designPresentable": 7,
@@ -7120,7 +7132,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 258.2,
+      "meanDays": 258.3,
       "medianDays": 99.1,
       "oldestDays": 976.1
     }
