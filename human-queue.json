@@ -817,13 +817,37 @@
         ]
       },
       "un-vetted": {
-        "count": 159,
+        "count": 156,
         "prs": [
           {
             "repo": "rainlanguage/rain.math.float",
-            "number": 491,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/491",
-            "title": "Fix main: allocation-free exact-oracle multiply (out-of-gas tests since #437)"
+            "number": 496,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/496",
+            "title": "Cap plain formatting on the canonical exponent; drop the spare word past formatted strings"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 495,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/495",
+            "title": "sub: negate b exactly inside the sum (#459, #461, #462)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 494,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/494",
+            "title": "Regenerate .gas-snapshot against the current test suite (#454)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 493,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/493",
+            "title": "Mutation coverage: IMPL-exp10Fixed-horner-borrows"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 492,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/492",
+            "title": "Format fuzz: non-zero base by construction (#448)"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -899,42 +923,6 @@
           },
           {
             "repo": "rainlanguage/rain.math.float",
-            "number": 466,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/466",
-            "title": "Mutation coverage: IMPL-exp10Fixed"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 465,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/465",
-            "title": "Mutation coverage: IMPL-log10Reduce"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 464,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/464",
-            "title": "Mutation coverage: IMPL-exp10Fixed"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 463,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/463",
-            "title": "Mutation coverage: FMT-nonScientific"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 447,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/447",
-            "title": "Mutation coverage: IMPL-scaleUp"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 446,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/446",
-            "title": "Mutation coverage: IMPL-div-extremes"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
             "number": 445,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/445",
             "title": "Halmos proofs: add/sub rounding and series equivalence"
@@ -950,12 +938,6 @@
             "number": 443,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/443",
             "title": "Spec: arithmetic rules for sign-off"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 442,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/442",
-            "title": "Mutation coverage: LDF-packLossy-shed"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -2675,27 +2657,9 @@
     },
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 462,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/462",
-      "title": "Implementation sub(x, x) reverts ExponentOverflow for x = (int256.min, int256.max) instead of returning zero"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 461,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/461",
-      "title": "Implementation sub with an int256.min subtrahend rounds twice: 3 - int256.min is 8 below exact instead of truncated once"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
       "number": 460,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/460",
       "title": "Zero-mantissa returns in readSignificantDigits and parseDecimalFloatPastInt256 are unreachable"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 459,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/459",
-      "title": "Implementation sub(-1, max, int256.min, max) reverts ExponentOverflow although the exact difference (int256.max, int256.max) is representable"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -2717,18 +2681,6 @@
     },
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 454,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/454",
-      "title": "Committed .gas-snapshot does not match the current test suite (lists removed maximize tests, omits current ones)"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 453,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/453",
-      "title": "toDecimalString allocates one word past the end of every formatted string (_toScientific / _toNonScientific)"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
       "number": 452,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/452",
       "title": "packLossy saturates (2^223+1)e int32.max to FLOAT_MAX but reverts ExponentOverflow on (2^223+2)e int32.max, where the NatSpec rule saturates and the README rule reverts both"
@@ -2744,18 +2696,6 @@
       "number": 450,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/450",
       "title": "packLossless reverts LossyConversionToFloat, not ExponentOverflow, for values just past FLOAT_MAX / FLOAT_MIN at the exponent ceiling"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 449,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/449",
-      "title": "Non-scientific format cap depends on the Float's representation, not its value"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 448,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/448",
-      "title": "testFormatCanonicalAcrossRepresentationsShifted fails above ~35k fuzz runs: vm.assume(base != 0) rejects ~65% of inputs"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -7118,6 +7058,12 @@
       "number": 272,
       "url": "https://github.com/rainlanguage/raindex/issues/272",
       "title": "Transaction failure destroys the entry form: deposit/withdraw/withdraw-all/take-order modals close and clear on error"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 269,
+      "url": "https://github.com/rainlanguage/raindex/issues/269",
+      "title": "cancel in-progress transactions"
     }
   ],
   "archivedRepoPrs": [
@@ -7148,7 +7094,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 159,
+    "unvetted": 156,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7159,18 +7105,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 276,
+    "totalProducerPrs": 273,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 753,
+    "uncoveredIssues": 747,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 979
   },
   "ages": {
     "openIssues": {
-      "meanDays": 247.9,
+      "meanDays": 249.0,
       "medianDays": 98.0,
-      "oldestDays": 968.6
+      "oldestDays": 969.2
     }
   }
 }
