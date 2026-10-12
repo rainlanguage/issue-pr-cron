@@ -817,8 +817,38 @@
         ]
       },
       "un-vetted": {
-        "count": 155,
+        "count": 159,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 491,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/491",
+            "title": "Fix main: allocation-free exact-oracle multiply (out-of-gas tests since #437)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 490,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/490",
+            "title": "Mutation coverage: LDF-fromFixed, LDF-constants"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 489,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/489",
+            "title": "Mutation coverage: LDF-pow10, PARSE-top"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 488,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/488",
+            "title": "Mutation coverage: PARSE-inline-mantissa"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 487,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/487",
+            "title": "Mutation coverage: PARSE-inline-mantissa"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 474,
@@ -926,12 +956,6 @@
             "number": 442,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/442",
             "title": "Mutation coverage: LDF-packLossy-shed"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 441,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/441",
-            "title": "Mutation coverage: PARSE-digitsExponent"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -2690,12 +2714,6 @@
       "number": 456,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/456",
       "title": "log10Ratio relative with b = 0 and a + b below 1e50 reverts Log10RatioRelativeSumTooSmall, not the documented Log10RatioOutOfRange"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 455,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/455",
-      "title": "testMulRevertsOnlyExponentOverflowEdges runs out of gas, so the main test job is red"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -7130,7 +7148,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 155,
+    "unvetted": 159,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7141,9 +7159,9 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 272,
+    "totalProducerPrs": 276,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 754,
+    "uncoveredIssues": 753,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 979
