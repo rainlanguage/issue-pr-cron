@@ -817,73 +817,19 @@
         ]
       },
       "un-vetted": {
-        "count": 150,
+        "count": 141,
         "prs": [
           {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 509,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/509",
-            "title": "packLossless reverts ExponentOverflow past every Float; document the packLossy overflow threshold (#450, #452)"
-          },
-          {
             "repo": "rainlanguage/rain-org-health",
-            "number": 194,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/194",
-            "title": "Role changes: name every address by its deploy-repo pin, mark the rest unrecognised"
+            "number": 195,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/195",
+            "title": "feat(deployments): show governance-timelock operations on the role changes tab"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
-            "number": 455,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/455",
-            "title": "Subgraph: index governance timelock operations"
-          },
-          {
-            "repo": "rainlanguage/rainix",
-            "number": 412,
-            "url": "https://github.com/rainlanguage/rainix/pull/412",
-            "title": "subgraph-deploy: fail on a refused deploy, label versions by build"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 501,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/501",
-            "title": "log10Unrounded: relative path at both 1.001 edges and for 77-digit coefficients (#482-#485)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 500,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/500",
-            "title": "log10Ratio: drop dead z^6 borrow term and split z^4 exactly (#475), document b = 0 revert order (#456), pin POW_FIXED_LN10 (#476)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 499,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/499",
-            "title": "mul ceiling margin 77, mul NatSpec, mulDiv zero denominator, div spill guard"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 498,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/498",
-            "title": "agree rejects reversed extremes; exact div/inv oracle; floor and frac NatSpec (#478-#481)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 497,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/497",
-            "title": "sqrt returns the root near int256.min (#451); unreachable zero-mantissa parse returns (#460)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 496,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/496",
-            "title": "Cap plain formatting on the canonical exponent; drop the spare word past formatted strings"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 495,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/495",
-            "title": "sub: negate b exactly inside the sum (#459, #461, #462)"
+            "number": 456,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/456",
+            "title": "Switch the EU authoriser prod test on the migration registry; classify main's reds against the chain"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -2549,6 +2495,12 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rain.math.float",
+      "number": 510,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/510",
+      "title": "parseDecimalFloat reverts ExponentOverflow from packing instead of returning it"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
       "number": 508,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/508",
       "title": "parseDecimalFloatPastInt256: the MalformedExponentDigits early return and the digitCount == 0 return are unreachable"
@@ -2774,12 +2726,6 @@
       "number": 411,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/411",
       "title": "New token deploys still hand ownership to the Safe, re-opening the timelock gap on every token"
-    },
-    {
-      "repo": "S01-Issuer/st0x.deploy",
-      "number": 410,
-      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/410",
-      "title": "main is 62 tests red: the invariant surface still asserts pre-timelock-migration ownership"
     },
     {
       "repo": "S01-Issuer/st0x.deploy",
@@ -6920,6 +6866,126 @@
       "number": 284,
       "url": "https://github.com/rainlanguage/raindex/issues/284",
       "title": "Fetch token decimals in input field"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 280,
+      "url": "https://github.com/rainlanguage/raindex/issues/280",
+      "title": "Help page content: Ledger Issues"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 276,
+      "url": "https://github.com/rainlanguage/raindex/issues/276",
+      "title": "Universal mac binaries"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 274,
+      "url": "https://github.com/rainlanguage/raindex/issues/274",
+      "title": "Include token symbol & transaction hash in transaction status notice"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 273,
+      "url": "https://github.com/rainlanguage/raindex/issues/273",
+      "title": "add a button to generate a random vaultid on the deposit modal"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 272,
+      "url": "https://github.com/rainlanguage/raindex/issues/272",
+      "title": "Transaction failure destroys the entry form: deposit/withdraw/withdraw-all/take-order modals close and clear on error"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 269,
+      "url": "https://github.com/rainlanguage/raindex/issues/269",
+      "title": "cancel in-progress transactions"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 262,
+      "url": "https://github.com/rainlanguage/raindex/issues/262",
+      "title": "Round values in order takes table -- show full value on hover"
+    },
+    {
+      "repo": "rainlanguage/forker",
+      "number": 3,
+      "url": "https://github.com/rainlanguage/forker/issues/3",
+      "title": "Make cache expiration configurable or default to never expire"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 236,
+      "url": "https://github.com/rainlanguage/raindex/issues/236",
+      "title": "Standardize CLI output method with other rain clis"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 235,
+      "url": "https://github.com/rainlanguage/raindex/issues/235",
+      "title": "Merge clears & takes into single chart / table"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 218,
+      "url": "https://github.com/rainlanguage/raindex/issues/218",
+      "title": "Frontmatter rebindings parse errors"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 212,
+      "url": "https://github.com/rainlanguage/raindex/issues/212",
+      "title": "Token detail page"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 211,
+      "url": "https://github.com/rainlanguage/raindex/issues/211",
+      "title": "make it impossible to close the diagnostics panel, or very easy to bring it back if it is closed"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 208,
+      "url": "https://github.com/rainlanguage/raindex/issues/208",
+      "title": "Link to orderbook in block explorer"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 206,
+      "url": "https://github.com/rainlanguage/raindex/issues/206",
+      "title": "Take Order Chart: number of transactions"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 205,
+      "url": "https://github.com/rainlanguage/raindex/issues/205",
+      "title": "Take Orders Chart: Token Balances"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 204,
+      "url": "https://github.com/rainlanguage/raindex/issues/204",
+      "title": "Live Chart w/ Polling"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 183,
+      "url": "https://github.com/rainlanguage/raindex/issues/183",
+      "title": "Disable \"Add Order\" button when linting finds problems"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 168,
+      "url": "https://github.com/rainlanguage/raindex/issues/168",
+      "title": "put counterparty desired amount in context"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 142,
+      "url": "https://github.com/rainlanguage/rainlang/issues/142",
+      "title": "utf8 support for parsing"
     }
   ],
   "archivedRepoPrs": [
@@ -6950,7 +7016,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 150,
+    "unvetted": 141,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -6961,18 +7027,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 267,
+    "totalProducerPrs": 258,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 729,
+    "uncoveredIssues": 749,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 979
+    "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 244.3,
-      "medianDays": 97.9,
-      "oldestDays": 969.9
+      "meanDays": 266.8,
+      "medianDays": 101.0,
+      "oldestDays": 983.3
     }
   }
 }
