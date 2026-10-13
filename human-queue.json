@@ -817,8 +817,68 @@
         ]
       },
       "un-vetted": {
-        "count": 141,
+        "count": 150,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 292,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/292",
+            "title": "List a timelock's pending operations from CallScheduled logs; generic event-log finder"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 522,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/522",
+            "title": "pow half-step order, log10 bound proof, roundSignificant carry: docs and tests (#505, #506, #507)"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 457,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/457",
+            "title": "Retire LibMigrationInvariant: assert executed migrations outright"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 291,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/291",
+            "title": "Add TimelockController deploy, invariant and rehearsal libraries"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 290,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/290",
+            "title": "Add findTransitionBlock: derive the block a view read first answers"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 289,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/289",
+            "title": "LibMigrationRegistry: (to, data) builders for registry writes in a Safe bundle or timelock batch"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 288,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/288",
+            "title": "IOwnable and LibRainDeploy.etchAndDeployZoltu"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 520,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/520",
+            "title": "Truncate FLOAT_PI toward zero so it does not exceed pi"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 518,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/518",
+            "title": "unabsUnsignedMulOrDivLossy: revert UnabsExponentOverflow, not Panic(0x11), when it sheds at int256.max"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 517,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/517",
+            "title": "Return ExponentOverflow by value from parse, never a packing revert (#510)"
+          },
           {
             "repo": "rainlanguage/rain-org-health",
             "number": 195,
@@ -844,16 +904,10 @@
             "title": "Differential fuzz vs dashu-float"
           },
           {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 443,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/443",
-            "title": "Spec: arithmetic rules for sign-off"
-          },
-          {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 451,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/451",
-            "title": "Bump dependencies to their latest releases (float 0.2.45)"
+            "title": "Bump dependencies to their latest releases (float 0.2.56, vats 0.2.5)"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -865,7 +919,7 @@
             "repo": "rainlanguage/rainlang",
             "number": 594,
             "url": "https://github.com/rainlanguage/rainlang/pull/594",
-            "title": "deps: st0x.deploy main's set (blocked-by rainlang-interface 0.2.13, rain-math-float-deploy 0.1.4)"
+            "title": "deps: latest everywhere; rain-math-float 0.2.45 without log tables"
           },
           {
             "repo": "rainlanguage/rain.math.float.deploy",
@@ -2494,52 +2548,64 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 510,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/510",
-      "title": "parseDecimalFloat reverts ExponentOverflow from packing instead of returning it"
+      "repo": "rainlanguage/rain.deploy",
+      "number": 285,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/285",
+      "title": "AccessControl holders cannot be enumerated: invariants only sample a pinned map"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 282,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/282",
+      "title": "No Safe v1.4.1 canonical constants or invariants: consumers pin singleton, factory and slots themselves"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 279,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/279",
+      "title": "No Safe-bundle script skeleton: every governed repo repeats the author/simulate/emit/verify body"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 278,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/278",
+      "title": "No Safe bundle toolkit: consumers hand-roll safeTxHash, MultiSend, Tx Builder JSON and approve-hash signing"
     },
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 508,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/508",
-      "title": "parseDecimalFloatPastInt256: the MalformedExponentDigits early return and the digitCount == 0 return are unreachable"
+      "number": 516,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/516",
+      "title": "Halmos: prove exp10Fixed series equivalence"
     },
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 507,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/507",
-      "title": "roundSignificant can return a 42-digit coefficient (1e41) after a carry, so it is not idempotent on its own output"
+      "number": 515,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/515",
+      "title": "Halmos: prove log10Ratio series equivalence"
     },
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 506,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/506",
-      "title": "log10 NatSpec bounds the internal approximation at 1.0037e-50 for every input, but once the characteristic reaches 1e25 the error goes past it"
+      "number": 514,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/514",
+      "title": "Halmos: prove FAR (add with a far exponent gap)"
     },
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 505,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/505",
-      "title": "pow(a, b) is not monotone in b by one ulp where b crosses an exact half (root path vs log10/pow10 leg)"
+      "number": 513,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/513",
+      "title": "Halmos: prove MINUS (add/sub cancellation)"
     },
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 504,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/504",
-      "title": "parseDecimalFloat reverts ExponentOverflow for some past-range literals but returns the ExponentOverflow selector for others"
+      "number": 512,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/512",
+      "title": "Halmos: prove NEAR (add with a near exponent gap)"
     },
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 503,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/503",
-      "title": "FLOAT_PI exceeds pi: it is rounded to nearest, not to the closest Float that does not exceed its magnitude"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 502,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/502",
-      "title": "unabsUnsignedMulOrDivLossy reverts Panic(0x11), not a named ExponentOverflow, when it sheds a digit at exponent == int256.max"
+      "number": 511,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/511",
+      "title": "Halmos: prove PACK (packArithmeticResult truncation)"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -2552,12 +2618,6 @@
       "number": 439,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/439",
       "title": "Differential fuzz against an independent arbitrary-precision decimal library"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 438,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/438",
-      "title": "Write the arithmetic rules as a spec for human sign-off"
     },
     {
       "repo": "rainlanguage/rain.deploy",
@@ -6920,72 +6980,6 @@
       "number": 236,
       "url": "https://github.com/rainlanguage/raindex/issues/236",
       "title": "Standardize CLI output method with other rain clis"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 235,
-      "url": "https://github.com/rainlanguage/raindex/issues/235",
-      "title": "Merge clears & takes into single chart / table"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 218,
-      "url": "https://github.com/rainlanguage/raindex/issues/218",
-      "title": "Frontmatter rebindings parse errors"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 212,
-      "url": "https://github.com/rainlanguage/raindex/issues/212",
-      "title": "Token detail page"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 211,
-      "url": "https://github.com/rainlanguage/raindex/issues/211",
-      "title": "make it impossible to close the diagnostics panel, or very easy to bring it back if it is closed"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 208,
-      "url": "https://github.com/rainlanguage/raindex/issues/208",
-      "title": "Link to orderbook in block explorer"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 206,
-      "url": "https://github.com/rainlanguage/raindex/issues/206",
-      "title": "Take Order Chart: number of transactions"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 205,
-      "url": "https://github.com/rainlanguage/raindex/issues/205",
-      "title": "Take Orders Chart: Token Balances"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 204,
-      "url": "https://github.com/rainlanguage/raindex/issues/204",
-      "title": "Live Chart w/ Polling"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 183,
-      "url": "https://github.com/rainlanguage/raindex/issues/183",
-      "title": "Disable \"Add Order\" button when linting finds problems"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 168,
-      "url": "https://github.com/rainlanguage/raindex/issues/168",
-      "title": "put counterparty desired amount in context"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 142,
-      "url": "https://github.com/rainlanguage/rainlang/issues/142",
-      "title": "utf8 support for parsing"
     }
   ],
   "archivedRepoPrs": [
@@ -7016,7 +7010,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 141,
+    "unvetted": 150,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7027,18 +7021,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 258,
+    "totalProducerPrs": 267,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 749,
+    "uncoveredIssues": 739,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 266.8,
-      "medianDays": 101.0,
-      "oldestDays": 983.3
+      "meanDays": 253.8,
+      "medianDays": 100.3,
+      "oldestDays": 972.1
     }
   }
 }
