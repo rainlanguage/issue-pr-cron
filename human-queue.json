@@ -817,8 +817,32 @@
         ]
       },
       "un-vetted": {
-        "count": 137,
+        "count": 141,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 692,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/692",
+            "title": "Halmos proofs: agree tolerance errors and either-order spread"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 691,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/691",
+            "title": "Error NatSpec: DivisionByZero, the eleven undocumented payloads, MulDivOverflow callers (#563, #564, #565)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 690,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/690",
+            "title": "Reference oracles pack the exact sum; exact.rs doc; build.rs watches remappings.txt (#559, #561, #562)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 688,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/688",
+            "title": "Transcendental oracle bounds: 3^85 exactness, lower-decade ulp, carve-out only on shed results (#553-#558)"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 445,
@@ -2471,9 +2495,645 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 553,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/553",
-      "title": "[A-rs-trans-0] [LOW] exact_power's p <= 84 cutoff is off by one: 3^85 has 41 digits, so pow results equal to 3^85 x 10^t are only bound-checked, never exactness-checked"
+      "number": 687,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/687",
+      "title": "floor and ceil return a non-canonical zero's bytes; floor packs it to FLOAT_ZERO only for e < 0"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 686,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/686",
+      "title": "[A-hazard-c-2] [LOW] The deny-list .soldeerignore ships every new top-level path, so the audit's own .audit/ stamp will publish a new release with identical Solidity"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 685,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/685",
+      "title": "[A-hazard-c-1] [INFO] Nothing checks that the inline library and the deployed DecimalFloat bytecode a consumer pairs with it compute the same results"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 684,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/684",
+      "title": "[A-hazard-c-0] [LOW] Breaking surface and semantic changes publish as patch releases: 0.2.1 to 0.2.59 all ride the single next-v0.2.0 intent tag"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 683,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/683",
+      "title": "[A-test-support-14] [INFO] maxPower returns 35 for any prime it does not know"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 682,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/682",
+      "title": "[A-test-support-13] [INFO] Baseline and harness names describe PR-time roles that have since changed"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 681,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/681",
+      "title": "[A-test-support-12] [INFO] LibCommonResults declares no library, only three undocumented free constants"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 680,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/680",
+      "title": "[A-test-support-11] [INFO] wideExponent says its below-range distance is 'saturated at 10^6' but returns 10^6 for distances as small as ~3000"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 679,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/679",
+      "title": "[A-test-support-10] [INFO] Concrete ABI harnesses document no function"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 678,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/678",
+      "title": "[A-test-support-9] [INFO] Oracle and baseline functions with no NatSpec, and none with @param/@return"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 677,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/677",
+      "title": "[A-test-support-8] [LOW] Single-letter locals and named returns in the oracles and gas harness"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 676,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/676",
+      "title": "[A-test-support-7] [LOW] Bare `src/` and `test/` imports throughout the test support code, mixed with relative imports elsewhere"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 675,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/675",
+      "title": "[A-test-support-6] [LOW] Two test libraries are pinned with `=0.8.25` instead of floating `^`"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 674,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/674",
+      "title": "[A-test-support-5] [LOW] FormatParseGas ends with a dangling, truncated NatSpec block after the contract and has none of its own"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 673,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/673",
+      "title": "[A-test-support-4] [INFO] Format and parse baselines name LibExactFloat as the source of expected values, but it has no format or parse oracle"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 672,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/672",
+      "title": "[A-test-support-3] [LOW] LibTestPowRange claims independence from the library under test, but its error term is unpacked, abs'd and packed by LibDecimalFloat"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 671,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/671",
+      "title": "[A-test-support-2] [LOW] Equivalence baselines claim their live helpers are unchanged since the copied commit, but unabsUnsignedMulOrDivLossy and mulDiv have changed"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 670,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/670",
+      "title": "[A-test-support-1] [LOW] sqrt variants described as 'the library's sqrt with X' differ from live sqrt in its guard, scale-up and exponent halving"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 669,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/669",
+      "title": "[A-test-support-0] [LOW] Plain-Solidity log10Ratio baseline still runs the pre-#475 series, so its gas rows no longer isolate the assembly"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 668,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/668",
+      "title": "[A-quality-global-5] [LOW] Three conflicting proptest case-count conventions: crate config(), proptest's default 256, and a hard-coded 20000 that ignores PROPTEST_CASES"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 667,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/667",
+      "title": "[A-quality-global-5] [LOW] Three conflicting proptest case-count conventions: crate config(), proptest's default 256, and a hard-coded 20000 that ignores PROPTEST_CASES"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 666,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/666",
+      "title": "[A-quality-global-4] [LOW] Test helpers copied between test files, some duplicating existing test/lib helpers"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 665,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/665",
+      "title": "[A-quality-global-4] [LOW] Test helpers copied between test files, some duplicating existing test/lib helpers"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 664,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/664",
+      "title": "[A-quality-global-3] [INFO] The decimal oracle spawns whatever python3 the ambient PATH holds; the flake's pinned python3 never reaches CI"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 663,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/663",
+      "title": "[A-quality-global-3] [INFO] The decimal oracle spawns whatever python3 the ambient PATH holds; the flake's pinned python3 never reaches CI"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 662,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/662",
+      "title": "[A-quality-global-2] [LOW] slither filter_paths still names the pre-Soldeer git-submodule layout (lib/forge-std, lib/rain.math.fixedpoint) and never filters dependencies/"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 661,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/661",
+      "title": "[A-quality-global-2] [LOW] slither filter_paths still names the pre-Soldeer git-submodule layout (lib/forge-std, lib/rain.math.fixedpoint) and never filters dependencies/"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 660,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/660",
+      "title": "[A-quality-global-1] [LOW] Two test-only libraries pin pragma =0.8.25; every other library in the repo floats ^0.8.25"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 659,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/659",
+      "title": "[A-quality-global-1] [LOW] Two test-only libraries pin pragma =0.8.25; every other library in the repo floats ^0.8.25"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 658,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/658",
+      "title": "[A-quality-global-0] [LOW] Bare src/ and test/ first-party imports across the whole test suite; src/ is clean and script/ does not exist"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 657,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/657",
+      "title": "[A-quality-global-0] [LOW] Bare src/ and test/ first-party imports across the whole test suite; src/ is clean and script/ does not exist"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 655,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/655",
+      "title": "[A-hazard-b-7] [INFO] The published log10/pow10/pow bound constants are duplicated between the Solidity and Rust test harnesses with no check that they agree"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 653,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/653",
+      "title": "[A-hazard-b-6] [INFO] Every workflow, including the autopublishing release with secrets: inherit, follows rainix@main, so CI and publish behaviour change without a commit here"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 651,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/651",
+      "title": "[A-hazard-b-5] [LOW] CI runs crates/tests outside the repo's declared dev shell, so the Python oracle and solc come from unpinned runner and network state"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 649,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/649",
+      "title": "[A-hazard-b-3] [INFO] The packLossy overflow threshold (2^223+2)·10^int32.max is encoded independently in five places across two files, and only packLossy is the truth"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 647,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/647",
+      "title": "[A-hazard-b-1] [LOW] Committed .gas-snapshot is regenerated by hand only and is stale again: 78 current tests are missing from it"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 645,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/645",
+      "title": "[A-hazard-b-0] [LOW] Equivalence baselines are not frozen: they call live helpers that have changed since their cited commits, and their provenance claims are false or unresolvable"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 643,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/643",
+      "title": "[A-float-2-8] [INFO] ceil comment explains a fraction == 0 case that the early return above has already handled"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 641,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/641",
+      "title": "[A-float-2-7] [INFO] agree helpers' @param still say lowest/highest after #498, and pow/pack private helpers have no @param/@return"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 639,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/639",
+      "title": "[A-float-2-6] [INFO] agreeValidateTolerances builds zero with packLossless(0, 0) at run time instead of FLOAT_ZERO"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 637,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/637",
+      "title": "[A-float-2-5] [INFO] pow's squaring loop squares the base once more after the top bit of N"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 635,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/635",
+      "title": "[A-float-2-4] [INFO] eq, pow10 and log10 NatSpec call Float a struct and refer to themselves"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 633,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/633",
+      "title": "[A-float-2-3] [LOW] log10 NatSpec omits its Log10Zero / Log10Negative reverts, and its packing comment is stale"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 631,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/631",
+      "title": "[A-float-2-2] [LOW] pow NatSpec omits the ZeroNegativePower revert and the 0^b, a^0 and 1^b special cases, and claims it does not lose precision"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 629,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/629",
+      "title": "[A-float-2-1] [LOW] agree NatSpec says `abs` reverts ExponentOverflow at the range extremes, but abs never reverts"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 627,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/627",
+      "title": "[A-float-2-0] [LOW] agree NatSpec and SPEC bound the boundary excess at 1e-76 of the spread, but it reaches about 1.7272e-76"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 626,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/626",
+      "title": "[A-parse-7] [INFO] parseDecimalFloatPastInt256 NatSpec omits its in-range ExponentOverflow return; wrapper comment presents PrecisionLoss as underflow only"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 625,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/625",
+      "title": "[A-parse-7] [INFO] parseDecimalFloatPastInt256 NatSpec omits its in-range ExponentOverflow return; wrapper comment presents PrecisionLoss as underflow only"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 624,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/624",
+      "title": "[A-parse-6] [INFO] Overflow-floor coefficient and ASCII codes are repeated magic numbers"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 623,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/623",
+      "title": "[A-parse-6] [INFO] Overflow-floor coefficient and ASCII codes are repeated magic numbers"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 622,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/622",
+      "title": "[A-parse-5] [LOW] The only non-memory-safe assembly block in src is in parseDecimalFloat"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 621,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/621",
+      "title": "[A-parse-5] [LOW] The only non-memory-safe assembly block in src is in parseDecimalFloat"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 619,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/619",
+      "title": "[A-parse-4] [INFO] Eleven parse tests are named or documented as reverts but assert a returned selector"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 620,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/620",
+      "title": "[A-parse-4] [INFO] Eleven parse tests are named or documented as reverts but assert a returned selector"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 618,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/618",
+      "title": "[A-parse-3] [LOW] ErrParse NatSpec says \"Thrown\" for selectors only ever returned by value, and misstates triggers and position"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 617,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/617",
+      "title": "[A-parse-3] [LOW] ErrParse NatSpec says \"Thrown\" for selectors only ever returned by value, and misstates triggers and position"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 616,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/616",
+      "title": "[A-parse-2] [LOW] Returned ExponentOverflow selector has a different argument shape from every other parse selector, undocumented"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 615,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/615",
+      "title": "[A-parse-2] [LOW] Returned ExponentOverflow selector has a different argument shape from every other parse selector, undocumented"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 613,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/613",
+      "title": "[A-parse-1] [LOW] Unreachable `exponent > 0` guard returns a misleading MalformedExponentDigits for a fraction"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 614,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/614",
+      "title": "[A-parse-1] [LOW] Unreachable `exponent > 0` guard returns a misleading MalformedExponentDigits for a fraction"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 612,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/612",
+      "title": "[A-parse-0] [LOW] isPastOverflowThreshold silently returns true outside its prose-only preconditions"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 611,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/611",
+      "title": "[A-parse-0] [LOW] isPastOverflowThreshold silently returns true outside its prose-only preconditions"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 610,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/610",
+      "title": "[A-process-docs-6] [INFO] SPEC pins UNRULED descriptions to commit 886ca07, 148 commits stale"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 609,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/609",
+      "title": "[A-process-docs-6] [INFO] SPEC pins UNRULED descriptions to commit 886ca07, 148 commits stale"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 608,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/608",
+      "title": "[A-process-docs-5] [INFO] CLAUDE.md layout omits test/concrete, test/oracle and the python3 requirement, and misplaces two errors"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 607,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/607",
+      "title": "[A-process-docs-5] [INFO] CLAUDE.md layout omits test/concrete, test/oracle and the python3 requirement, and misplaces two errors"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 605,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/605",
+      "title": "[A-process-docs-4] [LOW] CLAUDE.md misnames the license as 'Rain Decentralized Computer License'"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 606,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/606",
+      "title": "[A-process-docs-4] [LOW] CLAUDE.md misnames the license as 'Rain Decentralized Computer License'"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 604,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/604",
+      "title": "[A-process-docs-3] [LOW] SPEC range-guards table is stale: wrong sqrt trigger, missing zero-denominator case, missing UnabsExponentOverflow"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 603,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/603",
+      "title": "[A-process-docs-3] [LOW] SPEC range-guards table is stale: wrong sqrt trigger, missing zero-denominator case, missing UnabsExponentOverflow"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 602,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/602",
+      "title": "[A-process-docs-2] [LOW] SPEC agree rule uses the signed spread, so reversed extremes would always agree, which contradicts ruling #498"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 601,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/601",
+      "title": "[A-process-docs-2] [LOW] SPEC agree rule uses the signed spread, so reversed extremes would always agree, which contradicts ruling #498"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 600,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/600",
+      "title": "[A-process-docs-1] [LOW] SPEC says FLOAT_PI is rounded to nearest; ruling #503 and the code make it the closest Float not above pi"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 599,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/599",
+      "title": "[A-process-docs-1] [LOW] SPEC says FLOAT_PI is rounded to nearest; ruling #503 and the code make it the closest Float not above pi"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 598,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/598",
+      "title": "[A-process-docs-0] [LOW] README division examples describe the unpacked implementation, and are wrong for the public Float API: 1/3 keeps 67 digits, not 76, and (1/3)/(1/9) is not 3"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 597,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/597",
+      "title": "[A-process-docs-0] [LOW] README division examples describe the unpacked implementation, and are wrong for the public Float API: 1/3 keeps 67 digits, not 76, and (1/3)/(1/9) is not 3"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 596,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/596",
+      "title": "[A-impl-1-6] [INFO] div's `if (adjustExponent > 0)` at line 630 is always true"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 595,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/595",
+      "title": "[A-impl-1-6] [INFO] div's `if (adjustExponent > 0)` at line 630 is always true"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 594,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/594",
+      "title": "[A-impl-1-5] [LOW] SPEC 'Range guards' table omits the UnabsExponentOverflow guard of unabsUnsignedMulOrDivLossy"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 593,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/593",
+      "title": "[A-impl-1-5] [LOW] SPEC 'Range guards' table omits the UnabsExponentOverflow guard of unabsUnsignedMulOrDivLossy"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 592,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/592",
+      "title": "[A-impl-1-4] [INFO] WithTargetExponentOverflow and UnabsExponentOverflow are declared in the implementation file, unlike every other library error"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 591,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/591",
+      "title": "[A-impl-1-4] [INFO] WithTargetExponentOverflow and UnabsExponentOverflow are declared in the implementation file, unlike every other library error"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 590,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/590",
+      "title": "[A-impl-1-3] [LOW] mul512, mulDivFixed, mulDiv (internal) and the two private mul helpers have no @param/@return; mul512's prose names x, y for params a, b"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 589,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/589",
+      "title": "[A-impl-1-3] [LOW] mul512, mulDivFixed, mulDiv (internal) and the two private mul helpers have no @param/@return; mul512's prose names x, y for params a, b"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 588,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/588",
+      "title": "[A-impl-1-2] [LOW] Implementation div's ExponentOverflow carries the maximized, adjusted dividend, not the input, and the NatSpec does not say so"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 587,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/587",
+      "title": "[A-impl-1-2] [LOW] Implementation div's ExponentOverflow carries the maximized, adjusted dividend, not the input, and the NatSpec does not say so"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 586,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/586",
+      "title": "[A-impl-1-1] [LOW] Implementation mul NatSpec ('Stack only implementation of mul') omits rounding, zero shape, floor shedding and its ExponentOverflow revert"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 585,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/585",
+      "title": "[A-impl-1-1] [LOW] Implementation mul NatSpec ('Stack only implementation of mul') omits rounding, zero shape, floor shedding and its ExponentOverflow revert"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 584,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/584",
+      "title": "[A-rs-lib-5] [INFO] Test helpers without doc comments, and want_agree's doc holds check_agree's text"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 583,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/583",
+      "title": "[A-rs-lib-5] [INFO] Test helpers without doc comments, and want_agree's doc holds check_agree's text"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 582,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/582",
+      "title": "[A-rs-lib-4] [INFO] Duplicated test helpers and magic constants across the test modules"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 581,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/581",
+      "title": "[A-rs-lib-4] [INFO] Duplicated test helpers and magic constants across the test modules"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 580,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/580",
+      "title": "[A-rs-lib-3] [INFO] test_constants_relationships and test_constants_edge_cases re-fetch and re-assert the constants' own ordering in every fuzz case"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 579,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/579",
+      "title": "[A-rs-lib-3] [INFO] test_constants_relationships and test_constants_edge_cases re-fetch and re-assert the constants' own ordering in every fuzz case"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 578,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/578",
+      "title": "[A-rs-lib-2] [INFO] test_to_fixed_decimal_lossy comment misstates the conversion it checks"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 577,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/577",
+      "title": "[A-rs-lib-2] [INFO] test_to_fixed_decimal_lossy comment misstates the conversion it checks"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 576,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/576",
+      "title": "[A-rs-lib-1] [INFO] Parse error tests: one accepts any selector under a false comment; the other pins unnamed magic selectors and calls excess characters malformed"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 575,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/575",
+      "title": "[A-rs-lib-1] [INFO] Parse error tests: one accepts any selector under a false comment; the other pins unnamed magic selectors and calls excess characters malformed"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 574,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/574",
+      "title": "[A-rs-lib-0] [LOW] agree rejects a spread that is within the exact limit, because agreeLimit truncates proportional x anchor; both Rust oracles demand true and no generator reaches the case"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 573,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/573",
+      "title": "[A-rs-lib-0] [LOW] agree rejects a spread that is within the exact limit, because agreeLimit truncates proportional x anchor; both Rust oracles demand true and no generator reaches the case"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 572,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/572",
+      "title": "[A-format-err-9] [INFO] Private formatters lack @param/@return, stripTrailingZeros lacks @param, and _toNonScientific's NatSpec narrates history"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 571,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/571",
+      "title": "[A-format-err-8] [INFO] MaximizeOverflow NatSpec does not name its trigger"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 570,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/570",
+      "title": "[A-format-err-7] [INFO] UnformatableExponent NatSpec suggests scientific mode can throw it too"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 569,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/569",
+      "title": "[A-format-err-6] [INFO] _toScientific maximizes the coefficient only to undo it with stripTrailingZeros, through maximizeFull's unreachable MaximizeOverflow check"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 568,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/568",
+      "title": "[A-format-err-5] [INFO] Scratch headroom 0x80 / 0x60 and the ASCII bytes are unexplained magic numbers; the scientific headroom bound is never stated"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 567,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/567",
+      "title": "[A-format-err-4] [LOW] toDecimalString NatSpec omits its UnformatableExponent revert and output rules, and calls itself \"not particularly efficient\" despite gas-tuned assembly"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 566,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/566",
+      "title": "[A-format-err-3] [LOW] ExponentUnderflow NatSpec gives an example that does not underflow: mul operands whose exponents sum below int32.min"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -2570,60 +3230,6 @@
       "number": 537,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/537",
       "title": "[A-impl-2-0] [LOW] log10 / log10Unrounded NatSpec give the wrong grid and exponent for the add-summed characteristic (10^(n-75), \"at least -50\")"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 536,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/536",
-      "title": "[A-float-1-8] [INFO] toFixedDecimalLossless NatSpec does not name its errors"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 535,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/535",
-      "title": "[A-float-1-7] [INFO] NatSpec calls Float a 'struct'; it is a user-defined value type over bytes32"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 534,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/534",
-      "title": "[A-float-1-6] [INFO] Float type doc says packLossy 'only shrinks' the coefficient, omitting the ceiling lift that multiplies it"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 533,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/533",
-      "title": "[A-float-1-5] [INFO] unpack NatSpec calls itself 'the inverse of `pack`', a function that does not exist"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 532,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/532",
-      "title": "[A-float-1-4] [INFO] minus/abs NatSpec claim same-exponent/identity results, but zero at any exponent returns FLOAT_ZERO"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 531,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/531",
-      "title": "[A-float-1-3] [INFO] packArithmeticResult (internal) and packNegated have no @param/@return tags"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 530,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/530",
-      "title": "[A-float-1-2] [LOW] add/sub NatSpec omit their range errors; add opens with a circular 'Same as add'"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 529,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/529",
-      "title": "[A-float-1-1] [LOW] inv NatSpec never names ExponentUnderflow, yet says 'Both errors'; '10 10^int32.max' is missing an operator"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 528,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/528",
-      "title": "[A-float-1-0] [LOW] SPEC says FLOAT_E/FLOAT_PI are rounded to nearest, contradicting ruling #503 and the code"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -5206,12 +5812,6 @@
       "title": "Audit rain.erc end-to-end"
     },
     {
-      "repo": "rainlanguage/rain.erc",
-      "number": 24,
-      "url": "https://github.com/rainlanguage/rain.erc/issues/24",
-      "title": "Audit rain.erc end-to-end"
-    },
-    {
       "repo": "rainlanguage/rainix",
       "number": 126,
       "url": "https://github.com/rainlanguage/rainix/issues/126",
@@ -6476,528 +7076,6 @@
       "number": 144,
       "url": "https://github.com/rainlanguage/rain.solver/issues/144",
       "title": "Generate ABIs rather than hardcode"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 252,
-      "url": "https://github.com/rainlanguage/rainlang/issues/252",
-      "title": "Surface RPC errors better"
-    },
-    {
-      "repo": "rainlanguage/rain.solver",
-      "number": 126,
-      "url": "https://github.com/rainlanguage/rain.solver/issues/126",
-      "title": "exex spike"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 675,
-      "url": "https://github.com/rainlanguage/raindex/issues/675",
-      "title": "allow for a charting entrypoint"
-    },
-    {
-      "repo": "rainlanguage/rain.internal",
-      "number": 20,
-      "url": "https://github.com/rainlanguage/rain.internal/issues/20",
-      "title": "Create submission form for comp"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 242,
-      "url": "https://github.com/rainlanguage/rainlang/issues/242",
-      "title": "pointer generation for externs"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 241,
-      "url": "https://github.com/rainlanguage/rainlang/issues/241",
-      "title": "interfaces for pointers"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 671,
-      "url": "https://github.com/rainlanguage/raindex/issues/671",
-      "title": "inject order counterparty into context grid for simulations"
-    },
-    {
-      "repo": "rainlanguage/rain.internal",
-      "number": 11,
-      "url": "https://github.com/rainlanguage/rain.internal/issues/11",
-      "title": "Create a tutorial video for how to get words displaying in the app"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 659,
-      "url": "https://github.com/rainlanguage/raindex/issues/659",
-      "title": "rename `orderbook` word in subparser to `raindex`"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 657,
-      "url": "https://github.com/rainlanguage/raindex/issues/657",
-      "title": "add word to read the vault balance from an orderbook"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 649,
-      "url": "https://github.com/rainlanguage/raindex/issues/649",
-      "title": "show and ability to change the owner that is being used to eval the debug panel"
-    },
-    {
-      "repo": "rainlanguage/rain.internal",
-      "number": 2,
-      "url": "https://github.com/rainlanguage/rain.internal/issues/2",
-      "title": "Write CVSS-like criteria to help score and prioritise bugs and infra issues"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 231,
-      "url": "https://github.com/rainlanguage/rainlang/issues/231",
-      "title": "how should erc 721/1155 be handled as decimals?"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 228,
-      "url": "https://github.com/rainlanguage/rainlang/issues/228",
-      "title": "lexical ordering of 00 ops doesn't match compatibility number requirements"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 220,
-      "url": "https://github.com/rainlanguage/rainlang/issues/220",
-      "title": "true/false words"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 218,
-      "url": "https://github.com/rainlanguage/rainlang/issues/218",
-      "title": "support types in decimal literals like 1_d6 and 1_d0 and 1_uint etc."
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 217,
-      "url": "https://github.com/rainlanguage/rainlang/issues/217",
-      "title": "support _ separator like 1_000_000 in decimal literals"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 216,
-      "url": "https://github.com/rainlanguage/rainlang/issues/216",
-      "title": "support negative numbers"
-    },
-    {
-      "repo": "rainlanguage/rain.solver",
-      "number": 64,
-      "url": "https://github.com/rainlanguage/rain.solver/issues/64",
-      "title": "bot uses way too much rpc"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 575,
-      "url": "https://github.com/rainlanguage/raindex/issues/575",
-      "title": "if there's only one possible deployment in the dropdown on the add order page it should be selected"
-    },
-    {
-      "repo": "rainlanguage/rain.solver",
-      "number": 50,
-      "url": "https://github.com/rainlanguage/rain.solver/issues/50",
-      "title": "push docker to rainlang org on docker hub"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 567,
-      "url": "https://github.com/rainlanguage/raindex/issues/567",
-      "title": "show full order details including dispair and bytecode along with decoded rainlang meta"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 557,
-      "url": "https://github.com/rainlanguage/raindex/issues/557",
-      "title": "when we removed the \"back\" button in favour of breadcrumbs, we didn't make the breadcrumbs respect history"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 551,
-      "url": "https://github.com/rainlanguage/raindex/issues/551",
-      "title": "order screen needs to show the deployer otherwise it's trivial to create a phishing deployer"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 543,
-      "url": "https://github.com/rainlanguage/raindex/issues/543",
-      "title": "ability to set data type for charting"
-    },
-    {
-      "repo": "rainlanguage/rain.flare",
-      "number": 10,
-      "url": "https://github.com/rainlanguage/rain.flare/issues/10",
-      "title": "if the pair is against usd for pair it should just defer to a single pair rather than getting two quotes"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 536,
-      "url": "https://github.com/rainlanguage/raindex/issues/536",
-      "title": "trades chart only renders scale for days that data exists (i.e. when trades were made) rather than for the whole time frame that was selected"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 529,
-      "url": "https://github.com/rainlanguage/raindex/issues/529",
-      "title": "if there's no elided bindings i shouldn't have to specify runs to generate a chart (should imply 1 run)"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 528,
-      "url": "https://github.com/rainlanguage/raindex/issues/528",
-      "title": "cmd + s should save order"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 525,
-      "url": "https://github.com/rainlanguage/raindex/issues/525",
-      "title": "pasting an order into the editor when an order was already charted etc. doesn't clear what was previously done"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 524,
-      "url": "https://github.com/rainlanguage/raindex/issues/524",
-      "title": "small numbers getting rounded to zero on charts"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 522,
-      "url": "https://github.com/rainlanguage/raindex/issues/522",
-      "title": "undefined deployer address"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 521,
-      "url": "https://github.com/rainlanguage/raindex/issues/521",
-      "title": "ability to copy trade from the order view page"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 519,
-      "url": "https://github.com/rainlanguage/raindex/issues/519",
-      "title": "add order screen should be prefilled to a minimal skeleton to an order"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 513,
-      "url": "https://github.com/rainlanguage/raindex/issues/513",
-      "title": "scenario runs should be visible to children"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 193,
-      "url": "https://github.com/rainlanguage/rainlang/issues/193",
-      "title": "some kind of \"rain name service\" RNS as sub parser"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 504,
-      "url": "https://github.com/rainlanguage/raindex/issues/504",
-      "title": "ability to reference settings in bindings"
-    },
-    {
-      "repo": "rainlanguage/rain.solver",
-      "number": 43,
-      "url": "https://github.com/rainlanguage/rain.solver/issues/43",
-      "title": "review how we interact with flashbots"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 493,
-      "url": "https://github.com/rainlanguage/raindex/issues/493",
-      "title": "support rainlang strings for vault ids"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 485,
-      "url": "https://github.com/rainlanguage/raindex/issues/485",
-      "title": "Upload source maps to sentry"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 484,
-      "url": "https://github.com/rainlanguage/raindex/issues/484",
-      "title": "some kind of gas report for strats during testing"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 473,
-      "url": "https://github.com/rainlanguage/raindex/issues/473",
-      "title": "ability to chart orders that already exist if the rainlang is known"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 472,
-      "url": "https://github.com/rainlanguage/raindex/issues/472",
-      "title": "ability to quote bind data transformations while charting"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 471,
-      "url": "https://github.com/rainlanguage/raindex/issues/471",
-      "title": "ability to set the denomination of a chart axis to a token, and then have it render the token symbol"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 470,
-      "url": "https://github.com/rainlanguage/raindex/issues/470",
-      "title": "stable sorting of charts on the dashboard"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 468,
-      "url": "https://github.com/rainlanguage/raindex/issues/468",
-      "title": "support using-tokens-from in settings"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 465,
-      "url": "https://github.com/rainlanguage/raindex/issues/465",
-      "title": "ability to set sig figs for decimal amounts in the GUI from the settings yaml"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 464,
-      "url": "https://github.com/rainlanguage/raindex/issues/464",
-      "title": "ability to set date format in the settings yaml"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 463,
-      "url": "https://github.com/rainlanguage/raindex/issues/463",
-      "title": "ability to handle different combinations of IO for a single order in the same block"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 462,
-      "url": "https://github.com/rainlanguage/raindex/issues/462",
-      "title": "elisions should not error if runs is set during fuzzing"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 461,
-      "url": "https://github.com/rainlanguage/raindex/issues/461",
-      "title": "ability to name axes"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 460,
-      "url": "https://github.com/rainlanguage/raindex/issues/460",
-      "title": "ability to dismiss/accept the alpha warning"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 454,
-      "url": "https://github.com/rainlanguage/raindex/issues/454",
-      "title": "Display date times in locale of user"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 450,
-      "url": "https://github.com/rainlanguage/raindex/issues/450",
-      "title": "duplicate `runs` keys in scenarios when nested should be an error"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 447,
-      "url": "https://github.com/rainlanguage/raindex/issues/447",
-      "title": "Set Context in yml options"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 444,
-      "url": "https://github.com/rainlanguage/raindex/issues/444",
-      "title": "CSV output option for fuzz testing on CLI"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 442,
-      "url": "https://github.com/rainlanguage/raindex/issues/442",
-      "title": "User can navigate to orders page without required settings by clicking \"Home\" button in breadcrumbs"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 439,
-      "url": "https://github.com/rainlanguage/raindex/issues/439",
-      "title": "Trade / Deposit charts overlap \"early alpha\" notice"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 438,
-      "url": "https://github.com/rainlanguage/raindex/issues/438",
-      "title": "Decimal 18 scaled values for X and Y axis. "
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 435,
-      "url": "https://github.com/rainlanguage/raindex/issues/435",
-      "title": "Ensure linux .deb packages link to proper system libs or bundle required libs"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 417,
-      "url": "https://github.com/rainlanguage/raindex/issues/417",
-      "title": "Link to specs for words & yaml"
-    },
-    {
-      "repo": "rainlanguage/flow",
-      "number": 20,
-      "url": "https://github.com/rainlanguage/flow/issues/20",
-      "title": "add a sub parser"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 409,
-      "url": "https://github.com/rainlanguage/raindex/issues/409",
-      "title": "Include ledger connection requirements in ledger error toasts"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 405,
-      "url": "https://github.com/rainlanguage/raindex/issues/405",
-      "title": "Specify number of block confirmations to wait for a transaction per chain via config"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 404,
-      "url": "https://github.com/rainlanguage/raindex/issues/404",
-      "title": "Display number of block confirmations in transaction status notice as they are received"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 402,
-      "url": "https://github.com/rainlanguage/raindex/issues/402",
-      "title": "Make settings / add order text areas multiple rows by default"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 399,
-      "url": "https://github.com/rainlanguage/raindex/issues/399",
-      "title": "reliable builds on linux"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 398,
-      "url": "https://github.com/rainlanguage/raindex/issues/398",
-      "title": "libusb and gmp required on mac os"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 394,
-      "url": "https://github.com/rainlanguage/raindex/issues/394",
-      "title": "review if we can use the scale trick in uniswap ops to improve precision of ob"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 391,
-      "url": "https://github.com/rainlanguage/raindex/issues/391",
-      "title": "support fee on transfer tokens"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 390,
-      "url": "https://github.com/rainlanguage/raindex/issues/390",
-      "title": "replace typeshare with tsify"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 387,
-      "url": "https://github.com/rainlanguage/raindex/issues/387",
-      "title": "Reduce flakiness of ledger connnection"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 367,
-      "url": "https://github.com/rainlanguage/raindex/issues/367",
-      "title": "Observable charting for fuzzed traces in the GUI"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 363,
-      "url": "https://github.com/rainlanguage/raindex/issues/363",
-      "title": "Build fix"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 356,
-      "url": "https://github.com/rainlanguage/raindex/issues/356",
-      "title": "Input and output cols on trades table are around the wrong wa"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 332,
-      "url": "https://github.com/rainlanguage/raindex/issues/332",
-      "title": "Context menus don't disappear when clicking outside of them"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 328,
-      "url": "https://github.com/rainlanguage/raindex/issues/328",
-      "title": "Adding spaces to rain causes parser to revert with blank reason"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 322,
-      "url": "https://github.com/rainlanguage/raindex/issues/322",
-      "title": "Re-add a previously removed order"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 321,
-      "url": "https://github.com/rainlanguage/raindex/issues/321",
-      "title": "Volume Chart for trading pair"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 320,
-      "url": "https://github.com/rainlanguage/raindex/issues/320",
-      "title": "Take an order from the UI"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 316,
-      "url": "https://github.com/rainlanguage/raindex/issues/316",
-      "title": "Always convert returned subgraph structs into our own structs, with values converted from string to usable types in desired format"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 315,
-      "url": "https://github.com/rainlanguage/raindex/issues/315",
-      "title": "Subgraph vaultId should should be a \"0x\" prefixed hex value"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 313,
-      "url": "https://github.com/rainlanguage/raindex/issues/313",
-      "title": "verify decoded order meta matches actually deployed order"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 301,
-      "url": "https://github.com/rainlanguage/raindex/issues/301",
-      "title": "Support Legacy & abritarary Ledger Derviation Paths"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 299,
-      "url": "https://github.com/rainlanguage/raindex/issues/299",
-      "title": "Hovering orders table column changes width on mac os"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 291,
-      "url": "https://github.com/rainlanguage/raindex/issues/291",
-      "title": "tauri invoke awaits should time out"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 288,
-      "url": "https://github.com/rainlanguage/raindex/issues/288",
-      "title": "move derivation index field before address field"
     }
   ],
   "archivedRepoPrs": [
@@ -7028,7 +7106,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 137,
+    "unvetted": 141,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7039,18 +7117,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 254,
+    "totalProducerPrs": 258,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 755,
+    "uncoveredIssues": 764,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 979
+    "openIssues": 984
   },
   "ages": {
     "openIssues": {
-      "meanDays": 243.6,
-      "medianDays": 98.1,
-      "oldestDays": 970.1
+      "meanDays": 145.5,
+      "medianDays": 75.9,
+      "oldestDays": 834.0
     }
   }
 }
