@@ -820,6 +820,24 @@
         "count": 150,
         "prs": [
           {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 509,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/509",
+            "title": "packLossless reverts ExponentOverflow past every Float; document the packLossy overflow threshold (#450, #452)"
+          },
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 194,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/194",
+            "title": "Role changes: name every address by its deploy-repo pin, mark the rest unrecognised"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 455,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/455",
+            "title": "Subgraph: index governance timelock operations"
+          },
+          {
             "repo": "rainlanguage/rainix",
             "number": 412,
             "url": "https://github.com/rainlanguage/rainix/pull/412",
@@ -835,7 +853,7 @@
             "repo": "rainlanguage/rain.math.float",
             "number": 500,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/500",
-            "title": "log10Ratio: drop dead z^6 borrow term (#475), document b = 0 revert order (#456), pin POW_FIXED_LN10 (#476)"
+            "title": "log10Ratio: drop dead z^6 borrow term and split z^4 exactly (#475), document b = 0 revert order (#456), pin POW_FIXED_LN10 (#476)"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -866,24 +884,6 @@
             "number": 495,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/495",
             "title": "sub: negate b exactly inside the sum (#459, #461, #462)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 494,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/494",
-            "title": "Regenerate .gas-snapshot against the current test suite (#454)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 493,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/493",
-            "title": "Mutation coverage: IMPL-exp10Fixed-horner-borrows"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 488,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/488",
-            "title": "Mutation coverage: PARSE-inline-mantissa"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -2548,12 +2548,6 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
-      "repo": "S01-Issuer/st0x.deploy",
-      "number": 454,
-      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/454",
-      "title": "Subgraph: index governance timelock operations (scheduled / executed / cancelled)"
-    },
-    {
       "repo": "rainlanguage/rain.math.float",
       "number": 508,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/508",
@@ -2594,24 +2588,6 @@
       "number": 502,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/502",
       "title": "unabsUnsignedMulOrDivLossy reverts Panic(0x11), not a named ExponentOverflow, when it sheds a digit at exponent == int256.max"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 475,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/475",
-      "title": "log10Ratio: the lt(mm, prod0) borrow in the z^4 and z^6 in-place multiplies can never fire for any in-domain z, so no test can pin it"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 452,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/452",
-      "title": "packLossy saturates (2^223+1)e int32.max to FLOAT_MAX but reverts ExponentOverflow on (2^223+2)e int32.max, where the NatSpec rule saturates and the README rule reverts both"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 450,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/450",
-      "title": "packLossless reverts LossyConversionToFloat, not ExponentOverflow, for values just past FLOAT_MAX / FLOAT_MIN at the exponent ceiling"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -6938,6 +6914,12 @@
       "number": 288,
       "url": "https://github.com/rainlanguage/raindex/issues/288",
       "title": "move derivation index field before address field"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 284,
+      "url": "https://github.com/rainlanguage/raindex/issues/284",
+      "title": "Fetch token decimals in input field"
     }
   ],
   "archivedRepoPrs": [
@@ -6981,16 +6963,16 @@
     "leaks": 0,
     "totalProducerPrs": 267,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 732,
+    "uncoveredIssues": 729,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 979
   },
   "ages": {
     "openIssues": {
-      "meanDays": 243.1,
+      "meanDays": 244.1,
       "medianDays": 97.6,
-      "oldestDays": 969.6
+      "oldestDays": 969.7
     }
   }
 }
