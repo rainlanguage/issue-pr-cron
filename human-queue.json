@@ -817,8 +817,14 @@
         ]
       },
       "un-vetted": {
-        "count": 149,
+        "count": 150,
         "prs": [
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 412,
+            "url": "https://github.com/rainlanguage/rainix/pull/412",
+            "title": "subgraph-deploy: fail on a refused deploy, label versions by build"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 501,
@@ -2541,6 +2547,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 454,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/454",
+      "title": "Subgraph: index governance timelock operations (scheduled / executed / cancelled)"
+    },
     {
       "repo": "rainlanguage/rain.math.float",
       "number": 508,
@@ -6926,12 +6938,6 @@
       "number": 288,
       "url": "https://github.com/rainlanguage/raindex/issues/288",
       "title": "move derivation index field before address field"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 284,
-      "url": "https://github.com/rainlanguage/raindex/issues/284",
-      "title": "Fetch token decimals in input field"
     }
   ],
   "archivedRepoPrs": [
@@ -6962,7 +6968,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 149,
+    "unvetted": 150,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -6973,7 +6979,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 266,
+    "totalProducerPrs": 267,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 732,
     "designPresentable": 7,
@@ -6982,7 +6988,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 244.0,
+      "meanDays": 243.1,
       "medianDays": 97.6,
       "oldestDays": 969.6
     }
