@@ -817,7 +817,7 @@
         ]
       },
       "un-vetted": {
-        "count": 145,
+        "count": 139,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -832,46 +832,10 @@
             "title": "Safe bundle toolkit: safeTxHash, MultiSend, Tx Builder JSON, approve-hash execution, n+1"
           },
           {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 457,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/457",
-            "title": "Retire LibMigrationInvariant: assert executed migrations outright"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 291,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/291",
-            "title": "Add TimelockController deploy, invariant and rehearsal libraries"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 290,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/290",
-            "title": "Add findTransitionBlock: derive the block a view read first answers"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 289,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/289",
-            "title": "LibMigrationRegistry: (to, data) builders for registry writes in a Safe bundle or timelock batch"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 456,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/456",
-            "title": "Require the EU authoriser grant-and-handover on every chain; classify main's reds against the chain"
-          },
-          {
             "repo": "rainlanguage/rain.math.float",
             "number": 445,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/445",
             "title": "Halmos proofs: add/sub rounding and series equivalence"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 444,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/444",
-            "title": "Differential fuzz vs dashu-float"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -2564,12 +2528,6 @@
       "number": 440,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/440",
       "title": "Symbolic proofs for add/sub cancellation and the assembly series"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 439,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/439",
-      "title": "Differential fuzz against an independent arbitrary-precision decimal library"
     },
     {
       "repo": "rainlanguage/rain.deploy",
@@ -6980,6 +6938,42 @@
       "number": 204,
       "url": "https://github.com/rainlanguage/raindex/issues/204",
       "title": "Live Chart w/ Polling"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 183,
+      "url": "https://github.com/rainlanguage/raindex/issues/183",
+      "title": "Disable \"Add Order\" button when linting finds problems"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 168,
+      "url": "https://github.com/rainlanguage/raindex/issues/168",
+      "title": "put counterparty desired amount in context"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 142,
+      "url": "https://github.com/rainlanguage/rainlang/issues/142",
+      "title": "utf8 support for parsing"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 141,
+      "url": "https://github.com/rainlanguage/rainlang/issues/141",
+      "title": "some kind of onchain registry (ens?) support for things like well known addresses (e.g. weth)"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 139,
+      "url": "https://github.com/rainlanguage/rainlang/issues/139",
+      "title": "undefined word (requires subsitution)"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 138,
+      "url": "https://github.com/rainlanguage/rainlang/issues/138",
+      "title": "calldata eval rather than onchain deploys"
     }
   ],
   "archivedRepoPrs": [
@@ -7010,7 +7004,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 145,
+    "unvetted": 139,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7021,18 +7015,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 262,
+    "totalProducerPrs": 256,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 744,
+    "uncoveredIssues": 749,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 263.8,
-      "medianDays": 100.7,
-      "oldestDays": 980.0
+      "meanDays": 269.9,
+      "medianDays": 101.1,
+      "oldestDays": 983.4
     }
   }
 }
