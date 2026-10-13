@@ -817,20 +817,8 @@
         ]
       },
       "un-vetted": {
-        "count": 139,
+        "count": 137,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 295,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/295",
-            "title": "Add LibSafe: canonical Safe v1.4.1 constants and invariants"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 294,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/294",
-            "title": "Safe bundle toolkit: safeTxHash, MultiSend, Tx Builder JSON, approve-hash execution, n+1"
-          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 445,
@@ -2482,10 +2470,184 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 279,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/279",
-      "title": "No Safe-bundle script skeleton: every governed repo repeats the author/simulate/emit/verify body"
+      "repo": "rainlanguage/rain.math.float",
+      "number": 553,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/553",
+      "title": "[A-rs-trans-0] [LOW] exact_power's p <= 84 cutoff is off by one: 3^85 has 41 digits, so pow results equal to 3^85 x 10^t are only bound-checked, never exactness-checked"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 552,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/552",
+      "title": "[A-impl-4-5] [INFO] withTargetExponent returns maximize's zero sentinel on one branch and a literal 0 on the other"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 551,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/551",
+      "title": "[A-impl-4-4] [INFO] Literal 76 (largest k with 10^k in int256) repeated as a magic number"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 550,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/550",
+      "title": "[A-impl-4-3] [INFO] pow10 / pow10Unrounded NatSpec omits the WithTargetExponentOverflow revert for an integer part past int256"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 549,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/549",
+      "title": "[A-impl-4-2] [INFO] maximizeFull NatSpec does not name the error it reverts with"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 548,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/548",
+      "title": "[A-impl-4-1] [INFO] maximize NatSpec has no @param for either parameter, and opens with a narrative sentence"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 547,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/547",
+      "title": "[A-impl-4-0] [LOW] exp10Fixed series-loss bound 1.07902 does not follow from its own stated components"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 546,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/546",
+      "title": "[A-impl-2-9] [INFO] add NatSpec intro prose is stale and inaccurate (\"~26-33 decimals\", \"infinite recursion such a 1/3\")"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 545,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/545",
+      "title": "[A-impl-2-8] [INFO] eq NatSpec ends a sentence with a dangling comma"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 544,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/544",
+      "title": "[A-impl-2-7] [INFO] Implementation inv NatSpec says only \"Equivalent to 1 / x\", but a zero input reverts DivisionByZero(1e76, -76), not the input"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 543,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/543",
+      "title": "[A-impl-2-6] [INFO] mulDivFixed writes 1e50 out as a 51-digit literal instead of POW_FIXED_ONE"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 542,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/542",
+      "title": "[A-impl-2-5] [INFO] maximize NatSpec has @return tags but no @param"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 541,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/541",
+      "title": "[A-impl-2-4] [INFO] mul512 NatSpec has no @param or @return, and its comment names parameters it does not have"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 540,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/540",
+      "title": "[A-impl-2-3] [INFO] mulDiv NatSpec has no @param or @return"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 539,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/539",
+      "title": "[A-impl-2-2] [INFO] mulDivFixed NatSpec has no @param or @return"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 538,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/538",
+      "title": "[A-impl-2-1] [LOW] add and sub NatSpec never mention their ExponentOverflow revert or what it reports"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 537,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/537",
+      "title": "[A-impl-2-0] [LOW] log10 / log10Unrounded NatSpec give the wrong grid and exponent for the add-summed characteristic (10^(n-75), \"at least -50\")"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 536,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/536",
+      "title": "[A-float-1-8] [INFO] toFixedDecimalLossless NatSpec does not name its errors"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 535,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/535",
+      "title": "[A-float-1-7] [INFO] NatSpec calls Float a 'struct'; it is a user-defined value type over bytes32"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 534,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/534",
+      "title": "[A-float-1-6] [INFO] Float type doc says packLossy 'only shrinks' the coefficient, omitting the ceiling lift that multiplies it"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 533,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/533",
+      "title": "[A-float-1-5] [INFO] unpack NatSpec calls itself 'the inverse of `pack`', a function that does not exist"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 532,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/532",
+      "title": "[A-float-1-4] [INFO] minus/abs NatSpec claim same-exponent/identity results, but zero at any exponent returns FLOAT_ZERO"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 531,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/531",
+      "title": "[A-float-1-3] [INFO] packArithmeticResult (internal) and packNegated have no @param/@return tags"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 530,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/530",
+      "title": "[A-float-1-2] [LOW] add/sub NatSpec omit their range errors; add opens with a circular 'Same as add'"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 529,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/529",
+      "title": "[A-float-1-1] [LOW] inv NatSpec never names ExponentUnderflow, yet says 'Both errors'; '10 10^int32.max' is missing an operator"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 528,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/528",
+      "title": "[A-float-1-0] [LOW] SPEC says FLOAT_E/FLOAT_PI are rounded to nearest, contradicting ruling #503 and the code"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 527,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/527",
+      "title": "[A-impl-3-3] [INFO] log10Ratio NatSpec understates its domain as \"a few parts in ten thousand\""
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 526,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/526",
+      "title": "[A-impl-3-2] [INFO] log10Reduce mixes an unnamed and a named return and then returns both explicitly"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 525,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/525",
+      "title": "[A-impl-3-1] [LOW] Two log10Ratio tests claim to pin high-word borrows of in-place multiplies that log10Ratio no longer has"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 524,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/524",
+      "title": "[A-impl-3-0] [LOW] exp10Fixed comment cites an in-place mulDivFixed in log10Ratio that no longer exists"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -5044,6 +5206,12 @@
       "title": "Audit rain.erc end-to-end"
     },
     {
+      "repo": "rainlanguage/rain.erc",
+      "number": 24,
+      "url": "https://github.com/rainlanguage/rain.erc/issues/24",
+      "title": "Audit rain.erc end-to-end"
+    },
+    {
       "repo": "rainlanguage/rainix",
       "number": 126,
       "url": "https://github.com/rainlanguage/rainix/issues/126",
@@ -6830,150 +6998,6 @@
       "number": 288,
       "url": "https://github.com/rainlanguage/raindex/issues/288",
       "title": "move derivation index field before address field"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 284,
-      "url": "https://github.com/rainlanguage/raindex/issues/284",
-      "title": "Fetch token decimals in input field"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 280,
-      "url": "https://github.com/rainlanguage/raindex/issues/280",
-      "title": "Help page content: Ledger Issues"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 276,
-      "url": "https://github.com/rainlanguage/raindex/issues/276",
-      "title": "Universal mac binaries"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 274,
-      "url": "https://github.com/rainlanguage/raindex/issues/274",
-      "title": "Include token symbol & transaction hash in transaction status notice"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 273,
-      "url": "https://github.com/rainlanguage/raindex/issues/273",
-      "title": "add a button to generate a random vaultid on the deposit modal"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 272,
-      "url": "https://github.com/rainlanguage/raindex/issues/272",
-      "title": "Transaction failure destroys the entry form: deposit/withdraw/withdraw-all/take-order modals close and clear on error"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 269,
-      "url": "https://github.com/rainlanguage/raindex/issues/269",
-      "title": "cancel in-progress transactions"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 262,
-      "url": "https://github.com/rainlanguage/raindex/issues/262",
-      "title": "Round values in order takes table -- show full value on hover"
-    },
-    {
-      "repo": "rainlanguage/forker",
-      "number": 3,
-      "url": "https://github.com/rainlanguage/forker/issues/3",
-      "title": "Make cache expiration configurable or default to never expire"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 236,
-      "url": "https://github.com/rainlanguage/raindex/issues/236",
-      "title": "Standardize CLI output method with other rain clis"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 235,
-      "url": "https://github.com/rainlanguage/raindex/issues/235",
-      "title": "Merge clears & takes into single chart / table"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 218,
-      "url": "https://github.com/rainlanguage/raindex/issues/218",
-      "title": "Frontmatter rebindings parse errors"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 212,
-      "url": "https://github.com/rainlanguage/raindex/issues/212",
-      "title": "Token detail page"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 211,
-      "url": "https://github.com/rainlanguage/raindex/issues/211",
-      "title": "make it impossible to close the diagnostics panel, or very easy to bring it back if it is closed"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 208,
-      "url": "https://github.com/rainlanguage/raindex/issues/208",
-      "title": "Link to orderbook in block explorer"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 206,
-      "url": "https://github.com/rainlanguage/raindex/issues/206",
-      "title": "Take Order Chart: number of transactions"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 205,
-      "url": "https://github.com/rainlanguage/raindex/issues/205",
-      "title": "Take Orders Chart: Token Balances"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 204,
-      "url": "https://github.com/rainlanguage/raindex/issues/204",
-      "title": "Live Chart w/ Polling"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 183,
-      "url": "https://github.com/rainlanguage/raindex/issues/183",
-      "title": "Disable \"Add Order\" button when linting finds problems"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 168,
-      "url": "https://github.com/rainlanguage/raindex/issues/168",
-      "title": "put counterparty desired amount in context"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 142,
-      "url": "https://github.com/rainlanguage/rainlang/issues/142",
-      "title": "utf8 support for parsing"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 141,
-      "url": "https://github.com/rainlanguage/rainlang/issues/141",
-      "title": "some kind of onchain registry (ens?) support for things like well known addresses (e.g. weth)"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 139,
-      "url": "https://github.com/rainlanguage/rainlang/issues/139",
-      "title": "undefined word (requires subsitution)"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 138,
-      "url": "https://github.com/rainlanguage/rainlang/issues/138",
-      "title": "calldata eval rather than onchain deploys"
     }
   ],
   "archivedRepoPrs": [
@@ -7004,7 +7028,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 139,
+    "unvetted": 137,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7015,18 +7039,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 256,
+    "totalProducerPrs": 254,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 749,
+    "uncoveredIssues": 755,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 977
+    "openIssues": 979
   },
   "ages": {
     "openIssues": {
-      "meanDays": 269.9,
-      "medianDays": 101.1,
-      "oldestDays": 983.4
+      "meanDays": 243.6,
+      "medianDays": 98.1,
+      "oldestDays": 970.1
     }
   }
 }
