@@ -817,13 +817,25 @@
         ]
       },
       "un-vetted": {
-        "count": 144,
+        "count": 145,
         "prs": [
           {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 199,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/199",
+            "title": "feat(deployments): mark holdings to grant and to revoke against st0x.deploy's ideal-roles.json"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 310,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/310",
+            "title": "Fix #272's audit findings"
+          },
+          {
             "repo": "S01-Issuer/st0x.deploy",
-            "number": 463,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/463",
-            "title": "Take the retirement deadline off CI"
+            "number": 464,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/464",
+            "title": "Declare expected and forbidden grants per contract; emit ideal-roles.json"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -878,12 +890,6 @@
             "number": 709,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/709",
             "title": "Parse audit: named fraction guard, error NatSpec, test names, memory-safe (#613-#625), on #712"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 706,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/706",
-            "title": "Implementation mul/div NatSpec, errors into ErrDecimalFloat, SPEC unabs guard row, drop div's dead guard (#585, #587, #589, #591, #593, #595)"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -2512,10 +2518,10 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
-      "repo": "rainlanguage/rain-org-health",
-      "number": 198,
-      "url": "https://github.com/rainlanguage/rain-org-health/issues/198",
-      "title": "Roles held: warn on holdings the deploy repo declares must not exist (3D0C direct DEPOSIT/WITHDRAW)"
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 465,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/465",
+      "title": "Orchestrator vault-logic lock checks the current release's beacons, not the tokens' production beacons (RAI-2125)"
     },
     {
       "repo": "S01-Issuer/st0x.deploy",
@@ -6860,6 +6866,36 @@
       "number": 284,
       "url": "https://github.com/rainlanguage/raindex/issues/284",
       "title": "Fetch token decimals in input field"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 280,
+      "url": "https://github.com/rainlanguage/raindex/issues/280",
+      "title": "Help page content: Ledger Issues"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 276,
+      "url": "https://github.com/rainlanguage/raindex/issues/276",
+      "title": "Universal mac binaries"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 274,
+      "url": "https://github.com/rainlanguage/raindex/issues/274",
+      "title": "Include token symbol & transaction hash in transaction status notice"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 273,
+      "url": "https://github.com/rainlanguage/raindex/issues/273",
+      "title": "add a button to generate a random vaultid on the deposit modal"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 272,
+      "url": "https://github.com/rainlanguage/raindex/issues/272",
+      "title": "Transaction failure destroys the entry form: deposit/withdraw/withdraw-all/take-order modals close and clear on error"
     }
   ],
   "archivedRepoPrs": [
@@ -6890,7 +6926,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 144,
+    "unvetted": 145,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -6901,18 +6937,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 261,
+    "totalProducerPrs": 262,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 725,
+    "uncoveredIssues": 730,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 979
   },
   "ages": {
     "openIssues": {
-      "meanDays": 245.3,
-      "medianDays": 98.9,
-      "oldestDays": 971.0
+      "meanDays": 250.3,
+      "medianDays": 100.5,
+      "oldestDays": 971.1
     }
   }
 }
