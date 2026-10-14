@@ -817,13 +817,13 @@
         ]
       },
       "un-vetted": {
-        "count": 146,
+        "count": 144,
         "prs": [
           {
-            "repo": "rainlanguage/rain-org-health",
-            "number": 200,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/200",
-            "title": "feat(site): make Deployments the first tab and the site root"
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 469,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/469",
+            "title": "Publish privileged-addresses.json from the constants; rename OWNER_6 to OWNER_TDM"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -836,12 +836,6 @@
             "number": 310,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/310",
             "title": "Fix #272's audit findings"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 464,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/464",
-            "title": "Declare expected and forbidden grants per contract; emit ideal-roles.json"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -872,12 +866,6 @@
             "number": 716,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/716",
             "title": "agree compares the spread with the exact proportional limit (#573)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 712,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/712",
-            "title": "One encoding of the packLossy overflow threshold: isPastEveryFloat (#649)"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -2523,6 +2511,18 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 720,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/720",
+      "title": "Merging is not blocked by gas-snapshot, soldeer-package or rs-test: main's ruleset requires only the three rainix-sol jobs"
+    },
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 468,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/468",
+      "title": "StoxReceipt.uri() reverts: _vaultAssetSymbol() reads symbol() on address(0)"
+    },
     {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 466,
@@ -6926,7 +6926,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 146,
+    "unvetted": 144,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -6937,16 +6937,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 263,
+    "totalProducerPrs": 261,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 729,
+    "uncoveredIssues": 731,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 979
   },
   "ages": {
     "openIssues": {
-      "meanDays": 250.3,
+      "meanDays": 250.4,
       "medianDays": 100.5,
       "oldestDays": 971.1
     }
