@@ -817,8 +817,14 @@
         ]
       },
       "un-vetted": {
-        "count": 146,
+        "count": 144,
         "prs": [
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 463,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/463",
+            "title": "Take the retirement deadline off CI"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 719,
@@ -830,12 +836,6 @@
             "number": 718,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/718",
             "title": "test: freeze the sqrt, LiftFirst and Pr321 baselines; guard every live library"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 309,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/309",
-            "title": "Take the TimelockController generation as a parameter"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -854,12 +854,6 @@
             "number": 716,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/716",
             "title": "agree compares the spread with the exact proportional limit (#573)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 714,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/714",
-            "title": "Rust tests: one shared helpers module, repeated constants named once (#581)"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -920,12 +914,6 @@
             "number": 41,
             "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/41",
             "title": "deps: rain-math-float 0.2.45 (latest everywhere); delete the log tables"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 446,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/446",
-            "title": "Delete the chain-with-no-pin test the library test already covers"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -2523,6 +2511,18 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain-org-health",
+      "number": 198,
+      "url": "https://github.com/rainlanguage/rain-org-health/issues/198",
+      "title": "Roles held: warn on holdings the deploy repo declares must not exist (3D0C direct DEPOSIT/WITHDRAW)"
+    },
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 462,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/462",
+      "title": "Remove \"pointers\" from generated file names"
+    },
     {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 461,
@@ -6890,7 +6890,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 146,
+    "unvetted": 144,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -6901,18 +6901,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 263,
+    "totalProducerPrs": 261,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 723,
+    "uncoveredIssues": 725,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 979
   },
   "ages": {
     "openIssues": {
-      "meanDays": 245.2,
+      "meanDays": 245.3,
       "medianDays": 98.9,
-      "oldestDays": 970.9
+      "oldestDays": 971.0
     }
   }
 }
