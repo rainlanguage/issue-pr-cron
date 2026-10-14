@@ -817,8 +817,44 @@
         ]
       },
       "un-vetted": {
-        "count": 142,
+        "count": 148,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 707,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/707",
+            "title": "Hazards: Rust reads the Solidity bounds, oracle constants re-derived, SPEC names every error, concretes expose every function (#693-#698)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 706,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/706",
+            "title": "Implementation mul/div NatSpec, errors into ErrDecimalFloat, SPEC unabs guard row, drop div's dead guard (#585, #587, #589, #591, #593, #595)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 705,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/705",
+            "title": "Format and error NatSpec, named constants, _toScientific without maximizeFull (#566-#572)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 704,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/704",
+            "title": "Quality-global: relative imports in test/src, slither filter_paths, oracle python3 text, proptest config(), shared abs/anyDigits (#657 #661 #663 #665 #667)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 703,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/703",
+            "title": "Process docs: README division example, SPEC agree/range guards/UNRULED pin, CLAUDE.md license and layout (#597 #601 #603 #605 #607 #609)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 702,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/702",
+            "title": "exp10Fixed series loss 1.07903, INT256_MAX_POW10_EXPONENT, log10Ratio/pow10/maximize NatSpec (#524, #525, #527, #547-#552)"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 701,
@@ -2519,42 +2555,6 @@
     },
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 698,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/698",
-      "title": "[A-hazard-a-7] [INFO] CLAUDE.md restates which operations finalise through packArithmeticResult, a list SPEC.md and the NatSpec also keep"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 697,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/697",
-      "title": "[A-hazard-a-5] [INFO] The rule that the two concretes expose every library function is kept by hand; no test fails when a new function has no wrapper"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 696,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/696",
-      "title": "[A-hazard-a-4] [INFO] FIVE_INVERSE, POW_FIXED_ONE_ODD_INVERSE, TIMES_TEN_MAX and TIMES_TEN_SPAN are derived literals with no re-derivation test, and the equivalence copies import the inverses from src"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 695,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/695",
-      "title": "[A-hazard-a-3] [INFO] SPEC's range-guard table omits UnabsExponentOverflow and ParseDecimalNoSignificantDigits; nothing ties SPEC's error inventory to the errors src declares"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 694,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/694",
-      "title": "[A-hazard-a-2] [INFO] Test-oracle constants ORACLE_LN2, the low 20 digits of ORACLE_LN10, LOG10_OVERFLOW and LOG10_UP/DOWN_PER_E come from bc and have no re-derivation test"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 693,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/693",
-      "title": "[A-hazard-a-1] [LOW] The proven error-bound constants are copied by hand from LibTestErrorBound.sol into two Rust files, and nothing checks that the copies agree"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
       "number": 687,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/687",
       "title": "floor and ceil return a non-canonical zero's bytes; floor packs it to FLOAT_ZERO only for e < 0"
@@ -2669,27 +2669,9 @@
     },
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 667,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/667",
-      "title": "[A-quality-global-5] [LOW] Three conflicting proptest case-count conventions: crate config(), proptest's default 256, and a hard-coded 20000 that ignores PROPTEST_CASES"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
       "number": 665,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/665",
       "title": "[A-quality-global-4] [LOW] Test helpers copied between test files, some duplicating existing test/lib helpers"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 663,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/663",
-      "title": "[A-quality-global-3] [INFO] The decimal oracle spawns whatever python3 the ambient PATH holds; the flake's pinned python3 never reaches CI"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 661,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/661",
-      "title": "[A-quality-global-2] [LOW] slither filter_paths still names the pre-Soldeer git-submodule layout (lib/forge-std, lib/rain.math.fixedpoint) and never filters dependencies/"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -2843,84 +2825,6 @@
     },
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 609,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/609",
-      "title": "[A-process-docs-6] [INFO] SPEC pins UNRULED descriptions to commit 886ca07, 148 commits stale"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 607,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/607",
-      "title": "[A-process-docs-5] [INFO] CLAUDE.md layout omits test/concrete, test/oracle and the python3 requirement, and misplaces two errors"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 605,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/605",
-      "title": "[A-process-docs-4] [LOW] CLAUDE.md misnames the license as 'Rain Decentralized Computer License'"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 603,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/603",
-      "title": "[A-process-docs-3] [LOW] SPEC range-guards table is stale: wrong sqrt trigger, missing zero-denominator case, missing UnabsExponentOverflow"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 601,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/601",
-      "title": "[A-process-docs-2] [LOW] SPEC agree rule uses the signed spread, so reversed extremes would always agree, which contradicts ruling #498"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 599,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/599",
-      "title": "[A-process-docs-1] [LOW] SPEC says FLOAT_PI is rounded to nearest; ruling #503 and the code make it the closest Float not above pi"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 597,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/597",
-      "title": "[A-process-docs-0] [LOW] README division examples describe the unpacked implementation, and are wrong for the public Float API: 1/3 keeps 67 digits, not 76, and (1/3)/(1/9) is not 3"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 595,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/595",
-      "title": "[A-impl-1-6] [INFO] div's `if (adjustExponent > 0)` at line 630 is always true"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 593,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/593",
-      "title": "[A-impl-1-5] [LOW] SPEC 'Range guards' table omits the UnabsExponentOverflow guard of unabsUnsignedMulOrDivLossy"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 591,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/591",
-      "title": "[A-impl-1-4] [INFO] WithTargetExponentOverflow and UnabsExponentOverflow are declared in the implementation file, unlike every other library error"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 589,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/589",
-      "title": "[A-impl-1-3] [LOW] mul512, mulDivFixed, mulDiv (internal) and the two private mul helpers have no @param/@return; mul512's prose names x, y for params a, b"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 587,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/587",
-      "title": "[A-impl-1-2] [LOW] Implementation div's ExponentOverflow carries the maximized, adjusted dividend, not the input, and the NatSpec does not say so"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 585,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/585",
-      "title": "[A-impl-1-1] [LOW] Implementation mul NatSpec ('Stack only implementation of mul') omits rounding, zero shape, floor shedding and its ExponentOverflow revert"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
       "number": 581,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/581",
       "title": "[A-rs-lib-4] [INFO] Duplicated test helpers and magic constants across the test modules"
@@ -2933,105 +2837,9 @@
     },
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 572,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/572",
-      "title": "[A-format-err-9] [INFO] Private formatters lack @param/@return, stripTrailingZeros lacks @param, and _toNonScientific's NatSpec narrates history"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 571,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/571",
-      "title": "[A-format-err-8] [INFO] MaximizeOverflow NatSpec does not name its trigger"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 570,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/570",
-      "title": "[A-format-err-7] [INFO] UnformatableExponent NatSpec suggests scientific mode can throw it too"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 569,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/569",
-      "title": "[A-format-err-6] [INFO] _toScientific maximizes the coefficient only to undo it with stripTrailingZeros, through maximizeFull's unreachable MaximizeOverflow check"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 568,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/568",
-      "title": "[A-format-err-5] [INFO] Scratch headroom 0x80 / 0x60 and the ASCII bytes are unexplained magic numbers; the scientific headroom bound is never stated"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 567,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/567",
-      "title": "[A-format-err-4] [LOW] toDecimalString NatSpec omits its UnformatableExponent revert and output rules, and calls itself \"not particularly efficient\" despite gas-tuned assembly"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 566,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/566",
-      "title": "[A-format-err-3] [LOW] ExponentUnderflow NatSpec gives an example that does not underflow: mul operands whose exponents sum below int32.min"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 552,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/552",
-      "title": "[A-impl-4-5] [INFO] withTargetExponent returns maximize's zero sentinel on one branch and a literal 0 on the other"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 551,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/551",
-      "title": "[A-impl-4-4] [INFO] Literal 76 (largest k with 10^k in int256) repeated as a magic number"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 550,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/550",
-      "title": "[A-impl-4-3] [INFO] pow10 / pow10Unrounded NatSpec omits the WithTargetExponentOverflow revert for an integer part past int256"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 549,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/549",
-      "title": "[A-impl-4-2] [INFO] maximizeFull NatSpec does not name the error it reverts with"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 548,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/548",
-      "title": "[A-impl-4-1] [INFO] maximize NatSpec has no @param for either parameter, and opens with a narrative sentence"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 547,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/547",
-      "title": "[A-impl-4-0] [LOW] exp10Fixed series-loss bound 1.07902 does not follow from its own stated components"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 527,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/527",
-      "title": "[A-impl-3-3] [INFO] log10Ratio NatSpec understates its domain as \"a few parts in ten thousand\""
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
       "number": 526,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/526",
       "title": "[A-impl-3-2] [INFO] log10Reduce mixes an unnamed and a named return and then returns both explicitly"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 525,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/525",
-      "title": "[A-impl-3-1] [LOW] Two log10Ratio tests claim to pin high-word borrows of in-place multiplies that log10Ratio no longer has"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 524,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/524",
-      "title": "[A-impl-3-0] [LOW] exp10Fixed comment cites an in-place mulDivFixed in log10Ratio that no longer exists"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -6992,7 +6800,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 142,
+    "unvetted": 148,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7003,18 +6811,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 259,
+    "totalProducerPrs": 265,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 744,
+    "uncoveredIssues": 706,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 979
   },
   "ages": {
     "openIssues": {
-      "meanDays": 166.0,
-      "medianDays": 80.3,
-      "oldestDays": 889.7
+      "meanDays": 167.0,
+      "medianDays": 80.5,
+      "oldestDays": 890.8
     }
   }
 }
