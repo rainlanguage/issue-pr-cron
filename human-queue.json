@@ -817,7 +817,7 @@
         ]
       },
       "un-vetted": {
-        "count": 149,
+        "count": 146,
         "prs": [
           {
             "repo": "rainlanguage/rain.math.float",
@@ -857,12 +857,6 @@
           },
           {
             "repo": "rainlanguage/rain.math.float",
-            "number": 715,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/715",
-            "title": "Test code audit: relative imports, floating pragmas, shared helpers, names and NatSpec (#657 #659 #665 #675 #676 #677 #678 #681 #682)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
             "number": 714,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/714",
             "title": "Rust tests: one shared helpers module, repeated constants named once (#581)"
@@ -893,12 +887,6 @@
           },
           {
             "repo": "rainlanguage/rain.math.float",
-            "number": 707,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/707",
-            "title": "Hazards: Rust reads the Solidity bounds, oracle constants re-derived, SPEC names every error, concretes expose every function (#693-#698)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
             "number": 706,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/706",
             "title": "Implementation mul/div NatSpec, errors into ErrDecimalFloat, SPEC unabs guard row, drop div's dead guard (#585, #587, #589, #591, #593, #595)"
@@ -919,7 +907,7 @@
             "repo": "S01-Issuer/st0x.deploy",
             "number": 451,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/451",
-            "title": "Bump dependencies to their latest releases (float 0.2.56, vats 0.2.5)"
+            "title": "Bump dependencies to their latest releases (float 0.3.3, vats 0.2.5)"
           },
           {
             "repo": "rainlanguage/rainlang",
@@ -944,12 +932,6 @@
             "number": 439,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/439",
             "title": "Switch the EU authoriser prod test on the migration registry"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 272,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/272",
-            "title": "Declare and broadcast a factory clone through the same loop as a Zoltu deploy"
           },
           {
             "repo": "rainlanguage/rain.math.float.deploy",
@@ -2561,12 +2543,6 @@
     },
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 514,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/514",
-      "title": "Halmos: prove FAR (add with a far exponent gap)"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
       "number": 513,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/513",
       "title": "Halmos: prove MINUS (add/sub cancellation)"
@@ -2588,12 +2564,6 @@
       "number": 440,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/440",
       "title": "Symbolic proofs for add/sub cancellation and the assembly series"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 274,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/274",
-      "title": "No story for upgradeable beacons: consumers hand-roll the beacon invariants"
     },
     {
       "repo": "S01-Issuer/st0x.deploy",
@@ -6788,6 +6758,108 @@
       "number": 390,
       "url": "https://github.com/rainlanguage/raindex/issues/390",
       "title": "replace typeshare with tsify"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 387,
+      "url": "https://github.com/rainlanguage/raindex/issues/387",
+      "title": "Reduce flakiness of ledger connnection"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 367,
+      "url": "https://github.com/rainlanguage/raindex/issues/367",
+      "title": "Observable charting for fuzzed traces in the GUI"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 363,
+      "url": "https://github.com/rainlanguage/raindex/issues/363",
+      "title": "Build fix"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 356,
+      "url": "https://github.com/rainlanguage/raindex/issues/356",
+      "title": "Input and output cols on trades table are around the wrong wa"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 332,
+      "url": "https://github.com/rainlanguage/raindex/issues/332",
+      "title": "Context menus don't disappear when clicking outside of them"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 328,
+      "url": "https://github.com/rainlanguage/raindex/issues/328",
+      "title": "Adding spaces to rain causes parser to revert with blank reason"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 322,
+      "url": "https://github.com/rainlanguage/raindex/issues/322",
+      "title": "Re-add a previously removed order"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 321,
+      "url": "https://github.com/rainlanguage/raindex/issues/321",
+      "title": "Volume Chart for trading pair"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 320,
+      "url": "https://github.com/rainlanguage/raindex/issues/320",
+      "title": "Take an order from the UI"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 316,
+      "url": "https://github.com/rainlanguage/raindex/issues/316",
+      "title": "Always convert returned subgraph structs into our own structs, with values converted from string to usable types in desired format"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 315,
+      "url": "https://github.com/rainlanguage/raindex/issues/315",
+      "title": "Subgraph vaultId should should be a \"0x\" prefixed hex value"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 313,
+      "url": "https://github.com/rainlanguage/raindex/issues/313",
+      "title": "verify decoded order meta matches actually deployed order"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 301,
+      "url": "https://github.com/rainlanguage/raindex/issues/301",
+      "title": "Support Legacy & abritarary Ledger Derviation Paths"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 299,
+      "url": "https://github.com/rainlanguage/raindex/issues/299",
+      "title": "Hovering orders table column changes width on mac os"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 291,
+      "url": "https://github.com/rainlanguage/raindex/issues/291",
+      "title": "tauri invoke awaits should time out"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 288,
+      "url": "https://github.com/rainlanguage/raindex/issues/288",
+      "title": "move derivation index field before address field"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 284,
+      "url": "https://github.com/rainlanguage/raindex/issues/284",
+      "title": "Fetch token decimals in input field"
     }
   ],
   "archivedRepoPrs": [
@@ -6818,7 +6890,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 149,
+    "unvetted": 146,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -6829,18 +6901,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 266,
+    "totalProducerPrs": 263,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 708,
+    "uncoveredIssues": 723,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 979
   },
   "ages": {
     "openIssues": {
-      "meanDays": 228.4,
-      "medianDays": 96.0,
-      "oldestDays": 952.9
+      "meanDays": 245.2,
+      "medianDays": 98.9,
+      "oldestDays": 970.9
     }
   }
 }
