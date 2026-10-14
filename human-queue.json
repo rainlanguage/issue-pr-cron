@@ -817,8 +817,20 @@
         ]
       },
       "un-vetted": {
-        "count": 155,
+        "count": 149,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 719,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/719",
+            "title": "test: wei floor/ceil safe side holds to int224.max / 20, not 1e66"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 718,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/718",
+            "title": "test: freeze the sqrt, LiftFirst and Pr321 baselines; guard every live library"
+          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 309,
@@ -830,12 +842,6 @@
             "number": 308,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/308",
             "title": "Declare and verify upgradeable beacon state through the chain group"
-          },
-          {
-            "repo": "rainlanguage/rain-org-health",
-            "number": 197,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/197",
-            "title": "Deployments: \"Roles held\" tab, current roles per address, per network and contract"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -899,36 +905,6 @@
           },
           {
             "repo": "rainlanguage/rain.math.float",
-            "number": 705,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/705",
-            "title": "Format and error NatSpec, named constants, _toScientific without maximizeFull (#566-#572)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 704,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/704",
-            "title": "Quality-global: relative imports in test/src, slither filter_paths, oracle python3 text, proptest config(), shared abs/anyDigits (#657 #661 #663 #665 #667)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 703,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/703",
-            "title": "Process docs: README division example, SPEC agree/range guards/UNRULED pin, CLAUDE.md license and layout (#597 #601 #603 #605 #607 #609)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 702,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/702",
-            "title": "exp10Fixed series loss 1.07903, INT256_MAX_POW10_EXPONENT, log10Ratio/pow10/maximize NatSpec (#524, #525, #527, #547-#552)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 700,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/700",
-            "title": "Implementation NatSpec: log10 add grid, add/sub ExponentOverflow payloads, inv, eq, missing tags; POW_FIXED_ONE in mulDivFixed (#537-#546)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
             "number": 692,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/692",
             "title": "Halmos proofs: agree tolerance errors and either-order spread"
@@ -959,21 +935,9 @@
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
-            "number": 450,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/450",
-            "title": "Describe Role.holders as every account a grant or revoke named"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 449,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/449",
-            "title": "Record the subgraph mutation scan"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
             "number": 446,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/446",
-            "title": "Fix the chain-with-no-pin test for the lib's error"
+            "title": "Delete the chain-with-no-pin test the library test already covers"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -2630,12 +2594,6 @@
       "number": 274,
       "url": "https://github.com/rainlanguage/rain.deploy/issues/274",
       "title": "No story for upgradeable beacons: consumers hand-roll the beacon invariants"
-    },
-    {
-      "repo": "S01-Issuer/st0x.deploy",
-      "number": 448,
-      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/448",
-      "title": "Subgraph: createDiscoveredContract treats a row created from a log as an earlier discovery, skipping the template"
     },
     {
       "repo": "S01-Issuer/st0x.deploy",
@@ -6626,6 +6584,210 @@
       "number": 504,
       "url": "https://github.com/rainlanguage/raindex/issues/504",
       "title": "ability to reference settings in bindings"
+    },
+    {
+      "repo": "rainlanguage/rain.solver",
+      "number": 43,
+      "url": "https://github.com/rainlanguage/rain.solver/issues/43",
+      "title": "review how we interact with flashbots"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 493,
+      "url": "https://github.com/rainlanguage/raindex/issues/493",
+      "title": "support rainlang strings for vault ids"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 485,
+      "url": "https://github.com/rainlanguage/raindex/issues/485",
+      "title": "Upload source maps to sentry"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 484,
+      "url": "https://github.com/rainlanguage/raindex/issues/484",
+      "title": "some kind of gas report for strats during testing"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 473,
+      "url": "https://github.com/rainlanguage/raindex/issues/473",
+      "title": "ability to chart orders that already exist if the rainlang is known"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 472,
+      "url": "https://github.com/rainlanguage/raindex/issues/472",
+      "title": "ability to quote bind data transformations while charting"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 471,
+      "url": "https://github.com/rainlanguage/raindex/issues/471",
+      "title": "ability to set the denomination of a chart axis to a token, and then have it render the token symbol"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 470,
+      "url": "https://github.com/rainlanguage/raindex/issues/470",
+      "title": "stable sorting of charts on the dashboard"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 468,
+      "url": "https://github.com/rainlanguage/raindex/issues/468",
+      "title": "support using-tokens-from in settings"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 465,
+      "url": "https://github.com/rainlanguage/raindex/issues/465",
+      "title": "ability to set sig figs for decimal amounts in the GUI from the settings yaml"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 464,
+      "url": "https://github.com/rainlanguage/raindex/issues/464",
+      "title": "ability to set date format in the settings yaml"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 463,
+      "url": "https://github.com/rainlanguage/raindex/issues/463",
+      "title": "ability to handle different combinations of IO for a single order in the same block"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 462,
+      "url": "https://github.com/rainlanguage/raindex/issues/462",
+      "title": "elisions should not error if runs is set during fuzzing"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 461,
+      "url": "https://github.com/rainlanguage/raindex/issues/461",
+      "title": "ability to name axes"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 460,
+      "url": "https://github.com/rainlanguage/raindex/issues/460",
+      "title": "ability to dismiss/accept the alpha warning"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 454,
+      "url": "https://github.com/rainlanguage/raindex/issues/454",
+      "title": "Display date times in locale of user"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 450,
+      "url": "https://github.com/rainlanguage/raindex/issues/450",
+      "title": "duplicate `runs` keys in scenarios when nested should be an error"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 447,
+      "url": "https://github.com/rainlanguage/raindex/issues/447",
+      "title": "Set Context in yml options"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 444,
+      "url": "https://github.com/rainlanguage/raindex/issues/444",
+      "title": "CSV output option for fuzz testing on CLI"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 442,
+      "url": "https://github.com/rainlanguage/raindex/issues/442",
+      "title": "User can navigate to orders page without required settings by clicking \"Home\" button in breadcrumbs"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 439,
+      "url": "https://github.com/rainlanguage/raindex/issues/439",
+      "title": "Trade / Deposit charts overlap \"early alpha\" notice"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 438,
+      "url": "https://github.com/rainlanguage/raindex/issues/438",
+      "title": "Decimal 18 scaled values for X and Y axis. "
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 435,
+      "url": "https://github.com/rainlanguage/raindex/issues/435",
+      "title": "Ensure linux .deb packages link to proper system libs or bundle required libs"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 417,
+      "url": "https://github.com/rainlanguage/raindex/issues/417",
+      "title": "Link to specs for words & yaml"
+    },
+    {
+      "repo": "rainlanguage/flow",
+      "number": 20,
+      "url": "https://github.com/rainlanguage/flow/issues/20",
+      "title": "add a sub parser"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 409,
+      "url": "https://github.com/rainlanguage/raindex/issues/409",
+      "title": "Include ledger connection requirements in ledger error toasts"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 405,
+      "url": "https://github.com/rainlanguage/raindex/issues/405",
+      "title": "Specify number of block confirmations to wait for a transaction per chain via config"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 404,
+      "url": "https://github.com/rainlanguage/raindex/issues/404",
+      "title": "Display number of block confirmations in transaction status notice as they are received"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 402,
+      "url": "https://github.com/rainlanguage/raindex/issues/402",
+      "title": "Make settings / add order text areas multiple rows by default"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 399,
+      "url": "https://github.com/rainlanguage/raindex/issues/399",
+      "title": "reliable builds on linux"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 398,
+      "url": "https://github.com/rainlanguage/raindex/issues/398",
+      "title": "libusb and gmp required on mac os"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 394,
+      "url": "https://github.com/rainlanguage/raindex/issues/394",
+      "title": "review if we can use the scale trick in uniswap ops to improve precision of ob"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 391,
+      "url": "https://github.com/rainlanguage/raindex/issues/391",
+      "title": "support fee on transfer tokens"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 390,
+      "url": "https://github.com/rainlanguage/raindex/issues/390",
+      "title": "replace typeshare with tsify"
     }
   ],
   "archivedRepoPrs": [
@@ -6656,7 +6818,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 155,
+    "unvetted": 149,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -6667,18 +6829,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 272,
+    "totalProducerPrs": 266,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 675,
+    "uncoveredIssues": 708,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 979
   },
   "ages": {
     "openIssues": {
-      "meanDays": 192.8,
-      "medianDays": 91.0,
-      "oldestDays": 929.9
+      "meanDays": 228.4,
+      "medianDays": 96.0,
+      "oldestDays": 952.9
     }
   }
 }
