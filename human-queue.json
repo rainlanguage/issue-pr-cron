@@ -817,13 +817,19 @@
         ]
       },
       "un-vetted": {
-        "count": 145,
+        "count": 146,
         "prs": [
           {
             "repo": "rainlanguage/rain-org-health",
-            "number": 199,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/199",
-            "title": "feat(deployments): mark holdings to grant and to revoke against st0x.deploy's ideal-roles.json"
+            "number": 200,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/200",
+            "title": "feat(site): make Deployments the first tab and the site root"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 467,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/467",
+            "title": "Check each token's production beacon in the orchestrator vault-logic lock"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -2519,9 +2525,9 @@
   "uncoveredIssues": [
     {
       "repo": "S01-Issuer/st0x.deploy",
-      "number": 465,
-      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/465",
-      "title": "Orchestrator vault-logic lock checks the current release's beacons, not the tokens' production beacons (RAI-2125)"
+      "number": 466,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/466",
+      "title": "Role ids are inline keccak256 strings instead of named constants"
     },
     {
       "repo": "S01-Issuer/st0x.deploy",
@@ -2558,12 +2564,6 @@
       "number": 512,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/512",
       "title": "Halmos: prove NEAR (add with a near exponent gap)"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 511,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/511",
-      "title": "Halmos: prove PACK (packArithmeticResult truncation)"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -6926,7 +6926,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 145,
+    "unvetted": 146,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -6937,9 +6937,9 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 262,
+    "totalProducerPrs": 263,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 730,
+    "uncoveredIssues": 729,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 979
