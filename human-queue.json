@@ -817,8 +817,14 @@
         ]
       },
       "un-vetted": {
-        "count": 141,
+        "count": 142,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 701,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/701",
+            "title": "Rust test hygiene: named parse selectors, int224_max, helper docs (#575 #577 #579 #581 #583)"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 700,
@@ -2915,33 +2921,9 @@
     },
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 583,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/583",
-      "title": "[A-rs-lib-5] [INFO] Test helpers without doc comments, and want_agree's doc holds check_agree's text"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
       "number": 581,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/581",
       "title": "[A-rs-lib-4] [INFO] Duplicated test helpers and magic constants across the test modules"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 579,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/579",
-      "title": "[A-rs-lib-3] [INFO] test_constants_relationships and test_constants_edge_cases re-fetch and re-assert the constants' own ordering in every fuzz case"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 577,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/577",
-      "title": "[A-rs-lib-2] [INFO] test_to_fixed_decimal_lossy comment misstates the conversion it checks"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 575,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/575",
-      "title": "[A-rs-lib-1] [INFO] Parse error tests: one accepts any selector under a false comment; the other pins unnamed magic selectors and calls excess characters malformed"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -7010,7 +6992,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 141,
+    "unvetted": 142,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7021,9 +7003,9 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 258,
+    "totalProducerPrs": 259,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 748,
+    "uncoveredIssues": 744,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 979
@@ -7031,7 +7013,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 166.0,
-      "medianDays": 80.2,
+      "medianDays": 80.3,
       "oldestDays": 889.7
     }
   }
