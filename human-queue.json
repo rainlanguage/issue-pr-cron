@@ -2597,12 +2597,6 @@
     },
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 684,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/684",
-      "title": "[A-hazard-c-0] [LOW] Breaking surface and semantic changes publish as patch releases: 0.2.1 to 0.2.59 all ride the single next-v0.2.0 intent tag"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
       "number": 682,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/682",
       "title": "[A-test-support-13] [INFO] Baseline and harness names describe PR-time roles that have since changed"
@@ -2660,12 +2654,6 @@
       "number": 655,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/655",
       "title": "[A-hazard-b-7] [INFO] The published log10/pow10/pow bound constants are duplicated between the Solidity and Rust test harnesses with no check that they agree"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 653,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/653",
-      "title": "[A-hazard-b-6] [INFO] Every workflow, including the autopublishing release with secrets: inherit, follows rainix@main, so CI and publish behaviour change without a commit here"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -6663,16 +6651,16 @@
     "leaks": 0,
     "totalProducerPrs": 270,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 676,
+    "uncoveredIssues": 674,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 979
   },
   "ages": {
     "openIssues": {
-      "meanDays": 168.2,
-      "medianDays": 81.9,
-      "oldestDays": 891.9
+      "meanDays": 170.1,
+      "medianDays": 82.9,
+      "oldestDays": 908.9
     }
   }
 }
