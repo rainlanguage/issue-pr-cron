@@ -817,8 +817,44 @@
         ]
       },
       "un-vetted": {
-        "count": 147,
+        "count": 153,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 713,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/713",
+            "title": "Test-support audit: frozen baselines, sqrt variants, bit-level error bounds, FormatParseGas (#645 #669-#674, part of #682)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 712,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/712",
+            "title": "One encoding of the packLossy overflow threshold: isPastEveryFloat (#649)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 711,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/711",
+            "title": "CI and packaging: allow-list .soldeerignore, rs-test in the repo dev shell, checked gas snapshot (#647, #651, #686)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 710,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/710",
+            "title": "LibDecimalFloat audit: pow loop stops at the top bit, agree zero constant, NatSpec (#627-#643)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 709,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/709",
+            "title": "Parse audit: total isPastOverflowThreshold, named fraction guard, error NatSpec, test names (#611-#625)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 708,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/708",
+            "title": "Test oracle NatSpec and names, maxPower reverts on unknown primes (#677-#681, #683)"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 707,
@@ -2555,12 +2591,6 @@
     },
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 686,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/686",
-      "title": "[A-hazard-c-2] [LOW] The deny-list .soldeerignore ships every new top-level path, so the audit's own .audit/ stamp will publish a new release with identical Solidity"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
       "number": 685,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/685",
       "title": "[A-hazard-c-1] [INFO] Nothing checks that the inline library and the deployed DecimalFloat bytecode a consumer pairs with it compute the same results"
@@ -2573,12 +2603,6 @@
     },
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 683,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/683",
-      "title": "[A-test-support-14] [INFO] maxPower returns 35 for any prime it does not know"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
       "number": 682,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/682",
       "title": "[A-test-support-13] [INFO] Baseline and harness names describe PR-time roles that have since changed"
@@ -2588,18 +2612,6 @@
       "number": 681,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/681",
       "title": "[A-test-support-12] [INFO] LibCommonResults declares no library, only three undocumented free constants"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 680,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/680",
-      "title": "[A-test-support-11] [INFO] wideExponent says its below-range distance is 'saturated at 10^6' but returns 10^6 for distances as small as ~3000"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 679,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/679",
-      "title": "[A-test-support-10] [INFO] Concrete ABI harnesses document no function"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -2624,42 +2636,6 @@
       "number": 675,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/675",
       "title": "[A-test-support-6] [LOW] Two test libraries are pinned with `=0.8.25` instead of floating `^`"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 674,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/674",
-      "title": "[A-test-support-5] [LOW] FormatParseGas ends with a dangling, truncated NatSpec block after the contract and has none of its own"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 673,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/673",
-      "title": "[A-test-support-4] [INFO] Format and parse baselines name LibExactFloat as the source of expected values, but it has no format or parse oracle"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 672,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/672",
-      "title": "[A-test-support-3] [LOW] LibTestPowRange claims independence from the library under test, but its error term is unpacked, abs'd and packed by LibDecimalFloat"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 671,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/671",
-      "title": "[A-test-support-2] [LOW] Equivalence baselines claim their live helpers are unchanged since the copied commit, but unabsUnsignedMulOrDivLossy and mulDiv have changed"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 670,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/670",
-      "title": "[A-test-support-1] [LOW] sqrt variants described as 'the library's sqrt with X' differ from live sqrt in its guard, scale-up and exponent halving"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 669,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/669",
-      "title": "[A-test-support-0] [LOW] Plain-Solidity log10Ratio baseline still runs the pre-#475 series, so its gas rows no longer isolate the assembly"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -2693,129 +2669,9 @@
     },
     {
       "repo": "rainlanguage/rain.math.float",
-      "number": 651,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/651",
-      "title": "[A-hazard-b-5] [LOW] CI runs crates/tests outside the repo's declared dev shell, so the Python oracle and solc come from unpinned runner and network state"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 649,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/649",
-      "title": "[A-hazard-b-3] [INFO] The packLossy overflow threshold (2^223+2)·10^int32.max is encoded independently in five places across two files, and only packLossy is the truth"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 647,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/647",
-      "title": "[A-hazard-b-1] [LOW] Committed .gas-snapshot is regenerated by hand only and is stale again: 78 current tests are missing from it"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 645,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/645",
-      "title": "[A-hazard-b-0] [LOW] Equivalence baselines are not frozen: they call live helpers that have changed since their cited commits, and their provenance claims are false or unresolvable"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 643,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/643",
-      "title": "[A-float-2-8] [INFO] ceil comment explains a fraction == 0 case that the early return above has already handled"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 641,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/641",
-      "title": "[A-float-2-7] [INFO] agree helpers' @param still say lowest/highest after #498, and pow/pack private helpers have no @param/@return"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 639,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/639",
-      "title": "[A-float-2-6] [INFO] agreeValidateTolerances builds zero with packLossless(0, 0) at run time instead of FLOAT_ZERO"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 637,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/637",
-      "title": "[A-float-2-5] [INFO] pow's squaring loop squares the base once more after the top bit of N"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 635,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/635",
-      "title": "[A-float-2-4] [INFO] eq, pow10 and log10 NatSpec call Float a struct and refer to themselves"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 633,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/633",
-      "title": "[A-float-2-3] [LOW] log10 NatSpec omits its Log10Zero / Log10Negative reverts, and its packing comment is stale"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 631,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/631",
-      "title": "[A-float-2-2] [LOW] pow NatSpec omits the ZeroNegativePower revert and the 0^b, a^0 and 1^b special cases, and claims it does not lose precision"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 629,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/629",
-      "title": "[A-float-2-1] [LOW] agree NatSpec says `abs` reverts ExponentOverflow at the range extremes, but abs never reverts"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
       "number": 627,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/627",
       "title": "[A-float-2-0] [LOW] agree NatSpec and SPEC bound the boundary excess at 1e-76 of the spread, but it reaches about 1.7272e-76"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 625,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/625",
-      "title": "[A-parse-7] [INFO] parseDecimalFloatPastInt256 NatSpec omits its in-range ExponentOverflow return; wrapper comment presents PrecisionLoss as underflow only"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 623,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/623",
-      "title": "[A-parse-6] [INFO] Overflow-floor coefficient and ASCII codes are repeated magic numbers"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 621,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/621",
-      "title": "[A-parse-5] [LOW] The only non-memory-safe assembly block in src is in parseDecimalFloat"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 619,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/619",
-      "title": "[A-parse-4] [INFO] Eleven parse tests are named or documented as reverts but assert a returned selector"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 617,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/617",
-      "title": "[A-parse-3] [LOW] ErrParse NatSpec says \"Thrown\" for selectors only ever returned by value, and misstates triggers and position"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 615,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/615",
-      "title": "[A-parse-2] [LOW] Returned ExponentOverflow selector has a different argument shape from every other parse selector, undocumented"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 613,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/613",
-      "title": "[A-parse-1] [LOW] Unreachable `exponent > 0` guard returns a misleading MalformedExponentDigits for a fraction"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 611,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/611",
-      "title": "[A-parse-0] [LOW] isPastOverflowThreshold silently returns true outside its prose-only preconditions"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -6794,7 +6650,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 147,
+    "unvetted": 153,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -6805,9 +6661,9 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 264,
+    "totalProducerPrs": 270,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 706,
+    "uncoveredIssues": 676,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 979
@@ -6816,7 +6672,7 @@
     "openIssues": {
       "meanDays": 168.2,
       "medianDays": 81.9,
-      "oldestDays": 891.8
+      "oldestDays": 891.9
     }
   }
 }
