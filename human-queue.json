@@ -817,8 +817,20 @@
         ]
       },
       "un-vetted": {
-        "count": 153,
+        "count": 154,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 715,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/715",
+            "title": "Test code audit: relative imports, floating pragmas, shared helpers, names and NatSpec (#657 #659 #665 #675 #676 #677 #678 #681 #682)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 714,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/714",
+            "title": "Rust tests: one shared helpers module, repeated constants named once (#581)"
+          },
           {
             "repo": "rainlanguage/rain.math.float",
             "number": 713,
@@ -908,12 +920,6 @@
             "number": 692,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/692",
             "title": "Halmos proofs: agree tolerance errors and either-order spread"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 690,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/690",
-            "title": "Reference oracles pack the exact sum; exact.rs doc; build.rs watches remappings.txt (#559, #561, #562)"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -2593,7 +2599,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 153,
+    "unvetted": 154,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -2604,7 +2610,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 270,
+    "totalProducerPrs": 271,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 0,
     "designPresentable": 7,
