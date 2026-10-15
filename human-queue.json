@@ -817,8 +817,14 @@
         ]
       },
       "un-vetted": {
-        "count": 148,
+        "count": 149,
         "prs": [
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 206,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/206",
+            "title": "roh-scan: fall through an RPC endpoint that refuses under HTTP 200"
+          },
           {
             "repo": "rainlanguage/rain-org-health",
             "number": 205,
@@ -6932,7 +6938,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 148,
+    "unvetted": 149,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -6943,7 +6949,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 265,
+    "totalProducerPrs": 266,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 728,
     "designPresentable": 7,
@@ -6953,7 +6959,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 246.9,
-      "medianDays": 99.5,
+      "medianDays": 99.6,
       "oldestDays": 971.6
     }
   }
