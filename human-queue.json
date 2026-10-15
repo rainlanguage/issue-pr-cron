@@ -817,8 +817,32 @@
         ]
       },
       "un-vetted": {
-        "count": 145,
+        "count": 148,
         "prs": [
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 205,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/205",
+            "title": "Deployments: read st0x facts from privileged-addresses.json and ideal-roles.json, not Solidity constant names"
+          },
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 204,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/204",
+            "title": "Deployments: a Migrations sub-tab — every deploy-repo migration, run or not, per network (#202)"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 722,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/722",
+            "title": "Fix differential_pow flake: pow oracle panics converting a whole k·b past isize to an exponent"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 471,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/471",
+            "title": "Publish migrations.json: every migration's id, namespace, writer and prerequisites"
+          },
           {
             "repo": "rainlanguage/rain-org-health",
             "number": 203,
@@ -902,12 +926,6 @@
             "number": 445,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/445",
             "title": "Halmos proofs: add/sub rounding and series equivalence"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 451,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/451",
-            "title": "Bump dependencies to their latest releases (float 0.3.3, vats 0.2.5)"
           },
           {
             "repo": "rainlanguage/rainlang",
@@ -2518,10 +2536,10 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
-      "repo": "rainlanguage/rain-org-health",
-      "number": 202,
-      "url": "https://github.com/rainlanguage/rain-org-health/issues/202",
-      "title": "Deployments: a Migrations sub-tab — every st0x.deploy migration, run or not, per chain"
+      "repo": "rainlanguage/rain.math.float",
+      "number": 721,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/721",
+      "title": "[INFO] Baseline guard does not follow a baseline's imports of other test helpers"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -6884,12 +6902,6 @@
       "number": 280,
       "url": "https://github.com/rainlanguage/raindex/issues/280",
       "title": "Help page content: Ledger Issues"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 276,
-      "url": "https://github.com/rainlanguage/raindex/issues/276",
-      "title": "Universal mac binaries"
     }
   ],
   "archivedRepoPrs": [
@@ -6920,7 +6932,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 145,
+    "unvetted": 148,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -6931,18 +6943,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 262,
+    "totalProducerPrs": 265,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 729,
+    "uncoveredIssues": 728,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 979
   },
   "ages": {
     "openIssues": {
-      "meanDays": 247.8,
-      "medianDays": 99.8,
-      "oldestDays": 971.5
+      "meanDays": 246.9,
+      "medianDays": 99.5,
+      "oldestDays": 971.6
     }
   }
 }
