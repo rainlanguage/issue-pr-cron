@@ -817,8 +817,14 @@
         ]
       },
       "un-vetted": {
-        "count": 144,
+        "count": 145,
         "prs": [
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 203,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/203",
+            "title": "Deployments: a Known issues sub-tab; move the bricked-contracts section there"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 469,
@@ -2512,10 +2518,16 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain-org-health",
+      "number": 202,
+      "url": "https://github.com/rainlanguage/rain-org-health/issues/202",
+      "title": "Deployments: a Migrations sub-tab — every st0x.deploy migration, run or not, per chain"
+    },
+    {
       "repo": "rainlanguage/rain.math.float",
       "number": 720,
       "url": "https://github.com/rainlanguage/rain.math.float/issues/720",
-      "title": "Merging is not blocked by gas-snapshot, soldeer-package or rs-test: main's ruleset requires only the three rainix-sol jobs"
+      "title": "Merging is not blocked by soldeer-package or rs-test: main's ruleset requires only the three rainix-sol jobs"
     },
     {
       "repo": "S01-Issuer/st0x.deploy",
@@ -6878,24 +6890,6 @@
       "number": 276,
       "url": "https://github.com/rainlanguage/raindex/issues/276",
       "title": "Universal mac binaries"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 274,
-      "url": "https://github.com/rainlanguage/raindex/issues/274",
-      "title": "Include token symbol & transaction hash in transaction status notice"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 273,
-      "url": "https://github.com/rainlanguage/raindex/issues/273",
-      "title": "add a button to generate a random vaultid on the deposit modal"
-    },
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 272,
-      "url": "https://github.com/rainlanguage/raindex/issues/272",
-      "title": "Transaction failure destroys the entry form: deposit/withdraw/withdraw-all/take-order modals close and clear on error"
     }
   ],
   "archivedRepoPrs": [
@@ -6926,7 +6920,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 144,
+    "unvetted": 145,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -6937,17 +6931,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 261,
+    "totalProducerPrs": 262,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 731,
+    "uncoveredIssues": 729,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 979
   },
   "ages": {
     "openIssues": {
-      "meanDays": 250.7,
-      "medianDays": 100.9,
+      "meanDays": 247.8,
+      "medianDays": 99.8,
       "oldestDays": 971.5
     }
   }
