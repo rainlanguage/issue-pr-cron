@@ -817,7 +817,7 @@
         ]
       },
       "un-vetted": {
-        "count": 143,
+        "count": 142,
         "prs": [
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -872,12 +872,6 @@
             "number": 310,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/310",
             "title": "Fix #272's audit findings"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 719,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/719",
-            "title": "test: wei floor/ceil safe side holds to int224.max / 20, not 1e66"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -2505,12 +2499,6 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 721,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/721",
-      "title": "[INFO] Baseline guard does not follow a baseline's imports of other test helpers"
-    },
     {
       "repo": "rainlanguage/rain.math.float",
       "number": 720,
@@ -6992,6 +6980,12 @@
       "number": 138,
       "url": "https://github.com/rainlanguage/rainlang/issues/138",
       "title": "calldata eval rather than onchain deploys"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 137,
+      "url": "https://github.com/rainlanguage/rainlang/issues/137",
+      "title": "LHS parse substitutions"
     }
   ],
   "archivedRepoPrs": [
@@ -7022,7 +7016,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 143,
+    "unvetted": 142,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7033,7 +7027,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 260,
+    "totalProducerPrs": 259,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 748,
     "designPresentable": 7,
@@ -7042,7 +7036,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 272.6,
+      "meanDays": 273.7,
       "medianDays": 103.9,
       "oldestDays": 986.2
     }
