@@ -817,7 +817,7 @@
         ]
       },
       "un-vetted": {
-        "count": 145,
+        "count": 143,
         "prs": [
           {
             "repo": "rainlanguage/rain-org-health",
@@ -884,18 +884,6 @@
             "number": 308,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/308",
             "title": "Declare and verify upgradeable beacon state through the chain group"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 716,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/716",
-            "title": "agree compares the spread with the exact proportional limit (#573)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 710,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/710",
-            "title": "LibDecimalFloat audit: pow loop, agree zero constant, floor/ceil zero, NatSpec (#627-#643, #687)"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -2552,6 +2540,66 @@
       "number": 461,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/461",
       "title": "Inherit SafeBundleScript in the remaining Safe bundle scripts"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 687,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/687",
+      "title": "floor and ceil return a non-canonical zero's bytes; floor packs it to FLOAT_ZERO only for e < 0"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 643,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/643",
+      "title": "[A-float-2-8] [INFO] ceil comment explains a fraction == 0 case that the early return above has already handled"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 641,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/641",
+      "title": "[A-float-2-7] [INFO] agree helpers' @param still say lowest/highest after #498, and pow/pack private helpers have no @param/@return"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 639,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/639",
+      "title": "[A-float-2-6] [INFO] agreeValidateTolerances builds zero with packLossless(0, 0) at run time instead of FLOAT_ZERO"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 637,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/637",
+      "title": "[A-float-2-5] [INFO] pow's squaring loop squares the base once more after the top bit of N"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 635,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/635",
+      "title": "[A-float-2-4] [INFO] eq, pow10 and log10 NatSpec call Float a struct and refer to themselves"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 633,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/633",
+      "title": "[A-float-2-3] [LOW] log10 NatSpec omits its Log10Zero / Log10Negative reverts, and its packing comment is stale"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 631,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/631",
+      "title": "[A-float-2-2] [LOW] pow NatSpec omits the ZeroNegativePower revert and the 0^b, a^0 and 1^b special cases, and claims it does not lose precision"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 629,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/629",
+      "title": "[A-float-2-1] [LOW] agree NatSpec says `abs` reverts ExponentOverflow at the range extremes, but abs never reverts"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 627,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/627",
+      "title": "[A-float-2-0] [LOW] agree NatSpec and SPEC bound the boundary excess at 1e-76 of the spread, but it reaches about 1.7272e-76"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -6944,6 +6992,12 @@
       "number": 218,
       "url": "https://github.com/rainlanguage/raindex/issues/218",
       "title": "Frontmatter rebindings parse errors"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 212,
+      "url": "https://github.com/rainlanguage/raindex/issues/212",
+      "title": "Token detail page"
     }
   ],
   "archivedRepoPrs": [
@@ -6974,7 +7028,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 145,
+    "unvetted": 143,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -6985,18 +7039,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 262,
+    "totalProducerPrs": 260,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 738,
+    "uncoveredIssues": 749,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 259.3,
+      "meanDays": 260.4,
       "medianDays": 103.3,
-      "oldestDays": 978.5
+      "oldestDays": 980.3
     }
   }
 }
