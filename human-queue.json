@@ -817,8 +817,14 @@
         ]
       },
       "un-vetted": {
-        "count": 141,
+        "count": 142,
         "prs": [
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 475,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/475",
+            "title": "ideal-roles.json names every role; an unnamed role fails the build"
+          },
           {
             "repo": "rainlanguage/rain-org-health",
             "number": 206,
@@ -7010,7 +7016,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 141,
+    "unvetted": 142,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7021,7 +7027,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 258,
+    "totalProducerPrs": 259,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 748,
     "designPresentable": 7,
@@ -7031,7 +7037,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 274.8,
-      "medianDays": 104.0,
+      "medianDays": 104.1,
       "oldestDays": 986.3
     }
   }
