@@ -817,7 +817,7 @@
         ]
       },
       "un-vetted": {
-        "count": 149,
+        "count": 146,
         "prs": [
           {
             "repo": "rainlanguage/rain-org-health",
@@ -836,12 +836,6 @@
             "number": 204,
             "url": "https://github.com/rainlanguage/rain-org-health/pull/204",
             "title": "Deployments: a Migrations sub-tab — every deploy-repo migration, run or not, per network (#202)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 722,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/722",
-            "title": "Fix differential_pow flake: pow oracle panics converting a whole k·b past isize to an exponent"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -905,21 +899,9 @@
           },
           {
             "repo": "rainlanguage/rain.math.float",
-            "number": 711,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/711",
-            "title": "CI and packaging: allow-list .soldeerignore, rs-test in the repo dev shell, checked gas snapshot (#647, #651, #686)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
             "number": 710,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/710",
             "title": "LibDecimalFloat audit: pow loop, agree zero constant, floor/ceil zero, NatSpec (#627-#643, #687)"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 709,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/709",
-            "title": "Parse audit: named fraction guard, error NatSpec, test names, memory-safe (#613-#625), on #712"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -6908,6 +6890,60 @@
       "number": 280,
       "url": "https://github.com/rainlanguage/raindex/issues/280",
       "title": "Help page content: Ledger Issues"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 276,
+      "url": "https://github.com/rainlanguage/raindex/issues/276",
+      "title": "Universal mac binaries"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 274,
+      "url": "https://github.com/rainlanguage/raindex/issues/274",
+      "title": "Include token symbol & transaction hash in transaction status notice"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 273,
+      "url": "https://github.com/rainlanguage/raindex/issues/273",
+      "title": "add a button to generate a random vaultid on the deposit modal"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 272,
+      "url": "https://github.com/rainlanguage/raindex/issues/272",
+      "title": "Transaction failure destroys the entry form: deposit/withdraw/withdraw-all/take-order modals close and clear on error"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 269,
+      "url": "https://github.com/rainlanguage/raindex/issues/269",
+      "title": "cancel in-progress transactions"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 262,
+      "url": "https://github.com/rainlanguage/raindex/issues/262",
+      "title": "Round values in order takes table -- show full value on hover"
+    },
+    {
+      "repo": "rainlanguage/forker",
+      "number": 3,
+      "url": "https://github.com/rainlanguage/forker/issues/3",
+      "title": "Make cache expiration configurable or default to never expire"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 236,
+      "url": "https://github.com/rainlanguage/raindex/issues/236",
+      "title": "Standardize CLI output method with other rain clis"
+    },
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 235,
+      "url": "https://github.com/rainlanguage/raindex/issues/235",
+      "title": "Merge clears & takes into single chart / table"
     }
   ],
   "archivedRepoPrs": [
@@ -6938,7 +6974,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 149,
+    "unvetted": 146,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -6949,18 +6985,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 266,
+    "totalProducerPrs": 263,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 728,
+    "uncoveredIssues": 737,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 979
+    "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 247.8,
-      "medianDays": 100.5,
-      "oldestDays": 972.5
+      "meanDays": 257.3,
+      "medianDays": 103.0,
+      "oldestDays": 974.7
     }
   }
 }
