@@ -820,6 +820,12 @@
         "count": 143,
         "prs": [
           {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 474,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/474",
+            "title": "Subgraph: index each chain's token-owner Safe, owners and threshold from creation"
+          },
+          {
             "repo": "rainlanguage/rain-org-health",
             "number": 206,
             "url": "https://github.com/rainlanguage/rain-org-health/pull/206",
@@ -872,12 +878,6 @@
             "number": 719,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/719",
             "title": "test: wei floor/ceil safe side holds to int224.max / 20, not 1e66"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 718,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/718",
-            "title": "test: freeze the sqrt, LiftFirst and Pr321 baselines; guard every live library"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -2540,18 +2540,6 @@
       "number": 461,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/461",
       "title": "Inherit SafeBundleScript in the remaining Safe bundle scripts"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 516,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/516",
-      "title": "Halmos: prove exp10Fixed series equivalence"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 515,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/515",
-      "title": "Halmos: prove log10Ratio series equivalence"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -6992,6 +6980,18 @@
       "number": 141,
       "url": "https://github.com/rainlanguage/rainlang/issues/141",
       "title": "some kind of onchain registry (ens?) support for things like well known addresses (e.g. weth)"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 139,
+      "url": "https://github.com/rainlanguage/rainlang/issues/139",
+      "title": "undefined word (requires subsitution)"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 138,
+      "url": "https://github.com/rainlanguage/rainlang/issues/138",
+      "title": "calldata eval rather than onchain deploys"
     }
   ],
   "archivedRepoPrs": [
@@ -7042,9 +7042,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 270.6,
-      "medianDays": 103.8,
-      "oldestDays": 986.1
+      "meanDays": 272.6,
+      "medianDays": 103.9,
+      "oldestDays": 986.2
     }
   }
 }
