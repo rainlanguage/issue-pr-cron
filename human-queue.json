@@ -817,8 +817,14 @@
         ]
       },
       "un-vetted": {
-        "count": 142,
+        "count": 143,
         "prs": [
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 476,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/476",
+            "title": "Backfill the scripts that ran before records"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 475,
@@ -7016,7 +7022,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 142,
+    "unvetted": 143,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7027,7 +7033,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 259,
+    "totalProducerPrs": 260,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 748,
     "designPresentable": 7,
@@ -7037,7 +7043,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 275.6,
-      "medianDays": 104.8,
+      "medianDays": 104.9,
       "oldestDays": 987.1
     }
   }
