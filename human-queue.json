@@ -829,7 +829,7 @@
             "repo": "rainlanguage/rain.deploy",
             "number": 314,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/314",
-            "title": "MigrationRegistry: per-namespace delegated write authority"
+            "title": "MigrationRegistry V3: writes name the writer, per-namespace delegates"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -7043,8 +7043,8 @@
   "ages": {
     "openIssues": {
       "meanDays": 274.7,
-      "medianDays": 105.9,
-      "oldestDays": 988.2
+      "medianDays": 106.0,
+      "oldestDays": 988.3
     }
   }
 }
