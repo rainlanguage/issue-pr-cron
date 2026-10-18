@@ -823,7 +823,7 @@
             "repo": "rainlanguage/rain.deploy",
             "number": 315,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/315",
-            "title": "AddressRegistry: bind names to ABI-encoded values"
+            "title": "ConfigRegistry: bind names to ABI-encoded values"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -7043,7 +7043,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 274.8,
-      "medianDays": 106.0,
+      "medianDays": 106.1,
       "oldestDays": 988.3
     }
   }
