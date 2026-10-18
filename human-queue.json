@@ -7043,8 +7043,8 @@
   "ages": {
     "openIssues": {
       "meanDays": 276.0,
-      "medianDays": 105.2,
-      "oldestDays": 987.5
+      "medianDays": 105.3,
+      "oldestDays": 987.6
     }
   }
 }
