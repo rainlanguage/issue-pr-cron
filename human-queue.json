@@ -817,19 +817,13 @@
         ]
       },
       "un-vetted": {
-        "count": 145,
+        "count": 144,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 315,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/315",
             "title": "ConfigRegistry: bind names to ABI-encoded values"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 314,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/314",
-            "title": "MigrationRegistry V3: writes name the writer, per-namespace delegates"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -2517,6 +2511,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 477,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/477",
+      "title": "Adopt rain.deploy MigrationRegistry V3 (delegated writes, rainlanguage/rain.deploy#314)"
+    },
     {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 468,
@@ -7022,7 +7022,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 145,
+    "unvetted": 144,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7033,9 +7033,9 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 262,
+    "totalProducerPrs": 261,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 746,
+    "uncoveredIssues": 747,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
@@ -7043,8 +7043,8 @@
   "ages": {
     "openIssues": {
       "meanDays": 275.5,
-      "medianDays": 106.7,
-      "oldestDays": 989.0
+      "medianDays": 106.8,
+      "oldestDays": 989.1
     }
   }
 }
