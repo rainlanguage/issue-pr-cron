@@ -817,8 +817,14 @@
         ]
       },
       "un-vetted": {
-        "count": 151,
+        "count": 152,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 271,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/271",
+            "title": "Add ICloneableFactoryV5: deterministic open-salt beacon proxies"
+          },
           {
             "repo": "rainlanguage/rain.erc4626.words",
             "number": 271,
@@ -2553,6 +2559,24 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "S01-Issuer/tsalt.monitor",
+      "number": 2,
+      "url": "https://github.com/S01-Issuer/tsalt.monitor/issues/2",
+      "title": "Follow-ups from the PR #1 review: API clock skew bound, I1 rule 3 clock, heldSince wording, as-of-N records"
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 270,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/270",
+      "title": "NewClone.implementation carries a beacon for V5 beacon proxies, against V3's 'reference bytecode cloned' meaning"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 321,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/321",
+      "title": "Follow-ups from #308's final audit"
+    },
     {
       "repo": "rainlanguage/rain.deploy",
       "number": 320,
@@ -7022,24 +7046,6 @@
       "number": 142,
       "url": "https://github.com/rainlanguage/rainlang/issues/142",
       "title": "utf8 support for parsing"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 141,
-      "url": "https://github.com/rainlanguage/rainlang/issues/141",
-      "title": "some kind of onchain registry (ens?) support for things like well known addresses (e.g. weth)"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 139,
-      "url": "https://github.com/rainlanguage/rainlang/issues/139",
-      "title": "undefined word (requires subsitution)"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 138,
-      "url": "https://github.com/rainlanguage/rainlang/issues/138",
-      "title": "calldata eval rather than onchain deploys"
     }
   ],
   "archivedRepoPrs": [
@@ -7070,7 +7076,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 151,
+    "unvetted": 152,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7081,7 +7087,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 268,
+    "totalProducerPrs": 269,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 748,
     "designPresentable": 7,
@@ -7090,7 +7096,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 276.7,
+      "meanDays": 273.7,
       "medianDays": 108.0,
       "oldestDays": 990.3
     }
