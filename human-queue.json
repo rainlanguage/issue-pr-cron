@@ -817,8 +817,20 @@
         ]
       },
       "un-vetted": {
-        "count": 147,
+        "count": 149,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float.deploy",
+            "number": 42,
+            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/42",
+            "title": "deps: bump rain-datacontract 0.2.0 -> 0.2.1"
+          },
+          {
+            "repo": "rainlanguage/rain.verify",
+            "number": 36,
+            "url": "https://github.com/rainlanguage/rain.verify/pull/36",
+            "title": "Bump rain-sol-codegen 0.1.37 -> 0.1.39"
+          },
           {
             "repo": "rainlanguage/adversarial-mutation-test",
             "number": 37,
@@ -2529,6 +2541,18 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 320,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/320",
+      "title": "deriveDeployment initializes every per-network clone under the local chain id, so a chain-gated clone init reverts derivation"
+    },
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 479,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/479",
+      "title": "Deploy tokens from registry config: metadata in the address, RBAC from ConfigRegistry"
+    },
     {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 468,
@@ -6998,18 +7022,6 @@
       "number": 139,
       "url": "https://github.com/rainlanguage/rainlang/issues/139",
       "title": "undefined word (requires subsitution)"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 138,
-      "url": "https://github.com/rainlanguage/rainlang/issues/138",
-      "title": "calldata eval rather than onchain deploys"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 137,
-      "url": "https://github.com/rainlanguage/rainlang/issues/137",
-      "title": "LHS parse substitutions"
     }
   ],
   "archivedRepoPrs": [
@@ -7040,7 +7052,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 147,
+    "unvetted": 149,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7051,7 +7063,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 264,
+    "totalProducerPrs": 266,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 747,
     "designPresentable": 7,
@@ -7060,7 +7072,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 277.6,
+      "meanDays": 275.7,
       "medianDays": 107.9,
       "oldestDays": 990.2
     }
