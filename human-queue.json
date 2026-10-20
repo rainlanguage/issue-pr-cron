@@ -817,19 +817,43 @@
         ]
       },
       "un-vetted": {
-        "count": 149,
+        "count": 151,
         "prs": [
           {
-            "repo": "rainlanguage/rain.math.float.deploy",
-            "number": 42,
-            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/42",
-            "title": "deps: bump rain-datacontract 0.2.0 -> 0.2.1"
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 271,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/271",
+            "title": "Bump all soldeer deps to latest (rainlang 0.2.13 set)"
           },
           {
-            "repo": "rainlanguage/rain.verify",
-            "number": 36,
-            "url": "https://github.com/rainlanguage/rain.verify/pull/36",
-            "title": "Bump rain-sol-codegen 0.1.37 -> 0.1.39"
+            "repo": "rainlanguage/raindex.interface",
+            "number": 77,
+            "url": "https://github.com/rainlanguage/raindex.interface/pull/77",
+            "title": "Bump all soldeer deps to latest (agree with rainlang 0.2.13)"
+          },
+          {
+            "repo": "rainlanguage/rain.dia",
+            "number": 75,
+            "url": "https://github.com/rainlanguage/rain.dia/pull/75",
+            "title": "Bump all soldeer pins to latest with rainlang 0.2.13"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 219,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/219",
+            "title": "Bump all soldeer deps to latest (rainlang 0.2.13 set)"
+          },
+          {
+            "repo": "rainlanguage/rain.pyth",
+            "number": 42,
+            "url": "https://github.com/rainlanguage/rain.pyth/pull/42",
+            "title": "Bump all soldeer deps to latest (rainlang 0.2.13)"
+          },
+          {
+            "repo": "rainlanguage/rain.merkle",
+            "number": 24,
+            "url": "https://github.com/rainlanguage/rain.merkle/pull/24",
+            "title": "Bump rainlang 0.2.13 and all soldeer pins to latest"
           },
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -916,12 +940,6 @@
             "title": "Fix #272's audit findings"
           },
           {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 308,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/308",
-            "title": "Declare and verify upgradeable beacon state through the chain group"
-          },
-          {
             "repo": "rainlanguage/rain.math.float",
             "number": 692,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/692",
@@ -934,16 +952,10 @@
             "title": "Halmos proofs: add/sub rounding and series equivalence"
           },
           {
-            "repo": "rainlanguage/rainlang",
-            "number": 594,
-            "url": "https://github.com/rainlanguage/rainlang/pull/594",
-            "title": "deps: latest everywhere; rain-math-float 0.2.45 without log tables"
-          },
-          {
             "repo": "rainlanguage/rain.math.float.deploy",
             "number": 41,
             "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/41",
-            "title": "deps: rain-math-float 0.2.45 (latest everywhere); delete the log tables"
+            "title": "deps: latest everywhere (rain-math-float 0.3.10, rain-deploy 0.1.18); delete the log tables"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -7022,6 +7034,12 @@
       "number": 139,
       "url": "https://github.com/rainlanguage/rainlang/issues/139",
       "title": "undefined word (requires subsitution)"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 138,
+      "url": "https://github.com/rainlanguage/rainlang/issues/138",
+      "title": "calldata eval rather than onchain deploys"
     }
   ],
   "archivedRepoPrs": [
@@ -7052,7 +7070,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 149,
+    "unvetted": 151,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7063,18 +7081,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 266,
+    "totalProducerPrs": 268,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 747,
+    "uncoveredIssues": 748,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 275.7,
-      "medianDays": 107.9,
-      "oldestDays": 990.2
+      "meanDays": 276.7,
+      "medianDays": 108.0,
+      "oldestDays": 990.3
     }
   }
 }

@@ -1028,3 +1028,6 @@
 {"ts":"2026-10-19T11:55:56Z","observedAt":"2026-10-19T12:32:13Z","kind":"pr","repo":"rainlanguage/rain.deploy","number":314}
 {"ts":"2026-10-20T10:34:59Z","observedAt":"2026-10-20T11:31:32Z","kind":"pr","repo":"rainlanguage/rain.datacontract","number":106}
 {"ts":"2026-10-20T10:53:09Z","observedAt":"2026-10-20T11:31:32Z","kind":"pr","repo":"rainlanguage/rain.deploy","number":315}
+{"ts":"2026-10-20T17:20:32Z","observedAt":"2026-10-20T17:31:34Z","kind":"pr","repo":"rainlanguage/rain.deploy","number":308}
+{"ts":"2026-10-20T17:06:49Z","observedAt":"2026-10-20T17:31:34Z","kind":"pr","repo":"rainlanguage/rain.verify","number":36}
+{"ts":"2026-10-20T16:54:10Z","observedAt":"2026-10-20T17:31:34Z","kind":"pr","repo":"rainlanguage/rainlang","number":594}
