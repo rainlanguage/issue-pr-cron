@@ -817,8 +817,20 @@
         ]
       },
       "un-vetted": {
-        "count": 149,
+        "count": 151,
         "prs": [
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 413,
+            "url": "https://github.com/rainlanguage/rainix/pull/413",
+            "title": "manual-sol-verify: build the contract first so forge can resolve its compiler profile"
+          },
+          {
+            "repo": "rainlanguage/rainlang.deploy",
+            "number": 10,
+            "url": "https://github.com/rainlanguage/rainlang.deploy/pull/10",
+            "title": "Bump deps to rainlang 0.2.13; fit RainlangInterpreter and RainlangParser under EIP-170"
+          },
           {
             "repo": "rainlanguage/rainlang",
             "number": 595,
@@ -7058,7 +7070,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 149,
+    "unvetted": 151,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7069,7 +7081,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 266,
+    "totalProducerPrs": 268,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 748,
     "designPresentable": 7,
@@ -7078,9 +7090,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 274.8,
-      "medianDays": 108.1,
-      "oldestDays": 990.4
+      "meanDays": 274.9,
+      "medianDays": 108.2,
+      "oldestDays": 990.5
     }
   }
 }
