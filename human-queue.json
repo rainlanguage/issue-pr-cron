@@ -817,8 +817,14 @@
         ]
       },
       "un-vetted": {
-        "count": 146,
+        "count": 147,
         "prs": [
+          {
+            "repo": "rainlanguage/claude-audit-skills",
+            "number": 92,
+            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/92",
+            "title": "feat(audit): one test-coverage finding per surviving mutant"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 478,
@@ -7028,7 +7034,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 146,
+    "unvetted": 147,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7039,7 +7045,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 263,
+    "totalProducerPrs": 264,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 746,
     "designPresentable": 7,
@@ -7048,7 +7054,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 276.3,
+      "meanDays": 276.4,
       "medianDays": 107.6,
       "oldestDays": 989.9
     }
