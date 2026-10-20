@@ -817,13 +817,13 @@
         ]
       },
       "un-vetted": {
-        "count": 148,
+        "count": 147,
         "prs": [
           {
-            "repo": "rainlanguage/rain.datacontract",
-            "number": 106,
-            "url": "https://github.com/rainlanguage/rain.datacontract/pull/106",
-            "title": "Pin word round-up boundary in allocation tests"
+            "repo": "rainlanguage/adversarial-mutation-test",
+            "number": 37,
+            "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/37",
+            "title": "mutation-gen: deterministic diff mutants as the pr:<n> floor, sharded"
           },
           {
             "repo": "rainlanguage/claude-audit-skills",
@@ -842,12 +842,6 @@
             "number": 317,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/317",
             "title": "release: rain-deploy 0.1.19"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 315,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/315",
-            "title": "ConfigRegistry: bind names to ABI-encoded values"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -7004,6 +6998,18 @@
       "number": 139,
       "url": "https://github.com/rainlanguage/rainlang/issues/139",
       "title": "undefined word (requires subsitution)"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 138,
+      "url": "https://github.com/rainlanguage/rainlang/issues/138",
+      "title": "calldata eval rather than onchain deploys"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 137,
+      "url": "https://github.com/rainlanguage/rainlang/issues/137",
+      "title": "LHS parse substitutions"
     }
   ],
   "archivedRepoPrs": [
@@ -7034,7 +7040,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 148,
+    "unvetted": 147,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7045,16 +7051,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 265,
+    "totalProducerPrs": 264,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 745,
+    "uncoveredIssues": 747,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 977
   },
   "ages": {
     "openIssues": {
-      "meanDays": 275.4,
+      "meanDays": 277.5,
       "medianDays": 107.7,
       "oldestDays": 990.0
     }
