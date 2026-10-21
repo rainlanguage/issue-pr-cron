@@ -146,10 +146,70 @@
         "title": "deps: bump rain-math-binary 0.1.1 -> 0.1.3"
       },
       {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 436,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/436",
+        "title": "fix(a11y): keyboard + ARIA for NavButtons mobile menu"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 435,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/435",
+        "title": "fix(receipts): preserve display precision by truncating the decimal string"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 434,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/434",
+        "title": "fix(prices): make DataFetcher provider reactive to network switch"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 433,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/433",
+        "title": "fix(component): leaderboard heading reflects the actual row count"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 432,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/432",
+        "title": "fix(components): render generic error copy instead of raw error messages"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 431,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/431",
+        "title": "fix(component): remove inert min/step attributes from the amount text input"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 429,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/429",
+        "title": "fix(lock): freeze token select, LOCK button and network auto-switch while a tx is in flight"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 428,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/428",
+        "title": "fix(layout): swallow blockNumberStore.refresh rejections in the polling loop"
+      },
+      {
         "repo": "rainlanguage/rain.erc4626.words",
         "number": 259,
         "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/259",
         "title": "docs+test(readme): pin canonical authoringMetaV2 word descriptions into the README"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 426,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/426",
+        "title": "fix: sanity-bound quoter outputs in getDepositPreviewSwapValue / getCyTokenUsdPrice (#321)"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 425,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/425",
+        "title": "Fix #327: make Footer per-network token rows reactive on allTokens"
       },
       {
         "repo": "S01-Issuer/st0x.deploy",
@@ -174,6 +234,18 @@
         "number": 199,
         "url": "https://github.com/rainlanguage/rain.flare/pull/199",
         "title": "test: assert authoringMetaV2 descriptions state correct operand input counts"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 421,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/421",
+        "title": "fix(security): reject protocol-relative and backslash paths in sanitizeHref"
+      },
+      {
+        "repo": "rainlanguage/claude-audit-skills",
+        "number": 34,
+        "url": "https://github.com/rainlanguage/claude-audit-skills/pull/34",
+        "title": "audit: require fork tests for state-changing scripts"
       },
       {
         "repo": "rainlanguage/claude-audit-skills",
@@ -210,6 +282,12 @@
         "number": 412,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/412",
         "title": "fix: drop malformed subgraph rows from AccountStatus transfer history"
+      },
+      {
+        "repo": "rainlanguage/rain.math.fixedpoint",
+        "number": 25,
+        "url": "https://github.com/rainlanguage/rain.math.fixedpoint/pull/25",
+        "title": "fix: reject bare trailing decimal point (empty fraction) in decimal string parse"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -542,6 +620,12 @@
         "title": "ci: add rainix-npm-blacklist reusable workflow"
       },
       {
+        "repo": "rainlanguage/rain.math.fixedpoint",
+        "number": 22,
+        "url": "https://github.com/rainlanguage/rain.math.fixedpoint/pull/22",
+        "title": "test: mutation-harden LibFixedPointDecimalParse coverage"
+      },
+      {
         "repo": "rainlanguage/raindex",
         "number": 2721,
         "url": "https://github.com/rainlanguage/raindex/pull/2721",
@@ -721,8 +805,20 @@
         ]
       },
       "un-vetted": {
-        "count": 68,
+        "count": 72,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 280,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/280",
+            "title": "Add cloneRuntimeCode and cloneRuntimeCodeHash to LibICloneableFactoryV5"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 279,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/279",
+            "title": "Publish the ICloneableV2 fixtures rain.factory.deploy imports"
+          },
           {
             "repo": "rainlanguage/rain.merkle.deploy",
             "number": 27,
@@ -878,6 +974,18 @@
             "number": 57,
             "url": "https://github.com/cyclofinance/cyclo.sol/pull/57",
             "title": "feat: record the production bytecode as rain-deploy snapshots"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 442,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/442",
+            "title": "chore: drop the cyclo.sol submodule, commit the vault ABI from the verified implementation"
+          },
+          {
+            "repo": "S01-Issuer/st0x.attest",
+            "number": 3,
+            "url": "https://github.com/S01-Issuer/st0x.attest/pull/3",
+            "title": "docs: characterise the Alpaca stock pricing API"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -1197,7 +1305,7 @@
         }
       },
       "ai:needs-work": {
-        "count": 82,
+        "count": 96,
         "prs": [
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -1224,10 +1332,70 @@
             "title": "deps: bump rain-math-binary 0.1.1 -> 0.1.3"
           },
           {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 436,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/436",
+            "title": "fix(a11y): keyboard + ARIA for NavButtons mobile menu"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 435,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/435",
+            "title": "fix(receipts): preserve display precision by truncating the decimal string"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 434,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/434",
+            "title": "fix(prices): make DataFetcher provider reactive to network switch"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 433,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/433",
+            "title": "fix(component): leaderboard heading reflects the actual row count"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 432,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/432",
+            "title": "fix(components): render generic error copy instead of raw error messages"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 431,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/431",
+            "title": "fix(component): remove inert min/step attributes from the amount text input"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 429,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/429",
+            "title": "fix(lock): freeze token select, LOCK button and network auto-switch while a tx is in flight"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 428,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/428",
+            "title": "fix(layout): swallow blockNumberStore.refresh rejections in the polling loop"
+          },
+          {
             "repo": "rainlanguage/rain.erc4626.words",
             "number": 259,
             "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/259",
             "title": "docs+test(readme): pin canonical authoringMetaV2 word descriptions into the README"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 426,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/426",
+            "title": "fix: sanity-bound quoter outputs in getDepositPreviewSwapValue / getCyTokenUsdPrice (#321)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 425,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/425",
+            "title": "Fix #327: make Footer per-network token rows reactive on allTokens"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -1252,6 +1420,18 @@
             "number": 199,
             "url": "https://github.com/rainlanguage/rain.flare/pull/199",
             "title": "test: assert authoringMetaV2 descriptions state correct operand input counts"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 421,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/421",
+            "title": "fix(security): reject protocol-relative and backslash paths in sanitizeHref"
+          },
+          {
+            "repo": "rainlanguage/claude-audit-skills",
+            "number": 34,
+            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/34",
+            "title": "audit: require fork tests for state-changing scripts"
           },
           {
             "repo": "rainlanguage/claude-audit-skills",
@@ -1288,6 +1468,12 @@
             "number": 412,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/412",
             "title": "fix: drop malformed subgraph rows from AccountStatus transfer history"
+          },
+          {
+            "repo": "rainlanguage/rain.math.fixedpoint",
+            "number": 25,
+            "url": "https://github.com/rainlanguage/rain.math.fixedpoint/pull/25",
+            "title": "fix: reject bare trailing decimal point (empty fraction) in decimal string parse"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1620,6 +1806,12 @@
             "title": "ci: add rainix-npm-blacklist reusable workflow"
           },
           {
+            "repo": "rainlanguage/rain.math.fixedpoint",
+            "number": 22,
+            "url": "https://github.com/rainlanguage/rain.math.fixedpoint/pull/22",
+            "title": "test: mutation-harden LibFixedPointDecimalParse coverage"
+          },
+          {
             "repo": "rainlanguage/raindex",
             "number": 2721,
             "url": "https://github.com/rainlanguage/raindex/pull/2721",
@@ -1847,7 +2039,32 @@
       "title": "[F20] [MEDIUM] Public ankr RPC default in LibFork makes the entire fork test suite depend on an unowned, mutable endpoint that no test or CI step pins"
     }
   ],
-  "closeCandidateUnvetted": [],
+  "closeCandidateUnvetted": [
+    {
+      "repo": "rainlanguage/rain.dia",
+      "number": 14,
+      "url": "https://github.com/rainlanguage/rain.dia/issues/14",
+      "title": "[AUDIT-M09] [medium] NatSpec claims revert on zero price but only (0,0) sentinel reverts"
+    },
+    {
+      "repo": "rainlanguage/rain.dia",
+      "number": 9,
+      "url": "https://github.com/rainlanguage/rain.dia/issues/9",
+      "title": "[AUDIT-M04] [medium] maxAge exact boundary elapsed==staleAfter untested"
+    },
+    {
+      "repo": "rainlanguage/rain.flare",
+      "number": 67,
+      "url": "https://github.com/rainlanguage/rain.flare/issues/67",
+      "title": "[F20] [MEDIUM] Public ankr RPC default in LibFork makes the entire fork test suite depend on an unowned, mutable endpoint that no test or CI step pins"
+    },
+    {
+      "repo": "rainlanguage/rain.dia",
+      "number": 61,
+      "url": "https://github.com/rainlanguage/rain.dia/pull/61",
+      "title": "fix(dia): revert ZeroDiaPrice on any zero price, not only the (0,0) sentinel"
+    }
+  ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [],
   "archivedRepoPrs": [
@@ -1878,18 +2095,18 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 68,
+    "unvetted": 72,
     "blockedOn": 11,
     "ready": 1,
-    "needsWork": 82,
+    "needsWork": 96,
     "relink": 0,
     "design": 7,
     "blockedInfra": 0,
     "closeCandidateIssues": 3,
-    "closeCandidateUnvetted": 0,
+    "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 170,
+    "totalProducerPrs": 188,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 0,
     "designPresentable": 7,
