@@ -805,43 +805,37 @@
         ]
       },
       "un-vetted": {
-        "count": 76,
+        "count": 74,
         "prs": [
           {
-            "repo": "rainlanguage/rainlang.deploy",
-            "number": 11,
-            "url": "https://github.com/rainlanguage/rainlang.deploy/pull/11",
-            "title": "deps: rain-deploy 0.1.19, rainlang 0.2.15"
+            "repo": "rainlanguage/rain.deploy",
+            "number": 344,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/344",
+            "title": "Derive each per-network clone under its own network's chain id"
           },
           {
-            "repo": "rainlanguage/rain.dia",
-            "number": 76,
-            "url": "https://github.com/rainlanguage/rain.dia/pull/76",
-            "title": "Bump rain-deploy 0.1.19, rainlang 0.2.15"
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 487,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/487",
+            "title": "Deterministic tokens: StoxReceiptVault on the registry vault, factory proxies instead of beacon set deployers"
           },
           {
-            "repo": "rainlanguage/rain.tofu.erc20-decimals.deploy",
-            "number": 10,
-            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals.deploy/pull/10",
-            "title": "Bump rain-deploy 0.1.8 -> 0.1.19 and stale deps"
+            "repo": "rainlanguage/rainlang",
+            "number": 597,
+            "url": "https://github.com/rainlanguage/rainlang/pull/597",
+            "title": "deps: rain-deploy 0.1.20"
           },
           {
             "repo": "rainlanguage/rain.deploy",
-            "number": 339,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/339",
-            "title": "release: rain-deploy 0.1.20"
+            "number": 342,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/342",
+            "title": "DeploySuite.describedByMeta: emit the described-by meta on the metaboard"
           },
           {
-            "repo": "rainlanguage/rain.extrospection.deploy",
-            "number": 13,
-            "url": "https://github.com/rainlanguage/rain.extrospection.deploy/pull/13",
-            "title": "Bump rain-deploy 0.1.18 -> 0.1.19"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float.deploy",
-            "number": 46,
-            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/46",
-            "title": "Bump rain-deploy 0.1.18 -> 0.1.19"
+            "repo": "rainlanguage/raindex",
+            "number": 2902,
+            "url": "https://github.com/rainlanguage/raindex/pull/2902",
+            "title": "deps: rain-deploy 0.1.19, rainlang 0.2.15"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -860,12 +854,6 @@
             "number": 336,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/336",
             "title": "Move the generated DeploySuite concatenation into LibDeploySuiteConcat"
-          },
-          {
-            "repo": "rainlanguage/rainix",
-            "number": 417,
-            "url": "https://github.com/rainlanguage/rainix/pull/417",
-            "title": "rainix-copy-artifacts: install .staged-config itself"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -2092,6 +2080,18 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/raindex",
+      "number": 2903,
+      "url": "https://github.com/rainlanguage/raindex/issues/2903",
+      "title": "takeOrders4: take 0-ratio orders (output for nothing) instead of skipping them"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 343,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/343",
+      "title": "writeSnapshot initializes every per-network clone under the local chain id, so a chain-gated clone init reverts Build"
+    },
+    {
       "repo": "rainlanguage/rain.deploy",
       "number": 325,
       "url": "https://github.com/rainlanguage/rain.deploy/issues/325",
@@ -2114,12 +2114,6 @@
       "number": 321,
       "url": "https://github.com/rainlanguage/rain.deploy/issues/321",
       "title": "Follow-ups from #308's final audit"
-    },
-    {
-      "repo": "rainlanguage/rain.deploy",
-      "number": 320,
-      "url": "https://github.com/rainlanguage/rain.deploy/issues/320",
-      "title": "deriveDeployment initializes every per-network clone under the local chain id, so a chain-gated clone init reverts derivation"
     },
     {
       "repo": "S01-Issuer/st0x.deploy",
@@ -6554,7 +6548,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 76,
+    "unvetted": 74,
     "blockedOn": 11,
     "ready": 1,
     "needsWork": 96,
@@ -6565,18 +6559,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 192,
+    "totalProducerPrs": 190,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 739,
+    "uncoveredIssues": 740,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 902
+    "openIssues": 904
   },
   "ages": {
     "openIssues": {
-      "meanDays": 315.2,
-      "medianDays": 132.8,
-      "oldestDays": 1731.9
+      "meanDays": 314.5,
+      "medianDays": 129.8,
+      "oldestDays": 1732.0
     }
   }
 }
