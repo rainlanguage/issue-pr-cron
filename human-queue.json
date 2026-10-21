@@ -2555,6 +2555,12 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rain.deploy",
+      "number": 325,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/325",
+      "title": "Beacon proxy broadcast: gate the beacon, tie initial state to a declared implementation, widen the seat check"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
       "number": 324,
       "url": "https://github.com/rainlanguage/rain.deploy/issues/324",
       "title": "Dry run for a contract authority's ConfigRegistry bind"
@@ -7034,12 +7040,6 @@
       "number": 168,
       "url": "https://github.com/rainlanguage/raindex/issues/168",
       "title": "put counterparty desired amount in context"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 142,
-      "url": "https://github.com/rainlanguage/rainlang/issues/142",
-      "title": "utf8 support for parsing"
     }
   ],
   "archivedRepoPrs": [
@@ -7090,7 +7090,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 274.1,
+      "meanDays": 273.1,
       "medianDays": 108.4,
       "oldestDays": 990.7
     }
