@@ -1049,3 +1049,7 @@
 {"ts":"2026-10-21T10:57:33Z","observedAt":"2026-10-21T11:32:13Z","kind":"pr","repo":"rainlanguage/raindex","number":2831}
 {"ts":"2026-10-21T11:33:00Z","observedAt":"2026-10-21T12:32:50Z","kind":"pr","repo":"rainlanguage/rain.factory.deploy","number":56}
 {"ts":"2026-10-21T12:09:31Z","observedAt":"2026-10-21T12:32:50Z","kind":"pr","repo":"rainlanguage/rainix","number":392}
+{"ts":"2026-10-21T13:13:36Z","observedAt":"2026-10-21T13:30:37Z","kind":"pr","repo":"rainlanguage/rain.deploy","number":327}
+{"ts":"2026-10-21T12:35:27Z","observedAt":"2026-10-21T13:30:37Z","kind":"pr","repo":"rainlanguage/rain.factory.deploy","number":57}
+{"ts":"2026-10-21T13:28:07Z","observedAt":"2026-10-21T13:30:37Z","kind":"pr","repo":"rainlanguage/rain.merkle","number":25}
+{"ts":"2026-10-21T13:16:31Z","observedAt":"2026-10-21T13:30:37Z","kind":"pr","repo":"rainlanguage/rain.metadata.deploy","number":16}
