@@ -805,8 +805,14 @@
         ]
       },
       "un-vetted": {
-        "count": 74,
+        "count": 75,
         "prs": [
+          {
+            "repo": "rainlanguage/raindex",
+            "number": 2904,
+            "url": "https://github.com/rainlanguage/raindex/pull/2904",
+            "title": "takeOrders4: take 0-ratio orders for nothing instead of skipping"
+          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 344,
@@ -2079,12 +2085,6 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
-    {
-      "repo": "rainlanguage/raindex",
-      "number": 2903,
-      "url": "https://github.com/rainlanguage/raindex/issues/2903",
-      "title": "takeOrders4: take 0-ratio orders (output for nothing) instead of skipping them"
-    },
     {
       "repo": "rainlanguage/rain.deploy",
       "number": 343,
@@ -6548,7 +6548,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 74,
+    "unvetted": 75,
     "blockedOn": 11,
     "ready": 1,
     "needsWork": 96,
@@ -6559,17 +6559,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 190,
+    "totalProducerPrs": 191,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 740,
+    "uncoveredIssues": 739,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 904
   },
   "ages": {
     "openIssues": {
-      "meanDays": 314.5,
-      "medianDays": 129.8,
+      "meanDays": 314.6,
+      "medianDays": 129.9,
       "oldestDays": 1732.0
     }
   }
