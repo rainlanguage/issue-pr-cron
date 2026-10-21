@@ -805,8 +805,14 @@
         ]
       },
       "un-vetted": {
-        "count": 75,
+        "count": 76,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 345,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/345",
+            "title": "Add ApproveMigrationDelegate; share the approval run between registries"
+          },
           {
             "repo": "rainlanguage/raindex",
             "number": 2904,
@@ -6548,7 +6554,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 75,
+    "unvetted": 76,
     "blockedOn": 11,
     "ready": 1,
     "needsWork": 96,
@@ -6559,7 +6565,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 191,
+    "totalProducerPrs": 192,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 739,
     "designPresentable": 7,
@@ -6570,7 +6576,7 @@
     "openIssues": {
       "meanDays": 314.6,
       "medianDays": 129.9,
-      "oldestDays": 1732.0
+      "oldestDays": 1732.1
     }
   }
 }
