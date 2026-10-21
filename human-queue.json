@@ -2554,6 +2554,12 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 324,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/324",
+      "title": "Dry run for a contract authority's ConfigRegistry bind"
+    },
+    {
       "repo": "S01-Issuer/tsalt.monitor",
       "number": 2,
       "url": "https://github.com/S01-Issuer/tsalt.monitor/issues/2",
@@ -7034,12 +7040,6 @@
       "number": 142,
       "url": "https://github.com/rainlanguage/rainlang/issues/142",
       "title": "utf8 support for parsing"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 141,
-      "url": "https://github.com/rainlanguage/rainlang/issues/141",
-      "title": "some kind of onchain registry (ens?) support for things like well known addresses (e.g. weth)"
     }
   ],
   "archivedRepoPrs": [
@@ -7090,7 +7090,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 274.9,
+      "meanDays": 274.0,
       "medianDays": 108.3,
       "oldestDays": 990.6
     }
