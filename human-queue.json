@@ -805,13 +805,13 @@
         ]
       },
       "un-vetted": {
-        "count": 75,
+        "count": 74,
         "prs": [
           {
             "repo": "rainlanguage/rain.factory.deploy",
-            "number": 56,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/56",
-            "title": "Deploy CloneFactory as an ICloneableFactoryV5"
+            "number": 57,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/57",
+            "title": "release: rain-factory-deploy 0.2.0, the ICloneableFactoryV5 CloneFactory"
           },
           {
             "repo": "rainlanguage/rain.merkle",
@@ -1010,12 +1010,6 @@
             "number": 161,
             "url": "https://github.com/rainlanguage/rain.extrospection/pull/161",
             "title": "audit: append run stamp + scope (0.35.0)"
-          },
-          {
-            "repo": "rainlanguage/rainix",
-            "number": 392,
-            "url": "https://github.com/rainlanguage/rainix/pull/392",
-            "title": "ci: have the generator declare which paths it owns, and check it wrote them"
           },
           {
             "repo": "rainlanguage/rain.factory.deploy",
@@ -6686,7 +6680,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 75,
+    "unvetted": 74,
     "blockedOn": 11,
     "ready": 1,
     "needsWork": 96,
@@ -6697,7 +6691,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 191,
+    "totalProducerPrs": 190,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 762,
     "designPresentable": 7,
@@ -6706,7 +6700,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 308.8,
+      "meanDays": 308.9,
       "medianDays": 127.0,
       "oldestDays": 1731.6
     }
