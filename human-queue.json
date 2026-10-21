@@ -2,12 +2,6 @@
   "states": {
     "ai:blocked-on": [
       {
-        "repo": "rainlanguage/raindex",
-        "number": 2831,
-        "url": "https://github.com/rainlanguage/raindex/pull/2831",
-        "title": "chore: bump all soldeer deps to registry latest (rain-deploy 0.1.18, rain-math-float 0.3.10, rainlang 0.2.14)"
-      },
-      {
         "repo": "rainlanguage/rain.dia",
         "number": 66,
         "url": "https://github.com/rainlanguage/rain.dia/pull/66",
@@ -740,14 +734,8 @@
   "lanes": {
     "vet-lifecycle": {
       "ai:blocked-on": {
-        "count": 12,
+        "count": 11,
         "prs": [
-          {
-            "repo": "rainlanguage/raindex",
-            "number": 2831,
-            "url": "https://github.com/rainlanguage/raindex/pull/2831",
-            "title": "chore: bump all soldeer deps to registry latest (rain-deploy 0.1.18, rain-math-float 0.3.10, rainlang 0.2.14)"
-          },
           {
             "repo": "rainlanguage/rain.dia",
             "number": 66,
@@ -817,13 +805,13 @@
         ]
       },
       "un-vetted": {
-        "count": 77,
+        "count": 75,
         "prs": [
           {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 328,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/328",
-            "title": "test: declare Polygon extended in the unrecorded per-network clone beacon test"
+            "repo": "rainlanguage/rain.factory.deploy",
+            "number": 56,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/56",
+            "title": "Deploy CloneFactory as an ICloneableFactoryV5"
           },
           {
             "repo": "rainlanguage/rain.merkle",
@@ -848,18 +836,6 @@
             "number": 16,
             "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/16",
             "title": "Bump forge-std 1.17.0, rain-metadata 0.1.43, rain-deploy 0.1.18, rain-sol-codegen 0.1.39"
-          },
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 273,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/273",
-            "title": "Re-apply the September audit-fix backlog onto the V5 tree"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 323,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/323",
-            "title": "Beacon proxy deploy mechanism"
           },
           {
             "repo": "rainlanguage/rain.vats",
@@ -2579,57 +2555,9 @@
     },
     {
       "repo": "rainlanguage/rain.factory",
-      "number": 187,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/187",
-      "title": "[F83] [INFO] Precompile fuzz filter hand-copies a reserved-address range forge-std already owns, and already disagrees with it"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 186,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/186",
-      "title": "[F82] [INFO] predictCloneAddress test header enumerates two oracles; the file uses three"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 185,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/185",
-      "title": "[F81] [INFO] LibICloneableFactoryV4CloneAndInitializeTest's notice does not cover the prefunded-address test it holds"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
       "number": 184,
       "url": "https://github.com/rainlanguage/rain.factory/issues/184",
       "title": "[F80] [INFO] TestCloneable's guard-ordering rationale names a re-entrancy that its own `initialize` cannot have"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 183,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/183",
-      "title": "[F79] [INFO] Preimage-shape tests assert a 96-byte length that cannot fail"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 182,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/182",
-      "title": "[F78] [INFO] LibICloneableFactoryV4Test's \"never read back from the library\" claim is false for two of its own tests"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 181,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/181",
-      "title": "[F77] [INFO] LibICloneableFactoryV4.t.sol's contract NatSpec has no @notice, so its whole description is swallowed into @title"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 180,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/180",
-      "title": "[F76] [INFO] The suite asserts inequality with assertTrue(a != b) instead of forge-std's typed assertNotEq/assertGt, 18 times"
-    },
-    {
-      "repo": "rainlanguage/rain.factory",
-      "number": 179,
-      "url": "https://github.com/rainlanguage/rain.factory/issues/179",
-      "title": "[F75] [INFO] `.coderabbitai.yaml` declares its licence twice, and its `REUSE.toml` entry can never take effect"
     },
     {
       "repo": "rainlanguage/rain.factory",
@@ -3374,12 +3302,6 @@
       "number": 69,
       "url": "https://github.com/rainlanguage/raindex.interface/issues/69",
       "title": "Remove the submodule-era residue — dead `foundry.lock`, and `CLAUDE.md` documenting a `lib/` git submodule that does not exist"
-    },
-    {
-      "repo": "rainlanguage/rain.flare",
-      "number": 208,
-      "url": "https://github.com/rainlanguage/rain.flare/issues/208",
-      "title": "Remove the submodule-era residue — `.soldeerignore` still names `foundry.lock`, `.gitmodules` and `/lib`"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -6728,6 +6650,12 @@
       "number": 61,
       "url": "https://github.com/rainlanguage/dotrain/issues/61",
       "title": "fuzzing all the regexes against expectations"
+    },
+    {
+      "repo": "rainlanguage/rain-svelte-components",
+      "number": 63,
+      "url": "https://github.com/rainlanguage/rain-svelte-components/issues/63",
+      "title": "Bump Rainlang and the extension for the parser"
     }
   ],
   "archivedRepoPrs": [
@@ -6758,8 +6686,8 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 77,
-    "blockedOn": 12,
+    "unvetted": 75,
+    "blockedOn": 11,
     "ready": 1,
     "needsWork": 96,
     "relink": 0,
@@ -6769,18 +6697,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 194,
+    "totalProducerPrs": 191,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 770,
+    "uncoveredIssues": 762,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 977
+    "openIssues": 922
   },
   "ages": {
     "openIssues": {
-      "meanDays": 288.9,
-      "medianDays": 116.4,
-      "oldestDays": 1233.9
+      "meanDays": 308.8,
+      "medianDays": 127.0,
+      "oldestDays": 1731.6
     }
   }
 }

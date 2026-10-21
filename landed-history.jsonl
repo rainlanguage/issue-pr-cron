@@ -1044,3 +1044,6 @@
 {"ts":"2026-10-21T08:42:23Z","observedAt":"2026-10-21T09:31:54Z","kind":"pr","repo":"rainlanguage/rain.extrospection.deploy","number":12}
 {"ts":"2026-10-21T09:40:02Z","observedAt":"2026-10-21T10:31:41Z","kind":"pr","repo":"rainlanguage/rainlang","number":595}
 {"ts":"2026-10-21T09:57:06Z","observedAt":"2026-10-21T10:31:41Z","kind":"pr","repo":"rainlanguage/rainlang.deploy","number":10}
+{"ts":"2026-10-21T10:33:24Z","observedAt":"2026-10-21T11:32:13Z","kind":"pr","repo":"rainlanguage/rain.deploy","number":323}
+{"ts":"2026-10-21T10:33:13Z","observedAt":"2026-10-21T11:32:13Z","kind":"pr","repo":"rainlanguage/rain.factory","number":273}
+{"ts":"2026-10-21T10:57:33Z","observedAt":"2026-10-21T11:32:13Z","kind":"pr","repo":"rainlanguage/raindex","number":2831}
