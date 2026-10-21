@@ -805,8 +805,68 @@
         ]
       },
       "un-vetted": {
-        "count": 71,
+        "count": 76,
         "prs": [
+          {
+            "repo": "rainlanguage/rainlang.deploy",
+            "number": 11,
+            "url": "https://github.com/rainlanguage/rainlang.deploy/pull/11",
+            "title": "deps: rain-deploy 0.1.19, rainlang 0.2.15"
+          },
+          {
+            "repo": "rainlanguage/rain.dia",
+            "number": 76,
+            "url": "https://github.com/rainlanguage/rain.dia/pull/76",
+            "title": "Bump rain-deploy 0.1.19, rainlang 0.2.15"
+          },
+          {
+            "repo": "rainlanguage/rain.tofu.erc20-decimals.deploy",
+            "number": 10,
+            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals.deploy/pull/10",
+            "title": "Bump rain-deploy 0.1.8 -> 0.1.19 and stale deps"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 339,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/339",
+            "title": "release: rain-deploy 0.1.20"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection.deploy",
+            "number": 13,
+            "url": "https://github.com/rainlanguage/rain.extrospection.deploy/pull/13",
+            "title": "Bump rain-deploy 0.1.18 -> 0.1.19"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float.deploy",
+            "number": 46,
+            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/46",
+            "title": "Bump rain-deploy 0.1.18 -> 0.1.19"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 338,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/338",
+            "title": "writeStagedConfig: stop requiring script/build.sh"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 337,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/337",
+            "title": "BuildScript owns the generated-contract declaration and every generated lib"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 336,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/336",
+            "title": "Move the generated DeploySuite concatenation into LibDeploySuiteConcat"
+          },
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 417,
+            "url": "https://github.com/rainlanguage/rainix/pull/417",
+            "title": "rainix-copy-artifacts: install .staged-config itself"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 486,
@@ -820,28 +880,10 @@
             "title": "Convert to the deploy-repo shape (rain-merkle-deploy, merkle-words suite)"
           },
           {
-            "repo": "rainlanguage/raindex",
-            "number": 2901,
-            "url": "https://github.com/rainlanguage/raindex/pull/2901",
-            "title": "Fit RaindexV6 under EIP-170: move declarations out, compile via-IR at 800 runs"
-          },
-          {
-            "repo": "rainlanguage/rain.verify",
-            "number": 37,
-            "url": "https://github.com/rainlanguage/rain.verify/pull/37",
-            "title": "Bump soldeer deps to latest"
-          },
-          {
             "repo": "rainlanguage/rain.vats",
             "number": 345,
             "url": "https://github.com/rainlanguage/rain.vats/pull/345",
             "title": "Registry-configured OffchainAssetReceiptVault for deterministic beacon-proxy tokens"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 322,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/322",
-            "title": "ConfigRegistry: key bindings by authority instead of a welded root"
           },
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -860,12 +902,6 @@
             "number": 478,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/478",
             "title": "Adopt rain-deploy 0.1.19's MigrationRegistry V3"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 317,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/317",
-            "title": "release: rain-deploy 0.1.19"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -1202,12 +1238,6 @@
             "number": 29,
             "url": "https://github.com/rainlanguage/rain.verify/pull/29",
             "title": "codegen: use LibCodeGen.addressConstantString instead of a local copy"
-          },
-          {
-            "repo": "rainlanguage/rain.flare",
-            "number": 206,
-            "url": "https://github.com/rainlanguage/rain.flare/pull/206",
-            "title": "fix(ci): grant Package Release the token permissions its callee needs"
           },
           {
             "repo": "rainlanguage/rain.pyth",
@@ -2071,7 +2101,7 @@
       "repo": "rainlanguage/rain.deploy",
       "number": 324,
       "url": "https://github.com/rainlanguage/rain.deploy/issues/324",
-      "title": "Dry run for a contract authority's ConfigRegistry bind"
+      "title": "Safe-delegate ConfigRegistry bind: SafeBundleScript bundle, dry run and verify"
     },
     {
       "repo": "S01-Issuer/tsalt.monitor",
@@ -2504,12 +2534,6 @@
       "number": 393,
       "url": "https://github.com/rainlanguage/rainix/issues/393",
       "title": "rainix-autopublish cannot see that a downstream repo pins a many-revisions-old copy of what it just published"
-    },
-    {
-      "repo": "rainlanguage/rain.factory.deploy",
-      "number": 42,
-      "url": "https://github.com/rainlanguage/rain.factory.deploy/issues/42",
-      "title": "The deployed CloneFactory embeds rain-factory 0.1.9 and is missing the 7702, occupied-address and initialize-answer changes"
     },
     {
       "repo": "rainlanguage/rain.deploy",
@@ -6530,7 +6554,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 71,
+    "unvetted": 76,
     "blockedOn": 11,
     "ready": 1,
     "needsWork": 96,
@@ -6541,17 +6565,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 187,
+    "totalProducerPrs": 192,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 740,
+    "uncoveredIssues": 739,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 900
+    "openIssues": 902
   },
   "ages": {
     "openIssues": {
-      "meanDays": 315.9,
-      "medianDays": 136.2,
+      "meanDays": 315.2,
+      "medianDays": 132.8,
       "oldestDays": 1731.9
     }
   }
