@@ -805,31 +805,13 @@
         ]
       },
       "un-vetted": {
-        "count": 74,
+        "count": 71,
         "prs": [
           {
-            "repo": "rainlanguage/rain.factory.deploy",
-            "number": 58,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/58",
-            "title": "Import the ICloneableV2 fixtures from rain-factory instead of copies"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 331,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/331",
-            "title": "Unindex UnverifiableSource's parameters"
-          },
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 280,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/280",
-            "title": "Add cloneRuntimeCode and cloneRuntimeCodeHash to LibICloneableFactoryV5"
-          },
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 279,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/279",
-            "title": "Publish the ICloneableV2 fixtures rain.factory.deploy imports"
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 486,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/486",
+            "title": "release: 0.1.31 (fix tag release for push-free rainix-tag-release)"
           },
           {
             "repo": "rainlanguage/rain.merkle.deploy",
@@ -6548,7 +6530,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 74,
+    "unvetted": 71,
     "blockedOn": 11,
     "ready": 1,
     "needsWork": 96,
@@ -6559,18 +6541,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 190,
+    "totalProducerPrs": 187,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 740,
     "designPresentable": 7,
     "designNoQuestion": 0,
-    "openIssues": 902
+    "openIssues": 900
   },
   "ages": {
     "openIssues": {
-      "meanDays": 315.2,
-      "medianDays": 132.7,
-      "oldestDays": 1731.8
+      "meanDays": 315.9,
+      "medianDays": 136.2,
+      "oldestDays": 1731.9
     }
   }
 }
