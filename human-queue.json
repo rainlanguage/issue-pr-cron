@@ -817,14 +817,8 @@
         ]
       },
       "un-vetted": {
-        "count": 151,
+        "count": 149,
         "prs": [
-          {
-            "repo": "rainlanguage/rainix",
-            "number": 413,
-            "url": "https://github.com/rainlanguage/rainix/pull/413",
-            "title": "manual-sol-verify: build the contract first so forge can resolve its compiler profile"
-          },
           {
             "repo": "rainlanguage/rainlang.deploy",
             "number": 10,
@@ -950,12 +944,6 @@
             "number": 445,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/445",
             "title": "Halmos proofs: add/sub rounding and series equivalence"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float.deploy",
-            "number": 41,
-            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/41",
-            "title": "deps: latest everywhere (rain-math-float 0.3.10, rain-deploy 0.1.18); delete the log tables"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -7070,7 +7058,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 151,
+    "unvetted": 149,
     "blockedOn": 12,
     "ready": 1,
     "needsWork": 96,
@@ -7081,7 +7069,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 268,
+    "totalProducerPrs": 266,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 748,
     "designPresentable": 7,
