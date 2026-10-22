@@ -278,12 +278,6 @@
         "title": "fix: drop malformed subgraph rows from AccountStatus transfer history"
       },
       {
-        "repo": "rainlanguage/rain.math.fixedpoint",
-        "number": 25,
-        "url": "https://github.com/rainlanguage/rain.math.fixedpoint/pull/25",
-        "title": "fix: reject bare trailing decimal point (empty fraction) in decimal string parse"
-      },
-      {
         "repo": "cyclofinance/cyclo.site",
         "number": 409,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/409",
@@ -614,12 +608,6 @@
         "title": "ci: add rainix-npm-blacklist reusable workflow"
       },
       {
-        "repo": "rainlanguage/rain.math.fixedpoint",
-        "number": 22,
-        "url": "https://github.com/rainlanguage/rain.math.fixedpoint/pull/22",
-        "title": "test: mutation-harden LibFixedPointDecimalParse coverage"
-      },
-      {
         "repo": "rainlanguage/raindex",
         "number": 2721,
         "url": "https://github.com/rainlanguage/raindex/pull/2721",
@@ -793,25 +781,19 @@
         ]
       },
       "un-vetted": {
-        "count": 76,
+        "count": 75,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 283,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/283",
+            "title": "ICloneableFactoryV6: beacon proxies resolved from a config registry"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 491,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/491",
             "title": "Bump rain-deploy 0.1.21, rain-factory 0.2.4, rain-factory-deploy 0.2.1, rain-vats 0.2.7"
-          },
-          {
-            "repo": "rainlanguage/rain.vats.flare",
-            "number": 5,
-            "url": "https://github.com/rainlanguage/rain.vats.flare/pull/5",
-            "title": "Bump rain-flare 0.1.3 -> 0.1.4"
-          },
-          {
-            "repo": "rainlanguage/rain.tofu.erc20-decimals.deploy",
-            "number": 13,
-            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals.deploy/pull/13",
-            "title": "release: 0.1.2"
           },
           {
             "repo": "rainlanguage/rain.metadata.deploy",
@@ -1317,7 +1299,7 @@
         }
       },
       "ai:needs-work": {
-        "count": 96,
+        "count": 94,
         "prs": [
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -1480,12 +1462,6 @@
             "number": 412,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/412",
             "title": "fix: drop malformed subgraph rows from AccountStatus transfer history"
-          },
-          {
-            "repo": "rainlanguage/rain.math.fixedpoint",
-            "number": 25,
-            "url": "https://github.com/rainlanguage/rain.math.fixedpoint/pull/25",
-            "title": "fix: reject bare trailing decimal point (empty fraction) in decimal string parse"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -1818,12 +1794,6 @@
             "title": "ci: add rainix-npm-blacklist reusable workflow"
           },
           {
-            "repo": "rainlanguage/rain.math.fixedpoint",
-            "number": 22,
-            "url": "https://github.com/rainlanguage/rain.math.fixedpoint/pull/22",
-            "title": "test: mutation-harden LibFixedPointDecimalParse coverage"
-          },
-          {
             "repo": "rainlanguage/raindex",
             "number": 2721,
             "url": "https://github.com/rainlanguage/raindex/pull/2721",
@@ -2051,32 +2021,7 @@
       "title": "[F20] [MEDIUM] Public ankr RPC default in LibFork makes the entire fork test suite depend on an unowned, mutable endpoint that no test or CI step pins"
     }
   ],
-  "closeCandidateUnvetted": [
-    {
-      "repo": "rainlanguage/rain.dia",
-      "number": 14,
-      "url": "https://github.com/rainlanguage/rain.dia/issues/14",
-      "title": "[AUDIT-M09] [medium] NatSpec claims revert on zero price but only (0,0) sentinel reverts"
-    },
-    {
-      "repo": "rainlanguage/rain.dia",
-      "number": 9,
-      "url": "https://github.com/rainlanguage/rain.dia/issues/9",
-      "title": "[AUDIT-M04] [medium] maxAge exact boundary elapsed==staleAfter untested"
-    },
-    {
-      "repo": "rainlanguage/rain.flare",
-      "number": 67,
-      "url": "https://github.com/rainlanguage/rain.flare/issues/67",
-      "title": "[F20] [MEDIUM] Public ankr RPC default in LibFork makes the entire fork test suite depend on an unowned, mutable endpoint that no test or CI step pins"
-    },
-    {
-      "repo": "rainlanguage/rain.dia",
-      "number": 61,
-      "url": "https://github.com/rainlanguage/rain.dia/pull/61",
-      "title": "fix(dia): revert ZeroDiaPrice on any zero price, not only the (0,0) sentinel"
-    }
-  ],
+  "closeCandidateUnvetted": [],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [],
   "archivedRepoPrs": [
@@ -2107,18 +2052,18 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 76,
+    "unvetted": 75,
     "blockedOn": 10,
     "ready": 1,
-    "needsWork": 96,
+    "needsWork": 94,
     "relink": 0,
     "design": 7,
     "blockedInfra": 0,
     "closeCandidateIssues": 3,
-    "closeCandidateUnvetted": 4,
+    "closeCandidateUnvetted": 0,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 191,
+    "totalProducerPrs": 188,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 0,
     "designPresentable": 7,
