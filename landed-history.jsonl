@@ -1082,3 +1082,5 @@
 {"ts":"2026-10-22T10:06:58Z","observedAt":"2026-10-22T10:32:28Z","kind":"pr","repo":"rainlanguage/rainlang.deploy","number":12}
 {"ts":"2026-10-22T12:36:30Z","observedAt":"2026-10-22T13:32:14Z","kind":"pr","repo":"rainlanguage/rain.tofu.erc20-decimals.deploy","number":13}
 {"ts":"2026-10-22T12:36:52Z","observedAt":"2026-10-22T13:32:14Z","kind":"pr","repo":"rainlanguage/rain.vats.flare","number":5}
+{"ts":"2026-10-22T16:17:37Z","observedAt":"2026-10-22T16:31:02Z","kind":"pr","repo":"S01-Issuer/st0x.deploy","number":320}
+{"ts":"2026-10-22T16:04:03Z","observedAt":"2026-10-22T16:31:02Z","kind":"pr","repo":"rainlanguage/rain.factory","number":283}
