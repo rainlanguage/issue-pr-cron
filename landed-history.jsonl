@@ -1090,3 +1090,4 @@
 {"ts":"2026-10-22T16:49:15Z","observedAt":"2026-10-22T17:31:50Z","kind":"pr","repo":"S01-Issuer/st0x.deploy","number":469}
 {"ts":"2026-10-22T16:57:10Z","observedAt":"2026-10-22T17:31:50Z","kind":"pr","repo":"S01-Issuer/st0x.deploy","number":493}
 {"ts":"2026-10-22T16:47:16Z","observedAt":"2026-10-22T17:31:50Z","kind":"pr","repo":"rainlanguage/rain.deploy","number":347}
+{"ts":"2026-10-22T17:35:54Z","observedAt":"2026-10-22T18:31:44Z","kind":"pr","repo":"rainlanguage/rain.factory.deploy","number":63}
