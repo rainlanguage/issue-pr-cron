@@ -769,7 +769,7 @@
         ]
       },
       "un-vetted": {
-        "count": 76,
+        "count": 72,
         "prs": [
           {
             "repo": "rainlanguage/rain-org-health",
@@ -814,22 +814,10 @@
             "title": "ConfigRegistryOffchainAssetReceiptVaultAuthorizerV1: initial admin from the ConfigRegistry"
           },
           {
-            "repo": "rainlanguage/rain.math.float.deploy",
-            "number": 49,
-            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/49",
-            "title": "Bump rain-deploy 0.1.22, release: 0.1.7"
-          },
-          {
             "repo": "rainlanguage/rain.tofu.erc20-decimals.deploy",
             "number": 14,
             "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals.deploy/pull/14",
             "title": "release: 0.1.3 (rain-deploy 0.1.22)"
-          },
-          {
-            "repo": "rainlanguage/rain.factory.deploy",
-            "number": 62,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/62",
-            "title": "release: rain-factory-deploy 0.2.2, on rain-deploy 0.1.21"
           },
           {
             "repo": "rainlanguage/rain.verify",
@@ -842,12 +830,6 @@
             "number": 77,
             "url": "https://github.com/rainlanguage/rain.dia/pull/77",
             "title": "Bump rain-deploy 0.1.21, rainlang 0.2.17, rain-math-float-deploy 0.1.6"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata.deploy",
-            "number": 21,
-            "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/21",
-            "title": "release: 0.1.3"
           },
           {
             "repo": "rainlanguage/rain-org-health",
@@ -896,12 +878,6 @@
             "number": 27,
             "url": "https://github.com/rainlanguage/rain.merkle.deploy/pull/27",
             "title": "Convert to the deploy-repo shape (rain-merkle-deploy, merkle-words suite)"
-          },
-          {
-            "repo": "rainlanguage/rain.vats",
-            "number": 345,
-            "url": "https://github.com/rainlanguage/rain.vats/pull/345",
-            "title": "Bootstrapless OffchainAssetReceiptVault: initialize from the ConfigRegistry, one abstract vault"
           },
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -6517,7 +6493,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 76,
+    "unvetted": 72,
     "blockedOn": 10,
     "ready": 1,
     "needsWork": 93,
@@ -6528,7 +6504,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 187,
+    "totalProducerPrs": 183,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 743,
     "designPresentable": 6,
@@ -6538,7 +6514,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 315.3,
-      "medianDays": 129.6,
+      "medianDays": 129.7,
       "oldestDays": 1733.0
     }
   }
