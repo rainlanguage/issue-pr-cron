@@ -769,8 +769,26 @@
         ]
       },
       "un-vetted": {
-        "count": 73,
+        "count": 76,
         "prs": [
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 211,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/211",
+            "title": "Deployments: receipt vault owner and certification from privileged-addresses.json"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection.deploy",
+            "number": 15,
+            "url": "https://github.com/rainlanguage/rain.extrospection.deploy/pull/15",
+            "title": "release: 0.1.1 (rain-deploy 0.1.22)"
+          },
+          {
+            "repo": "rainlanguage/rainlang",
+            "number": 599,
+            "url": "https://github.com/rainlanguage/rainlang/pull/599",
+            "title": "Bump rain-deploy to 0.1.22"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 497,
@@ -799,13 +817,13 @@
             "repo": "rainlanguage/rain.math.float.deploy",
             "number": 49,
             "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/49",
-            "title": "Bump rain-deploy 0.1.21, release: 0.1.7"
+            "title": "Bump rain-deploy 0.1.22, release: 0.1.7"
           },
           {
             "repo": "rainlanguage/rain.tofu.erc20-decimals.deploy",
             "number": 14,
             "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals.deploy/pull/14",
-            "title": "release: 0.1.3 (rain-deploy 0.1.21)"
+            "title": "release: 0.1.3 (rain-deploy 0.1.22)"
           },
           {
             "repo": "rainlanguage/rain.factory.deploy",
@@ -817,7 +835,7 @@
             "repo": "rainlanguage/rain.verify",
             "number": 41,
             "url": "https://github.com/rainlanguage/rain.verify/pull/41",
-            "title": "Bump rain-deploy 0.1.21, rainlang 0.2.17, rain-math-float-deploy 0.1.6"
+            "title": "Bump rain-deploy 0.1.22, rainlang 0.2.17, rain-math-float-deploy 0.1.6"
           },
           {
             "repo": "rainlanguage/rain.dia",
@@ -6499,7 +6517,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 73,
+    "unvetted": 76,
     "blockedOn": 10,
     "ready": 1,
     "needsWork": 93,
@@ -6510,18 +6528,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 184,
+    "totalProducerPrs": 187,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 743,
     "designPresentable": 6,
     "designNoQuestion": 0,
-    "openIssues": 903
+    "openIssues": 904
   },
   "ages": {
     "openIssues": {
-      "meanDays": 315.6,
-      "medianDays": 130.0,
-      "oldestDays": 1732.9
+      "meanDays": 315.3,
+      "medianDays": 129.6,
+      "oldestDays": 1733.0
     }
   }
 }
