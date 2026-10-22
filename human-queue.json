@@ -36,6 +36,30 @@
         "number": 53,
         "url": "https://github.com/rainlanguage/rain.dia/pull/53",
         "title": "test(dia): exercise StaleDiaPrice revert path in LibDia.getPriceNoOlderThan"
+      },
+      {
+        "repo": "rainlanguage/rain.flare",
+        "number": 170,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/170",
+        "title": "refactor(tests): use relative imports instead of bare src/ and test/ paths"
+      },
+      {
+        "repo": "rainlanguage/rain.flare",
+        "number": 137,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/137",
+        "title": "fix: enforce the DecimalsTooLarge bound inside LibFtsoCurrentPriceUsd"
+      },
+      {
+        "repo": "rainlanguage/raindex",
+        "number": 2724,
+        "url": "https://github.com/rainlanguage/raindex/pull/2724",
+        "title": "Pin all third-party GitHub Actions to commit SHAs"
+      },
+      {
+        "repo": "rainlanguage/raindex",
+        "number": 2722,
+        "url": "https://github.com/rainlanguage/raindex/pull/2722",
+        "title": "Add \"remove and withdraw all\" option to order removal (#2024)"
       }
     ],
     "ai:close-candidate": [
@@ -76,6 +100,12 @@
         "number": 276,
         "url": "https://github.com/rainlanguage/issue-pr-cron/pull/276",
         "title": "rework(vetter): resume a dead auditor before redispatching, and name the path taken"
+      },
+      {
+        "repo": "rainlanguage/rain.flare",
+        "number": 161,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/161",
+        "title": "fix: remove ankr public RPC fallback from LibFork — fail loud on unset env"
       }
     ],
     "ai:needs-work": [
@@ -162,13 +192,525 @@
         "number": 425,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/425",
         "title": "Fix #327: make Footer per-network token rows reactive on allTokens"
+      },
+      {
+        "repo": "S01-Issuer/st0x.deploy",
+        "number": 250,
+        "url": "https://github.com/S01-Issuer/st0x.deploy/pull/250",
+        "title": "feat(deploy): deterministic-clone toolchain + deterministic V4 authoriser deploy capability (#292 step 1)"
+      },
+      {
+        "repo": "rainlanguage/rainlang-codemirror",
+        "number": 32,
+        "url": "https://github.com/rainlanguage/rainlang-codemirror/pull/32",
+        "title": "ci: adopt rainix nix-cachix-setup composite, drop deprecated DeterminateSystems nix installer"
+      },
+      {
+        "repo": "rainlanguage/rainix",
+        "number": 263,
+        "url": "https://github.com/rainlanguage/rainix/pull/263",
+        "title": "feat(ci): component-screenshots reusable (Storybook → PNG)"
+      },
+      {
+        "repo": "rainlanguage/rain.flare",
+        "number": 199,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/199",
+        "title": "test: assert authoringMetaV2 descriptions state correct operand input counts"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 421,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/421",
+        "title": "fix(security): reject protocol-relative and backslash paths in sanitizeHref"
+      },
+      {
+        "repo": "rainlanguage/claude-audit-skills",
+        "number": 34,
+        "url": "https://github.com/rainlanguage/claude-audit-skills/pull/34",
+        "title": "audit: require fork tests for state-changing scripts"
+      },
+      {
+        "repo": "rainlanguage/claude-audit-skills",
+        "number": 33,
+        "url": "https://github.com/rainlanguage/claude-audit-skills/pull/33",
+        "title": "audit: require re-derivation tests for derived constants"
+      },
+      {
+        "repo": "rainlanguage/claude-audit-skills",
+        "number": 32,
+        "url": "https://github.com/rainlanguage/claude-audit-skills/pull/32",
+        "title": "audit: deploy-version consistency — two distinct counters, deploy-keyed pins, no release-spanning"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 418,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/418",
+        "title": "Match Select options by a stable key by default"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 414,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/414",
+        "title": "fix: validate account prop and canonicalize rewards link in AccountSummary"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 413,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/413",
+        "title": "fix: validate account prop and transaction hash in AccountStatus"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 412,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/412",
+        "title": "fix: drop malformed subgraph rows from AccountStatus transfer history"
+      },
+      {
+        "repo": "rainlanguage/rain.math.fixedpoint",
+        "number": 25,
+        "url": "https://github.com/rainlanguage/rain.math.fixedpoint/pull/25",
+        "title": "fix: reject bare trailing decimal point (empty fraction) in decimal string parse"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 409,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/409",
+        "title": "fix(component): validate tokenId and surface previewRedeem errors (#359)"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 407,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/407",
+        "title": "fix: reactive mappedReceipts and safe readableBalance in ReceiptsTable (#358, #360)"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 406,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/406",
+        "title": "fix(store): forward the vault oracle's I_STALE_AFTER as the footer Pyth max age, drop STALE_PERIOD (#318)"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 405,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/405",
+        "title": "fix: Input.svelte sanitize external updates and tighten default validator (#328, #330)"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 404,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/404",
+        "title": "fix: case-insensitive symbol lookup in AccountStats (#312)"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 403,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/403",
+        "title": "fix: getCyTokenUsdPrice returns null on error instead of 0n (#317)"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 400,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/400",
+        "title": "test(receipt): swap, undefined signer, and wrong-network coverage for ReceiptModal (#353, #355, #357)"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 399,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/399",
+        "title": "fix(component): fix chain-switch race and add pre-flight validation in DcaStrategy"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 398,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/398",
+        "title": "fix(component): wire validators and fix disableDeploy gates in DsfStrategy"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 396,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/396",
+        "title": "fix(component): switch wallet before committing activeNetworkKey in NetworkSelector"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 395,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/395",
+        "title": "fix(component): fix NavButtons active-route detection; remove spurious toggleMenu from desktop"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 394,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/394",
+        "title": "fix(component): guard zero/invalid tokenId in ReceiptsTable; use BigInt exponentiation"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 390,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/390",
+        "title": "fix(store): throw on non-positive Pyth price; use BigInt exponentiation"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 389,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/389",
+        "title": "fix(component): guard totalRewards with || 0n fallback in AccountStats"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 388,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/388",
+        "title": "fix(component): catch getAndStartDataFetcher rejection in DataFetcherProvider"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 386,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/386",
+        "title": "fix(store): add inflightToken concurrency guard to blockNumberStore"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 385,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/385",
+        "title": "docs(setup): fix README setup steps and add missing env var"
+      },
+      {
+        "repo": "rainlanguage/rain.erc4626.words",
+        "number": 252,
+        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/252",
+        "title": "Deploy deterministically via Zoltu with no network selection"
+      },
+      {
+        "repo": "rainlanguage/rainix",
+        "number": 252,
+        "url": "https://github.com/rainlanguage/rainix/pull/252",
+        "title": "feat(ci): assert all rainix-*.yaml reusables share one pinned RAINIX_SHA"
+      },
+      {
+        "repo": "rainlanguage/rainix",
+        "number": 251,
+        "url": "https://github.com/rainlanguage/rainix/pull/251",
+        "title": "feat(ci): enforce pragma convention ^ lib/abstract, = concrete (closes #250)"
+      },
+      {
+        "repo": "rainlanguage/dotrain",
+        "number": 143,
+        "url": "https://github.com/rainlanguage/dotrain/pull/143",
+        "title": "fix(parser): comment before next binding bleeds into previous content_position"
+      },
+      {
+        "repo": "rainlanguage/rain.flare",
+        "number": 188,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/188",
+        "title": "fix(lib): move DecimalsTooLarge guard into LibFtsoCurrentPriceUsd (#79)"
+      },
+      {
+        "repo": "rainlanguage/rain.flare",
+        "number": 186,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/186",
+        "title": "fix: view mutability, return names, meta description, and eval-order comments"
+      },
+      {
+        "repo": "rainlanguage/rainix",
+        "number": 238,
+        "url": "https://github.com/rainlanguage/rainix/pull/238",
+        "title": "feat(deploy): add shared check-published-deploy-constants script"
+      },
+      {
+        "repo": "rainlanguage/rain.erc4626.words",
+        "number": 233,
+        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/233",
+        "title": "fix(security): bound vault and asset decimals to MAX_DECIMALS (closes #84)"
+      },
+      {
+        "repo": "rainlanguage/rain.erc4626.words",
+        "number": 230,
+        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/230",
+        "title": "test(extern): assert sub-parser honors overridden extern() address"
+      },
+      {
+        "repo": "rainlanguage/rain.erc4626.words",
+        "number": 226,
+        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/226",
+        "title": "refactor(extern): add INTEGRITY_FUNCTION_POINTERS_LENGTH and pin pointer slot non-zero tests"
+      },
+      {
+        "repo": "rainlanguage/rain.erc4626.words",
+        "number": 225,
+        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/225",
+        "title": "style(pragma): pin all non-generated source/test files to =0.8.25"
+      },
+      {
+        "repo": "rainlanguage/rain.erc4626.words",
+        "number": 222,
+        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/222",
+        "title": "refactor(fork): use vm.rpcUrl from foundry.toml, remove LibFork hardcoded URL"
+      },
+      {
+        "repo": "rainlanguage/rain.erc4626.words",
+        "number": 220,
+        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/220",
+        "title": "build(sh): include BuildPointers.sol and forge fmt in build.sh"
+      },
+      {
+        "repo": "rainlanguage/rain.flare",
+        "number": 171,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/171",
+        "title": "fix(staleness): use subtraction to avoid overflow for large timeout values"
+      },
+      {
+        "repo": "rainlanguage/rain.flare",
+        "number": 169,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/169",
+        "title": "docs(natspec): add NatSpec to interfaces and op libraries"
+      },
+      {
+        "repo": "rainlanguage/rain.vats",
+        "number": 323,
+        "url": "https://github.com/rainlanguage/rain.vats/pull/323",
+        "title": "docs(natspec): document authorizer-trust assumption in call-sites"
+      },
+      {
+        "repo": "rainlanguage/rain.flare",
+        "number": 167,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/167",
+        "title": "refactor(lts): use calculateFeeById for single feed fee calc"
+      },
+      {
+        "repo": "rainlanguage/rain.erc4626.words",
+        "number": 209,
+        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/209",
+        "title": "test(fork): add FORK_VAULT_COUNT enumeration to lock vault table length"
+      },
+      {
+        "repo": "rainlanguage/rain.erc4626.words",
+        "number": 197,
+        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/197",
+        "title": "refactor: consolidate duplicate decimals() into IDecimalsMinimal"
+      },
+      {
+        "repo": "rainlanguage/rain.erc4626.words",
+        "number": 194,
+        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/194",
+        "title": "chore: pin pragma, rename word-count constant, use relative test imports"
+      },
+      {
+        "repo": "rainlanguage/rain.erc4626.words",
+        "number": 188,
+        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/188",
+        "title": "docs+test(meta): authoring-meta precision-loss constraint + index alignment tests"
+      },
+      {
+        "repo": "rainlanguage/rain.erc4626.words",
+        "number": 171,
+        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/171",
+        "title": "ci: wire BuildPointers into build.sh/prelude and pin git-clean SHA"
+      },
+      {
+        "repo": "rainlanguage/rain.erc4626.words",
+        "number": 166,
+        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/166",
+        "title": "fix(lib): use lossy decimal conversions to prevent revert on sub-decimal inputs"
+      },
+      {
+        "repo": "rainlanguage/rain.erc4626.words",
+        "number": 162,
+        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/162",
+        "title": "docs(natspec): document floor-rounding direction in convert* words"
+      },
+      {
+        "repo": "rainlanguage/raindex",
+        "number": 2779,
+        "url": "https://github.com/rainlanguage/raindex/pull/2779",
+        "title": "fix: include counterparty (zero address) as 3rd context row in addOrder/removeOrder"
+      },
+      {
+        "repo": "rainlanguage/raindex",
+        "number": 2778,
+        "url": "https://github.com/rainlanguage/raindex/pull/2778",
+        "title": "fix: mask signer row operand to low byte"
+      },
+      {
+        "repo": "rainlanguage/raindex",
+        "number": 2777,
+        "url": "https://github.com/rainlanguage/raindex/pull/2777",
+        "title": "fix: guard weighted-average merge against zero outputAmountSum in historicalOrderCharts"
+      },
+      {
+        "repo": "rainlanguage/rain.flare",
+        "number": 164,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/164",
+        "title": "docs: warn in ftsoV2LTSGetFeed NatSpec that excess msg.value is not refunded"
+      },
+      {
+        "repo": "rainlanguage/rain.flare",
+        "number": 163,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/163",
+        "title": "test: add mock unit tests for LibOpSLFRCurrentExchangeRate run() and integrity()"
+      },
+      {
+        "repo": "rainlanguage/rain.flare",
+        "number": 160,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/160",
+        "title": "test: add scale-band assertions for sFLR, flrETH, and FtsoV2 LTS feeds"
+      },
+      {
+        "repo": "rainlanguage/rain.flare",
+        "number": 157,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/157",
+        "title": "fix: rename SLFR typo to SFLR in constant, library, and doc comment"
+      },
+      {
+        "repo": "rainlanguage/rain.flare",
+        "number": 153,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/153",
+        "title": "fix: revert with ContractNotRegistered on zero-address registry lookup"
+      },
+      {
+        "repo": "rainlanguage/rain.flare",
+        "number": 146,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/146",
+        "title": "refactor: trim IStakedFlr to the single consumed function"
+      },
+      {
+        "repo": "rainlanguage/rain.flare",
+        "number": 139,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/139",
+        "title": "test: add staleness boundary, pair error propagation, InconsistentFtso, and sFLR arg-pin tests"
+      },
+      {
+        "repo": "rainlanguage/rain.flare",
+        "number": 138,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/138",
+        "title": "test: pin BYTECODE_HASH, assert word-opcode alignment, verify FLRETH rate reciprocity"
+      },
+      {
+        "repo": "rainlanguage/rain.flare",
+        "number": 133,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/133",
+        "title": "test: assert function pointer array length against OPCODE_FUNCTION_POINTERS_LENGTH"
+      },
+      {
+        "repo": "rainlanguage/rain.flare",
+        "number": 129,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/129",
+        "title": "Add NatSpec and fix misleading return-param names in interfaces"
+      },
+      {
+        "repo": "rainlanguage/rainix",
+        "number": 230,
+        "url": "https://github.com/rainlanguage/rainix/pull/230",
+        "title": "ci: add rainix-npm-blacklist reusable workflow"
+      },
+      {
+        "repo": "rainlanguage/rain.math.fixedpoint",
+        "number": 22,
+        "url": "https://github.com/rainlanguage/rain.math.fixedpoint/pull/22",
+        "title": "test: mutation-harden LibFixedPointDecimalParse coverage"
+      },
+      {
+        "repo": "rainlanguage/raindex",
+        "number": 2721,
+        "url": "https://github.com/rainlanguage/raindex/pull/2721",
+        "title": "fix(webapp): stop double-fetching custom registries in advanced mode"
+      },
+      {
+        "repo": "rainlanguage/raindex",
+        "number": 2720,
+        "url": "https://github.com/rainlanguage/raindex/pull/2720",
+        "title": "Retry SDK indexing on transient timeout before failing"
+      },
+      {
+        "repo": "rainlanguage/raindex",
+        "number": 2719,
+        "url": "https://github.com/rainlanguage/raindex/pull/2719",
+        "title": "Strip RPC URLs from generated dotrain to prevent API token leak (#2165)"
+      },
+      {
+        "repo": "rainlanguage/raindex",
+        "number": 2702,
+        "url": "https://github.com/rainlanguage/raindex/pull/2702",
+        "title": "Dust accounting: per-(user, token) credit ledger realized on the next token move (#2673)"
+      },
+      {
+        "repo": "rainlanguage/flow",
+        "number": 475,
+        "url": "https://github.com/rainlanguage/flow/pull/475",
+        "title": "WIP: migrate flow to V4 interpreter + soldeer + reusable workflows"
+      },
+      {
+        "repo": "cyclofinance/cyclo.sol",
+        "number": 42,
+        "url": "https://github.com/cyclofinance/cyclo.sol/pull/42",
+        "title": "test: pin cyclo-site-tokens.json claims on-chain via fork tests"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 369,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/369",
+        "title": "fix(lock): gate LOCK on price freshness, send a 1% depositMinShareRatio floor (A17-4)"
+      },
+      {
+        "repo": "cyclofinance/cyclo.site",
+        "number": 294,
+        "url": "https://github.com/cyclofinance/cyclo.site/pull/294",
+        "title": "feat: show re-up opportunity per receipt on unlock page"
+      },
+      {
+        "repo": "rainlanguage/rain.strategies",
+        "number": 60,
+        "url": "https://github.com/rainlanguage/rain.strategies/pull/60",
+        "title": "v5 for dynamic spread"
+      },
+      {
+        "repo": "rainlanguage/rain.strategies",
+        "number": 20,
+        "url": "https://github.com/rainlanguage/rain.strategies/pull/20",
+        "title": "2025 03 05 ds"
+      },
+      {
+        "repo": "rainlanguage/rain.subgraph.docker",
+        "number": 3,
+        "url": "https://github.com/rainlanguage/rain.subgraph.docker/pull/3",
+        "title": "2023 12 23 anvil"
+      }
+    ],
+    "ai:ready": [
+      {
+        "repo": "rainlanguage/rain.pyth",
+        "number": 28,
+        "url": "https://github.com/rainlanguage/rain.pyth/pull/28",
+        "title": "chore(release): adopt next-version Soldeer lifecycle (closes #27)"
+      },
+      {
+        "repo": "rainlanguage/rain.erc4626.words",
+        "number": 254,
+        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/254",
+        "title": "feat(deps): bump rainlang to 0.1.8 for NotAnAddress(bytes32) — REQUIRES redeploy at land"
+      },
+      {
+        "repo": "rainlanguage/rain.flare",
+        "number": 196,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/196",
+        "title": "docs+test(flreth): document Dinero naming convention and add reciprocity test"
+      },
+      {
+        "repo": "rainlanguage/raindex",
+        "number": 2793,
+        "url": "https://github.com/rainlanguage/raindex/pull/2793",
+        "title": "perf: eliminate redundant read_dispair calls in try_into_call"
+      },
+      {
+        "repo": "rainlanguage/rain.flare",
+        "number": 125,
+        "url": "https://github.com/rainlanguage/rain.flare/pull/125",
+        "title": "Fix staleness overflow: use subtraction instead of addition in stale check"
       }
     ]
   },
   "lanes": {
     "vet-lifecycle": {
       "ai:blocked-on": {
-        "count": 6,
+        "count": 10,
         "prs": [
           {
             "repo": "rainlanguage/rain.erc4626.words",
@@ -205,23 +747,47 @@
             "number": 53,
             "url": "https://github.com/rainlanguage/rain.dia/pull/53",
             "title": "test(dia): exercise StaleDiaPrice revert path in LibDia.getPriceNoOlderThan"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 170,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/170",
+            "title": "refactor(tests): use relative imports instead of bare src/ and test/ paths"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 137,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/137",
+            "title": "fix: enforce the DecimalsTooLarge bound inside LibFtsoCurrentPriceUsd"
+          },
+          {
+            "repo": "rainlanguage/raindex",
+            "number": 2724,
+            "url": "https://github.com/rainlanguage/raindex/pull/2724",
+            "title": "Pin all third-party GitHub Actions to commit SHAs"
+          },
+          {
+            "repo": "rainlanguage/raindex",
+            "number": 2722,
+            "url": "https://github.com/rainlanguage/raindex/pull/2722",
+            "title": "Add \"remove and withdraw all\" option to order removal (#2024)"
           }
         ]
       },
       "un-vetted": {
-        "count": 74,
+        "count": 73,
         "prs": [
           {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 347,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/347",
-            "title": "Bump rain-factory 0.2.4 -> 0.2.5"
+            "repo": "rainlanguage/rain.factory.deploy",
+            "number": 63,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/63",
+            "title": "CloneFactory implements ICloneableFactoryV6"
           },
           {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 493,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/493",
-            "title": "Differential test: share and receipt rebase migration parity"
+            "repo": "rainlanguage/rain.vats",
+            "number": 349,
+            "url": "https://github.com/rainlanguage/rain.vats/pull/349",
+            "title": "ConfigRegistryOffchainAssetReceiptVaultAuthorizerV1: initial admin from the ConfigRegistry"
           },
           {
             "repo": "rainlanguage/rain.math.float.deploy",
@@ -375,12 +941,6 @@
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
-            "number": 469,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/469",
-            "title": "Publish privileged-addresses.json from the constants; rename OWNER_6 to OWNER_TDM"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
             "number": 467,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/467",
             "title": "Check each token's production beacon in the orchestrator vault-logic lock"
@@ -408,18 +968,6 @@
             "number": 36,
             "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/36",
             "title": "Add Float macro and serde crates"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 412,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/412",
-            "title": "Give Robinhood an [etherscan] entry pointing at Blockscout"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 408,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/408",
-            "title": "Prove the governance loop against post-migration chain state"
           },
           {
             "repo": "rainlanguage/issue-pr-cron",
@@ -482,12 +1030,6 @@
             "title": "SignedContextV2: EIP-712 signed context under a caller-chosen domain separator, exposed in context"
           },
           {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 328,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/328",
-            "title": "Commit the Protofire 6.0 report the 0.1.30 freeze rests on"
-          },
-          {
             "repo": "rainlanguage/raindex",
             "number": 2854,
             "url": "https://github.com/rainlanguage/raindex/pull/2854",
@@ -504,12 +1046,6 @@
             "number": 2842,
             "url": "https://github.com/rainlanguage/raindex/pull/2842",
             "title": "Float the suites declaration's pragma, as every other abstract here does"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 321,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/321",
-            "title": "Bump rain-sol-codegen to 0.1.36 (rain-deploy 0.1.7, forge-std 1.16.2)"
           },
           {
             "repo": "rainlanguage/rainlang.interface",
@@ -654,13 +1190,37 @@
             "number": 29,
             "url": "https://github.com/rainlanguage/rain.verify/pull/29",
             "title": "codegen: use LibCodeGen.addressConstantString instead of a local copy"
+          },
+          {
+            "repo": "rainlanguage/rain.pyth",
+            "number": 28,
+            "url": "https://github.com/rainlanguage/rain.pyth/pull/28",
+            "title": "chore(release): adopt next-version Soldeer lifecycle (closes #27)"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 196,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/196",
+            "title": "docs+test(flreth): document Dinero naming convention and add reciprocity test"
+          },
+          {
+            "repo": "rainlanguage/raindex",
+            "number": 2793,
+            "url": "https://github.com/rainlanguage/raindex/pull/2793",
+            "title": "perf: eliminate redundant read_dispair calls in try_into_call"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 125,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/125",
+            "title": "Fix staleness overflow: use subtraction instead of addition in stale check"
           }
         ]
       }
     },
     "vetter-verdicts": {
       "ai:design": {
-        "count": 5,
+        "count": 6,
         "prs": [
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -696,18 +1256,25 @@
             "url": "https://github.com/rainlanguage/issue-pr-cron/pull/276",
             "title": "rework(vetter): resume a dead auditor before redispatching, and name the path taken",
             "bucket": "presentable"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 161,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/161",
+            "title": "fix: remove ankr public RPC fallback from LibFork — fail loud on unset env",
+            "bucket": "presentable"
           }
         ],
         "breakdown": {
           "draft": 0,
           "fetchErrors": 0,
           "noQuestion": 0,
-          "presentable": 5,
+          "presentable": 6,
           "unaddressable": 0
         }
       },
       "ai:needs-work": {
-        "count": 14,
+        "count": 94,
         "prs": [
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -792,6 +1359,497 @@
             "number": 425,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/425",
             "title": "Fix #327: make Footer per-network token rows reactive on allTokens"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 250,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/250",
+            "title": "feat(deploy): deterministic-clone toolchain + deterministic V4 authoriser deploy capability (#292 step 1)"
+          },
+          {
+            "repo": "rainlanguage/rainlang-codemirror",
+            "number": 32,
+            "url": "https://github.com/rainlanguage/rainlang-codemirror/pull/32",
+            "title": "ci: adopt rainix nix-cachix-setup composite, drop deprecated DeterminateSystems nix installer"
+          },
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 263,
+            "url": "https://github.com/rainlanguage/rainix/pull/263",
+            "title": "feat(ci): component-screenshots reusable (Storybook → PNG)"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 199,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/199",
+            "title": "test: assert authoringMetaV2 descriptions state correct operand input counts"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 421,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/421",
+            "title": "fix(security): reject protocol-relative and backslash paths in sanitizeHref"
+          },
+          {
+            "repo": "rainlanguage/claude-audit-skills",
+            "number": 34,
+            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/34",
+            "title": "audit: require fork tests for state-changing scripts"
+          },
+          {
+            "repo": "rainlanguage/claude-audit-skills",
+            "number": 33,
+            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/33",
+            "title": "audit: require re-derivation tests for derived constants"
+          },
+          {
+            "repo": "rainlanguage/claude-audit-skills",
+            "number": 32,
+            "url": "https://github.com/rainlanguage/claude-audit-skills/pull/32",
+            "title": "audit: deploy-version consistency — two distinct counters, deploy-keyed pins, no release-spanning"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 418,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/418",
+            "title": "Match Select options by a stable key by default"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 414,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/414",
+            "title": "fix: validate account prop and canonicalize rewards link in AccountSummary"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 413,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/413",
+            "title": "fix: validate account prop and transaction hash in AccountStatus"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 412,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/412",
+            "title": "fix: drop malformed subgraph rows from AccountStatus transfer history"
+          },
+          {
+            "repo": "rainlanguage/rain.math.fixedpoint",
+            "number": 25,
+            "url": "https://github.com/rainlanguage/rain.math.fixedpoint/pull/25",
+            "title": "fix: reject bare trailing decimal point (empty fraction) in decimal string parse"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 409,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/409",
+            "title": "fix(component): validate tokenId and surface previewRedeem errors (#359)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 407,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/407",
+            "title": "fix: reactive mappedReceipts and safe readableBalance in ReceiptsTable (#358, #360)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 406,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/406",
+            "title": "fix(store): forward the vault oracle's I_STALE_AFTER as the footer Pyth max age, drop STALE_PERIOD (#318)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 405,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/405",
+            "title": "fix: Input.svelte sanitize external updates and tighten default validator (#328, #330)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 404,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/404",
+            "title": "fix: case-insensitive symbol lookup in AccountStats (#312)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 403,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/403",
+            "title": "fix: getCyTokenUsdPrice returns null on error instead of 0n (#317)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 400,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/400",
+            "title": "test(receipt): swap, undefined signer, and wrong-network coverage for ReceiptModal (#353, #355, #357)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 399,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/399",
+            "title": "fix(component): fix chain-switch race and add pre-flight validation in DcaStrategy"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 398,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/398",
+            "title": "fix(component): wire validators and fix disableDeploy gates in DsfStrategy"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 396,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/396",
+            "title": "fix(component): switch wallet before committing activeNetworkKey in NetworkSelector"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 395,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/395",
+            "title": "fix(component): fix NavButtons active-route detection; remove spurious toggleMenu from desktop"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 394,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/394",
+            "title": "fix(component): guard zero/invalid tokenId in ReceiptsTable; use BigInt exponentiation"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 390,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/390",
+            "title": "fix(store): throw on non-positive Pyth price; use BigInt exponentiation"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 389,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/389",
+            "title": "fix(component): guard totalRewards with || 0n fallback in AccountStats"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 388,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/388",
+            "title": "fix(component): catch getAndStartDataFetcher rejection in DataFetcherProvider"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 386,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/386",
+            "title": "fix(store): add inflightToken concurrency guard to blockNumberStore"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 385,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/385",
+            "title": "docs(setup): fix README setup steps and add missing env var"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 252,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/252",
+            "title": "Deploy deterministically via Zoltu with no network selection"
+          },
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 252,
+            "url": "https://github.com/rainlanguage/rainix/pull/252",
+            "title": "feat(ci): assert all rainix-*.yaml reusables share one pinned RAINIX_SHA"
+          },
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 251,
+            "url": "https://github.com/rainlanguage/rainix/pull/251",
+            "title": "feat(ci): enforce pragma convention ^ lib/abstract, = concrete (closes #250)"
+          },
+          {
+            "repo": "rainlanguage/dotrain",
+            "number": 143,
+            "url": "https://github.com/rainlanguage/dotrain/pull/143",
+            "title": "fix(parser): comment before next binding bleeds into previous content_position"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 188,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/188",
+            "title": "fix(lib): move DecimalsTooLarge guard into LibFtsoCurrentPriceUsd (#79)"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 186,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/186",
+            "title": "fix: view mutability, return names, meta description, and eval-order comments"
+          },
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 238,
+            "url": "https://github.com/rainlanguage/rainix/pull/238",
+            "title": "feat(deploy): add shared check-published-deploy-constants script"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 233,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/233",
+            "title": "fix(security): bound vault and asset decimals to MAX_DECIMALS (closes #84)"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 230,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/230",
+            "title": "test(extern): assert sub-parser honors overridden extern() address"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 226,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/226",
+            "title": "refactor(extern): add INTEGRITY_FUNCTION_POINTERS_LENGTH and pin pointer slot non-zero tests"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 225,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/225",
+            "title": "style(pragma): pin all non-generated source/test files to =0.8.25"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 222,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/222",
+            "title": "refactor(fork): use vm.rpcUrl from foundry.toml, remove LibFork hardcoded URL"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 220,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/220",
+            "title": "build(sh): include BuildPointers.sol and forge fmt in build.sh"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 171,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/171",
+            "title": "fix(staleness): use subtraction to avoid overflow for large timeout values"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 169,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/169",
+            "title": "docs(natspec): add NatSpec to interfaces and op libraries"
+          },
+          {
+            "repo": "rainlanguage/rain.vats",
+            "number": 323,
+            "url": "https://github.com/rainlanguage/rain.vats/pull/323",
+            "title": "docs(natspec): document authorizer-trust assumption in call-sites"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 167,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/167",
+            "title": "refactor(lts): use calculateFeeById for single feed fee calc"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 209,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/209",
+            "title": "test(fork): add FORK_VAULT_COUNT enumeration to lock vault table length"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 197,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/197",
+            "title": "refactor: consolidate duplicate decimals() into IDecimalsMinimal"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 194,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/194",
+            "title": "chore: pin pragma, rename word-count constant, use relative test imports"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 188,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/188",
+            "title": "docs+test(meta): authoring-meta precision-loss constraint + index alignment tests"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 171,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/171",
+            "title": "ci: wire BuildPointers into build.sh/prelude and pin git-clean SHA"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 166,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/166",
+            "title": "fix(lib): use lossy decimal conversions to prevent revert on sub-decimal inputs"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 162,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/162",
+            "title": "docs(natspec): document floor-rounding direction in convert* words"
+          },
+          {
+            "repo": "rainlanguage/raindex",
+            "number": 2779,
+            "url": "https://github.com/rainlanguage/raindex/pull/2779",
+            "title": "fix: include counterparty (zero address) as 3rd context row in addOrder/removeOrder"
+          },
+          {
+            "repo": "rainlanguage/raindex",
+            "number": 2778,
+            "url": "https://github.com/rainlanguage/raindex/pull/2778",
+            "title": "fix: mask signer row operand to low byte"
+          },
+          {
+            "repo": "rainlanguage/raindex",
+            "number": 2777,
+            "url": "https://github.com/rainlanguage/raindex/pull/2777",
+            "title": "fix: guard weighted-average merge against zero outputAmountSum in historicalOrderCharts"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 164,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/164",
+            "title": "docs: warn in ftsoV2LTSGetFeed NatSpec that excess msg.value is not refunded"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 163,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/163",
+            "title": "test: add mock unit tests for LibOpSLFRCurrentExchangeRate run() and integrity()"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 160,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/160",
+            "title": "test: add scale-band assertions for sFLR, flrETH, and FtsoV2 LTS feeds"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 157,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/157",
+            "title": "fix: rename SLFR typo to SFLR in constant, library, and doc comment"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 153,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/153",
+            "title": "fix: revert with ContractNotRegistered on zero-address registry lookup"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 146,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/146",
+            "title": "refactor: trim IStakedFlr to the single consumed function"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 139,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/139",
+            "title": "test: add staleness boundary, pair error propagation, InconsistentFtso, and sFLR arg-pin tests"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 138,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/138",
+            "title": "test: pin BYTECODE_HASH, assert word-opcode alignment, verify FLRETH rate reciprocity"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 133,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/133",
+            "title": "test: assert function pointer array length against OPCODE_FUNCTION_POINTERS_LENGTH"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 129,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/129",
+            "title": "Add NatSpec and fix misleading return-param names in interfaces"
+          },
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 230,
+            "url": "https://github.com/rainlanguage/rainix/pull/230",
+            "title": "ci: add rainix-npm-blacklist reusable workflow"
+          },
+          {
+            "repo": "rainlanguage/rain.math.fixedpoint",
+            "number": 22,
+            "url": "https://github.com/rainlanguage/rain.math.fixedpoint/pull/22",
+            "title": "test: mutation-harden LibFixedPointDecimalParse coverage"
+          },
+          {
+            "repo": "rainlanguage/raindex",
+            "number": 2721,
+            "url": "https://github.com/rainlanguage/raindex/pull/2721",
+            "title": "fix(webapp): stop double-fetching custom registries in advanced mode"
+          },
+          {
+            "repo": "rainlanguage/raindex",
+            "number": 2720,
+            "url": "https://github.com/rainlanguage/raindex/pull/2720",
+            "title": "Retry SDK indexing on transient timeout before failing"
+          },
+          {
+            "repo": "rainlanguage/raindex",
+            "number": 2719,
+            "url": "https://github.com/rainlanguage/raindex/pull/2719",
+            "title": "Strip RPC URLs from generated dotrain to prevent API token leak (#2165)"
+          },
+          {
+            "repo": "rainlanguage/raindex",
+            "number": 2702,
+            "url": "https://github.com/rainlanguage/raindex/pull/2702",
+            "title": "Dust accounting: per-(user, token) credit ledger realized on the next token move (#2673)"
+          },
+          {
+            "repo": "rainlanguage/flow",
+            "number": 475,
+            "url": "https://github.com/rainlanguage/flow/pull/475",
+            "title": "WIP: migrate flow to V4 interpreter + soldeer + reusable workflows"
+          },
+          {
+            "repo": "cyclofinance/cyclo.sol",
+            "number": 42,
+            "url": "https://github.com/cyclofinance/cyclo.sol/pull/42",
+            "title": "test: pin cyclo-site-tokens.json claims on-chain via fork tests"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 369,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/369",
+            "title": "fix(lock): gate LOCK on price freshness, send a 1% depositMinShareRatio floor (A17-4)"
+          },
+          {
+            "repo": "cyclofinance/cyclo.site",
+            "number": 294,
+            "url": "https://github.com/cyclofinance/cyclo.site/pull/294",
+            "title": "feat: show re-up opportunity per receipt on unlock page"
+          },
+          {
+            "repo": "rainlanguage/rain.strategies",
+            "number": 60,
+            "url": "https://github.com/rainlanguage/rain.strategies/pull/60",
+            "title": "v5 for dynamic spread"
+          },
+          {
+            "repo": "rainlanguage/rain.strategies",
+            "number": 20,
+            "url": "https://github.com/rainlanguage/rain.strategies/pull/20",
+            "title": "2025 03 05 ds"
+          },
+          {
+            "repo": "rainlanguage/rain.subgraph.docker",
+            "number": 3,
+            "url": "https://github.com/rainlanguage/rain.subgraph.docker/pull/3",
+            "title": "2023 12 23 anvil"
+          }
+        ]
+      },
+      "ai:ready": {
+        "count": 1,
+        "prs": [
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 254,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/254",
+            "title": "feat(deps): bump rainlang to 0.1.8 for NotAnAddress(bytes32) — REQUIRES redeploy at land"
           }
         ]
       }
@@ -966,25 +2024,49 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [],
-  "archivedRepoPrs": [],
+  "archivedRepoPrs": [
+    {
+      "repo": "rainlanguage/rain.webapp",
+      "number": 354,
+      "url": "https://github.com/rainlanguage/rain.webapp/pull/354",
+      "title": "Boolean GUI presets emit rainlang 1/0 + Storybook preset-buttons story (rainix#262 pilot)"
+    },
+    {
+      "repo": "rainlanguage/rain.uniswap",
+      "number": 31,
+      "url": "https://github.com/rainlanguage/rain.uniswap/pull/31",
+      "title": "2024 06 23 sushi v3"
+    },
+    {
+      "repo": "rainlanguage/rain-protocol",
+      "number": 675,
+      "url": "https://github.com/rainlanguage/rain-protocol/pull/675",
+      "title": "remove ob"
+    },
+    {
+      "repo": "rainlanguage/rain-protocol",
+      "number": 613,
+      "url": "https://github.com/rainlanguage/rain-protocol/pull/613",
+      "title": "add generic errors for integrity operand overflow and underflow"
+    }
+  ],
   "leaks": [],
   "counts": {
-    "unvetted": 74,
-    "blockedOn": 6,
-    "ready": 0,
-    "needsWork": 14,
+    "unvetted": 73,
+    "blockedOn": 10,
+    "ready": 1,
+    "needsWork": 94,
     "relink": 0,
-    "design": 5,
+    "design": 6,
     "blockedInfra": 0,
     "closeCandidateIssues": 3,
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 100,
-    "archivedRepoPrs": 0,
+    "totalProducerPrs": 185,
+    "archivedRepoPrs": 4,
     "uncoveredIssues": 0,
-    "designPresentable": 5,
-    "designNoQuestion": 0,
-    "openIssues": 0
+    "designPresentable": 6,
+    "designNoQuestion": 0
   }
 }
