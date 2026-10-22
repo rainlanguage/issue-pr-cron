@@ -194,12 +194,6 @@
         "title": "Fix #327: make Footer per-network token rows reactive on allTokens"
       },
       {
-        "repo": "S01-Issuer/st0x.deploy",
-        "number": 250,
-        "url": "https://github.com/S01-Issuer/st0x.deploy/pull/250",
-        "title": "feat(deploy): deterministic-clone toolchain + deterministic V4 authoriser deploy capability (#292 step 1)"
-      },
-      {
         "repo": "rainlanguage/rainlang-codemirror",
         "number": 32,
         "url": "https://github.com/rainlanguage/rainlang-codemirror/pull/32",
@@ -779,6 +773,12 @@
         "prs": [
           {
             "repo": "S01-Issuer/st0x.deploy",
+            "number": 497,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/497",
+            "title": "Registry-admin V4 authoriser clone: bind the admin in the ConfigRegistry, deploy one clone on every chain"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
             "number": 496,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/496",
             "title": "Drop per-chain migration-applied asserts; the dashboard tracks them"
@@ -944,12 +944,6 @@
             "number": 203,
             "url": "https://github.com/rainlanguage/rain-org-health/pull/203",
             "title": "Deployments: a Known issues sub-tab; move the bricked-contracts section there"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 467,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/467",
-            "title": "Check each token's production beacon in the orchestrator vault-logic lock"
           },
           {
             "repo": "rainlanguage/rain.math.float",
@@ -1274,7 +1268,7 @@
         }
       },
       "ai:needs-work": {
-        "count": 94,
+        "count": 93,
         "prs": [
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -1359,12 +1353,6 @@
             "number": 425,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/425",
             "title": "Fix #327: make Footer per-network token rows reactive on allTokens"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 250,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/250",
-            "title": "feat(deploy): deterministic-clone toolchain + deterministic V4 authoriser deploy capability (#292 step 1)"
           },
           {
             "repo": "rainlanguage/rainlang-codemirror",
@@ -2095,6 +2083,12 @@
       "number": 466,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/466",
       "title": "Role ids are inline keccak256 strings instead of named constants"
+    },
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 465,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/465",
+      "title": "Orchestrator vault-logic lock checks the current release's beacons, not the tokens' production beacons (RAI-2125)"
     },
     {
       "repo": "S01-Issuer/st0x.deploy",
@@ -6508,7 +6502,7 @@
     "unvetted": 73,
     "blockedOn": 10,
     "ready": 1,
-    "needsWork": 94,
+    "needsWork": 93,
     "relink": 0,
     "design": 6,
     "blockedInfra": 0,
@@ -6516,16 +6510,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 185,
+    "totalProducerPrs": 184,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 742,
+    "uncoveredIssues": 743,
     "designPresentable": 6,
     "designNoQuestion": 0,
     "openIssues": 903
   },
   "ages": {
     "openIssues": {
-      "meanDays": 315.5,
+      "meanDays": 315.6,
       "medianDays": 130.0,
       "oldestDays": 1732.9
     }
