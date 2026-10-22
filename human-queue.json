@@ -793,37 +793,25 @@
         ]
       },
       "un-vetted": {
-        "count": 75,
+        "count": 73,
         "prs": [
           {
-            "repo": "rainlanguage/rain.tofu.erc20-decimals.deploy",
-            "number": 12,
-            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals.deploy/pull/12",
-            "title": "release: 0.1.1"
-          },
-          {
             "repo": "rainlanguage/rain.metadata.deploy",
-            "number": 20,
-            "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/20",
-            "title": "release: 0.1.2"
+            "number": 21,
+            "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/21",
+            "title": "release: 0.1.3"
           },
           {
-            "repo": "rainlanguage/rain.math.float.deploy",
-            "number": 48,
-            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/48",
-            "title": "release: 0.1.6"
+            "repo": "rainlanguage/rain-org-health",
+            "number": 209,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/209",
+            "title": "Deployments: root authority's config bindings, st0x.deploy migration line and delegates per network (#208)"
           },
           {
-            "repo": "rainlanguage/rainlang.deploy",
-            "number": 12,
-            "url": "https://github.com/rainlanguage/rainlang.deploy/pull/12",
-            "title": "Bump rain-deploy 0.1.19 -> 0.1.20, rain-factory 0.2.0 -> 0.2.4, rainlang 0.2.15 -> 0.2.16"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 345,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/345",
-            "title": "Add ApproveMigrationDelegate; share the approval run between registries"
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 490,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/490",
+            "title": "Subgraph: index ConfigRegistry, MigrationRegistry and factory-built vaults"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -2078,12 +2066,6 @@
       "number": 418,
       "url": "https://github.com/rainlanguage/rainix/issues/418",
       "title": "install-staged-config: remove the script/build.sh hook skip; rainix is the sole installer"
-    },
-    {
-      "repo": "rainlanguage/rain-org-health",
-      "number": 208,
-      "url": "https://github.com/rainlanguage/rain-org-health/issues/208",
-      "title": "Dashboard: st0x ConfigRegistry bindings, MigrationRegistry line and delegates per chain"
     },
     {
       "repo": "S01-Issuer/st0x.deploy",
@@ -6554,7 +6536,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 75,
+    "unvetted": 73,
     "blockedOn": 10,
     "ready": 1,
     "needsWork": 96,
@@ -6565,9 +6547,9 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 190,
+    "totalProducerPrs": 188,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 742,
+    "uncoveredIssues": 741,
     "designPresentable": 7,
     "designNoQuestion": 0,
     "openIssues": 904
@@ -6576,7 +6558,7 @@
     "openIssues": {
       "meanDays": 315.1,
       "medianDays": 130.4,
-      "oldestDays": 1732.5
+      "oldestDays": 1732.6
     }
   }
 }
