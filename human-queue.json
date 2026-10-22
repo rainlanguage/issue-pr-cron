@@ -793,8 +793,14 @@
         ]
       },
       "un-vetted": {
-        "count": 73,
+        "count": 74,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.tofu.erc20-decimals.deploy",
+            "number": 13,
+            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals.deploy/pull/13",
+            "title": "release: 0.1.2"
+          },
           {
             "repo": "rainlanguage/rain.metadata.deploy",
             "number": 21,
@@ -6536,7 +6542,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 73,
+    "unvetted": 74,
     "blockedOn": 10,
     "ready": 1,
     "needsWork": 96,
@@ -6547,7 +6553,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 188,
+    "totalProducerPrs": 189,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 741,
     "designPresentable": 7,
@@ -6556,8 +6562,8 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 315.1,
-      "medianDays": 130.4,
+      "meanDays": 315.2,
+      "medianDays": 130.5,
       "oldestDays": 1732.6
     }
   }
