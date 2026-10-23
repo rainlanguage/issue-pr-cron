@@ -772,6 +772,18 @@
         "count": 70,
         "prs": [
           {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 164,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/164",
+            "title": "Pass rainix sol static: forge lint -D warnings and comment-loc-cap"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 163,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/163",
+            "title": "Extract the beacon from RegistryBeaconProxy runtime bytecode"
+          },
+          {
             "repo": "rainlanguage/raindex",
             "number": 2917,
             "url": "https://github.com/rainlanguage/raindex/pull/2917",
@@ -797,21 +809,9 @@
           },
           {
             "repo": "rainlanguage/raindex",
-            "number": 2913,
-            "url": "https://github.com/rainlanguage/raindex/pull/2913",
-            "title": "Deploy suites declare exactly the deployments their code calls"
-          },
-          {
-            "repo": "rainlanguage/raindex",
             "number": 2912,
             "url": "https://github.com/rainlanguage/raindex/pull/2912",
             "title": "clear3: refuse a side take would skip (zero output / negative ratio)"
-          },
-          {
-            "repo": "rainlanguage/raindex.interface",
-            "number": 78,
-            "url": "https://github.com/rainlanguage/raindex.interface/pull/78",
-            "title": "Restore unsupported-token warning on IRaindexV6 (incl. fee-on-transfer)"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -6495,7 +6495,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 315.2,
+      "meanDays": 315.3,
       "medianDays": 129.9,
       "oldestDays": 1733.7
     }
