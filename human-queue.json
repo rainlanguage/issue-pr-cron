@@ -769,31 +769,19 @@
         ]
       },
       "un-vetted": {
-        "count": 70,
+        "count": 67,
         "prs": [
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 502,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/502",
+            "title": "Fix main build: retarget #478's rain-deploy imports to 0.1.22"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 501,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/501",
             "title": "Move to rain-vats 0.2.9; remove the beacon-set deployers"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 500,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/500",
-            "title": "Bump rain-extrospection-deploy 0.1.0 -> 0.1.1"
-          },
-          {
-            "repo": "rainlanguage/rain.vats.flare",
-            "number": 6,
-            "url": "https://github.com/rainlanguage/rain.vats.flare/pull/6",
-            "title": "Bump rain-vats 0.2.7 -> 0.2.9, rain-factory 0.2.4 -> 0.2.5"
-          },
-          {
-            "repo": "rainlanguage/rain-org-health",
-            "number": 213,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/213",
-            "title": "Deployments: discover receipt vaults on-chain, diff against privileged-addresses.json"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -890,12 +878,6 @@
             "number": 92,
             "url": "https://github.com/rainlanguage/claude-audit-skills/pull/92",
             "title": "feat(audit): one test-coverage finding per surviving mutant"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 478,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/478",
-            "title": "Backfill MigrationRegistry V3 from V2"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -1994,6 +1976,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.vats",
+      "number": 351,
+      "url": "https://github.com/rainlanguage/rain.vats/issues/351",
+      "title": "OffchainAssetReceiptVault is near EIP-170 at optimizer_runs 200"
+    },
     {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 492,
@@ -6475,7 +6463,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 70,
+    "unvetted": 67,
     "blockedOn": 10,
     "ready": 1,
     "needsWork": 93,
@@ -6486,18 +6474,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 181,
+    "totalProducerPrs": 178,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 742,
+    "uncoveredIssues": 743,
     "designPresentable": 6,
     "designNoQuestion": 0,
-    "openIssues": 902
+    "openIssues": 901
   },
   "ages": {
     "openIssues": {
-      "meanDays": 316.5,
-      "medianDays": 131.4,
-      "oldestDays": 1733.5
+      "meanDays": 316.9,
+      "medianDays": 132.2,
+      "oldestDays": 1733.6
     }
   }
 }
