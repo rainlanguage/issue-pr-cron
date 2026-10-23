@@ -769,19 +769,19 @@
         ]
       },
       "un-vetted": {
-        "count": 71,
+        "count": 70,
         "prs": [
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 501,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/501",
+            "title": "Move to rain-vats 0.2.9; remove the beacon-set deployers"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 500,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/500",
-            "title": "Bump stale soldeer deps"
-          },
-          {
-            "repo": "rainlanguage/rainlang",
-            "number": 600,
-            "url": "https://github.com/rainlanguage/rainlang/pull/600",
-            "title": "bump rain-math-float-deploy 0.1.7"
+            "title": "Bump rain-extrospection-deploy 0.1.0 -> 0.1.1"
           },
           {
             "repo": "rainlanguage/rain.vats.flare",
@@ -920,12 +920,6 @@
             "number": 205,
             "url": "https://github.com/rainlanguage/rain-org-health/pull/205",
             "title": "Deployments: read st0x facts from privileged-addresses.json and ideal-roles.json, not Solidity constant names"
-          },
-          {
-            "repo": "rainlanguage/rain-org-health",
-            "number": 204,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/204",
-            "title": "Deployments: a Migrations sub-tab — every deploy-repo migration, run or not, per network (#202)"
           },
           {
             "repo": "rainlanguage/rain-org-health",
@@ -6481,7 +6475,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 71,
+    "unvetted": 70,
     "blockedOn": 10,
     "ready": 1,
     "needsWork": 93,
@@ -6492,18 +6486,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 182,
+    "totalProducerPrs": 181,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 742,
     "designPresentable": 6,
     "designNoQuestion": 0,
-    "openIssues": 903
+    "openIssues": 902
   },
   "ages": {
     "openIssues": {
-      "meanDays": 316.1,
-      "medianDays": 130.5,
-      "oldestDays": 1733.4
+      "meanDays": 316.4,
+      "medianDays": 131.3,
+      "oldestDays": 1733.5
     }
   }
 }
