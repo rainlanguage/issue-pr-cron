@@ -769,14 +769,8 @@
         ]
       },
       "un-vetted": {
-        "count": 67,
+        "count": 63,
         "prs": [
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 502,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/502",
-            "title": "Fix main build: retarget #478's rain-deploy imports to 0.1.22"
-          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 501,
@@ -806,18 +800,6 @@
             "number": 349,
             "url": "https://github.com/rainlanguage/rain.vats/pull/349",
             "title": "ConfigRegistryOffchainAssetReceiptVaultAuthorizerV1: initial admin from the ConfigRegistry"
-          },
-          {
-            "repo": "rainlanguage/rain.verify",
-            "number": 41,
-            "url": "https://github.com/rainlanguage/rain.verify/pull/41",
-            "title": "Bump rain-deploy 0.1.22, rainlang 0.2.17, rain-math-float-deploy 0.1.6"
-          },
-          {
-            "repo": "rainlanguage/rain.dia",
-            "number": 77,
-            "url": "https://github.com/rainlanguage/rain.dia/pull/77",
-            "title": "Bump rain-deploy 0.1.22, rainlang 0.2.18, rain-math-float-deploy 0.1.6"
           },
           {
             "repo": "rainlanguage/rain-org-health",
@@ -860,12 +842,6 @@
             "number": 486,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/486",
             "title": "release: 0.1.31 (fix tag release for push-free rainix-tag-release)"
-          },
-          {
-            "repo": "rainlanguage/rain.merkle.deploy",
-            "number": 27,
-            "url": "https://github.com/rainlanguage/rain.merkle.deploy/pull/27",
-            "title": "Convert to the deploy-repo shape (rain-merkle-deploy, merkle-words suite)"
           },
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -1976,6 +1952,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/raindex",
+      "number": 2906,
+      "url": "https://github.com/rainlanguage/raindex/issues/2906",
+      "title": "clear3 runs state changes for a side take would skip (zero output / negative ratio)"
+    },
     {
       "repo": "rainlanguage/rain.vats",
       "number": 351,
@@ -6463,7 +6445,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 67,
+    "unvetted": 63,
     "blockedOn": 10,
     "ready": 1,
     "needsWork": 93,
@@ -6474,17 +6456,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 178,
+    "totalProducerPrs": 174,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 743,
+    "uncoveredIssues": 744,
     "designPresentable": 6,
     "designNoQuestion": 0,
-    "openIssues": 901
+    "openIssues": 902
   },
   "ages": {
     "openIssues": {
-      "meanDays": 316.9,
-      "medianDays": 132.2,
+      "meanDays": 316.6,
+      "medianDays": 131.5,
       "oldestDays": 1733.6
     }
   }

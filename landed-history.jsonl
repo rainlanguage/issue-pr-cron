@@ -1105,3 +1105,6 @@
 {"ts":"2026-10-23T10:13:21Z","observedAt":"2026-10-23T10:32:00Z","kind":"pr","repo":"S01-Issuer/st0x.deploy","number":500}
 {"ts":"2026-10-23T10:07:19Z","observedAt":"2026-10-23T10:32:00Z","kind":"pr","repo":"rainlanguage/rain-org-health","number":213}
 {"ts":"2026-10-23T10:05:21Z","observedAt":"2026-10-23T10:32:00Z","kind":"pr","repo":"rainlanguage/rain.vats.flare","number":6}
+{"ts":"2026-10-23T10:52:11Z","observedAt":"2026-10-23T11:31:30Z","kind":"pr","repo":"rainlanguage/rain.dia","number":77}
+{"ts":"2026-10-23T10:57:16Z","observedAt":"2026-10-23T11:31:30Z","kind":"pr","repo":"rainlanguage/rain.merkle.deploy","number":27}
+{"ts":"2026-10-23T10:57:20Z","observedAt":"2026-10-23T11:31:30Z","kind":"pr","repo":"rainlanguage/rain.verify","number":41}
