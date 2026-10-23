@@ -1108,3 +1108,4 @@
 {"ts":"2026-10-23T10:52:11Z","observedAt":"2026-10-23T11:31:30Z","kind":"pr","repo":"rainlanguage/rain.dia","number":77}
 {"ts":"2026-10-23T10:57:16Z","observedAt":"2026-10-23T11:31:30Z","kind":"pr","repo":"rainlanguage/rain.merkle.deploy","number":27}
 {"ts":"2026-10-23T10:57:20Z","observedAt":"2026-10-23T11:31:30Z","kind":"pr","repo":"rainlanguage/rain.verify","number":41}
+{"ts":"2026-10-23T13:26:25Z","observedAt":"2026-10-23T13:32:54Z","kind":"pr","repo":"S01-Issuer/st0x.deploy","number":506}
