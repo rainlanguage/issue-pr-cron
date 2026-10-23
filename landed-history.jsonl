@@ -1094,3 +1094,8 @@
 {"ts":"2026-10-22T20:32:24Z","observedAt":"2026-10-22T21:32:46Z","kind":"pr","repo":"rainlanguage/rain.math.float.deploy","number":49}
 {"ts":"2026-10-22T20:33:06Z","observedAt":"2026-10-22T21:32:46Z","kind":"pr","repo":"rainlanguage/rain.metadata.deploy","number":21}
 {"ts":"2026-10-22T20:41:18Z","observedAt":"2026-10-22T21:32:46Z","kind":"pr","repo":"rainlanguage/rain.vats","number":345}
+{"ts":"2026-10-23T06:58:16Z","observedAt":"2026-10-23T07:32:55Z","kind":"pr","repo":"S01-Issuer/st0x.deploy","number":471}
+{"ts":"2026-10-23T07:02:03Z","observedAt":"2026-10-23T07:32:55Z","kind":"pr","repo":"rainlanguage/rain-org-health","number":211}
+{"ts":"2026-10-23T06:37:30Z","observedAt":"2026-10-23T07:32:55Z","kind":"pr","repo":"rainlanguage/rain.extrospection.deploy","number":15}
+{"ts":"2026-10-23T06:51:13Z","observedAt":"2026-10-23T07:32:55Z","kind":"pr","repo":"rainlanguage/rain.tofu.erc20-decimals.deploy","number":14}
+{"ts":"2026-10-23T06:52:29Z","observedAt":"2026-10-23T07:32:55Z","kind":"pr","repo":"rainlanguage/rainlang","number":599}
