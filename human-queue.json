@@ -50,15 +50,15 @@
         "title": "fix: enforce the DecimalsTooLarge bound inside LibFtsoCurrentPriceUsd"
       },
       {
-        "repo": "rainlanguage/raindex",
+        "repo": "rainlanguage/raindex.deploy",
         "number": 2724,
-        "url": "https://github.com/rainlanguage/raindex/pull/2724",
+        "url": "https://github.com/rainlanguage/raindex.deploy/pull/2724",
         "title": "Pin all third-party GitHub Actions to commit SHAs"
       },
       {
-        "repo": "rainlanguage/raindex",
+        "repo": "rainlanguage/raindex.deploy",
         "number": 2722,
-        "url": "https://github.com/rainlanguage/raindex/pull/2722",
+        "url": "https://github.com/rainlanguage/raindex.deploy/pull/2722",
         "title": "Add \"remove and withdraw all\" option to order removal (#2024)"
       }
     ],
@@ -512,21 +512,21 @@
         "title": "docs(natspec): document floor-rounding direction in convert* words"
       },
       {
-        "repo": "rainlanguage/raindex",
+        "repo": "rainlanguage/raindex.deploy",
         "number": 2779,
-        "url": "https://github.com/rainlanguage/raindex/pull/2779",
+        "url": "https://github.com/rainlanguage/raindex.deploy/pull/2779",
         "title": "fix: include counterparty (zero address) as 3rd context row in addOrder/removeOrder"
       },
       {
-        "repo": "rainlanguage/raindex",
+        "repo": "rainlanguage/raindex.deploy",
         "number": 2778,
-        "url": "https://github.com/rainlanguage/raindex/pull/2778",
+        "url": "https://github.com/rainlanguage/raindex.deploy/pull/2778",
         "title": "fix: mask signer row operand to low byte"
       },
       {
-        "repo": "rainlanguage/raindex",
+        "repo": "rainlanguage/raindex.deploy",
         "number": 2777,
-        "url": "https://github.com/rainlanguage/raindex/pull/2777",
+        "url": "https://github.com/rainlanguage/raindex.deploy/pull/2777",
         "title": "fix: guard weighted-average merge against zero outputAmountSum in historicalOrderCharts"
       },
       {
@@ -602,27 +602,27 @@
         "title": "test: mutation-harden LibFixedPointDecimalParse coverage"
       },
       {
-        "repo": "rainlanguage/raindex",
+        "repo": "rainlanguage/raindex.deploy",
         "number": 2721,
-        "url": "https://github.com/rainlanguage/raindex/pull/2721",
+        "url": "https://github.com/rainlanguage/raindex.deploy/pull/2721",
         "title": "fix(webapp): stop double-fetching custom registries in advanced mode"
       },
       {
-        "repo": "rainlanguage/raindex",
+        "repo": "rainlanguage/raindex.deploy",
         "number": 2720,
-        "url": "https://github.com/rainlanguage/raindex/pull/2720",
+        "url": "https://github.com/rainlanguage/raindex.deploy/pull/2720",
         "title": "Retry SDK indexing on transient timeout before failing"
       },
       {
-        "repo": "rainlanguage/raindex",
+        "repo": "rainlanguage/raindex.deploy",
         "number": 2719,
-        "url": "https://github.com/rainlanguage/raindex/pull/2719",
+        "url": "https://github.com/rainlanguage/raindex.deploy/pull/2719",
         "title": "Strip RPC URLs from generated dotrain to prevent API token leak (#2165)"
       },
       {
-        "repo": "rainlanguage/raindex",
+        "repo": "rainlanguage/raindex.deploy",
         "number": 2702,
-        "url": "https://github.com/rainlanguage/raindex/pull/2702",
+        "url": "https://github.com/rainlanguage/raindex.deploy/pull/2702",
         "title": "Dust accounting: per-(user, token) credit ledger realized on the next token move (#2673)"
       },
       {
@@ -688,9 +688,9 @@
         "title": "docs+test(flreth): document Dinero naming convention and add reciprocity test"
       },
       {
-        "repo": "rainlanguage/raindex",
+        "repo": "rainlanguage/raindex.deploy",
         "number": 2793,
-        "url": "https://github.com/rainlanguage/raindex/pull/2793",
+        "url": "https://github.com/rainlanguage/raindex.deploy/pull/2793",
         "title": "perf: eliminate redundant read_dispair calls in try_into_call"
       },
       {
@@ -755,27 +755,27 @@
             "title": "fix: enforce the DecimalsTooLarge bound inside LibFtsoCurrentPriceUsd"
           },
           {
-            "repo": "rainlanguage/raindex",
+            "repo": "rainlanguage/raindex.deploy",
             "number": 2724,
-            "url": "https://github.com/rainlanguage/raindex/pull/2724",
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2724",
             "title": "Pin all third-party GitHub Actions to commit SHAs"
           },
           {
-            "repo": "rainlanguage/raindex",
+            "repo": "rainlanguage/raindex.deploy",
             "number": 2722,
-            "url": "https://github.com/rainlanguage/raindex/pull/2722",
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2722",
             "title": "Add \"remove and withdraw all\" option to order removal (#2024)"
           }
         ]
       },
       "un-vetted": {
-        "count": 67,
+        "count": 66,
         "prs": [
           {
-            "repo": "rainlanguage/raindex",
-            "number": 2919,
-            "url": "https://github.com/rainlanguage/raindex/pull/2919",
-            "title": "Convert raindex to the .deploy convention: prod/subgraph tests pin the released suite"
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 509,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/509",
+            "title": "Deploy every Zoltu suite through StoxDeploySuites"
           },
           {
             "repo": "rainlanguage/rain-org-health",
@@ -784,28 +784,22 @@
             "title": "Deployments: Root registry tab — registry delegations, config changes, migration records"
           },
           {
-            "repo": "rainlanguage/raindex",
+            "repo": "rainlanguage/raindex.deploy",
             "number": 2917,
-            "url": "https://github.com/rainlanguage/raindex/pull/2917",
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2917",
             "title": "Signer / signed-context words read the real signer columns in every post task"
           },
           {
-            "repo": "rainlanguage/raindex",
+            "repo": "rainlanguage/raindex.deploy",
             "number": 2916,
-            "url": "https://github.com/rainlanguage/raindex/pull/2916",
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2916",
             "title": "Zero the length word of takeOrders4's orderIOCalculationsToHandle"
           },
           {
-            "repo": "rainlanguage/raindex",
+            "repo": "rainlanguage/raindex.deploy",
             "number": 2915,
-            "url": "https://github.com/rainlanguage/raindex/pull/2915",
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2915",
             "title": "arb4 rejects an untrusted raindex with BadRaindex"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 505,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/505",
-            "title": "Drop the threshold migration's vault-ownership drift test"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -988,21 +982,21 @@
             "title": "SignedContextV2: EIP-712 signed context under a caller-chosen domain separator, exposed in context"
           },
           {
-            "repo": "rainlanguage/raindex",
+            "repo": "rainlanguage/raindex.deploy",
             "number": 2854,
-            "url": "https://github.com/rainlanguage/raindex/pull/2854",
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2854",
             "title": "Verify the graph-node API schema snapshot in CI"
           },
           {
-            "repo": "rainlanguage/raindex",
+            "repo": "rainlanguage/raindex.deploy",
             "number": 2846,
-            "url": "https://github.com/rainlanguage/raindex/pull/2846",
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2846",
             "title": "Add the Manual sol verify caller workflow"
           },
           {
-            "repo": "rainlanguage/raindex",
+            "repo": "rainlanguage/raindex.deploy",
             "number": 2842,
-            "url": "https://github.com/rainlanguage/raindex/pull/2842",
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2842",
             "title": "Float the suites declaration's pragma, as every other abstract here does"
           },
           {
@@ -1120,9 +1114,9 @@
             "title": "bootstrap.sh: stand a fresh producer/vetter box up from a tracked script"
           },
           {
-            "repo": "rainlanguage/raindex",
+            "repo": "rainlanguage/raindex.deploy",
             "number": 2835,
-            "url": "https://github.com/rainlanguage/raindex/pull/2835",
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2835",
             "title": "Remove submodule-era residue; repair the copilot build fallback"
           },
           {
@@ -1162,9 +1156,9 @@
             "title": "docs+test(flreth): document Dinero naming convention and add reciprocity test"
           },
           {
-            "repo": "rainlanguage/raindex",
+            "repo": "rainlanguage/raindex.deploy",
             "number": 2793,
-            "url": "https://github.com/rainlanguage/raindex/pull/2793",
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2793",
             "title": "perf: eliminate redundant read_dispair calls in try_into_call"
           },
           {
@@ -1637,21 +1631,21 @@
             "title": "docs(natspec): document floor-rounding direction in convert* words"
           },
           {
-            "repo": "rainlanguage/raindex",
+            "repo": "rainlanguage/raindex.deploy",
             "number": 2779,
-            "url": "https://github.com/rainlanguage/raindex/pull/2779",
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2779",
             "title": "fix: include counterparty (zero address) as 3rd context row in addOrder/removeOrder"
           },
           {
-            "repo": "rainlanguage/raindex",
+            "repo": "rainlanguage/raindex.deploy",
             "number": 2778,
-            "url": "https://github.com/rainlanguage/raindex/pull/2778",
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2778",
             "title": "fix: mask signer row operand to low byte"
           },
           {
-            "repo": "rainlanguage/raindex",
+            "repo": "rainlanguage/raindex.deploy",
             "number": 2777,
-            "url": "https://github.com/rainlanguage/raindex/pull/2777",
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2777",
             "title": "fix: guard weighted-average merge against zero outputAmountSum in historicalOrderCharts"
           },
           {
@@ -1727,27 +1721,27 @@
             "title": "test: mutation-harden LibFixedPointDecimalParse coverage"
           },
           {
-            "repo": "rainlanguage/raindex",
+            "repo": "rainlanguage/raindex.deploy",
             "number": 2721,
-            "url": "https://github.com/rainlanguage/raindex/pull/2721",
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2721",
             "title": "fix(webapp): stop double-fetching custom registries in advanced mode"
           },
           {
-            "repo": "rainlanguage/raindex",
+            "repo": "rainlanguage/raindex.deploy",
             "number": 2720,
-            "url": "https://github.com/rainlanguage/raindex/pull/2720",
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2720",
             "title": "Retry SDK indexing on transient timeout before failing"
           },
           {
-            "repo": "rainlanguage/raindex",
+            "repo": "rainlanguage/raindex.deploy",
             "number": 2719,
-            "url": "https://github.com/rainlanguage/raindex/pull/2719",
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2719",
             "title": "Strip RPC URLs from generated dotrain to prevent API token leak (#2165)"
           },
           {
-            "repo": "rainlanguage/raindex",
+            "repo": "rainlanguage/raindex.deploy",
             "number": 2702,
-            "url": "https://github.com/rainlanguage/raindex/pull/2702",
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2702",
             "title": "Dust accounting: per-(user, token) credit ledger realized on the next token move (#2673)"
           },
           {
@@ -1976,6 +1970,30 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain-org-health",
+      "number": 219,
+      "url": "https://github.com/rainlanguage/rain-org-health/issues/219",
+      "title": "Beacons: only the timelock is a healthy owner"
+    },
+    {
+      "repo": "rainlanguage/rain-org-health",
+      "number": 218,
+      "url": "https://github.com/rainlanguage/rain-org-health/issues/218",
+      "title": "Tokens: expect each token's authoriser by region"
+    },
+    {
+      "repo": "rainlanguage/rain-org-health",
+      "number": 217,
+      "url": "https://github.com/rainlanguage/rain-org-health/issues/217",
+      "title": "Known owners: Safe owner set misses OWNER_TDM"
+    },
+    {
+      "repo": "rainlanguage/rain-org-health",
+      "number": 216,
+      "url": "https://github.com/rainlanguage/rain-org-health/issues/216",
+      "title": "Beacons: target each beacon's expected implementation, not 0.1.1"
+    },
     {
       "repo": "rainlanguage/rain.vats",
       "number": 351,
@@ -2535,9 +2553,9 @@
       "title": "Retire rain.lib.hash after rainlang.interface adopts EIP-712 signed context: inline the one hashWords line and drop the dependency"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2856,
-      "url": "https://github.com/rainlanguage/raindex/issues/2856",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2856",
       "title": "try_into_emit_meta_call hand-rolls the dotrain emission recipe rain-metadata exports"
     },
     {
@@ -2583,15 +2601,15 @@
       "title": "Upstream the graph-node API schema snapshot check as a reusable workflow, once two consumers have defined its seam"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2851,
-      "url": "https://github.com/rainlanguage/raindex/issues/2851",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2851",
       "title": "Pin clear3's shipped signed-context routing with a baseline test"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2850,
-      "url": "https://github.com/rainlanguage/raindex/issues/2850",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2850",
       "title": "clear3 cross-wires alice/bob signed context vs its interface docs; next version must fix it with a loud break"
     },
     {
@@ -2679,9 +2697,9 @@
       "title": "rainix-sol/test red on main: 5 prod fork tests assert deployments that lag main"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2840,
-      "url": "https://github.com/rainlanguage/raindex/issues/2840",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2840",
       "title": "rainix-sol/static (slither) is red on main; #2838 merged over it"
     },
     {
@@ -2763,9 +2781,9 @@
       "title": "Bump solc to current and enable via_ir: the legacy pipeline is taxing structurally-correct code"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2837,
-      "url": "https://github.com/rainlanguage/raindex/issues/2837",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2837",
       "title": "A reverting calculate-io eval reverts the whole takeOrders4 batch instead of skipping that order"
     },
     {
@@ -2919,9 +2937,9 @@
       "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2836,
-      "url": "https://github.com/rainlanguage/raindex/issues/2836",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2836",
       "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
     },
     {
@@ -3165,9 +3183,9 @@
       "title": "Diagnose wedged release lane: wedged with no deploy half (rainix#296)"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2832,
-      "url": "https://github.com/rainlanguage/raindex/issues/2832",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2832",
       "title": "Split deploy half out of raindex (rainix#296)"
     },
     {
@@ -3489,21 +3507,21 @@
       "title": "Collapse un-vetted and awaiting-re-vet into one needs-vet state"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2824,
-      "url": "https://github.com/rainlanguage/raindex/issues/2824",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2824",
       "title": "Scenario-eval pipeline (charts/metrics + per-scenario words) is maintained but has no consumer"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2823,
-      "url": "https://github.com/rainlanguage/raindex/issues/2823",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2823",
       "title": "packages/ui-components/src/lib/utils is a junk drawer — split into named directories"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2822,
-      "url": "https://github.com/rainlanguage/raindex/issues/2822",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2822",
       "title": "raindex_cli logs have no timestamps (.without_time() in crates/cli/src/main.rs)"
     },
     {
@@ -3525,33 +3543,33 @@
       "title": "Vetter is the quality gate for ALL producer output, not just PRs (close-candidates first: ~1 in 3 wrong)"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2821,
-      "url": "https://github.com/rainlanguage/raindex/issues/2821",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2821",
       "title": "Dead-code sweep: unreferenced exports, orphaned modules, unused deps, commented-out blocks"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2820,
-      "url": "https://github.com/rainlanguage/raindex/issues/2820",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2820",
       "title": "Restore in-app order authoring: a free-form dotrain editor that can deploy without a registry"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2819,
-      "url": "https://github.com/rainlanguage/raindex/issues/2819",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2819",
       "title": "Browser-driven smoke tests for the webapp (extend the render-harness conventions to real user flows)"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2818,
-      "url": "https://github.com/rainlanguage/raindex/issues/2818",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2818",
       "title": "charts: support a `description` on plots (metrics already have one)"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2817,
-      "url": "https://github.com/rainlanguage/raindex/issues/2817",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2817",
       "title": "Deploy Order button is not disabled when the deployment config is incomplete/invalid"
     },
     {
@@ -3687,9 +3705,9 @@
       "title": "roh: track deployments (which version is live on which network) and flag deployed-beyond-audit"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2812,
-      "url": "https://github.com/rainlanguage/raindex/issues/2812",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2812",
       "title": "Goldsky ob4-base subgraph still serves pre-rename orderbook schema (breaks GraphQL consumers on SDK v6)"
     },
     {
@@ -3777,9 +3795,9 @@
       "title": "Convert BuildPointers to the shared LibSnapshot (drop the local copy + reconcile deployTags divergence)"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2809,
-      "url": "https://github.com/rainlanguage/raindex/issues/2809",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2809",
       "title": "Convert BuildPointers to the shared LibSnapshot (drop the local deployTag/freezeSnapshot copy)"
     },
     {
@@ -3825,9 +3843,9 @@
       "title": "Migrate soldeer dependency `rain-interpreter-interface` → `rainlang-interface`"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2805,
-      "url": "https://github.com/rainlanguage/raindex/issues/2805",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2805",
       "title": "Migrate soldeer dependency `rain-interpreter-interface` → `rainlang-interface`"
     },
     {
@@ -3903,9 +3921,9 @@
       "title": "Migrate to the next-version Soldeer release lifecycle (bump [package].version)"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2803,
-      "url": "https://github.com/rainlanguage/raindex/issues/2803",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2803",
       "title": "Migrate to the next-version Soldeer release lifecycle (bump [package].version)"
     },
     {
@@ -3915,15 +3933,15 @@
       "title": "Revert the auction-dca halflife clamp from #118 (fixed-point-era; not needed on float)"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2802,
-      "url": "https://github.com/rainlanguage/raindex/issues/2802",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2802",
       "title": "Depositing to a vault doesn't update an order's max output until page reload (stale cache)"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2801,
-      "url": "https://github.com/rainlanguage/raindex/issues/2801",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2801",
       "title": "Webapp: blank white screen for a long time on load, with no loading indication"
     },
     {
@@ -3963,9 +3981,9 @@
       "title": "st0x-deploy release lifecycle: foundry.toml = next version, generate-into-it, publish+bump+regenerate on merge"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2800,
-      "url": "https://github.com/rainlanguage/raindex/issues/2800",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2800",
       "title": "Document clear3 signed-context cross-assignment (alice/bob slots)"
     },
     {
@@ -3993,9 +4011,9 @@
       "title": "Orchestrator 1155 receiver: restrict to the known receipt implementation (single shared beacon) instead of accept-all + defensive probe"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2799,
-      "url": "https://github.com/rainlanguage/raindex/issues/2799",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2799",
       "title": "Make the deploy-constant check pointer-driven (drop the hardcoded prefix list + FFI/soldeer fetch)"
     },
     {
@@ -4227,9 +4245,9 @@
       "title": "Followup to #199: align versioned deploy constants + CI with raindex (single source of truth + artifact drift-check)"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2788,
-      "url": "https://github.com/rainlanguage/raindex/issues/2788",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2788",
       "title": "Allow the order input token to be optional"
     },
     {
@@ -4263,15 +4281,15 @@
       "title": "Update vendored dynamic-spread strategy to rain.strategies v6 (halflife exponent clamp)"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2746,
-      "url": "https://github.com/rainlanguage/raindex/issues/2746",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2746",
       "title": "Latest raindex should support Flare end-to-end"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2715,
-      "url": "https://github.com/rainlanguage/raindex/issues/2715",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2715",
       "title": "addOrder4 could validate calculate-source output count at add time (would make the runtime UnsupportedCalculateOutputs check removable)"
     },
     {
@@ -4281,15 +4299,15 @@
       "title": "perf(claims): Claims & Portfolio pages load slowly on first visit"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2671,
-      "url": "https://github.com/rainlanguage/raindex/issues/2671",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2671",
       "title": "Error-quality + NatSpec-accuracy bundle (OOB->Panic 0x32, clear revert ordering, stale clear/LibOpContext/quote2 NatSpec)"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2647,
-      "url": "https://github.com/rainlanguage/raindex/issues/2647",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2647",
       "title": "Post-action context: subparser words silently alias other fields or revert OOB (generalizes Protofire M02 #2619)"
     },
     {
@@ -4329,9 +4347,9 @@
       "title": "Add immutable CycloMintWrapper to make the safe deposit path verifiable (mitigates _msgSender spoofing, rain.vats#309)"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2599,
-      "url": "https://github.com/rainlanguage/raindex/issues/2599",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2599",
       "title": "Unify getrandom to 0.4 across the wasm dependency graph"
     },
     {
@@ -4353,9 +4371,9 @@
       "title": "Publish rainix nix derivations to a shared binary cache (substituter)"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2593,
-      "url": "https://github.com/rainlanguage/raindex/issues/2593",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2593",
       "title": "Remove ALL git dependencies + submodule path-deps from raindex (zero exceptions)"
     },
     {
@@ -4743,9 +4761,9 @@
       "title": "Replace Arbitrum rewards subgraph with direct RPC calls"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2540,
-      "url": "https://github.com/rainlanguage/raindex/issues/2540",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2540",
       "title": "Remote DB deployment via CI action"
     },
     {
@@ -4755,15 +4773,15 @@
       "title": "Security Enhancement: Mint Recipient Whitelist with Two-Key Model"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2524,
-      "url": "https://github.com/rainlanguage/raindex/issues/2524",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2524",
       "title": "Investigate lag when changing filters on Orders and Vaults pages"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2523,
-      "url": "https://github.com/rainlanguage/raindex/issues/2523",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2523",
       "title": "Vault detail page intermittently fails to load (v6.raindex.finance)"
     },
     {
@@ -4773,45 +4791,45 @@
       "title": "upstream GM word to float lib"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2471,
-      "url": "https://github.com/rainlanguage/raindex/issues/2471",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2471",
       "title": "Extract RaindexOrderBuilder from js_api into common crate"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2451,
-      "url": "https://github.com/rainlanguage/raindex/issues/2451",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2451",
       "title": "Local DB sync forensics: separate logs DB + structured sync logs"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2448,
-      "url": "https://github.com/rainlanguage/raindex/issues/2448",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2448",
       "title": "No way to debug user-reported local database issues"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2447,
-      "url": "https://github.com/rainlanguage/raindex/issues/2447",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2447",
       "title": "Add local DB support for fetching dotrain source"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2446,
-      "url": "https://github.com/rainlanguage/raindex/issues/2446",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2446",
       "title": "Use local DB for fetching dotrain source"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2445,
-      "url": "https://github.com/rainlanguage/raindex/issues/2445",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2445",
       "title": "Index metaboard contract events in the sync pipeline"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2426,
-      "url": "https://github.com/rainlanguage/raindex/issues/2426",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2426",
       "title": "Dynamic Chunking for Local DB Sync"
     },
     {
@@ -4821,105 +4839,105 @@
       "title": "I migrated your subgraph to HyperIndex - 100x faster indexing"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2410,
-      "url": "https://github.com/rainlanguage/raindex/issues/2410",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2410",
       "title": "Vaultless Phase 8: Quote Fillability (Optional)"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2409,
-      "url": "https://github.com/rainlanguage/raindex/issues/2409",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2409",
       "title": "Vaultless Phase 7: Performance Metrics Display"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2408,
-      "url": "https://github.com/rainlanguage/raindex/issues/2408",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2408",
       "title": "Vaultless Phase 6: Vault List Handling"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2407,
-      "url": "https://github.com/rainlanguage/raindex/issues/2407",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2407",
       "title": "Vaultless Phase 5: Webapp Display - Order Detail"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2406,
-      "url": "https://github.com/rainlanguage/raindex/issues/2406",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2406",
       "title": "Vaultless Phase 4: Webapp Order Creation UI"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2405,
-      "url": "https://github.com/rainlanguage/raindex/issues/2405",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2405",
       "title": "Vaultless Phase 3: GUI Order Operations"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2404,
-      "url": "https://github.com/rainlanguage/raindex/issues/2404",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2404",
       "title": "Vaultless Phase 2: SDK Validation Guards"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2402,
-      "url": "https://github.com/rainlanguage/raindex/issues/2402",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2402",
       "title": "Vaultless Orders (Direct Trading) - V6 Feature Implementation"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2400,
-      "url": "https://github.com/rainlanguage/raindex/issues/2400",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2400",
       "title": "Improve First-Load Experience on Mobile (Sync Status Visibility)"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2397,
-      "url": "https://github.com/rainlanguage/raindex/issues/2397",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2397",
       "title": "Remove subgraph fallback from get_balance_changes when using local DB"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2394,
-      "url": "https://github.com/rainlanguage/raindex/issues/2394",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2394",
       "title": "Implement LocalDB as data source for Take Orders API"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2389,
-      "url": "https://github.com/rainlanguage/raindex/issues/2389",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2389",
       "title": "V6 Migration - SDK & App Review"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2386,
-      "url": "https://github.com/rainlanguage/raindex/issues/2386",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2386",
       "title": "Implement Take Orders SDK with V6 Exact Swap Interface"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2377,
-      "url": "https://github.com/rainlanguage/raindex/issues/2377",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2377",
       "title": "Base Network Local DB taking way longer to sync"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2374,
-      "url": "https://github.com/rainlanguage/raindex/issues/2374",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2374",
       "title": "Support LocalDB as a data source for Order Detail “Volume” tab"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2357,
-      "url": "https://github.com/rainlanguage/raindex/issues/2357",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2357",
       "title": "Take Orders SDK – Phase 3: Exact‑In Simulation and Builder"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2353,
-      "url": "https://github.com/rainlanguage/raindex/issues/2353",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2353",
       "title": "Take Orders SDK Functionality"
     },
     {
@@ -4935,9 +4953,9 @@
       "title": "\"buy\" button shows for sold out assets"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2327,
-      "url": "https://github.com/rainlanguage/raindex/issues/2327",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2327",
       "title": "add retry when deposit tx timeouts"
     },
     {
@@ -4953,9 +4971,9 @@
       "title": "Refactor js package build process for removing the need for `await init()` call"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2206,
-      "url": "https://github.com/rainlanguage/raindex/issues/2206",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2206",
       "title": "Implement \"0 vault id\" logic in sdk and webapp"
     },
     {
@@ -4977,9 +4995,9 @@
       "title": "Marking the address that is blacklisted on the rewards subpage"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2105,
-      "url": "https://github.com/rainlanguage/raindex/issues/2105",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2105",
       "title": "Link the abstractions of DotrainRegistry, DotrainOrder and DotrainOrderGui"
     },
     {
@@ -5013,27 +5031,27 @@
       "title": "Rethink IRR / APY approach and naming conventions"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2052,
-      "url": "https://github.com/rainlanguage/raindex/issues/2052",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2052",
       "title": "Think about the flow of mullti-network in sdk"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2051,
-      "url": "https://github.com/rainlanguage/raindex/issues/2051",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2051",
       "title": "Add version dropdown to SDK docs website"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2049,
-      "url": "https://github.com/rainlanguage/raindex/issues/2049",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2049",
       "title": "Track Schwab fill prices"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2041,
-      "url": "https://github.com/rainlanguage/raindex/issues/2041",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2041",
       "title": "Re-deploy orderbook v5 and related infra across all networks"
     },
     {
@@ -5043,63 +5061,63 @@
       "title": "Update rain.strategies (`settings.yaml`, individual strategies, and then registry)"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2028,
-      "url": "https://github.com/rainlanguage/raindex/issues/2028",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2028",
       "title": "Remove CLI and ledger support from tauri app"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2027,
-      "url": "https://github.com/rainlanguage/raindex/issues/2027",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2027",
       "title": "the name of the project is not at all clearly visible on the landing page, can be improved with a border maybe or a darker font color"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2026,
-      "url": "https://github.com/rainlanguage/raindex/issues/2026",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2026",
       "title": "The theme button is missing on the landing page"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2025,
-      "url": "https://github.com/rainlanguage/raindex/issues/2025",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2025",
       "title": "The UI of deploying a limit order of chain, looks like a basic html file - can add some boxes and divs to make to look good with simpler and easier user experience"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2023,
-      "url": "https://github.com/rainlanguage/raindex/issues/2023",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2023",
       "title": "Fix deposit/withdraw buttons"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2022,
-      "url": "https://github.com/rainlanguage/raindex/issues/2022",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2022",
       "title": "Improve token selection UI/UX"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2021,
-      "url": "https://github.com/rainlanguage/raindex/issues/2021",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2021",
       "title": "Improve page load time"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2016,
-      "url": "https://github.com/rainlanguage/raindex/issues/2016",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2016",
       "title": "Wallet Connect Error"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 2011,
-      "url": "https://github.com/rainlanguage/raindex/issues/2011",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2011",
       "title": "Passing structs back to WASM without losing its reference"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1998,
-      "url": "https://github.com/rainlanguage/raindex/issues/1998",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1998",
       "title": "Ability to reference price ratios in field names/descriptions and for default field values in `DotrainOrderGui` yaml"
     },
     {
@@ -5109,27 +5127,27 @@
       "title": "receipts not showing in GUI"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1991,
-      "url": "https://github.com/rainlanguage/raindex/issues/1991",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1991",
       "title": "Create types to parse YAML to/from and isolate the YAML handling. Use well-typed values everywhere else"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1990,
-      "url": "https://github.com/rainlanguage/raindex/issues/1990",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1990",
       "title": "Create strongly typed equivalents of subgraph types, convert between them directly in the subgraph crate, and make the current Sg* types private to the subgraph crate"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1967,
-      "url": "https://github.com/rainlanguage/raindex/issues/1967",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1967",
       "title": "Rethink about the getters that return `Result` in the raindex client sdk"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1965,
-      "url": "https://github.com/rainlanguage/raindex/issues/1965",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1965",
       "title": "Tauri app does not display error if settings text is not valid"
     },
     {
@@ -5139,15 +5157,15 @@
       "title": "Update wasm export macro to remove pre-processing on some of the attributes"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1954,
-      "url": "https://github.com/rainlanguage/raindex/issues/1954",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1954",
       "title": "Move query filters in get orders and get vaults queries to the new RaindexClient"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1953,
-      "url": "https://github.com/rainlanguage/raindex/issues/1953",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1953",
       "title": "Remove alloy-ethers-typecast dependency from rain.orderbook"
     },
     {
@@ -5157,33 +5175,33 @@
       "title": "Rouzwelt  comms"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1898,
-      "url": "https://github.com/rainlanguage/raindex/issues/1898",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1898",
       "title": "callback closure for getting prices"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1887,
-      "url": "https://github.com/rainlanguage/raindex/issues/1887",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1887",
       "title": "Optimize PR CI by conditional execution"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1867,
-      "url": "https://github.com/rainlanguage/raindex/issues/1867",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1867",
       "title": "vault balance chnage types filter"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1794,
-      "url": "https://github.com/rainlanguage/raindex/issues/1794",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1794",
       "title": "Replace all transactions in transactionStore with constructor versions"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1792,
-      "url": "https://github.com/rainlanguage/raindex/issues/1792",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1792",
       "title": "Simulate transactions before sending them to wallet"
     },
     {
@@ -5199,63 +5217,63 @@
       "title": "Automate publish workflow on main merge"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1743,
-      "url": "https://github.com/rainlanguage/raindex/issues/1743",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1743",
       "title": "Constructable Transactions that allow multiple tx's to run concurrently"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1740,
-      "url": "https://github.com/rainlanguage/raindex/issues/1740",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1740",
       "title": "_🧹 Nitpick (assertive)_"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1739,
-      "url": "https://github.com/rainlanguage/raindex/issues/1739",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1739",
       "title": "_⚠️ Potential issue_"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1737,
-      "url": "https://github.com/rainlanguage/raindex/issues/1737",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1737",
       "title": "_🛠️ Refactor suggestion_"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1736,
-      "url": "https://github.com/rainlanguage/raindex/issues/1736",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1736",
       "title": "_🛠️ Refactor suggestion_"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1734,
-      "url": "https://github.com/rainlanguage/raindex/issues/1734",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1734",
       "title": "_🛠️ Refactor suggestion_"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1733,
-      "url": "https://github.com/rainlanguage/raindex/issues/1733",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1733",
       "title": "_🛠️ Refactor suggestion_"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1732,
-      "url": "https://github.com/rainlanguage/raindex/issues/1732",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1732",
       "title": "_🧹 Nitpick (assertive)_"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1731,
-      "url": "https://github.com/rainlanguage/raindex/issues/1731",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1731",
       "title": "_🧹 Nitpick (assertive)_"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1728,
-      "url": "https://github.com/rainlanguage/raindex/issues/1728",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1728",
       "title": "Provide ability to set block numbers for debug tab"
     },
     {
@@ -5265,87 +5283,87 @@
       "title": "automate deployment poc"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1672,
-      "url": "https://github.com/rainlanguage/raindex/issues/1672",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1672",
       "title": "Move transaction indexing logic after deploying an order into gui"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1664,
-      "url": "https://github.com/rainlanguage/raindex/issues/1664",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1664",
       "title": "Should there be an option to paste in a .rain and deploy, instead of having to use a registry URL?"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1650,
-      "url": "https://github.com/rainlanguage/raindex/issues/1650",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1650",
       "title": "make invariant testing work"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1618,
-      "url": "https://github.com/rainlanguage/raindex/issues/1618",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1618",
       "title": "Add inline deposit/withdraw/remove functionality to list components in webapp"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1609,
-      "url": "https://github.com/rainlanguage/raindex/issues/1609",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1609",
       "title": "vault balances tab"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1595,
-      "url": "https://github.com/rainlanguage/raindex/issues/1595",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1595",
       "title": "gui.ValidateDeployment to run simulateWriteContract before deploying strates"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1578,
-      "url": "https://github.com/rainlanguage/raindex/issues/1578",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1578",
       "title": "Order deployed on network, but returned status is failed."
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1556,
-      "url": "https://github.com/rainlanguage/raindex/issues/1556",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1556",
       "title": "EditableSpan doesn't appear to be used anywhere, could probably be deleted"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1553,
-      "url": "https://github.com/rainlanguage/raindex/issues/1553",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1553",
       "title": "packages/webapp/src/routes/orders/[network]-[orderHash]/+page.svelte"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1550,
-      "url": "https://github.com/rainlanguage/raindex/issues/1550",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1550",
       "title": "packages/webapp/src/routes/deploy/+layout.svelte"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1537,
-      "url": "https://github.com/rainlanguage/raindex/issues/1537",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1537",
       "title": "Move validateAmount.ts into Rust"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1533,
-      "url": "https://github.com/rainlanguage/raindex/issues/1533",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1533",
       "title": "Move any value-handling logic out of components into files that can be fuzz-tested"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1525,
-      "url": "https://github.com/rainlanguage/raindex/issues/1525",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1525",
       "title": "Failing to get token info from Ethereum mainnet for valid tokens"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1509,
-      "url": "https://github.com/rainlanguage/raindex/issues/1509",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1509",
       "title": "Cannot switch chains using walletConnect from tauri-app"
     },
     {
@@ -5355,15 +5373,15 @@
       "title": "Add support for automatically generating the return type in wasm_export macro"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1450,
-      "url": "https://github.com/rainlanguage/raindex/issues/1450",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1450",
       "title": "For all vaults/order, return the Chain ID of the Orderbook which deployed it"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1395,
-      "url": "https://github.com/rainlanguage/raindex/issues/1395",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1395",
       "title": "Move transaction args into transaction.ts and extend them for various state of TX (frontend/ with config)"
     },
     {
@@ -5385,51 +5403,51 @@
       "title": "Solver KPIs"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1386,
-      "url": "https://github.com/rainlanguage/raindex/issues/1386",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1386",
       "title": "Bitfrost wallet compatibility"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1374,
-      "url": "https://github.com/rainlanguage/raindex/issues/1374",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1374",
       "title": "is:open label:enhancement Pull Asset list from Sparkdex.ai and/or Blazeswap for choosing the assets to trade"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1359,
-      "url": "https://github.com/rainlanguage/raindex/issues/1359",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1359",
       "title": "Refactor Balance/ trade Chart wrappers"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1347,
-      "url": "https://github.com/rainlanguage/raindex/issues/1347",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1347",
       "title": "Add fuzz-testing for deploymentSteps"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1337,
-      "url": "https://github.com/rainlanguage/raindex/issues/1337",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1337",
       "title": "Would be great that your own vaults would show up during the strategy deployment so you dont have to copy paste"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1320,
-      "url": "https://github.com/rainlanguage/raindex/issues/1320",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1320",
       "title": "Better validation for fields"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1311,
-      "url": "https://github.com/rainlanguage/raindex/issues/1311",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1311",
       "title": "Clear message for the missing binding."
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1310,
-      "url": "https://github.com/rainlanguage/raindex/issues/1310",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1310",
       "title": "Modal showing the deployment status from v1"
     },
     {
@@ -5439,9 +5457,9 @@
       "title": "Be able to burn with your locked tokens"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1261,
-      "url": "https://github.com/rainlanguage/raindex/issues/1261",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1261",
       "title": "network selection and network bindings"
     },
     {
@@ -5529,9 +5547,9 @@
       "title": "try to use https://blinklabs.xyz/ to avoid front running that causes expensive reverts"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 991,
-      "url": "https://github.com/rainlanguage/raindex/issues/991",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/991",
       "title": "get vault balances for an order in cli"
     },
     {
@@ -5547,27 +5565,27 @@
       "title": "Ensure raindex tg bot is in typescript"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 950,
-      "url": "https://github.com/rainlanguage/raindex/issues/950",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/950",
       "title": "have a local db"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 936,
-      "url": "https://github.com/rainlanguage/raindex/issues/936",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/936",
       "title": "clicking on all the accounts in the orders page also turns on \"all accounts\" which includes accounts that aren't in the list"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 929,
-      "url": "https://github.com/rainlanguage/raindex/issues/929",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/929",
       "title": "connect to wallet connect button does nothing (after disconnecting?)"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 927,
-      "url": "https://github.com/rainlanguage/raindex/issues/927",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/927",
       "title": "can't deposit any tokens into order on polygon, says 0 wallet balance for all vaults"
     },
     {
@@ -5577,15 +5595,15 @@
       "title": "integrate with rubic aggregator - https://rubic.exchange/"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 924,
-      "url": "https://github.com/rainlanguage/raindex/issues/924",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/924",
       "title": "add `balance` field to `erc20` entity in subgraph"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 1392,
-      "url": "https://github.com/rainlanguage/raindex/issues/1392",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1392",
       "title": "transaction ID on strategy page is not a link, it should be"
     },
     {
@@ -5595,33 +5613,33 @@
       "title": "decouple CAS locations from subgraph"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 907,
-      "url": "https://github.com/rainlanguage/raindex/issues/907",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/907",
       "title": "show max drawdowns"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 906,
-      "url": "https://github.com/rainlanguage/raindex/issues/906",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/906",
       "title": "mousewheel over the charts only moves the horizontal axis, it doesn't move the vertical axis"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 901,
-      "url": "https://github.com/rainlanguage/raindex/issues/901",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/901",
       "title": "Add official RP4 addresses to deployment CI as env"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 889,
-      "url": "https://github.com/rainlanguage/raindex/issues/889",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/889",
       "title": "Change the \"rainlang\" tab on the order page to \"source\" and add subtabs for the rainlang and the dotrain"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 888,
-      "url": "https://github.com/rainlanguage/raindex/issues/888",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/888",
       "title": "Add the dotrain for a deployment to the meta for an order, as well as the composed rainlang"
     },
     {
@@ -5631,9 +5649,9 @@
       "title": "Webapp/Flare incentives launch"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 850,
-      "url": "https://github.com/rainlanguage/raindex/issues/850",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/850",
       "title": "add a rainlang repl to the order page"
     },
     {
@@ -5643,9 +5661,9 @@
       "title": "OrderBookV4 docs sweep"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 754,
-      "url": "https://github.com/rainlanguage/raindex/issues/754",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/754",
       "title": "Uniswap-v3 twap historical data inaccurate."
     },
     {
@@ -5661,27 +5679,27 @@
       "title": "Porting legacy tests from \".Flow/flow\" — test case \"should not be able to access values set in a flow across different flows\""
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 743,
-      "url": "https://github.com/rainlanguage/raindex/issues/743",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/743",
       "title": "Signed Context in Raindex App"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 730,
-      "url": "https://github.com/rainlanguage/raindex/issues/730",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/730",
       "title": "Vault screen in raindex, list of orders add # trades and tooltip"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 726,
-      "url": "https://github.com/rainlanguage/raindex/issues/726",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/726",
       "title": "Add area chart capability"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 710,
-      "url": "https://github.com/rainlanguage/raindex/issues/710",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/710",
       "title": "Define additional task entrypoints in order frontmatter"
     },
     {
@@ -5691,15 +5709,15 @@
       "title": "Rust for unpacking and formatting rain stack items"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 707,
-      "url": "https://github.com/rainlanguage/raindex/issues/707",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/707",
       "title": "raindex - browsing and navigation of lists or orders, vaults and trades"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 705,
-      "url": "https://github.com/rainlanguage/raindex/issues/705",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/705",
       "title": "some kind of visual warning to users when they are interacting with tokens that don't have `decimals` on the contract"
     },
     {
@@ -5721,9 +5739,9 @@
       "title": "exex spike"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 675,
-      "url": "https://github.com/rainlanguage/raindex/issues/675",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/675",
       "title": "allow for a charting entrypoint"
     },
     {
@@ -5745,9 +5763,9 @@
       "title": "interfaces for pointers"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 671,
-      "url": "https://github.com/rainlanguage/raindex/issues/671",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/671",
       "title": "inject order counterparty into context grid for simulations"
     },
     {
@@ -5757,21 +5775,21 @@
       "title": "Create a tutorial video for how to get words displaying in the app"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 659,
-      "url": "https://github.com/rainlanguage/raindex/issues/659",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/659",
       "title": "rename `orderbook` word in subparser to `raindex`"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 657,
-      "url": "https://github.com/rainlanguage/raindex/issues/657",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/657",
       "title": "add word to read the vault balance from an orderbook"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 649,
-      "url": "https://github.com/rainlanguage/raindex/issues/649",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/649",
       "title": "show and ability to change the owner that is being used to eval the debug panel"
     },
     {
@@ -5823,9 +5841,9 @@
       "title": "bot uses way too much rpc"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 575,
-      "url": "https://github.com/rainlanguage/raindex/issues/575",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/575",
       "title": "if there's only one possible deployment in the dropdown on the add order page it should be selected"
     },
     {
@@ -5835,27 +5853,27 @@
       "title": "push docker to rainlang org on docker hub"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 567,
-      "url": "https://github.com/rainlanguage/raindex/issues/567",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/567",
       "title": "show full order details including dispair and bytecode along with decoded rainlang meta"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 557,
-      "url": "https://github.com/rainlanguage/raindex/issues/557",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/557",
       "title": "when we removed the \"back\" button in favour of breadcrumbs, we didn't make the breadcrumbs respect history"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 551,
-      "url": "https://github.com/rainlanguage/raindex/issues/551",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/551",
       "title": "order screen needs to show the deployer otherwise it's trivial to create a phishing deployer"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 543,
-      "url": "https://github.com/rainlanguage/raindex/issues/543",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/543",
       "title": "ability to set data type for charting"
     },
     {
@@ -5865,57 +5883,57 @@
       "title": "if the pair is against usd for pair it should just defer to a single pair rather than getting two quotes"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 536,
-      "url": "https://github.com/rainlanguage/raindex/issues/536",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/536",
       "title": "trades chart only renders scale for days that data exists (i.e. when trades were made) rather than for the whole time frame that was selected"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 529,
-      "url": "https://github.com/rainlanguage/raindex/issues/529",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/529",
       "title": "if there's no elided bindings i shouldn't have to specify runs to generate a chart (should imply 1 run)"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 528,
-      "url": "https://github.com/rainlanguage/raindex/issues/528",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/528",
       "title": "cmd + s should save order"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 525,
-      "url": "https://github.com/rainlanguage/raindex/issues/525",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/525",
       "title": "pasting an order into the editor when an order was already charted etc. doesn't clear what was previously done"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 524,
-      "url": "https://github.com/rainlanguage/raindex/issues/524",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/524",
       "title": "small numbers getting rounded to zero on charts"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 522,
-      "url": "https://github.com/rainlanguage/raindex/issues/522",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/522",
       "title": "undefined deployer address"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 521,
-      "url": "https://github.com/rainlanguage/raindex/issues/521",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/521",
       "title": "ability to copy trade from the order view page"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 519,
-      "url": "https://github.com/rainlanguage/raindex/issues/519",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/519",
       "title": "add order screen should be prefilled to a minimal skeleton to an order"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 513,
-      "url": "https://github.com/rainlanguage/raindex/issues/513",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/513",
       "title": "scenario runs should be visible to children"
     },
     {
@@ -5925,9 +5943,9 @@
       "title": "some kind of \"rain name service\" RNS as sub parser"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 504,
-      "url": "https://github.com/rainlanguage/raindex/issues/504",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/504",
       "title": "ability to reference settings in bindings"
     },
     {
@@ -5937,141 +5955,141 @@
       "title": "review how we interact with flashbots"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 493,
-      "url": "https://github.com/rainlanguage/raindex/issues/493",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/493",
       "title": "support rainlang strings for vault ids"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 485,
-      "url": "https://github.com/rainlanguage/raindex/issues/485",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/485",
       "title": "Upload source maps to sentry"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 484,
-      "url": "https://github.com/rainlanguage/raindex/issues/484",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/484",
       "title": "some kind of gas report for strats during testing"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 473,
-      "url": "https://github.com/rainlanguage/raindex/issues/473",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/473",
       "title": "ability to chart orders that already exist if the rainlang is known"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 472,
-      "url": "https://github.com/rainlanguage/raindex/issues/472",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/472",
       "title": "ability to quote bind data transformations while charting"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 471,
-      "url": "https://github.com/rainlanguage/raindex/issues/471",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/471",
       "title": "ability to set the denomination of a chart axis to a token, and then have it render the token symbol"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 470,
-      "url": "https://github.com/rainlanguage/raindex/issues/470",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/470",
       "title": "stable sorting of charts on the dashboard"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 468,
-      "url": "https://github.com/rainlanguage/raindex/issues/468",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/468",
       "title": "support using-tokens-from in settings"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 465,
-      "url": "https://github.com/rainlanguage/raindex/issues/465",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/465",
       "title": "ability to set sig figs for decimal amounts in the GUI from the settings yaml"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 464,
-      "url": "https://github.com/rainlanguage/raindex/issues/464",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/464",
       "title": "ability to set date format in the settings yaml"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 463,
-      "url": "https://github.com/rainlanguage/raindex/issues/463",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/463",
       "title": "ability to handle different combinations of IO for a single order in the same block"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 462,
-      "url": "https://github.com/rainlanguage/raindex/issues/462",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/462",
       "title": "elisions should not error if runs is set during fuzzing"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 461,
-      "url": "https://github.com/rainlanguage/raindex/issues/461",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/461",
       "title": "ability to name axes"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 460,
-      "url": "https://github.com/rainlanguage/raindex/issues/460",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/460",
       "title": "ability to dismiss/accept the alpha warning"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 454,
-      "url": "https://github.com/rainlanguage/raindex/issues/454",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/454",
       "title": "Display date times in locale of user"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 450,
-      "url": "https://github.com/rainlanguage/raindex/issues/450",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/450",
       "title": "duplicate `runs` keys in scenarios when nested should be an error"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 447,
-      "url": "https://github.com/rainlanguage/raindex/issues/447",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/447",
       "title": "Set Context in yml options"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 444,
-      "url": "https://github.com/rainlanguage/raindex/issues/444",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/444",
       "title": "CSV output option for fuzz testing on CLI"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 442,
-      "url": "https://github.com/rainlanguage/raindex/issues/442",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/442",
       "title": "User can navigate to orders page without required settings by clicking \"Home\" button in breadcrumbs"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 439,
-      "url": "https://github.com/rainlanguage/raindex/issues/439",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/439",
       "title": "Trade / Deposit charts overlap \"early alpha\" notice"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 438,
-      "url": "https://github.com/rainlanguage/raindex/issues/438",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/438",
       "title": "Decimal 18 scaled values for X and Y axis. "
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 435,
-      "url": "https://github.com/rainlanguage/raindex/issues/435",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/435",
       "title": "Ensure linux .deb packages link to proper system libs or bundle required libs"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 417,
-      "url": "https://github.com/rainlanguage/raindex/issues/417",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/417",
       "title": "Link to specs for words & yaml"
     },
     {
@@ -6081,201 +6099,201 @@
       "title": "add a sub parser"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 409,
-      "url": "https://github.com/rainlanguage/raindex/issues/409",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/409",
       "title": "Include ledger connection requirements in ledger error toasts"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 405,
-      "url": "https://github.com/rainlanguage/raindex/issues/405",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/405",
       "title": "Specify number of block confirmations to wait for a transaction per chain via config"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 404,
-      "url": "https://github.com/rainlanguage/raindex/issues/404",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/404",
       "title": "Display number of block confirmations in transaction status notice as they are received"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 402,
-      "url": "https://github.com/rainlanguage/raindex/issues/402",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/402",
       "title": "Make settings / add order text areas multiple rows by default"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 399,
-      "url": "https://github.com/rainlanguage/raindex/issues/399",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/399",
       "title": "reliable builds on linux"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 398,
-      "url": "https://github.com/rainlanguage/raindex/issues/398",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/398",
       "title": "libusb and gmp required on mac os"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 394,
-      "url": "https://github.com/rainlanguage/raindex/issues/394",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/394",
       "title": "review if we can use the scale trick in uniswap ops to improve precision of ob"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 391,
-      "url": "https://github.com/rainlanguage/raindex/issues/391",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/391",
       "title": "support fee on transfer tokens"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 390,
-      "url": "https://github.com/rainlanguage/raindex/issues/390",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/390",
       "title": "replace typeshare with tsify"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 387,
-      "url": "https://github.com/rainlanguage/raindex/issues/387",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/387",
       "title": "Reduce flakiness of ledger connnection"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 367,
-      "url": "https://github.com/rainlanguage/raindex/issues/367",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/367",
       "title": "Observable charting for fuzzed traces in the GUI"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 363,
-      "url": "https://github.com/rainlanguage/raindex/issues/363",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/363",
       "title": "Build fix"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 356,
-      "url": "https://github.com/rainlanguage/raindex/issues/356",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/356",
       "title": "Input and output cols on trades table are around the wrong wa"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 332,
-      "url": "https://github.com/rainlanguage/raindex/issues/332",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/332",
       "title": "Context menus don't disappear when clicking outside of them"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 328,
-      "url": "https://github.com/rainlanguage/raindex/issues/328",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/328",
       "title": "Adding spaces to rain causes parser to revert with blank reason"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 322,
-      "url": "https://github.com/rainlanguage/raindex/issues/322",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/322",
       "title": "Re-add a previously removed order"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 321,
-      "url": "https://github.com/rainlanguage/raindex/issues/321",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/321",
       "title": "Volume Chart for trading pair"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 320,
-      "url": "https://github.com/rainlanguage/raindex/issues/320",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/320",
       "title": "Take an order from the UI"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 316,
-      "url": "https://github.com/rainlanguage/raindex/issues/316",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/316",
       "title": "Always convert returned subgraph structs into our own structs, with values converted from string to usable types in desired format"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 315,
-      "url": "https://github.com/rainlanguage/raindex/issues/315",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/315",
       "title": "Subgraph vaultId should should be a \"0x\" prefixed hex value"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 313,
-      "url": "https://github.com/rainlanguage/raindex/issues/313",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/313",
       "title": "verify decoded order meta matches actually deployed order"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 301,
-      "url": "https://github.com/rainlanguage/raindex/issues/301",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/301",
       "title": "Support Legacy & abritarary Ledger Derviation Paths"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 299,
-      "url": "https://github.com/rainlanguage/raindex/issues/299",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/299",
       "title": "Hovering orders table column changes width on mac os"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 291,
-      "url": "https://github.com/rainlanguage/raindex/issues/291",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/291",
       "title": "tauri invoke awaits should time out"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 288,
-      "url": "https://github.com/rainlanguage/raindex/issues/288",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/288",
       "title": "move derivation index field before address field"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 284,
-      "url": "https://github.com/rainlanguage/raindex/issues/284",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/284",
       "title": "Fetch token decimals in input field"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 280,
-      "url": "https://github.com/rainlanguage/raindex/issues/280",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/280",
       "title": "Help page content: Ledger Issues"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 276,
-      "url": "https://github.com/rainlanguage/raindex/issues/276",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/276",
       "title": "Universal mac binaries"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 274,
-      "url": "https://github.com/rainlanguage/raindex/issues/274",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/274",
       "title": "Include token symbol & transaction hash in transaction status notice"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 273,
-      "url": "https://github.com/rainlanguage/raindex/issues/273",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/273",
       "title": "add a button to generate a random vaultid on the deposit modal"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 272,
-      "url": "https://github.com/rainlanguage/raindex/issues/272",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/272",
       "title": "Transaction failure destroys the entry form: deposit/withdraw/withdraw-all/take-order modals close and clear on error"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 269,
-      "url": "https://github.com/rainlanguage/raindex/issues/269",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/269",
       "title": "cancel in-progress transactions"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 262,
-      "url": "https://github.com/rainlanguage/raindex/issues/262",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/262",
       "title": "Round values in order takes table -- show full value on hover"
     },
     {
@@ -6285,69 +6303,69 @@
       "title": "Make cache expiration configurable or default to never expire"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 236,
-      "url": "https://github.com/rainlanguage/raindex/issues/236",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/236",
       "title": "Standardize CLI output method with other rain clis"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 235,
-      "url": "https://github.com/rainlanguage/raindex/issues/235",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/235",
       "title": "Merge clears & takes into single chart / table"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 218,
-      "url": "https://github.com/rainlanguage/raindex/issues/218",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/218",
       "title": "Frontmatter rebindings parse errors"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 212,
-      "url": "https://github.com/rainlanguage/raindex/issues/212",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/212",
       "title": "Token detail page"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 211,
-      "url": "https://github.com/rainlanguage/raindex/issues/211",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/211",
       "title": "make it impossible to close the diagnostics panel, or very easy to bring it back if it is closed"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 208,
-      "url": "https://github.com/rainlanguage/raindex/issues/208",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/208",
       "title": "Link to orderbook in block explorer"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 206,
-      "url": "https://github.com/rainlanguage/raindex/issues/206",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/206",
       "title": "Take Order Chart: number of transactions"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 205,
-      "url": "https://github.com/rainlanguage/raindex/issues/205",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/205",
       "title": "Take Orders Chart: Token Balances"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 204,
-      "url": "https://github.com/rainlanguage/raindex/issues/204",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/204",
       "title": "Live Chart w/ Polling"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 183,
-      "url": "https://github.com/rainlanguage/raindex/issues/183",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/183",
       "title": "Disable \"Add Order\" button when linting finds problems"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 168,
-      "url": "https://github.com/rainlanguage/raindex/issues/168",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/168",
       "title": "put counterparty desired amount in context"
     },
     {
@@ -6399,21 +6417,21 @@
       "title": "use current metadata cli at https://crates.io/crates/rain-metadata"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 148,
-      "url": "https://github.com/rainlanguage/raindex/issues/148",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/148",
       "title": "Call local Parser in addOrder functions"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 142,
-      "url": "https://github.com/rainlanguage/raindex/issues/142",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/142",
       "title": "Transaction status notice should last until the subgraph includes the submitted transaction"
     },
     {
-      "repo": "rainlanguage/raindex",
+      "repo": "rainlanguage/raindex.deploy",
       "number": 102,
-      "url": "https://github.com/rainlanguage/raindex/issues/102",
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/102",
       "title": "subgraph query integration tests"
     },
     {
@@ -6457,7 +6475,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 67,
+    "unvetted": 66,
     "blockedOn": 10,
     "ready": 1,
     "needsWork": 93,
@@ -6468,17 +6486,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 178,
+    "totalProducerPrs": 177,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 742,
+    "uncoveredIssues": 746,
     "designPresentable": 6,
     "designNoQuestion": 0,
-    "openIssues": 903
+    "openIssues": 907
   },
   "ages": {
     "openIssues": {
-      "meanDays": 318.5,
-      "medianDays": 133.0,
+      "meanDays": 317.1,
+      "medianDays": 132.1,
       "oldestDays": 1735.9
     }
   }
