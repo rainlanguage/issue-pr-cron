@@ -769,8 +769,32 @@
         ]
       },
       "un-vetted": {
-        "count": 66,
+        "count": 69,
         "prs": [
+          {
+            "repo": "rainlanguage/raindex.interface",
+            "number": 79,
+            "url": "https://github.com/rainlanguage/raindex.interface/pull/79",
+            "title": "IRaindexV7: clear4 routes each order's signed context to its own eval"
+          },
+          {
+            "repo": "rainlanguage/rainlang",
+            "number": 602,
+            "url": "https://github.com/rainlanguage/rainlang/pull/602",
+            "title": "Reference repeat literal reverts on Float coefficient overflow"
+          },
+          {
+            "repo": "rainlanguage/rain.merkle.deploy",
+            "number": 29,
+            "url": "https://github.com/rainlanguage/rain.merkle.deploy/pull/29",
+            "title": "merkle-proof-verify: StandardMerkleTree leaves only"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 510,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/510",
+            "title": "Emit expected-state.json for the rain-org-health dashboard"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 509,
@@ -794,12 +818,6 @@
             "number": 2916,
             "url": "https://github.com/rainlanguage/raindex.deploy/pull/2916",
             "title": "Zero the length word of takeOrders4's orderIOCalculationsToHandle"
-          },
-          {
-            "repo": "rainlanguage/raindex.deploy",
-            "number": 2915,
-            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2915",
-            "title": "arb4 rejects an untrusted raindex with BadRaindex"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -6475,7 +6493,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 66,
+    "unvetted": 69,
     "blockedOn": 10,
     "ready": 1,
     "needsWork": 93,
@@ -6486,7 +6504,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 177,
+    "totalProducerPrs": 180,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 746,
     "designPresentable": 6,
@@ -6495,9 +6513,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 317.1,
-      "medianDays": 132.1,
-      "oldestDays": 1735.9
+      "meanDays": 317.2,
+      "medianDays": 132.2,
+      "oldestDays": 1736.0
     }
   }
 }
