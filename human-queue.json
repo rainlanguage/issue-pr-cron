@@ -769,19 +769,31 @@
         ]
       },
       "un-vetted": {
-        "count": 69,
+        "count": 70,
         "prs": [
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 221,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/221",
+            "title": "feat(deployments): take expectations from st0x.deploy's expected-state.json"
+          },
+          {
+            "repo": "rainlanguage/raindex.deploy",
+            "number": 2921,
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2921",
+            "title": "Context words read their true value per entrypoint or revert (M02)"
+          },
+          {
+            "repo": "rainlanguage/raindex.deploy",
+            "number": 2920,
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2920",
+            "title": "clear4: route each order's signed context to its own eval (IRaindexV7)"
+          },
           {
             "repo": "rainlanguage/raindex.interface",
             "number": 79,
             "url": "https://github.com/rainlanguage/raindex.interface/pull/79",
             "title": "IRaindexV7: clear4 routes each order's signed context to its own eval"
-          },
-          {
-            "repo": "rainlanguage/rainlang",
-            "number": 602,
-            "url": "https://github.com/rainlanguage/rainlang/pull/602",
-            "title": "Reference repeat literal reverts on Float coefficient overflow"
           },
           {
             "repo": "rainlanguage/rain.merkle.deploy",
@@ -812,12 +824,6 @@
             "number": 2917,
             "url": "https://github.com/rainlanguage/raindex.deploy/pull/2917",
             "title": "Signer / signed-context words read the real signer columns in every post task"
-          },
-          {
-            "repo": "rainlanguage/raindex.deploy",
-            "number": 2916,
-            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2916",
-            "title": "Zero the length word of takeOrders4's orderIOCalculationsToHandle"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -997,7 +1003,7 @@
             "repo": "rainlanguage/rainlang.interface",
             "number": 134,
             "url": "https://github.com/rainlanguage/rainlang.interface/pull/134",
-            "title": "SignedContextV2: EIP-712 signed context under a caller-chosen domain separator, exposed in context"
+            "title": "feat: IInterpreterCallerV5 with EIP-712 SignedContextV2; drop V1 LibContext and rain-lib-hash"
           },
           {
             "repo": "rainlanguage/raindex.deploy",
@@ -1990,6 +1996,18 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rain-org-health",
+      "number": 222,
+      "url": "https://github.com/rainlanguage/rain-org-health/issues/222",
+      "title": "Tokens: the 'current prod authoriser' label can never fire (STOX_PROD_AUTHORISER no longer exists upstream)"
+    },
+    {
+      "repo": "rainlanguage/rain-org-health",
+      "number": 220,
+      "url": "https://github.com/rainlanguage/rain-org-health/issues/220",
+      "title": "Grants panel: show the ST0x orchestrator's expected role holders per chain"
+    },
+    {
+      "repo": "rainlanguage/rain-org-health",
       "number": 219,
       "url": "https://github.com/rainlanguage/rain-org-health/issues/219",
       "title": "Beacons: only the timelock is a healthy owner"
@@ -2005,12 +2023,6 @@
       "number": 217,
       "url": "https://github.com/rainlanguage/rain-org-health/issues/217",
       "title": "Known owners: Safe owner set misses OWNER_TDM"
-    },
-    {
-      "repo": "rainlanguage/rain-org-health",
-      "number": 216,
-      "url": "https://github.com/rainlanguage/rain-org-health/issues/216",
-      "title": "Beacons: target each beacon's expected implementation, not 0.1.1"
     },
     {
       "repo": "rainlanguage/rain.vats",
@@ -2623,12 +2635,6 @@
       "number": 2851,
       "url": "https://github.com/rainlanguage/raindex.deploy/issues/2851",
       "title": "Pin clear3's shipped signed-context routing with a baseline test"
-    },
-    {
-      "repo": "rainlanguage/raindex.deploy",
-      "number": 2850,
-      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2850",
-      "title": "clear3 cross-wires alice/bob signed context vs its interface docs; next version must fix it with a loud break"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -6493,7 +6499,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 69,
+    "unvetted": 70,
     "blockedOn": 10,
     "ready": 1,
     "needsWork": 93,
@@ -6504,7 +6510,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 180,
+    "totalProducerPrs": 181,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 746,
     "designPresentable": 6,
