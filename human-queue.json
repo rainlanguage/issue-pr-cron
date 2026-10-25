@@ -769,8 +769,14 @@
         ]
       },
       "un-vetted": {
-        "count": 69,
+        "count": 67,
         "prs": [
+          {
+            "repo": "rainlanguage/raindex",
+            "number": 2919,
+            "url": "https://github.com/rainlanguage/raindex/pull/2919",
+            "title": "Convert raindex to the .deploy convention: prod/subgraph tests pin the released suite"
+          },
           {
             "repo": "rainlanguage/rain-org-health",
             "number": 214,
@@ -796,28 +802,10 @@
             "title": "arb4 rejects an untrusted raindex with BadRaindex"
           },
           {
-            "repo": "rainlanguage/raindex",
-            "number": 2914,
-            "url": "https://github.com/rainlanguage/raindex/pull/2914",
-            "title": "Reject foreign onTakeOrders2 callers during arb5"
-          },
-          {
-            "repo": "rainlanguage/raindex",
-            "number": 2912,
-            "url": "https://github.com/rainlanguage/raindex/pull/2912",
-            "title": "clear3: refuse a side take would skip (zero output / negative ratio)"
-          },
-          {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 505,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/505",
             "title": "Drop the threshold migration's vault-ownership drift test"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 501,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/501",
-            "title": "Move to rain-vats 0.2.9; remove the beacon-set deployers"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -6469,7 +6457,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 69,
+    "unvetted": 67,
     "blockedOn": 10,
     "ready": 1,
     "needsWork": 93,
@@ -6480,17 +6468,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 180,
+    "totalProducerPrs": 178,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 742,
     "designPresentable": 6,
     "designNoQuestion": 0,
-    "openIssues": 905
+    "openIssues": 903
   },
   "ages": {
     "openIssues": {
-      "meanDays": 317.6,
-      "medianDays": 131.9,
+      "meanDays": 318.3,
+      "medianDays": 132.8,
       "oldestDays": 1735.7
     }
   }
