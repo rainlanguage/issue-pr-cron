@@ -769,8 +769,38 @@
         ]
       },
       "un-vetted": {
-        "count": 70,
+        "count": 74,
         "prs": [
+          {
+            "repo": "rainlanguage/raindex.deploy",
+            "number": 2923,
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2923",
+            "title": "takeOrders4 skips an order whose calculate fails"
+          },
+          {
+            "repo": "rainlanguage/raindex.deploy",
+            "number": 2922,
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2922",
+            "title": "Correct frozen RaindexV6/SubParser DEPENDENCIES to what the bytecode reaches"
+          },
+          {
+            "repo": "rainlanguage/raindex.interface",
+            "number": 80,
+            "url": "https://github.com/rainlanguage/raindex.interface/pull/80",
+            "title": "IRaindexV7: OrderCalculateReverted"
+          },
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 349,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/349",
+            "title": "RainDeployVerifyDeclaration: shared deploy-declaration checks"
+          },
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 223,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/223",
+            "title": "Grants: read orchestrator expectedGrants live per chain"
+          },
           {
             "repo": "rainlanguage/rain-org-health",
             "number": 221,
@@ -818,12 +848,6 @@
             "number": 214,
             "url": "https://github.com/rainlanguage/rain-org-health/pull/214",
             "title": "Deployments: Root registry tab — registry delegations, config changes, migration records"
-          },
-          {
-            "repo": "rainlanguage/raindex.deploy",
-            "number": 2917,
-            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2917",
-            "title": "Signer / signed-context words read the real signer columns in every post task"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -2002,12 +2026,6 @@
     },
     {
       "repo": "rainlanguage/rain-org-health",
-      "number": 220,
-      "url": "https://github.com/rainlanguage/rain-org-health/issues/220",
-      "title": "Grants panel: show the ST0x orchestrator's expected role holders per chain"
-    },
-    {
-      "repo": "rainlanguage/rain-org-health",
       "number": 219,
       "url": "https://github.com/rainlanguage/rain-org-health/issues/219",
       "title": "Beacons: only the timelock is a healthy owner"
@@ -2803,12 +2821,6 @@
       "number": 328,
       "url": "https://github.com/rainlanguage/rainix/issues/328",
       "title": "Bump solc to current and enable via_ir: the legacy pipeline is taxing structurally-correct code"
-    },
-    {
-      "repo": "rainlanguage/raindex.deploy",
-      "number": 2837,
-      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2837",
-      "title": "A reverting calculate-io eval reverts the whole takeOrders4 batch instead of skipping that order"
     },
     {
       "repo": "rainlanguage/claude-audit-skills",
@@ -4327,12 +4339,6 @@
       "number": 2671,
       "url": "https://github.com/rainlanguage/raindex.deploy/issues/2671",
       "title": "Error-quality + NatSpec-accuracy bundle (OOB->Panic 0x32, clear revert ordering, stale clear/LibOpContext/quote2 NatSpec)"
-    },
-    {
-      "repo": "rainlanguage/raindex.deploy",
-      "number": 2647,
-      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2647",
-      "title": "Post-action context: subparser words silently alias other fields or revert OOB (generalizes Protofire M02 #2619)"
     },
     {
       "repo": "rainlanguage/rainlang.interface",
@@ -6499,7 +6505,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 70,
+    "unvetted": 74,
     "blockedOn": 10,
     "ready": 1,
     "needsWork": 93,
@@ -6510,18 +6516,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 181,
+    "totalProducerPrs": 185,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 746,
+    "uncoveredIssues": 743,
     "designPresentable": 6,
     "designNoQuestion": 0,
-    "openIssues": 907
+    "openIssues": 906
   },
   "ages": {
     "openIssues": {
-      "meanDays": 317.2,
-      "medianDays": 132.2,
-      "oldestDays": 1736.0
+      "meanDays": 317.6,
+      "medianDays": 132.3,
+      "oldestDays": 1736.1
     }
   }
 }
