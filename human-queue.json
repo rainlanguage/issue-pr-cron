@@ -739,8 +739,44 @@
         ]
       },
       "un-vetted": {
-        "count": 79,
+        "count": 77,
         "prs": [
+          {
+            "repo": "rainlanguage/raindex.deploy",
+            "number": 2926,
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2926",
+            "title": "Deposit context words read their own column or revert"
+          },
+          {
+            "repo": "rainlanguage/rainlang.interface",
+            "number": 152,
+            "url": "https://github.com/rainlanguage/rainlang.interface/pull/152",
+            "title": "Pin each parse meta word to its expander layer slot (#143)"
+          },
+          {
+            "repo": "rainlanguage/rainlang",
+            "number": 613,
+            "url": "https://github.com/rainlanguage/rainlang/pull/613",
+            "title": "Absorb rainlang-interface into rainlang"
+          },
+          {
+            "repo": "rainlanguage/rain.merkle.deploy",
+            "number": 31,
+            "url": "https://github.com/rainlanguage/rain.merkle.deploy/pull/31",
+            "title": "Bind rain-deploy RainDeployVerifyDeclaration; bump rainlang 0.2.26"
+          },
+          {
+            "repo": "rainlanguage/rainlang.interface",
+            "number": 151,
+            "url": "https://github.com/rainlanguage/rainlang.interface/pull/151",
+            "title": "test: keep checkNoOOBPointers corruptions well formed"
+          },
+          {
+            "repo": "rainlanguage/rain.vats",
+            "number": 353,
+            "url": "https://github.com/rainlanguage/rain.vats/pull/353",
+            "title": "Bump rain-factory-deploy 0.2.3"
+          },
           {
             "repo": "rainlanguage/rain.math.float.deploy",
             "number": 52,
@@ -760,40 +796,10 @@
             "title": "LibDecimalFloat.gm: the signed geometric mean"
           },
           {
-            "repo": "rainlanguage/rain.factory.deploy",
-            "number": 66,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/66",
-            "title": "release: rain-factory-deploy 0.2.3, rain-deploy 0.1.25"
-          },
-          {
             "repo": "rainlanguage/rainlang.deploy",
             "number": 20,
             "url": "https://github.com/rainlanguage/rainlang.deploy/pull/20",
             "title": "rain-deploy 0.1.25: bind RainDeployVerifyDeclaration, drop hand-rolled shim and build.sh"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata.deploy",
-            "number": 24,
-            "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/24",
-            "title": "release: 0.1.4"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection.deploy",
-            "number": 17,
-            "url": "https://github.com/rainlanguage/rain.extrospection.deploy/pull/17",
-            "title": "release: 0.1.2 (rain-extrospection 0.1.16, rain-deploy 0.1.25)"
-          },
-          {
-            "repo": "rainlanguage/rain.tofu.erc20-decimals.deploy",
-            "number": 16,
-            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals.deploy/pull/16",
-            "title": "release: 0.1.4 (rain-deploy 0.1.25)"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata.deploy",
-            "number": 23,
-            "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/23",
-            "title": "Bump rain-deploy 0.1.22 -> 0.1.25"
           },
           {
             "repo": "rainlanguage/rainlang.deploy",
@@ -820,18 +826,6 @@
             "title": "Deploy the US and EU test tokens through the V6 factory"
           },
           {
-            "repo": "rainlanguage/raindex.deploy",
-            "number": 2923,
-            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2923",
-            "title": "takeOrders4 skips an order whose calculate fails"
-          },
-          {
-            "repo": "rainlanguage/raindex.interface",
-            "number": 80,
-            "url": "https://github.com/rainlanguage/raindex.interface/pull/80",
-            "title": "IRaindexV7: OrderCalculateReverted"
-          },
-          {
             "repo": "rainlanguage/rain-org-health",
             "number": 221,
             "url": "https://github.com/rainlanguage/rain-org-health/pull/221",
@@ -848,12 +842,6 @@
             "number": 2920,
             "url": "https://github.com/rainlanguage/raindex.deploy/pull/2920",
             "title": "clear4: route each order's signed context to its own eval (IRaindexV7)"
-          },
-          {
-            "repo": "rainlanguage/raindex.interface",
-            "number": 79,
-            "url": "https://github.com/rainlanguage/raindex.interface/pull/79",
-            "title": "IRaindexV7: clear4 routes each order's signed context to its own eval"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -2030,12 +2018,6 @@
       "title": "Known owners: an authoriser clone's status is read from one vault per chain, so a split migration reports one vault's answer"
     },
     {
-      "repo": "rainlanguage/rain.merkle.deploy",
-      "number": 30,
-      "url": "https://github.com/rainlanguage/rain.merkle.deploy/issues/30",
-      "title": "Bind rain-deploy RainDeployVerifyDeclaration; delete the local declaration-test copy"
-    },
-    {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 513,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/513",
@@ -2366,12 +2348,6 @@
       "title": "comment-loc-cap: script/ is uncounted, and one aggregate lets test subsidise src"
     },
     {
-      "repo": "rainlanguage/rainlang.interface",
-      "number": 147,
-      "url": "https://github.com/rainlanguage/rainlang.interface/issues/147",
-      "title": "testFindExpanderMatchesReference is within 4x of its vm.assume rejection ceiling"
-    },
-    {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 405,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/405",
@@ -2388,18 +2364,6 @@
       "number": 357,
       "url": "https://github.com/S01-Issuer/s01.ops/issues/357",
       "title": "Data room review, part 2 input: the Albion data room in full (screens, rooms, access, features, design, stack)"
-    },
-    {
-      "repo": "rainlanguage/rainlang.interface",
-      "number": 144,
-      "url": "https://github.com/rainlanguage/rainlang.interface/issues/144",
-      "title": "checkNoOOBPointers fuzz tests get TruncatedSource where they expect another error"
-    },
-    {
-      "repo": "rainlanguage/rainlang.interface",
-      "number": 143,
-      "url": "https://github.com/rainlanguage/rainlang.interface/issues/143",
-      "title": "buildParseMetaV2 can write one item past the end of the items region"
     },
     {
       "repo": "S01-Issuer/st0x.attest",
@@ -3030,6 +2994,12 @@
       "number": 309,
       "url": "https://github.com/rainlanguage/rainix/issues/309",
       "title": "Cap the ratio of comment lines to source lines, charging non-doc comments only"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
+      "number": 291,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/291",
+      "title": "token-profile's dispatching benchmark is stale, and stored so it will go stale again"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -6300,7 +6270,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 79,
+    "unvetted": 77,
     "blockedOn": 9,
     "ready": 1,
     "needsWork": 91,
@@ -6311,18 +6281,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 186,
+    "totalProducerPrs": 184,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 712,
+    "uncoveredIssues": 709,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 878
+    "openIssues": 877
   },
   "ages": {
     "openIssues": {
-      "meanDays": 309.3,
-      "medianDays": 132.2,
-      "oldestDays": 1736.8
+      "meanDays": 309.6,
+      "medianDays": 132.3,
+      "oldestDays": 1736.9
     }
   }
 }
