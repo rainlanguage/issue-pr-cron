@@ -769,7 +769,7 @@
         ]
       },
       "un-vetted": {
-        "count": 76,
+        "count": 75,
         "prs": [
           {
             "repo": "rainlanguage/rain-org-health",
@@ -806,12 +806,6 @@
             "number": 80,
             "url": "https://github.com/rainlanguage/raindex.interface/pull/80",
             "title": "IRaindexV7: OrderCalculateReverted"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 349,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/349",
-            "title": "RainDeployVerifyDeclaration: shared deploy-declaration checks"
           },
           {
             "repo": "rainlanguage/rain-org-health",
@@ -2030,6 +2024,30 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.merkle.deploy",
+      "number": 30,
+      "url": "https://github.com/rainlanguage/rain.merkle.deploy/issues/30",
+      "title": "Bind rain-deploy RainDeployVerifyDeclaration; delete the local declaration-test copy"
+    },
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 513,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/513",
+      "title": "Bind rain-deploy RainDeployVerifyDeclaration; delete the local declaration-test copy"
+    },
+    {
+      "repo": "rainlanguage/rainlang.deploy",
+      "number": 14,
+      "url": "https://github.com/rainlanguage/rainlang.deploy/issues/14",
+      "title": "Bind rain-deploy RainDeployVerifyDeclaration; delete the local declaration-test copy"
+    },
+    {
+      "repo": "rainlanguage/raindex.deploy",
+      "number": 2924,
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2924",
+      "title": "Bind rain-deploy RainDeployVerifyDeclaration; delete the local declaration-test copy"
+    },
     {
       "repo": "rainlanguage/rain-org-health",
       "number": 226,
@@ -6499,7 +6517,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 76,
+    "unvetted": 75,
     "blockedOn": 10,
     "ready": 1,
     "needsWork": 93,
@@ -6510,17 +6528,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 187,
+    "totalProducerPrs": 186,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 740,
+    "uncoveredIssues": 744,
     "designPresentable": 6,
     "designNoQuestion": 0,
-    "openIssues": 907
+    "openIssues": 911
   },
   "ages": {
     "openIssues": {
-      "meanDays": 317.8,
-      "medianDays": 132.8,
+      "meanDays": 316.4,
+      "medianDays": 132.0,
       "oldestDays": 1736.6
     }
   }
