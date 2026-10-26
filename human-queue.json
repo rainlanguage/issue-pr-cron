@@ -739,13 +739,25 @@
         ]
       },
       "un-vetted": {
-        "count": 76,
+        "count": 74,
         "prs": [
           {
-            "repo": "rainlanguage/rain.math.float.deploy",
-            "number": 54,
-            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/54",
-            "title": "release: 0.1.9"
+            "repo": "rainlanguage/rain.dia",
+            "number": 79,
+            "url": "https://github.com/rainlanguage/rain.dia/pull/79",
+            "title": "Ignore .env"
+          },
+          {
+            "repo": "rainlanguage/rain.solver",
+            "number": 505,
+            "url": "https://github.com/rainlanguage/rain.solver/pull/505",
+            "title": "Remove legacy CI_DEPLOY_*_RPC_URL references"
+          },
+          {
+            "repo": "rainlanguage/flow",
+            "number": 487,
+            "url": "https://github.com/rainlanguage/flow/pull/487",
+            "title": "Remove legacy CI_DEPLOY_*_RPC_URL references"
           },
           {
             "repo": "rainlanguage/rain.verify",
@@ -758,12 +770,6 @@
             "number": 78,
             "url": "https://github.com/rainlanguage/rain.dia/pull/78",
             "title": "Bump rain-deploy 0.1.22 -> 0.1.25, rainlang 0.2.19 -> 0.2.26"
-          },
-          {
-            "repo": "rainlanguage/raindex.deploy",
-            "number": 2931,
-            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2931",
-            "title": "Bind rain-deploy RainDeployVerifyDeclaration; correct frozen arb DEPENDENCIES"
           },
           {
             "repo": "rainlanguage/raindex.deploy",
@@ -782,24 +788,6 @@
             "number": 2928,
             "url": "https://github.com/rainlanguage/raindex.deploy/pull/2928",
             "title": "Order clearer reads the order column or reverts"
-          },
-          {
-            "repo": "rainlanguage/rainlang.interface",
-            "number": 152,
-            "url": "https://github.com/rainlanguage/rainlang.interface/pull/152",
-            "title": "Pin each parse meta word to its expander layer slot (#143)"
-          },
-          {
-            "repo": "rainlanguage/rainlang.interface",
-            "number": 151,
-            "url": "https://github.com/rainlanguage/rainlang.interface/pull/151",
-            "title": "test: keep checkNoOOBPointers corruptions well formed"
-          },
-          {
-            "repo": "rainlanguage/rainlang.deploy",
-            "number": 20,
-            "url": "https://github.com/rainlanguage/rainlang.deploy/pull/20",
-            "title": "rain-deploy 0.1.25: bind RainDeployVerifyDeclaration, drop hand-rolled shim and build.sh"
           },
           {
             "repo": "rainlanguage/rain-org-health",
@@ -2139,12 +2127,6 @@
     },
     {
       "repo": "rainlanguage/rain.math.float.deploy",
-      "number": 40,
-      "url": "https://github.com/rainlanguage/rain.math.float.deploy/issues/40",
-      "title": "Stop deploying the log-table data contract; the library no longer reads it"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float.deploy",
       "number": 39,
       "url": "https://github.com/rainlanguage/rain.math.float.deploy/issues/39",
       "title": "Test the published rain-math-float crate's Rust API in this repo"
@@ -2352,6 +2334,18 @@
       "number": 357,
       "url": "https://github.com/S01-Issuer/s01.ops/issues/357",
       "title": "Data room review, part 2 input: the Albion data room in full (screens, rooms, access, features, design, stack)"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 614,
+      "url": "https://github.com/rainlanguage/rainlang/issues/614",
+      "title": "checkNoOOBPointers fuzz tests get TruncatedSource where they expect another error"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 615,
+      "url": "https://github.com/rainlanguage/rainlang/issues/615",
+      "title": "buildParseMetaV2 can write one item past the end of the items region"
     },
     {
       "repo": "S01-Issuer/st0x.attest",
@@ -2678,12 +2672,6 @@
       "title": "script/Deploy.sol emits meta to the v1 MetaBoard; the org deployed a successor board on 2026-08-21"
     },
     {
-      "repo": "rainlanguage/rain.math.float.deploy",
-      "number": 10,
-      "url": "https://github.com/rainlanguage/rain.math.float.deploy/issues/10",
-      "title": "Deploy-suite tests etch only the candidate log tables, so a future table move wedges CI red on a live released suite"
-    },
-    {
       "repo": "rainlanguage/rainix",
       "number": 355,
       "url": "https://github.com/rainlanguage/rainix/issues/355",
@@ -2706,12 +2694,6 @@
       "number": 353,
       "url": "https://github.com/rainlanguage/rainix/issues/353",
       "title": "rainix-autopublish pushes the version bump before publishing, so a failed publish permanently advances the version"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float.deploy",
-      "number": 37,
-      "url": "https://github.com/rainlanguage/rain.math.float.deploy/issues/37",
-      "title": "DecimalFloat was never deployed at its currently pinned address: 5 red testProdDeployment* tests need an on-chain deploy, not a code change"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -3116,9 +3098,9 @@
       "title": "Absorb raindex-interface back into raindex (rainix#296)"
     },
     {
-      "repo": "rainlanguage/rainlang.interface",
-      "number": 120,
-      "url": "https://github.com/rainlanguage/rainlang.interface/issues/120",
+      "repo": "rainlanguage/rainlang",
+      "number": 616,
+      "url": "https://github.com/rainlanguage/rainlang/issues/616",
       "title": "Absorb rainlang-interface back into rainlang (rainix#296)"
     },
     {
@@ -6258,7 +6240,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 76,
+    "unvetted": 74,
     "blockedOn": 9,
     "ready": 1,
     "needsWork": 91,
@@ -6269,16 +6251,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 183,
+    "totalProducerPrs": 181,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 708,
+    "uncoveredIssues": 707,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 875
+    "openIssues": 872
   },
   "ages": {
     "openIssues": {
-      "meanDays": 310.1,
+      "meanDays": 311.1,
       "medianDays": 132.4,
       "oldestDays": 1737.0
     }
