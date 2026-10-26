@@ -769,7 +769,7 @@
         ]
       },
       "un-vetted": {
-        "count": 75,
+        "count": 72,
         "prs": [
           {
             "repo": "rainlanguage/rain-org-health",
@@ -794,12 +794,6 @@
             "number": 2923,
             "url": "https://github.com/rainlanguage/raindex.deploy/pull/2923",
             "title": "takeOrders4 skips an order whose calculate fails"
-          },
-          {
-            "repo": "rainlanguage/raindex.deploy",
-            "number": 2922,
-            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2922",
-            "title": "Correct frozen RaindexV6/SubParser DEPENDENCIES to what the bytecode reaches"
           },
           {
             "repo": "rainlanguage/raindex.interface",
@@ -860,12 +854,6 @@
             "number": 497,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/497",
             "title": "Registry-admin V4 authoriser clone: bind the admin in the ConfigRegistry, deploy one clone on every chain"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 496,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/496",
-            "title": "Drop per-chain migration-applied asserts; the dashboard tracks them"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -1028,12 +1016,6 @@
             "number": 181,
             "url": "https://github.com/rainlanguage/rain-org-health/pull/181",
             "title": "Replay health.json onto the race winner instead of rebasing onto it"
-          },
-          {
-            "repo": "rainlanguage/rainlang.interface",
-            "number": 134,
-            "url": "https://github.com/rainlanguage/rainlang.interface/pull/134",
-            "title": "feat: IInterpreterCallerV5 with EIP-712 SignedContextV2; drop V1 LibContext and rain-lib-hash"
           },
           {
             "repo": "rainlanguage/raindex.deploy",
@@ -2025,6 +2007,12 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain-org-health",
+      "number": 227,
+      "url": "https://github.com/rainlanguage/rain-org-health/issues/227",
+      "title": "Known owners: an authoriser clone's status is read from one vault per chain, so a split migration reports one vault's answer"
+    },
+    {
       "repo": "rainlanguage/rain.merkle.deploy",
       "number": 30,
       "url": "https://github.com/rainlanguage/rain.merkle.deploy/issues/30",
@@ -2047,12 +2035,6 @@
       "number": 2924,
       "url": "https://github.com/rainlanguage/raindex.deploy/issues/2924",
       "title": "Bind rain-deploy RainDeployVerifyDeclaration; delete the local declaration-test copy"
-    },
-    {
-      "repo": "rainlanguage/rain-org-health",
-      "number": 226,
-      "url": "https://github.com/rainlanguage/rain-org-health/issues/226",
-      "title": "Known owners: the Ethereum V4 authoriser clone row claims active from the pin, without a live authorizer() read"
     },
     {
       "repo": "rainlanguage/rain.vats",
@@ -6517,7 +6499,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 75,
+    "unvetted": 72,
     "blockedOn": 10,
     "ready": 1,
     "needsWork": 93,
@@ -6528,7 +6510,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 186,
+    "totalProducerPrs": 183,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 744,
     "designPresentable": 6,
@@ -6538,8 +6520,8 @@
   "ages": {
     "openIssues": {
       "meanDays": 316.4,
-      "medianDays": 132.0,
-      "oldestDays": 1736.6
+      "medianDays": 132.1,
+      "oldestDays": 1736.7
     }
   }
 }
