@@ -763,8 +763,14 @@
         ]
       },
       "un-vetted": {
-        "count": 75,
+        "count": 76,
         "prs": [
+          {
+            "repo": "rainlanguage/rainlang",
+            "number": 606,
+            "url": "https://github.com/rainlanguage/rainlang/pull/606",
+            "title": "Rename ExpressionDeployer to Compiler"
+          },
           {
             "repo": "rainlanguage/rainlang.deploy",
             "number": 15,
@@ -2012,6 +2018,30 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rainlang",
+      "number": 607,
+      "url": "https://github.com/rainlanguage/rainlang/issues/607",
+      "title": "Move the leftover src/generated/0_1_9/ deploy records to rainlang.deploy"
+    },
+    {
+      "repo": "rainlanguage/rainlang.interface",
+      "number": 149,
+      "url": "https://github.com/rainlanguage/rainlang.interface/issues/149",
+      "title": "Use compiler naming for the expression deployer in the next interface version"
+    },
+    {
+      "repo": "rainlanguage/rainlang.deploy",
+      "number": 16,
+      "url": "https://github.com/rainlanguage/rainlang.deploy/issues/16",
+      "title": "Crates Release fails on every main push: version-bump push rejected by main ruleset (GH013)"
+    },
+    {
+      "repo": "rainlanguage/rainlang",
+      "number": 604,
+      "url": "https://github.com/rainlanguage/rainlang/issues/604",
+      "title": "Port dotrain composition (bindings, elisions, imports) onchain"
+    },
+    {
       "repo": "rainlanguage/rain.deploy",
       "number": 350,
       "url": "https://github.com/rainlanguage/rain.deploy/issues/350",
@@ -2694,12 +2724,6 @@
       "number": 566,
       "url": "https://github.com/rainlanguage/rainlang/issues/566",
       "title": "Sub-parseable literal scans complement uint128 masks: high bytes halt the scan, contradicting the UTF-8 comment, and the semantics silently flip when rain.string widens to uint256"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 565,
-      "url": "https://github.com/rainlanguage/rainlang/issues/565",
-      "title": "RHS literal branch has no yang guard: adjacent literals parse without whitespace between them"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -3800,12 +3824,6 @@
       "title": "Adopt per-release deploy snapshots (src/generated/<tag>/) via the shared LibSnapshot"
     },
     {
-      "repo": "rainlanguage/rainlang",
-      "number": 545,
-      "url": "https://github.com/rainlanguage/rainlang/issues/545",
-      "title": "Adopt per-release deploy snapshots (src/generated/<tag>/) via the shared LibSnapshot"
-    },
-    {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 251,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/251",
@@ -3860,12 +3878,6 @@
       "title": "Migrate soldeer dependency `rain-interpreter-interface` → `rainlang-interface`"
     },
     {
-      "repo": "rainlanguage/rainlang",
-      "number": 542,
-      "url": "https://github.com/rainlanguage/rainlang/issues/542",
-      "title": "Migrate soldeer dependency `rain-interpreter-interface` → `rainlang-interface`"
-    },
-    {
       "repo": "rainlanguage/rain-org-health",
       "number": 65,
       "url": "https://github.com/rainlanguage/rain-org-health/issues/65",
@@ -3917,12 +3929,6 @@
       "repo": "rainlanguage/rain.vats",
       "number": 326,
       "url": "https://github.com/rainlanguage/rain.vats/issues/326",
-      "title": "Migrate to the next-version Soldeer release lifecycle (bump [package].version)"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 541,
-      "url": "https://github.com/rainlanguage/rainlang/issues/541",
       "title": "Migrate to the next-version Soldeer release lifecycle (bump [package].version)"
     },
     {
@@ -4364,12 +4370,6 @@
       "title": "Package Release fails at npm publish: @rainlanguage/float 404 (scoped package never created)"
     },
     {
-      "repo": "rainlanguage/rainlang",
-      "number": 519,
-      "url": "https://github.com/rainlanguage/rainlang/issues/519",
-      "title": "Publish rainlang-eval + rainlang_test_fixtures to crates.io (unblock raindex's last git deps)"
-    },
-    {
       "repo": "rainlanguage/rainix",
       "number": 196,
       "url": "https://github.com/rainlanguage/rainix/issues/196",
@@ -4388,12 +4388,6 @@
       "title": "Pinned nixpkgs ships tailscale 1.98.0 — broken MagicDNS on Linux"
     },
     {
-      "repo": "rainlanguage/rainlang",
-      "number": 510,
-      "url": "https://github.com/rainlanguage/rainlang/issues/510",
-      "title": "Publish Rust crates (bindings, dispair, parser, eval) to crates.io"
-    },
-    {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 195,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/195",
@@ -4410,12 +4404,6 @@
       "number": 173,
       "url": "https://github.com/rainlanguage/rainix/issues/173",
       "title": "Upstream a regen-derived-artifacts-and-assert-clean-tree reusable workflow"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 499,
-      "url": "https://github.com/rainlanguage/rainlang/issues/499",
-      "title": "Speed up copy-artifacts.yaml (currently ~11 min)"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -4724,12 +4712,6 @@
       "title": "unmigrated storage field name is semantically misleading"
     },
     {
-      "repo": "rainlanguage/rainlang",
-      "number": 479,
-      "url": "https://github.com/rainlanguage/rainlang/issues/479",
-      "title": "CI takes 30-40min due to macOS Nix cache and redundant sol-prelude"
-    },
-    {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 34,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/34",
@@ -4742,15 +4724,9 @@
       "title": "V2 OARV deployer beacons bricked on Base"
     },
     {
-      "repo": "rainlanguage/rainlang",
-      "number": 478,
-      "url": "https://github.com/rainlanguage/rainlang/issues/478",
-      "title": "Rename RainlangExpressionDeployer"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 465,
-      "url": "https://github.com/rainlanguage/rainlang/issues/465",
+      "repo": "rainlanguage/rainlang.deploy",
+      "number": 17,
+      "url": "https://github.com/rainlanguage/rainlang.deploy/issues/17",
       "title": "Rename DISPaiR struct and crate to Rainlang"
     },
     {
@@ -4790,10 +4766,10 @@
       "title": "Vault detail page intermittently fails to load (v6.raindex.finance)"
     },
     {
-      "repo": "rainlanguage/rainlang",
-      "number": 434,
-      "url": "https://github.com/rainlanguage/rainlang/issues/434",
-      "title": "upstream GM word to float lib"
+      "repo": "rainlanguage/rain.math.float",
+      "number": 729,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/729",
+      "title": "Upstream signed geometric mean (gm) from rainlang into LibDecimalFloat"
     },
     {
       "repo": "rainlanguage/raindex.deploy",
@@ -5708,12 +5684,6 @@
       "title": "Define additional task entrypoints in order frontmatter"
     },
     {
-      "repo": "rainlanguage/rainlang",
-      "number": 258,
-      "url": "https://github.com/rainlanguage/rainlang/issues/258",
-      "title": "Rust for unpacking and formatting rain stack items"
-    },
-    {
       "repo": "rainlanguage/raindex.deploy",
       "number": 707,
       "url": "https://github.com/rainlanguage/raindex.deploy/issues/707",
@@ -5732,12 +5702,6 @@
       "title": "Generate ABIs rather than hardcode"
     },
     {
-      "repo": "rainlanguage/rainlang",
-      "number": 252,
-      "url": "https://github.com/rainlanguage/rainlang/issues/252",
-      "title": "Surface RPC errors better"
-    },
-    {
       "repo": "rainlanguage/rain.solver",
       "number": 126,
       "url": "https://github.com/rainlanguage/rain.solver/issues/126",
@@ -5754,18 +5718,6 @@
       "number": 20,
       "url": "https://github.com/rainlanguage/rain.internal/issues/20",
       "title": "Create submission form for comp"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 242,
-      "url": "https://github.com/rainlanguage/rainlang/issues/242",
-      "title": "pointer generation for externs"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 241,
-      "url": "https://github.com/rainlanguage/rainlang/issues/241",
-      "title": "interfaces for pointers"
     },
     {
       "repo": "rainlanguage/raindex.deploy",
@@ -5804,40 +5756,10 @@
       "title": "Write CVSS-like criteria to help score and prioritise bugs and infra issues"
     },
     {
-      "repo": "rainlanguage/rainlang",
-      "number": 231,
-      "url": "https://github.com/rainlanguage/rainlang/issues/231",
-      "title": "how should erc 721/1155 be handled as decimals?"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 228,
-      "url": "https://github.com/rainlanguage/rainlang/issues/228",
-      "title": "lexical ordering of 00 ops doesn't match compatibility number requirements"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 220,
-      "url": "https://github.com/rainlanguage/rainlang/issues/220",
-      "title": "true/false words"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 218,
-      "url": "https://github.com/rainlanguage/rainlang/issues/218",
-      "title": "support types in decimal literals like 1_d6 and 1_d0 and 1_uint etc."
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 217,
-      "url": "https://github.com/rainlanguage/rainlang/issues/217",
-      "title": "support _ separator like 1_000_000 in decimal literals"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 216,
-      "url": "https://github.com/rainlanguage/rainlang/issues/216",
-      "title": "support negative numbers"
+      "repo": "rainlanguage/rain.math.float",
+      "number": 730,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/730",
+      "title": "Decimal literals: support _ digit separators (1_000_000)"
     },
     {
       "repo": "rainlanguage/rain.solver",
@@ -6375,33 +6297,9 @@
     },
     {
       "repo": "rainlanguage/rainlang",
-      "number": 142,
-      "url": "https://github.com/rainlanguage/rainlang/issues/142",
-      "title": "utf8 support for parsing"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
       "number": 141,
       "url": "https://github.com/rainlanguage/rainlang/issues/141",
       "title": "some kind of onchain registry (ens?) support for things like well known addresses (e.g. weth)"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 139,
-      "url": "https://github.com/rainlanguage/rainlang/issues/139",
-      "title": "undefined word (requires subsitution)"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 138,
-      "url": "https://github.com/rainlanguage/rainlang/issues/138",
-      "title": "calldata eval rather than onchain deploys"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 137,
-      "url": "https://github.com/rainlanguage/rainlang/issues/137",
-      "title": "LHS parse substitutions"
     },
     {
       "repo": "rainlanguage/rain.math.float",
@@ -6474,7 +6372,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 75,
+    "unvetted": 76,
     "blockedOn": 10,
     "ready": 1,
     "needsWork": 93,
@@ -6485,17 +6383,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 185,
+    "totalProducerPrs": 186,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 739,
+    "uncoveredIssues": 721,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 905
+    "openIssues": 886
   },
   "ages": {
     "openIssues": {
-      "meanDays": 317.0,
-      "medianDays": 133.0,
+      "meanDays": 307.2,
+      "medianDays": 132.2,
       "oldestDays": 1736.8
     }
   }
