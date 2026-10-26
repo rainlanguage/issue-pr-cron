@@ -1143,3 +1143,7 @@
 {"ts":"2026-10-26T17:34:22Z","observedAt":"2026-10-26T18:32:48Z","kind":"pr","repo":"rainlanguage/rain.tofu.erc20-decimals.deploy","number":16}
 {"ts":"2026-10-26T18:09:16Z","observedAt":"2026-10-26T18:32:48Z","kind":"pr","repo":"rainlanguage/raindex.deploy","number":2923}
 {"ts":"2026-10-26T18:29:19Z","observedAt":"2026-10-26T18:32:48Z","kind":"pr","repo":"rainlanguage/raindex.interface","number":79}
+{"ts":"2026-10-26T19:05:11Z","observedAt":"2026-10-26T19:31:43Z","kind":"pr","repo":"rainlanguage/rain.math.float","number":731}
+{"ts":"2026-10-26T18:39:40Z","observedAt":"2026-10-26T19:31:43Z","kind":"pr","repo":"rainlanguage/rain.math.float.deploy","number":51}
+{"ts":"2026-10-26T18:42:01Z","observedAt":"2026-10-26T19:31:43Z","kind":"pr","repo":"rainlanguage/rain.math.float.deploy","number":52}
+{"ts":"2026-10-26T19:24:49Z","observedAt":"2026-10-26T19:31:43Z","kind":"pr","repo":"rainlanguage/raindex.deploy","number":2926}

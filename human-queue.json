@@ -739,13 +739,43 @@
         ]
       },
       "un-vetted": {
-        "count": 77,
+        "count": 79,
         "prs": [
           {
             "repo": "rainlanguage/raindex.deploy",
-            "number": 2926,
-            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2926",
-            "title": "Deposit context words read their own column or revert"
+            "number": 2931,
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2931",
+            "title": "Bind rain-deploy RainDeployVerifyDeclaration; correct frozen arb DEPENDENCIES"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float",
+            "number": 733,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/733",
+            "title": "ci: call the rainix reusable rs-test workflow"
+          },
+          {
+            "repo": "rainlanguage/raindex.deploy",
+            "number": 2930,
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2930",
+            "title": "Signed-context row operand reverts past 255 instead of wrapping"
+          },
+          {
+            "repo": "rainlanguage/raindex.deploy",
+            "number": 2929,
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2929",
+            "title": "Adopt IRaindexV7 and SignedContextV2"
+          },
+          {
+            "repo": "rainlanguage/raindex.deploy",
+            "number": 2928,
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2928",
+            "title": "Order clearer reads the order column or reverts"
+          },
+          {
+            "repo": "rainlanguage/raindex.deploy",
+            "number": 2927,
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2927",
+            "title": "Withdraw context words read their own column or revert"
           },
           {
             "repo": "rainlanguage/rainlang.interface",
@@ -776,24 +806,6 @@
             "number": 353,
             "url": "https://github.com/rainlanguage/rain.vats/pull/353",
             "title": "Bump rain-factory-deploy 0.2.3"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float.deploy",
-            "number": 52,
-            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/52",
-            "title": "release: 0.1.8"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float.deploy",
-            "number": 51,
-            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/51",
-            "title": "Bump rain-deploy to 0.1.25"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 731,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/731",
-            "title": "LibDecimalFloat.gm: the signed geometric mean"
           },
           {
             "repo": "rainlanguage/rainlang.deploy",
@@ -841,7 +853,7 @@
             "repo": "rainlanguage/raindex.deploy",
             "number": 2920,
             "url": "https://github.com/rainlanguage/raindex.deploy/pull/2920",
-            "title": "clear4: route each order's signed context to its own eval (IRaindexV7)"
+            "title": "Route each clear4 signed context to its own order"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -2021,12 +2033,6 @@
       "repo": "S01-Issuer/st0x.deploy",
       "number": 513,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/513",
-      "title": "Bind rain-deploy RainDeployVerifyDeclaration; delete the local declaration-test copy"
-    },
-    {
-      "repo": "rainlanguage/raindex.deploy",
-      "number": 2924,
-      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2924",
       "title": "Bind rain-deploy RainDeployVerifyDeclaration; delete the local declaration-test copy"
     },
     {
@@ -6270,7 +6276,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 77,
+    "unvetted": 79,
     "blockedOn": 9,
     "ready": 1,
     "needsWork": 91,
@@ -6281,16 +6287,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 184,
+    "totalProducerPrs": 186,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 709,
+    "uncoveredIssues": 708,
     "designPresentable": 5,
     "designNoQuestion": 0,
     "openIssues": 877
   },
   "ages": {
     "openIssues": {
-      "meanDays": 309.6,
+      "meanDays": 309.4,
       "medianDays": 132.3,
       "oldestDays": 1736.9
     }
