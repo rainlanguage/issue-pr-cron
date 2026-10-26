@@ -739,109 +739,91 @@
         ]
       },
       "un-vetted": {
-        "count": 83,
+        "count": 77,
         "prs": [
           {
+            "repo": "rainlanguage/rainix",
+            "number": 432,
+            "url": "https://github.com/rainlanguage/rainix/pull/432",
+            "title": "Declare every secret each reusable reads so cross-org callers can pass it"
+          },
+          {
+            "repo": "rainlanguage/raindex.deploy",
+            "number": 2938,
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2938",
+            "title": "deploy-subgraph: call the rainix-subgraph-deploy reusable"
+          },
+          {
             "repo": "S01-Issuer/st0x.deploy",
-            "number": 516,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/516",
-            "title": "Bump rain-math-float to 0.3.11"
+            "number": 519,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/519",
+            "title": "deploy-subgraph: call the rainix-subgraph-deploy reusable"
           },
           {
-            "repo": "rainlanguage/rain.vats",
-            "number": 354,
-            "url": "https://github.com/rainlanguage/rain.vats/pull/354",
-            "title": "Bump rain-math-float to 0.3.11"
+            "repo": "rainlanguage/rainix",
+            "number": 429,
+            "url": "https://github.com/rainlanguage/rainix/pull/429",
+            "title": "Add rainix-subgraph-deploy reusable workflow"
           },
           {
-            "repo": "rainlanguage/raindex.interface",
-            "number": 82,
-            "url": "https://github.com/rainlanguage/raindex.interface/pull/82",
-            "title": "Bump rain-math-float to 0.3.11"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.leakybucket",
-            "number": 129,
-            "url": "https://github.com/rainlanguage/rain.lib.leakybucket/pull/129",
-            "title": "Bump rain-math-float to 0.3.11"
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 518,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/518",
+            "title": "git-clean: use rainix-copy-artifacts reusable"
           },
           {
             "repo": "rainlanguage/rainlang.deploy",
-            "number": 21,
-            "url": "https://github.com/rainlanguage/rainlang.deploy/pull/21",
-            "title": "Move off rainlang-interface onto rainlang 0.2.27"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float.deploy",
-            "number": 55,
-            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/55",
-            "title": "Test the published rain-math-float crate"
+            "number": 22,
+            "url": "https://github.com/rainlanguage/rainlang.deploy/pull/22",
+            "title": "Bump rainlang to 0.2.30, rain-math-float to 0.3.11, rain-math-float-deploy to 0.1.9"
           },
           {
             "repo": "rainlanguage/rain.merkle.deploy",
-            "number": 32,
-            "url": "https://github.com/rainlanguage/rain.merkle.deploy/pull/32",
-            "title": "Import rainlang interfaces from rainlang; drop rainlang-interface"
+            "number": 35,
+            "url": "https://github.com/rainlanguage/rain.merkle.deploy/pull/35",
+            "title": "Bump rainlang to 0.2.30, rain-math-float to 0.3.11, rain-math-float-deploy to 0.1.9"
           },
           {
-            "repo": "rainlanguage/rain.verify",
-            "number": 43,
-            "url": "https://github.com/rainlanguage/rain.verify/pull/43",
-            "title": "Import rainlang interfaces from rainlang; drop rainlang-interface"
-          },
-          {
-            "repo": "rainlanguage/rain.erc4626.words",
-            "number": 276,
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/276",
-            "title": "Import rainlang interfaces from rainlang; drop rainlang-interface"
+            "repo": "rainlanguage/rain.pyth",
+            "number": 48,
+            "url": "https://github.com/rainlanguage/rain.pyth/pull/48",
+            "title": "Bump rainlang to 0.2.30, rain-math-float to 0.3.11, rain-math-float-deploy to 0.1.9"
           },
           {
             "repo": "rainlanguage/rain.flare",
-            "number": 222,
-            "url": "https://github.com/rainlanguage/rain.flare/pull/222",
-            "title": "Import rainlang interfaces from rainlang; drop rainlang-interface"
+            "number": 223,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/223",
+            "title": "Bump rainlang to 0.2.30, rain-math-float to 0.3.11, rain-math-float-deploy to 0.1.9"
           },
           {
-            "repo": "rainlanguage/rainlang",
-            "number": 617,
-            "url": "https://github.com/rainlanguage/rainlang/pull/617",
-            "title": "gm: adopt LibDecimalFloat.gm (rain-math-float 0.3.11)"
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 277,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/277",
+            "title": "Bump rainlang to 0.2.30, rain-math-float to 0.3.11, rain-math-float-deploy to 0.1.9"
+          },
+          {
+            "repo": "rainlanguage/rain.dia",
+            "number": 81,
+            "url": "https://github.com/rainlanguage/rain.dia/pull/81",
+            "title": "Bump rainlang to 0.2.30, rain-math-float to 0.3.11, rain-math-float-deploy to 0.1.9"
+          },
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 427,
+            "url": "https://github.com/rainlanguage/rainix/pull/427",
+            "title": "Static check: .env must be gitignored and never tracked"
+          },
+          {
+            "repo": "rainlanguage/raindex.deploy",
+            "number": 2937,
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2937",
+            "title": "Test order-clearer and order context words for both orders in clear3"
           },
           {
             "repo": "rainlanguage/rain.dia",
             "number": 79,
             "url": "https://github.com/rainlanguage/rain.dia/pull/79",
             "title": "Ignore .env"
-          },
-          {
-            "repo": "rainlanguage/rain.solver",
-            "number": 505,
-            "url": "https://github.com/rainlanguage/rain.solver/pull/505",
-            "title": "Remove legacy CI_DEPLOY_*_RPC_URL references"
-          },
-          {
-            "repo": "rainlanguage/flow",
-            "number": 487,
-            "url": "https://github.com/rainlanguage/flow/pull/487",
-            "title": "Remove legacy CI_DEPLOY_*_RPC_URL references"
-          },
-          {
-            "repo": "rainlanguage/rain.dia",
-            "number": 78,
-            "url": "https://github.com/rainlanguage/rain.dia/pull/78",
-            "title": "Bump rain-deploy 0.1.22 -> 0.1.25, rainlang 0.2.19 -> 0.2.26"
-          },
-          {
-            "repo": "rainlanguage/raindex.deploy",
-            "number": 2930,
-            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2930",
-            "title": "Signed-context row operand reverts past 255 instead of wrapping"
-          },
-          {
-            "repo": "rainlanguage/raindex.deploy",
-            "number": 2929,
-            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2929",
-            "title": "Adopt IRaindexV7 and SignedContextV2"
           },
           {
             "repo": "rainlanguage/rain-org-health",
@@ -869,12 +851,6 @@
           },
           {
             "repo": "rainlanguage/raindex.deploy",
-            "number": 2921,
-            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2921",
-            "title": "Context words read their true value per entrypoint or revert (M02)"
-          },
-          {
-            "repo": "rainlanguage/raindex.deploy",
             "number": 2920,
             "url": "https://github.com/rainlanguage/raindex.deploy/pull/2920",
             "title": "Route each clear4 signed context to its own order"
@@ -884,12 +860,6 @@
             "number": 510,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/510",
             "title": "Emit expected-state.json for the rain-org-health dashboard"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 509,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/509",
-            "title": "Deploy every Zoltu suite through StoxDeploySuites"
           },
           {
             "repo": "rainlanguage/rain-org-health",
@@ -1004,12 +974,6 @@
             "number": 445,
             "url": "https://github.com/rainlanguage/rain.math.float/pull/445",
             "title": "Halmos proofs: add/sub rounding and series equivalence"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float.deploy",
-            "number": 36,
-            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/36",
-            "title": "Add Float macro and serde crates"
           },
           {
             "repo": "rainlanguage/issue-pr-cron",
@@ -2024,6 +1988,18 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rainix",
+      "number": 430,
+      "url": "https://github.com/rainlanguage/rainix/issues/430",
+      "title": "env-ignored check: cover .env.* variants (keep .env.example allowed)"
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 425,
+      "url": "https://github.com/rainlanguage/rainix/issues/425",
+      "title": "Reusable workflow for consumers' JS/wasm binding tests"
+    },
+    {
       "repo": "rainlanguage/rainlang.deploy",
       "number": 16,
       "url": "https://github.com/rainlanguage/rainlang.deploy/issues/16",
@@ -2610,12 +2586,6 @@
       "number": 367,
       "url": "https://github.com/rainlanguage/rainix/issues/367",
       "title": "rainix-copy-artifacts: set permissions: contents: read on the reusable's job"
-    },
-    {
-      "repo": "rainlanguage/rainix",
-      "number": 366,
-      "url": "https://github.com/rainlanguage/rainix/issues/366",
-      "title": "rainix-copy-artifacts: declare the CACHIX_AUTH_TOKEN contract so consumers can drop secrets: inherit"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -6270,7 +6240,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 83,
+    "unvetted": 77,
     "blockedOn": 9,
     "ready": 1,
     "needsWork": 91,
@@ -6281,17 +6251,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 190,
+    "totalProducerPrs": 184,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 703,
+    "uncoveredIssues": 704,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 869
+    "openIssues": 871
   },
   "ages": {
     "openIssues": {
-      "meanDays": 312.1,
-      "medianDays": 132.4,
+      "meanDays": 310.9,
+      "medianDays": 132.5,
       "oldestDays": 1737.1
     }
   }
