@@ -1129,3 +1129,10 @@
 {"ts":"2026-10-26T13:17:06Z","observedAt":"2026-10-26T13:32:50Z","kind":"pr","repo":"rainlanguage/rainlang.interface","number":134}
 {"ts":"2026-10-26T14:20:23Z","observedAt":"2026-10-26T14:31:08Z","kind":"pr","repo":"rainlanguage/rain.merkle.deploy","number":18}
 {"ts":"2026-10-26T13:50:43Z","observedAt":"2026-10-26T14:31:08Z","kind":"pr","repo":"rainlanguage/rain.merkle.deploy","number":29}
+{"ts":"2026-10-26T17:05:24Z","observedAt":"2026-10-26T17:31:48Z","kind":"pr","repo":"rainlanguage/rain.extrospection.deploy","number":16}
+{"ts":"2026-10-26T17:04:28Z","observedAt":"2026-10-26T17:31:48Z","kind":"pr","repo":"rainlanguage/rain.factory.deploy","number":65}
+{"ts":"2026-10-26T17:03:45Z","observedAt":"2026-10-26T17:31:48Z","kind":"pr","repo":"rainlanguage/rain.tofu.erc20-decimals.deploy","number":15}
+{"ts":"2026-10-26T17:02:39Z","observedAt":"2026-10-26T17:31:48Z","kind":"pr","repo":"rainlanguage/rain.vats","number":352}
+{"ts":"2026-10-26T16:59:24Z","observedAt":"2026-10-26T17:31:48Z","kind":"pr","repo":"rainlanguage/rainlang","number":606}
+{"ts":"2026-10-26T17:09:19Z","observedAt":"2026-10-26T17:31:48Z","kind":"pr","repo":"rainlanguage/rainlang.deploy","number":15}
+{"ts":"2026-10-26T17:15:07Z","observedAt":"2026-10-26T17:31:48Z","kind":"pr","repo":"rainlanguage/rainlang.interface","number":128}

@@ -2,12 +2,6 @@
   "states": {
     "ai:blocked-on": [
       {
-        "repo": "rainlanguage/rain.erc4626.words",
-        "number": 261,
-        "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/261",
-        "title": "bump rain-math-binary 0.1.1 -> 0.1.3"
-      },
-      {
         "repo": "cyclofinance/cyclo.sol",
         "number": 56,
         "url": "https://github.com/cyclofinance/cyclo.sol/pull/56",
@@ -108,18 +102,6 @@
         "number": 26,
         "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/26",
         "title": "Scan ledger: a wrapper object that states its own ordering and authority rule"
-      },
-      {
-        "repo": "rainlanguage/rain.flare",
-        "number": 205,
-        "url": "https://github.com/rainlanguage/rain.flare/pull/205",
-        "title": "bump rain-math-binary 0.1.1 -> 0.1.3"
-      },
-      {
-        "repo": "rainlanguage/rain.pyth",
-        "number": 32,
-        "url": "https://github.com/rainlanguage/rain.pyth/pull/32",
-        "title": "deps: bump rain-math-binary 0.1.1 -> 0.1.3"
       },
       {
         "repo": "cyclofinance/cyclo.site",
@@ -698,14 +680,8 @@
   "lanes": {
     "vet-lifecycle": {
       "ai:blocked-on": {
-        "count": 10,
+        "count": 9,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.erc4626.words",
-            "number": 261,
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/261",
-            "title": "bump rain-math-binary 0.1.1 -> 0.1.3"
-          },
           {
             "repo": "cyclofinance/cyclo.sol",
             "number": 56,
@@ -763,43 +739,67 @@
         ]
       },
       "un-vetted": {
-        "count": 76,
+        "count": 79,
         "prs": [
           {
-            "repo": "rainlanguage/rainlang",
-            "number": 606,
-            "url": "https://github.com/rainlanguage/rainlang/pull/606",
-            "title": "Rename ExpressionDeployer to Compiler"
+            "repo": "rainlanguage/rain.math.float.deploy",
+            "number": 52,
+            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/52",
+            "title": "release: 0.1.8"
           },
           {
-            "repo": "rainlanguage/rainlang.deploy",
-            "number": 15,
-            "url": "https://github.com/rainlanguage/rainlang.deploy/pull/15",
-            "title": "Bump rain-extrospection to 0.1.16"
+            "repo": "rainlanguage/rain.math.float.deploy",
+            "number": 51,
+            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/51",
+            "title": "Bump rain-deploy to 0.1.25"
           },
           {
-            "repo": "rainlanguage/rain.extrospection.deploy",
-            "number": 16,
-            "url": "https://github.com/rainlanguage/rain.extrospection.deploy/pull/16",
-            "title": "Bump rain-extrospection to 0.1.16"
-          },
-          {
-            "repo": "rainlanguage/rain.vats",
-            "number": 352,
-            "url": "https://github.com/rainlanguage/rain.vats/pull/352",
-            "title": "Bump rain-extrospection to 0.1.16"
+            "repo": "rainlanguage/rain.math.float",
+            "number": 731,
+            "url": "https://github.com/rainlanguage/rain.math.float/pull/731",
+            "title": "LibDecimalFloat.gm: the signed geometric mean"
           },
           {
             "repo": "rainlanguage/rain.factory.deploy",
-            "number": 65,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/65",
-            "title": "Bump rain-extrospection to 0.1.16"
+            "number": 66,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/66",
+            "title": "release: rain-factory-deploy 0.2.3, rain-deploy 0.1.25"
+          },
+          {
+            "repo": "rainlanguage/rainlang.deploy",
+            "number": 20,
+            "url": "https://github.com/rainlanguage/rainlang.deploy/pull/20",
+            "title": "rain-deploy 0.1.25: bind RainDeployVerifyDeclaration, drop hand-rolled shim and build.sh"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata.deploy",
+            "number": 24,
+            "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/24",
+            "title": "release: 0.1.4"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection.deploy",
+            "number": 17,
+            "url": "https://github.com/rainlanguage/rain.extrospection.deploy/pull/17",
+            "title": "release: 0.1.2 (rain-extrospection 0.1.16, rain-deploy 0.1.25)"
           },
           {
             "repo": "rainlanguage/rain.tofu.erc20-decimals.deploy",
-            "number": 15,
-            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals.deploy/pull/15",
-            "title": "Bump rain-extrospection to 0.1.16"
+            "number": 16,
+            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals.deploy/pull/16",
+            "title": "release: 0.1.4 (rain-deploy 0.1.25)"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata.deploy",
+            "number": 23,
+            "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/23",
+            "title": "Bump rain-deploy 0.1.22 -> 0.1.25"
+          },
+          {
+            "repo": "rainlanguage/rainlang.deploy",
+            "number": 19,
+            "url": "https://github.com/rainlanguage/rainlang.deploy/pull/19",
+            "title": "Rename RainlangExpressionDeployer to RainlangCompiler"
           },
           {
             "repo": "rainlanguage/rain-org-health",
@@ -1060,12 +1060,6 @@
             "title": "Float the suites declaration's pragma, as every other abstract here does"
           },
           {
-            "repo": "rainlanguage/rainlang.interface",
-            "number": 128,
-            "url": "https://github.com/rainlanguage/rainlang.interface/pull/128",
-            "title": "Drop foundry.toml release metadata: version intent lives in next-v tags (rainix#335)"
-          },
-          {
             "repo": "rainlanguage/raindex.interface",
             "number": 72,
             "url": "https://github.com/rainlanguage/raindex.interface/pull/72",
@@ -1273,25 +1267,13 @@
         }
       },
       "ai:needs-work": {
-        "count": 93,
+        "count": 91,
         "prs": [
           {
             "repo": "rainlanguage/adversarial-mutation-test",
             "number": 26,
             "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/26",
             "title": "Scan ledger: a wrapper object that states its own ordering and authority rule"
-          },
-          {
-            "repo": "rainlanguage/rain.flare",
-            "number": 205,
-            "url": "https://github.com/rainlanguage/rain.flare/pull/205",
-            "title": "bump rain-math-binary 0.1.1 -> 0.1.3"
-          },
-          {
-            "repo": "rainlanguage/rain.pyth",
-            "number": 32,
-            "url": "https://github.com/rainlanguage/rain.pyth/pull/32",
-            "title": "deps: bump rain-math-binary 0.1.1 -> 0.1.3"
           },
           {
             "repo": "cyclofinance/cyclo.site",
@@ -2019,14 +2001,8 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rainlang",
-      "number": 607,
-      "url": "https://github.com/rainlanguage/rainlang/issues/607",
-      "title": "Move the leftover src/generated/0_1_9/ deploy records to rainlang.deploy"
-    },
-    {
-      "repo": "rainlanguage/rainlang.interface",
-      "number": 149,
-      "url": "https://github.com/rainlanguage/rainlang.interface/issues/149",
+      "number": 612,
+      "url": "https://github.com/rainlanguage/rainlang/issues/612",
       "title": "Use compiler naming for the expression deployer in the next interface version"
     },
     {
@@ -2063,12 +2039,6 @@
       "repo": "S01-Issuer/st0x.deploy",
       "number": 513,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/513",
-      "title": "Bind rain-deploy RainDeployVerifyDeclaration; delete the local declaration-test copy"
-    },
-    {
-      "repo": "rainlanguage/rainlang.deploy",
-      "number": 14,
-      "url": "https://github.com/rainlanguage/rainlang.deploy/issues/14",
       "title": "Bind rain-deploy RainDeployVerifyDeclaration; delete the local declaration-test copy"
     },
     {
@@ -2624,12 +2594,6 @@
       "title": "BSC carries a second, unpinned set of 41 token vaults from run 34542307257 — record it as orphaned (or re-pin to it)"
     },
     {
-      "repo": "rainlanguage/rainlang",
-      "number": 578,
-      "url": "https://github.com/rainlanguage/rainlang/issues/578",
-      "title": "LibParseStackName: two fuzz tests fail for a specific ParseState input"
-    },
-    {
       "repo": "rainlanguage/rain.lib.hash",
       "number": 39,
       "url": "https://github.com/rainlanguage/rain.lib.hash/issues/39",
@@ -2718,12 +2682,6 @@
       "number": 33,
       "url": "https://github.com/rainlanguage/adversarial-mutation-test/issues/33",
       "title": "Documented fail-pattern example cannot match forge fuzz FAIL lines: killer names silently dropped when counterexamples embed ] in args"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 566,
-      "url": "https://github.com/rainlanguage/rainlang/issues/566",
-      "title": "Sub-parseable literal scans complement uint128 masks: high bytes halt the scan, contradicting the UTF-8 comment, and the semantics silently flip when rain.string widens to uint256"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -2972,12 +2930,6 @@
       "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
     },
     {
-      "repo": "rainlanguage/rainlang.interface",
-      "number": 124,
-      "url": "https://github.com/rainlanguage/rainlang.interface/issues/124",
-      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
-    },
-    {
       "repo": "rainlanguage/rain.flare",
       "number": 210,
       "url": "https://github.com/rainlanguage/rain.flare/issues/210",
@@ -3050,12 +3002,6 @@
       "title": "Named-returns rule reads as neutral; the org preference for unnamed should be stated in it"
     },
     {
-      "repo": "rainlanguage/rainlang.interface",
-      "number": 123,
-      "url": "https://github.com/rainlanguage/rainlang.interface/issues/123",
-      "title": "Migrate rain-interpreter-interface to rain-math-binary 0.1.3 and publish — five consumer PRs block on this"
-    },
-    {
       "repo": "rainlanguage/issue-pr-cron",
       "number": 306,
       "url": "https://github.com/rainlanguage/issue-pr-cron/issues/306",
@@ -3084,12 +3030,6 @@
       "number": 309,
       "url": "https://github.com/rainlanguage/rainix/issues/309",
       "title": "Cap the ratio of comment lines to source lines, charging non-doc comments only"
-    },
-    {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 291,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/291",
-      "title": "token-profile's dispatching benchmark is stale, and stored so it will go stale again"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -4322,12 +4262,6 @@
       "title": "Error-quality + NatSpec-accuracy bundle (OOB->Panic 0x32, clear revert ordering, stale clear/LibOpContext/quote2 NatSpec)"
     },
     {
-      "repo": "rainlanguage/rainlang.interface",
-      "number": 107,
-      "url": "https://github.com/rainlanguage/rainlang.interface/issues/107",
-      "title": "Rename rain.interpreter.interface → rainlang.interface (follow rain.interpreter → rainlang)"
-    },
-    {
       "repo": "rainlanguage/raindex.interface",
       "number": 60,
       "url": "https://github.com/rainlanguage/raindex.interface/issues/60",
@@ -4764,12 +4698,6 @@
       "number": 2523,
       "url": "https://github.com/rainlanguage/raindex.deploy/issues/2523",
       "title": "Vault detail page intermittently fails to load (v6.raindex.finance)"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float",
-      "number": 729,
-      "url": "https://github.com/rainlanguage/rain.math.float/issues/729",
-      "title": "Upstream signed geometric mean (gm) from rainlang into LibDecimalFloat"
     },
     {
       "repo": "rainlanguage/raindex.deploy",
@@ -6372,10 +6300,10 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 76,
-    "blockedOn": 10,
+    "unvetted": 79,
+    "blockedOn": 9,
     "ready": 1,
-    "needsWork": 93,
+    "needsWork": 91,
     "relink": 0,
     "design": 5,
     "blockedInfra": 0,
@@ -6385,14 +6313,14 @@
     "leaks": 0,
     "totalProducerPrs": 186,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 721,
+    "uncoveredIssues": 712,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 886
+    "openIssues": 878
   },
   "ages": {
     "openIssues": {
-      "meanDays": 307.2,
+      "meanDays": 309.3,
       "medianDays": 132.2,
       "oldestDays": 1736.8
     }
