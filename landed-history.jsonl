@@ -1127,3 +1127,5 @@
 {"ts":"2026-10-26T12:52:09Z","observedAt":"2026-10-26T13:32:50Z","kind":"pr","repo":"S01-Issuer/st0x.deploy","number":496}
 {"ts":"2026-10-26T13:30:14Z","observedAt":"2026-10-26T13:32:50Z","kind":"pr","repo":"rainlanguage/raindex.deploy","number":2922}
 {"ts":"2026-10-26T13:17:06Z","observedAt":"2026-10-26T13:32:50Z","kind":"pr","repo":"rainlanguage/rainlang.interface","number":134}
+{"ts":"2026-10-26T14:20:23Z","observedAt":"2026-10-26T14:31:08Z","kind":"pr","repo":"rainlanguage/rain.merkle.deploy","number":18}
+{"ts":"2026-10-26T13:50:43Z","observedAt":"2026-10-26T14:31:08Z","kind":"pr","repo":"rainlanguage/rain.merkle.deploy","number":29}
