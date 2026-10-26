@@ -739,8 +739,74 @@
         ]
       },
       "un-vetted": {
-        "count": 74,
+        "count": 83,
         "prs": [
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 516,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/516",
+            "title": "Bump rain-math-float to 0.3.11"
+          },
+          {
+            "repo": "rainlanguage/rain.vats",
+            "number": 354,
+            "url": "https://github.com/rainlanguage/rain.vats/pull/354",
+            "title": "Bump rain-math-float to 0.3.11"
+          },
+          {
+            "repo": "rainlanguage/raindex.interface",
+            "number": 82,
+            "url": "https://github.com/rainlanguage/raindex.interface/pull/82",
+            "title": "Bump rain-math-float to 0.3.11"
+          },
+          {
+            "repo": "rainlanguage/rain.lib.leakybucket",
+            "number": 129,
+            "url": "https://github.com/rainlanguage/rain.lib.leakybucket/pull/129",
+            "title": "Bump rain-math-float to 0.3.11"
+          },
+          {
+            "repo": "rainlanguage/rainlang.deploy",
+            "number": 21,
+            "url": "https://github.com/rainlanguage/rainlang.deploy/pull/21",
+            "title": "Move off rainlang-interface onto rainlang 0.2.27"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float.deploy",
+            "number": 55,
+            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/55",
+            "title": "Test the published rain-math-float crate"
+          },
+          {
+            "repo": "rainlanguage/rain.merkle.deploy",
+            "number": 32,
+            "url": "https://github.com/rainlanguage/rain.merkle.deploy/pull/32",
+            "title": "Import rainlang interfaces from rainlang; drop rainlang-interface"
+          },
+          {
+            "repo": "rainlanguage/rain.verify",
+            "number": 43,
+            "url": "https://github.com/rainlanguage/rain.verify/pull/43",
+            "title": "Import rainlang interfaces from rainlang; drop rainlang-interface"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 276,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/276",
+            "title": "Import rainlang interfaces from rainlang; drop rainlang-interface"
+          },
+          {
+            "repo": "rainlanguage/rain.flare",
+            "number": 222,
+            "url": "https://github.com/rainlanguage/rain.flare/pull/222",
+            "title": "Import rainlang interfaces from rainlang; drop rainlang-interface"
+          },
+          {
+            "repo": "rainlanguage/rainlang",
+            "number": 617,
+            "url": "https://github.com/rainlanguage/rainlang/pull/617",
+            "title": "gm: adopt LibDecimalFloat.gm (rain-math-float 0.3.11)"
+          },
           {
             "repo": "rainlanguage/rain.dia",
             "number": 79,
@@ -760,12 +826,6 @@
             "title": "Remove legacy CI_DEPLOY_*_RPC_URL references"
           },
           {
-            "repo": "rainlanguage/rain.verify",
-            "number": 42,
-            "url": "https://github.com/rainlanguage/rain.verify/pull/42",
-            "title": "Bump rain-deploy 0.1.22 -> 0.1.25"
-          },
-          {
             "repo": "rainlanguage/rain.dia",
             "number": 78,
             "url": "https://github.com/rainlanguage/rain.dia/pull/78",
@@ -782,12 +842,6 @@
             "number": 2929,
             "url": "https://github.com/rainlanguage/raindex.deploy/pull/2929",
             "title": "Adopt IRaindexV7 and SignedContextV2"
-          },
-          {
-            "repo": "rainlanguage/raindex.deploy",
-            "number": 2928,
-            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2928",
-            "title": "Order clearer reads the order column or reverts"
           },
           {
             "repo": "rainlanguage/rain-org-health",
@@ -1970,12 +2024,6 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
-      "repo": "rainlanguage/rainlang",
-      "number": 612,
-      "url": "https://github.com/rainlanguage/rainlang/issues/612",
-      "title": "Use compiler naming for the expression deployer in the next interface version"
-    },
-    {
       "repo": "rainlanguage/rainlang.deploy",
       "number": 16,
       "url": "https://github.com/rainlanguage/rainlang.deploy/issues/16",
@@ -2124,12 +2172,6 @@
       "number": 433,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/433",
       "title": "manual-broadcast's --legacy is per-dispatch, but HyperEVM and Robinhood need opposite values"
-    },
-    {
-      "repo": "rainlanguage/rain.math.float.deploy",
-      "number": 39,
-      "url": "https://github.com/rainlanguage/rain.math.float.deploy/issues/39",
-      "title": "Test the published rain-math-float crate's Rust API in this repo"
     },
     {
       "repo": "S01-Issuer/s01.ops",
@@ -2334,18 +2376,6 @@
       "number": 357,
       "url": "https://github.com/S01-Issuer/s01.ops/issues/357",
       "title": "Data room review, part 2 input: the Albion data room in full (screens, rooms, access, features, design, stack)"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 614,
-      "url": "https://github.com/rainlanguage/rainlang/issues/614",
-      "title": "checkNoOOBPointers fuzz tests get TruncatedSource where they expect another error"
-    },
-    {
-      "repo": "rainlanguage/rainlang",
-      "number": 615,
-      "url": "https://github.com/rainlanguage/rainlang/issues/615",
-      "title": "buildParseMetaV2 can write one item past the end of the items region"
     },
     {
       "repo": "S01-Issuer/st0x.attest",
@@ -6240,7 +6270,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 74,
+    "unvetted": 83,
     "blockedOn": 9,
     "ready": 1,
     "needsWork": 91,
@@ -6251,18 +6281,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 181,
+    "totalProducerPrs": 190,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 707,
+    "uncoveredIssues": 703,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 872
+    "openIssues": 869
   },
   "ages": {
     "openIssues": {
-      "meanDays": 311.1,
+      "meanDays": 312.1,
       "medianDays": 132.4,
-      "oldestDays": 1737.0
+      "oldestDays": 1737.1
     }
   }
 }
