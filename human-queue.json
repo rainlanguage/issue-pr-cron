@@ -739,19 +739,31 @@
         ]
       },
       "un-vetted": {
-        "count": 79,
+        "count": 76,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float.deploy",
+            "number": 54,
+            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/54",
+            "title": "release: 0.1.9"
+          },
+          {
+            "repo": "rainlanguage/rain.verify",
+            "number": 42,
+            "url": "https://github.com/rainlanguage/rain.verify/pull/42",
+            "title": "Bump rain-deploy 0.1.22 -> 0.1.25"
+          },
+          {
+            "repo": "rainlanguage/rain.dia",
+            "number": 78,
+            "url": "https://github.com/rainlanguage/rain.dia/pull/78",
+            "title": "Bump rain-deploy 0.1.22 -> 0.1.25, rainlang 0.2.19 -> 0.2.26"
+          },
           {
             "repo": "rainlanguage/raindex.deploy",
             "number": 2931,
             "url": "https://github.com/rainlanguage/raindex.deploy/pull/2931",
             "title": "Bind rain-deploy RainDeployVerifyDeclaration; correct frozen arb DEPENDENCIES"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float",
-            "number": 733,
-            "url": "https://github.com/rainlanguage/rain.math.float/pull/733",
-            "title": "ci: call the rainix reusable rs-test workflow"
           },
           {
             "repo": "rainlanguage/raindex.deploy",
@@ -772,28 +784,10 @@
             "title": "Order clearer reads the order column or reverts"
           },
           {
-            "repo": "rainlanguage/raindex.deploy",
-            "number": 2927,
-            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2927",
-            "title": "Withdraw context words read their own column or revert"
-          },
-          {
             "repo": "rainlanguage/rainlang.interface",
             "number": 152,
             "url": "https://github.com/rainlanguage/rainlang.interface/pull/152",
             "title": "Pin each parse meta word to its expander layer slot (#143)"
-          },
-          {
-            "repo": "rainlanguage/rainlang",
-            "number": 613,
-            "url": "https://github.com/rainlanguage/rainlang/pull/613",
-            "title": "Absorb rainlang-interface into rainlang"
-          },
-          {
-            "repo": "rainlanguage/rain.merkle.deploy",
-            "number": 31,
-            "url": "https://github.com/rainlanguage/rain.merkle.deploy/pull/31",
-            "title": "Bind rain-deploy RainDeployVerifyDeclaration; bump rainlang 0.2.26"
           },
           {
             "repo": "rainlanguage/rainlang.interface",
@@ -802,22 +796,10 @@
             "title": "test: keep checkNoOOBPointers corruptions well formed"
           },
           {
-            "repo": "rainlanguage/rain.vats",
-            "number": 353,
-            "url": "https://github.com/rainlanguage/rain.vats/pull/353",
-            "title": "Bump rain-factory-deploy 0.2.3"
-          },
-          {
             "repo": "rainlanguage/rainlang.deploy",
             "number": 20,
             "url": "https://github.com/rainlanguage/rainlang.deploy/pull/20",
             "title": "rain-deploy 0.1.25: bind RainDeployVerifyDeclaration, drop hand-rolled shim and build.sh"
-          },
-          {
-            "repo": "rainlanguage/rainlang.deploy",
-            "number": 19,
-            "url": "https://github.com/rainlanguage/rainlang.deploy/pull/19",
-            "title": "Rename RainlangExpressionDeployer to RainlangCompiler"
           },
           {
             "repo": "rainlanguage/rain-org-health",
@@ -6276,7 +6258,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 79,
+    "unvetted": 76,
     "blockedOn": 9,
     "ready": 1,
     "needsWork": 91,
@@ -6287,18 +6269,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 186,
+    "totalProducerPrs": 183,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 708,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 877
+    "openIssues": 875
   },
   "ages": {
     "openIssues": {
-      "meanDays": 309.4,
-      "medianDays": 132.3,
-      "oldestDays": 1736.9
+      "meanDays": 310.1,
+      "medianDays": 132.4,
+      "oldestDays": 1737.0
     }
   }
 }
