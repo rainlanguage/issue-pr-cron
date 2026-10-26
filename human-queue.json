@@ -769,8 +769,26 @@
         ]
       },
       "un-vetted": {
-        "count": 74,
+        "count": 76,
         "prs": [
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 225,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/225",
+            "title": "fix(owners): drop authoriser rows that only ever render without an address"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 512,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/512",
+            "title": "Migrations onto one root line, no history (PR3 of #487)"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 511,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/511",
+            "title": "Deploy the US and EU test tokens through the V6 factory"
+          },
           {
             "repo": "rainlanguage/raindex.deploy",
             "number": 2923,
@@ -794,12 +812,6 @@
             "number": 349,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/349",
             "title": "RainDeployVerifyDeclaration: shared deploy-declaration checks"
-          },
-          {
-            "repo": "rainlanguage/rain-org-health",
-            "number": 223,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/223",
-            "title": "Grants: read orchestrator expectedGrants live per chain"
           },
           {
             "repo": "rainlanguage/rain-org-health",
@@ -2020,27 +2032,9 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/rain-org-health",
-      "number": 222,
-      "url": "https://github.com/rainlanguage/rain-org-health/issues/222",
-      "title": "Tokens: the 'current prod authoriser' label can never fire (STOX_PROD_AUTHORISER no longer exists upstream)"
-    },
-    {
-      "repo": "rainlanguage/rain-org-health",
-      "number": 219,
-      "url": "https://github.com/rainlanguage/rain-org-health/issues/219",
-      "title": "Beacons: only the timelock is a healthy owner"
-    },
-    {
-      "repo": "rainlanguage/rain-org-health",
-      "number": 218,
-      "url": "https://github.com/rainlanguage/rain-org-health/issues/218",
-      "title": "Tokens: expect each token's authoriser by region"
-    },
-    {
-      "repo": "rainlanguage/rain-org-health",
-      "number": 217,
-      "url": "https://github.com/rainlanguage/rain-org-health/issues/217",
-      "title": "Known owners: Safe owner set misses OWNER_TDM"
+      "number": 226,
+      "url": "https://github.com/rainlanguage/rain-org-health/issues/226",
+      "title": "Known owners: the Ethereum V4 authoriser clone row claims active from the pin, without a live authorizer() read"
     },
     {
       "repo": "rainlanguage/rain.vats",
@@ -6505,7 +6499,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 74,
+    "unvetted": 76,
     "blockedOn": 10,
     "ready": 1,
     "needsWork": 93,
@@ -6516,16 +6510,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 185,
+    "totalProducerPrs": 187,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 743,
+    "uncoveredIssues": 740,
     "designPresentable": 6,
     "designNoQuestion": 0,
-    "openIssues": 906
+    "openIssues": 907
   },
   "ages": {
     "openIssues": {
-      "meanDays": 318.1,
+      "meanDays": 317.8,
       "medianDays": 132.8,
       "oldestDays": 1736.6
     }
