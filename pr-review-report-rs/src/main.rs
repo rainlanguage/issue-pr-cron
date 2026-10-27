@@ -58954,6 +58954,22 @@ mod usage_probe_tests {
     }
 }
 
+/// TEST HELPER: read a file the pipeline publishes to the `dashboard-data` branch
+/// (refresh-human-queue.sh), which `main` does not carry. It comes from the checkout of that branch
+/// `DASHBOARD_DATA_DIR` names — CI's `dashboard-data corroboration` job sets it. Unset is `None`;
+/// set but unreadable panics, so a broken checkout can never pass as a skipped corroboration.
+#[cfg(test)]
+fn dashboard_data_text(rel: &str) -> Option<String> {
+    let dir = std::env::var_os("DASHBOARD_DATA_DIR")?;
+    let path = std::path::Path::new(&dir).join(rel);
+    Some(std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!(
+            "DASHBOARD_DATA_DIR is set, but {} is unreadable: {e}",
+            path.display()
+        )
+    }))
+}
+
 /// TEST HELPER: read a file that lives at the REPO ROOT, one directory up from the crate.
 ///
 /// `cargo test` runs with the CRATE directory as its cwd, so a bare `read_to_string("README.md")`
@@ -70694,8 +70710,8 @@ mod state_descriptor_tests {
     /// `hist_fold` to prevent.
     ///
     /// The assertion is STRUCTURAL first — off the descriptor table, which is always present — so
-    /// it cannot pass vacuously in the flake build sandbox, where the repo-root read is filtered
-    /// out. The committed history is then read as corroboration, which is what makes the fold list
+    /// it cannot pass vacuously wherever no dashboard-data checkout is named. The published history
+    /// (the `dashboard-data` branch) is then read as corroboration, which is what makes the fold list
     /// a claim about real measurements rather than three strings kept in step by hand.
     #[test]
     fn the_needs_work_series_draws_every_spelling_the_state_has_had() {
@@ -70713,8 +70729,8 @@ mod state_descriptor_tests {
             );
         }
 
-        let Some(history) = repo_root_text("human-queue-history.jsonl") else {
-            return; // no SOURCE checked out (the flake build filters it); the structure above holds regardless
+        let Some(history) = dashboard_data_text("human-queue-history.jsonl") else {
+            return; // no dashboard-data checkout named; the structure above holds regardless
         };
         let mut samples: std::collections::BTreeMap<String, usize> =
             std::collections::BTreeMap::new();
@@ -84402,9 +84418,9 @@ mod journal_tests {
     fn the_seeded_journal_answers_both_questions() {
         let (Some(text), Some(metrics)) = (
             repo_root_text(JOURNAL_FILE),
-            repo_root_text("metrics/runs.jsonl"),
+            dashboard_data_text("metrics/runs.jsonl"),
         ) else {
-            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+            return; // not checked out — the dashboard-data corroboration CI job is the gate
         };
         let (entries, defects) = journal_entries(&text);
         assert!(defects.is_empty(), "{JOURNAL_FILE}: {defects:?}");
