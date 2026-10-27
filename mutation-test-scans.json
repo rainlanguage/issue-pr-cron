@@ -26,5 +26,14 @@
   "publishedTag": null,
   "scope": "#117 (scanned on the branch atop this base) — the over-budget refusal's advice (narrowing_argument/oversize_result_error/TOOL_NARROWS_KEY + the mcp_tools strip) and the two unbounded clone reads it exposed (fit_clone_rows/clone_hold/clone_row_rank/clone_list_exec, gc_outcome_rank/clone_gc_exec)",
   "summary": "10/10 mutants killed, 0 survivors, one per behaviour with the whole suite run each time and the source restored between runs; the base behaviour of narrowing_argument (the pre-#117 `_ => Some(\"limit\")` catch-all) was restored as a mutation and killed, so the rewritten table-walking test is pinned to the defect rather than to a compile failure; one no-op mutation was discarded rather than recorded as a survivor (`.or(Some(\"limit\"))` appended after a `?` chain that short-circuits before it)"
+ },
+ {
+  "timestamp": "2026-10-27T16:15:54Z",
+  "commit": "a70fa86f9ea1ef42e4c9b71716222248854531a2",
+  "testsAfterCommit": "e12bc829d52ffb333e73235ae80c5a6fe9dc3304",
+  "publishedTag": null,
+  "scope": "pr:343 (scanned on the branch) — refresh-human-queue.sh (sync, data_tip, generation, history/landed append, unpublished, subject choice, build_commit, push retry, lock) + backfill-human-queue-history.sh + backfill-landed-history.sh dashboard-data walks",
+  "tool": "mutation-probe (github:rainlanguage/adversarial-mutation-test 7f734eb), adversarial-mutation-test skill 0.35.0",
+  "summary": "66 mutants. Before (pre-existing 15 tests at commit): 27/60 killed, 33 survived. After (40 tests at testsAfterCommit): 64/66 killed; 2 equivalent (R36 grep -qx vs -q: has() only receives three fixed literals none a substring/regex match of another data path; R41 dropping -c commit.gpgsign=false: git commit-tree ignores commit.gpgsign since 2.9.1). Adversarial finding fixed in-PR (33e621b): the branch had dropped `flock -n 9`, so overlapping ticks were unlocked. No issues filed (regression was in the unmerged PR itself)."
  }
 ]
