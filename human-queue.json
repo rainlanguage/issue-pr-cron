@@ -727,8 +727,26 @@
         ]
       },
       "un-vetted": {
-        "count": 72,
+        "count": 75,
         "prs": [
+          {
+            "repo": "rainlanguage/raindex.deploy",
+            "number": 2947,
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2947",
+            "title": "Release 0.1.16"
+          },
+          {
+            "repo": "rainlanguage/rain.merkle.deploy",
+            "number": 36,
+            "url": "https://github.com/rainlanguage/rain.merkle.deploy/pull/36",
+            "title": "Cut release 0.1.1: freeze candidate as src/generated/0_1_1/"
+          },
+          {
+            "repo": "rainlanguage/rainlang.deploy",
+            "number": 24,
+            "url": "https://github.com/rainlanguage/rainlang.deploy/pull/24",
+            "title": "Release rainlang 0.1.10"
+          },
           {
             "repo": "rainlanguage/raindex.deploy",
             "number": 2943,
@@ -6102,7 +6120,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 72,
+    "unvetted": 75,
     "blockedOn": 9,
     "ready": 1,
     "needsWork": 89,
@@ -6113,7 +6131,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 177,
+    "totalProducerPrs": 180,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 690,
     "designPresentable": 5,
@@ -6123,8 +6141,8 @@
   "ages": {
     "openIssues": {
       "meanDays": 310.6,
-      "medianDays": 132.7,
-      "oldestDays": 1737.3
+      "medianDays": 132.8,
+      "oldestDays": 1737.4
     }
   }
 }
