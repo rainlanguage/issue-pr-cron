@@ -579,12 +579,6 @@
       },
       {
         "repo": "rainlanguage/raindex.deploy",
-        "number": 2719,
-        "url": "https://github.com/rainlanguage/raindex.deploy/pull/2719",
-        "title": "Strip endpoint URLs (rpcs, subgraphs, metaboards) from generated dotrain (#2165)"
-      },
-      {
-        "repo": "rainlanguage/raindex.deploy",
         "number": 2702,
         "url": "https://github.com/rainlanguage/raindex.deploy/pull/2702",
         "title": "Dust accounting: per-(user, token) credit ledger realized on the next token move (#2673)"
@@ -727,19 +721,13 @@
         ]
       },
       "un-vetted": {
-        "count": 76,
+        "count": 73,
         "prs": [
           {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 522,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/522",
-            "title": "Bump rain-tofu-erc20-decimals-deploy 0.1.4, rain-vats 0.2.12"
-          },
-          {
             "repo": "rainlanguage/raindex.deploy",
-            "number": 2953,
-            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2953",
-            "title": "fix(npm): package repository fields point at raindex.deploy"
+            "number": 2955,
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2955",
+            "title": "SDK: read vaultless vault balances live via vaultBalance2"
           },
           {
             "repo": "rainlanguage/rain.tofu.erc20-decimals.deploy",
@@ -748,22 +736,10 @@
             "title": "Drop networks input from manual sol verify"
           },
           {
-            "repo": "rainlanguage/rainlang.deploy",
-            "number": 25,
-            "url": "https://github.com/rainlanguage/rainlang.deploy/pull/25",
-            "title": "Drop networks input from manual sol verify"
-          },
-          {
             "repo": "rainlanguage/raindex.deploy",
             "number": 2943,
             "url": "https://github.com/rainlanguage/raindex.deploy/pull/2943",
             "title": "Derive subgraph networks from deploy networks and the live candidate"
-          },
-          {
-            "repo": "rainlanguage/raindex.governance",
-            "number": 14,
-            "url": "https://github.com/rainlanguage/raindex.governance/pull/14",
-            "title": "Bump rain-math-float to 0.3.11, raindex-interface to 0.1.13, rainlang to 0.2.30"
           },
           {
             "repo": "rainlanguage/rainix",
@@ -1237,7 +1213,7 @@
         }
       },
       "ai:needs-work": {
-        "count": 89,
+        "count": 88,
         "prs": [
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -1718,12 +1694,6 @@
             "number": 2720,
             "url": "https://github.com/rainlanguage/raindex.deploy/pull/2720",
             "title": "Retry SDK indexing on transient timeout before failing"
-          },
-          {
-            "repo": "rainlanguage/raindex.deploy",
-            "number": 2719,
-            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2719",
-            "title": "Strip endpoint URLs (rpcs, subgraphs, metaboards) from generated dotrain (#2165)"
           },
           {
             "repo": "rainlanguage/raindex.deploy",
@@ -4952,6 +4922,12 @@
       "title": "Remove alloy-ethers-typecast dependency from rain.orderbook"
     },
     {
+      "repo": "rainlanguage/raindex.deploy",
+      "number": 1951,
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1951",
+      "title": "Passing default vault_id value to DepositArgs in js_api shouldn't be required"
+    },
+    {
       "repo": "rainlanguage/rain.strategies",
       "number": 43,
       "url": "https://github.com/rainlanguage/rain.strategies/issues/43",
@@ -4974,6 +4950,12 @@
       "number": 1867,
       "url": "https://github.com/rainlanguage/raindex.deploy/issues/1867",
       "title": "vault balance chnage types filter"
+    },
+    {
+      "repo": "rainlanguage/raindex.deploy",
+      "number": 1857,
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1857",
+      "title": "Trade Timestamps in UTC and not local datetime"
     },
     {
       "repo": "rainlanguage/raindex.deploy",
@@ -6132,10 +6114,10 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 76,
+    "unvetted": 73,
     "blockedOn": 9,
     "ready": 1,
-    "needsWork": 89,
+    "needsWork": 88,
     "relink": 0,
     "design": 5,
     "blockedInfra": 0,
@@ -6143,16 +6125,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 181,
+    "totalProducerPrs": 177,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 691,
+    "uncoveredIssues": 693,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 858
+    "openIssues": 856
   },
   "ages": {
     "openIssues": {
-      "meanDays": 309.5,
+      "meanDays": 309.8,
       "medianDays": 132.9,
       "oldestDays": 1737.5
     }
