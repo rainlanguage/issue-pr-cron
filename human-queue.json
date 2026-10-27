@@ -489,18 +489,6 @@
       },
       {
         "repo": "rainlanguage/raindex.deploy",
-        "number": 2779,
-        "url": "https://github.com/rainlanguage/raindex.deploy/pull/2779",
-        "title": "fix: include counterparty (zero address) as 3rd context row in addOrder/removeOrder"
-      },
-      {
-        "repo": "rainlanguage/raindex.deploy",
-        "number": 2778,
-        "url": "https://github.com/rainlanguage/raindex.deploy/pull/2778",
-        "title": "fix: mask signer row operand to low byte"
-      },
-      {
-        "repo": "rainlanguage/raindex.deploy",
         "number": 2777,
         "url": "https://github.com/rainlanguage/raindex.deploy/pull/2777",
         "title": "fix: guard weighted-average merge against zero outputAmountSum in historicalOrderCharts"
@@ -739,8 +727,44 @@
         ]
       },
       "un-vetted": {
-        "count": 77,
+        "count": 76,
         "prs": [
+          {
+            "repo": "rainlanguage/rainlang.deploy",
+            "number": 23,
+            "url": "https://github.com/rainlanguage/rainlang.deploy/pull/23",
+            "title": "Bump rain-tofu-erc20-decimals-deploy to 0.1.4"
+          },
+          {
+            "repo": "rainlanguage/raindex.deploy",
+            "number": 2943,
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2943",
+            "title": "Derive subgraph networks from deploy networks and the live candidate"
+          },
+          {
+            "repo": "rainlanguage/raindex.deploy",
+            "number": 2939,
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2939",
+            "title": "Drop rainlang-interface; move to rainlang 0.2.30"
+          },
+          {
+            "repo": "rainlanguage/raindex.governance",
+            "number": 14,
+            "url": "https://github.com/rainlanguage/raindex.governance/pull/14",
+            "title": "Bump rain-math-float to 0.3.11, raindex-interface to 0.1.12"
+          },
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 433,
+            "url": "https://github.com/rainlanguage/rainix/pull/433",
+            "title": "Remove the script/build.sh hook; rainix is the sole staged-config installer"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 521,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/521",
+            "title": "subgraph-test: pass CACHIX_AUTH_TOKEN explicitly to the cross-org reusable"
+          },
           {
             "repo": "rainlanguage/rainix",
             "number": 432,
@@ -770,42 +794,6 @@
             "number": 518,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/518",
             "title": "git-clean: use rainix-copy-artifacts reusable"
-          },
-          {
-            "repo": "rainlanguage/rainlang.deploy",
-            "number": 22,
-            "url": "https://github.com/rainlanguage/rainlang.deploy/pull/22",
-            "title": "Bump rainlang to 0.2.30, rain-math-float to 0.3.11, rain-math-float-deploy to 0.1.9"
-          },
-          {
-            "repo": "rainlanguage/rain.merkle.deploy",
-            "number": 35,
-            "url": "https://github.com/rainlanguage/rain.merkle.deploy/pull/35",
-            "title": "Bump rainlang to 0.2.30, rain-math-float to 0.3.11, rain-math-float-deploy to 0.1.9"
-          },
-          {
-            "repo": "rainlanguage/rain.pyth",
-            "number": 48,
-            "url": "https://github.com/rainlanguage/rain.pyth/pull/48",
-            "title": "Bump rainlang to 0.2.30, rain-math-float to 0.3.11, rain-math-float-deploy to 0.1.9"
-          },
-          {
-            "repo": "rainlanguage/rain.flare",
-            "number": 223,
-            "url": "https://github.com/rainlanguage/rain.flare/pull/223",
-            "title": "Bump rainlang to 0.2.30, rain-math-float to 0.3.11, rain-math-float-deploy to 0.1.9"
-          },
-          {
-            "repo": "rainlanguage/rain.erc4626.words",
-            "number": 277,
-            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/277",
-            "title": "Bump rainlang to 0.2.30, rain-math-float to 0.3.11, rain-math-float-deploy to 0.1.9"
-          },
-          {
-            "repo": "rainlanguage/rain.dia",
-            "number": 81,
-            "url": "https://github.com/rainlanguage/rain.dia/pull/81",
-            "title": "Bump rainlang to 0.2.30, rain-math-float to 0.3.11, rain-math-float-deploy to 0.1.9"
           },
           {
             "repo": "rainlanguage/rainix",
@@ -848,12 +836,6 @@
             "number": 221,
             "url": "https://github.com/rainlanguage/rain-org-health/pull/221",
             "title": "feat(deployments): take expectations from st0x.deploy's expected-state.json"
-          },
-          {
-            "repo": "rainlanguage/raindex.deploy",
-            "number": 2920,
-            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2920",
-            "title": "Route each clear4 signed context to its own order"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -1255,7 +1237,7 @@
         }
       },
       "ai:needs-work": {
-        "count": 91,
+        "count": 89,
         "prs": [
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -1649,18 +1631,6 @@
           },
           {
             "repo": "rainlanguage/raindex.deploy",
-            "number": 2779,
-            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2779",
-            "title": "fix: include counterparty (zero address) as 3rd context row in addOrder/removeOrder"
-          },
-          {
-            "repo": "rainlanguage/raindex.deploy",
-            "number": 2778,
-            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2778",
-            "title": "fix: mask signer row operand to low byte"
-          },
-          {
-            "repo": "rainlanguage/raindex.deploy",
             "number": 2777,
             "url": "https://github.com/rainlanguage/raindex.deploy/pull/2777",
             "title": "fix: guard weighted-average merge against zero outputAmountSum in historicalOrderCharts"
@@ -1988,6 +1958,30 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/raindex.deploy",
+      "number": 2941,
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2941",
+      "title": "Soldeer package name: release workflow pushes `raindex`, foundry.toml declares `raindex-deploy`"
+    },
+    {
+      "repo": "rainlanguage/raindex.deploy",
+      "number": 2940,
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2940",
+      "title": "Test clear4 signed-context routing when only one side supplies context"
+    },
+    {
+      "repo": "rainlanguage/rain.strategies",
+      "number": 140,
+      "url": "https://github.com/rainlanguage/rain.strategies/issues/140",
+      "title": "Add Flare to registry settings.yaml"
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 434,
+      "url": "https://github.com/rainlanguage/rainix/issues/434",
+      "title": "copy-artifacts: explicit regenerate-command input replacing the build.sh hook (decision + consumer migration)"
+    },
+    {
       "repo": "rainlanguage/rainix",
       "number": 430,
       "url": "https://github.com/rainlanguage/rainix/issues/430",
@@ -2046,12 +2040,6 @@
       "number": 348,
       "url": "https://github.com/rainlanguage/rain.vats/issues/348",
       "title": "Convert the remaining concretes to abstracts"
-    },
-    {
-      "repo": "rainlanguage/rainix",
-      "number": 418,
-      "url": "https://github.com/rainlanguage/rainix/issues/418",
-      "title": "install-staged-config: remove the script/build.sh hook skip; rainix is the sole installer"
     },
     {
       "repo": "rainlanguage/rain.deploy",
@@ -2594,12 +2582,6 @@
       "title": "Upstream the graph-node API schema snapshot check as a reusable workflow, once two consumers have defined its seam"
     },
     {
-      "repo": "rainlanguage/raindex.deploy",
-      "number": 2851,
-      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2851",
-      "title": "Pin clear3's shipped signed-context routing with a baseline test"
-    },
-    {
       "repo": "rainlanguage/rainix",
       "number": 361,
       "url": "https://github.com/rainlanguage/rainix/issues/361",
@@ -2658,12 +2640,6 @@
       "number": 322,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/322",
       "title": "build-artifact + rainix-sol test red on main: live-chain grant/pin drift"
-    },
-    {
-      "repo": "rainlanguage/raindex.deploy",
-      "number": 2840,
-      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2840",
-      "title": "rainix-sol/static (slither) is red on main; #2838 merged over it"
     },
     {
       "repo": "rainlanguage/rain.erc4626.words",
@@ -2867,12 +2843,6 @@
       "repo": "rainlanguage/rain.flare",
       "number": 210,
       "url": "https://github.com/rainlanguage/rain.flare/issues/210",
-      "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
-    },
-    {
-      "repo": "rainlanguage/raindex.deploy",
-      "number": 2836,
-      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2836",
       "title": "foundry.toml's bare [package] warns on every forge invocation, and forge's suggested fix makes it worse"
     },
     {
@@ -3632,12 +3602,6 @@
       "title": "roh: track deployments (which version is live on which network) and flag deployed-beyond-audit"
     },
     {
-      "repo": "rainlanguage/raindex.deploy",
-      "number": 2812,
-      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2812",
-      "title": "Goldsky ob4-base subgraph still serves pre-rename orderbook schema (breaks GraphQL consumers on SDK v6)"
-    },
-    {
       "repo": "rainlanguage/rain-org-health",
       "number": 83,
       "url": "https://github.com/rainlanguage/rain-org-health/issues/83",
@@ -3710,12 +3674,6 @@
       "title": "Convert BuildPointers to the shared LibSnapshot (drop the local copy + reconcile deployTags divergence)"
     },
     {
-      "repo": "rainlanguage/raindex.deploy",
-      "number": 2809,
-      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2809",
-      "title": "Convert BuildPointers to the shared LibSnapshot (drop the local deployTag/freezeSnapshot copy)"
-    },
-    {
       "repo": "rainlanguage/rainix",
       "number": 271,
       "url": "https://github.com/rainlanguage/rainix/issues/271",
@@ -3749,12 +3707,6 @@
       "repo": "rainlanguage/raindex.interface",
       "number": 67,
       "url": "https://github.com/rainlanguage/raindex.interface/issues/67",
-      "title": "Migrate soldeer dependency `rain-interpreter-interface` → `rainlang-interface`"
-    },
-    {
-      "repo": "rainlanguage/raindex.deploy",
-      "number": 2805,
-      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2805",
       "title": "Migrate soldeer dependency `rain-interpreter-interface` → `rainlang-interface`"
     },
     {
@@ -3818,12 +3770,6 @@
       "title": "Migrate to the next-version Soldeer release lifecycle (bump [package].version)"
     },
     {
-      "repo": "rainlanguage/raindex.deploy",
-      "number": 2803,
-      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2803",
-      "title": "Migrate to the next-version Soldeer release lifecycle (bump [package].version)"
-    },
-    {
       "repo": "rainlanguage/rain.strategies",
       "number": 121,
       "url": "https://github.com/rainlanguage/rain.strategies/issues/121",
@@ -3878,12 +3824,6 @@
       "title": "st0x-deploy release lifecycle: foundry.toml = next version, generate-into-it, publish+bump+regenerate on merge"
     },
     {
-      "repo": "rainlanguage/raindex.deploy",
-      "number": 2800,
-      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2800",
-      "title": "Document clear3 signed-context cross-assignment (alice/bob slots)"
-    },
-    {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 238,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/238",
@@ -3906,12 +3846,6 @@
       "number": 234,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/234",
       "title": "Orchestrator 1155 receiver: restrict to the known receipt implementation (single shared beacon) instead of accept-all + defensive probe"
-    },
-    {
-      "repo": "rainlanguage/raindex.deploy",
-      "number": 2799,
-      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2799",
-      "title": "Make the deploy-constant check pointer-driven (drop the hardcoded prefix list + FFI/soldeer fetch)"
     },
     {
       "repo": "rainlanguage/rain-org-health",
@@ -4194,12 +4128,6 @@
       "number": 175,
       "url": "https://github.com/S01-Issuer/Albion-issuance-site/issues/175",
       "title": "perf(claims): Claims & Portfolio pages load slowly on first visit"
-    },
-    {
-      "repo": "rainlanguage/raindex.deploy",
-      "number": 2671,
-      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2671",
-      "title": "Error-quality + NatSpec-accuracy bundle (OOB->Panic 0x32, clear revert ordering, stale clear/LibOpContext/quote2 NatSpec)"
     },
     {
       "repo": "rainlanguage/raindex.interface",
@@ -5085,42 +5013,6 @@
     },
     {
       "repo": "rainlanguage/raindex.deploy",
-      "number": 1737,
-      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1737",
-      "title": "_🛠️ Refactor suggestion_"
-    },
-    {
-      "repo": "rainlanguage/raindex.deploy",
-      "number": 1736,
-      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1736",
-      "title": "_🛠️ Refactor suggestion_"
-    },
-    {
-      "repo": "rainlanguage/raindex.deploy",
-      "number": 1734,
-      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1734",
-      "title": "_🛠️ Refactor suggestion_"
-    },
-    {
-      "repo": "rainlanguage/raindex.deploy",
-      "number": 1733,
-      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1733",
-      "title": "_🛠️ Refactor suggestion_"
-    },
-    {
-      "repo": "rainlanguage/raindex.deploy",
-      "number": 1732,
-      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1732",
-      "title": "_🧹 Nitpick (assertive)_"
-    },
-    {
-      "repo": "rainlanguage/raindex.deploy",
-      "number": 1731,
-      "url": "https://github.com/rainlanguage/raindex.deploy/issues/1731",
-      "title": "_🧹 Nitpick (assertive)_"
-    },
-    {
-      "repo": "rainlanguage/raindex.deploy",
       "number": 1728,
       "url": "https://github.com/rainlanguage/raindex.deploy/issues/1728",
       "title": "Provide ability to set block numbers for debug tab"
@@ -5598,12 +5490,6 @@
       "number": 11,
       "url": "https://github.com/rainlanguage/rain.internal/issues/11",
       "title": "Create a tutorial video for how to get words displaying in the app"
-    },
-    {
-      "repo": "rainlanguage/raindex.deploy",
-      "number": 659,
-      "url": "https://github.com/rainlanguage/raindex.deploy/issues/659",
-      "title": "rename `orderbook` word in subparser to `raindex`"
     },
     {
       "repo": "rainlanguage/raindex.deploy",
@@ -6240,10 +6126,10 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 77,
+    "unvetted": 76,
     "blockedOn": 9,
     "ready": 1,
-    "needsWork": 91,
+    "needsWork": 89,
     "relink": 0,
     "design": 5,
     "blockedInfra": 0,
@@ -6251,16 +6137,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 184,
+    "totalProducerPrs": 181,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 704,
+    "uncoveredIssues": 690,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 871
+    "openIssues": 858
   },
   "ages": {
     "openIssues": {
-      "meanDays": 310.9,
+      "meanDays": 309.7,
       "medianDays": 132.5,
       "oldestDays": 1737.1
     }
