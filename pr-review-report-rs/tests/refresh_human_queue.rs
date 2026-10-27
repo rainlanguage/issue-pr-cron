@@ -1576,3 +1576,65 @@ fn the_landed_backfill_walks_the_published_branch() {
         "the last pair's previous snapshot is the second one"
     );
 }
+
+/// An install only AHEAD of `main` (local commits, nothing new upstream) has not diverged: the
+/// tick publishes and succeeds, and the local commits stay unpushed.
+#[test]
+fn an_install_only_ahead_of_main_publishes_and_succeeds() {
+    let Some(f) = Fixture::new("ahead") else {
+        return;
+    };
+    let main_before = f.origin_main();
+    git(
+        &f.install,
+        &[
+            "commit",
+            "--quiet",
+            "--allow-empty",
+            "-m",
+            "unpushed local work",
+        ],
+    );
+    f.set_next_snapshot("{\"counts\":{\"a\":2}}\n");
+
+    let out = f.tick();
+    assert!(out.status.success(), "tick failed: {}", stderr(&out));
+    assert!(!stderr(&out).contains("diverged"), "{}", stderr(&out));
+    assert_eq!(f.origin_main(), main_before, "main must never be pushed");
+    assert_eq!(f.published("human-queue.json"), "{\"counts\":{\"a\":2}}");
+}
+
+/// A failed fetch of `dashboard-data` itself stops the tick: a stale tip is never built on.
+#[test]
+fn a_failed_data_branch_fetch_stops_the_tick() {
+    let Some(f) = Fixture::new("data-fetch") else {
+        return;
+    };
+    let tip_before = f.data_tip();
+    f.set_next_snapshot("{\"counts\":{\"a\":2}}\n");
+    f.fail_git("fetch", 2);
+
+    let out = f.tick();
+    assert!(!out.status.success(), "the tick must fail");
+    assert!(
+        stderr(&out)
+            .contains("+refs/heads/dashboard-data:refs/remotes/origin/dashboard-data failed"),
+        "{}",
+        stderr(&out)
+    );
+    assert_untouched(&f, &tip_before, &out);
+}
+
+/// A changed snapshot whose landed diff found nothing appends nothing to the landed ledger.
+#[test]
+fn an_empty_landed_diff_appends_nothing() {
+    let Some(f) = Fixture::new("landed-empty") else {
+        return;
+    };
+    f.set_next_snapshot("{\"counts\":{\"a\":2}}\n");
+
+    let out = f.tick();
+    assert!(out.status.success(), "tick failed: {}", stderr(&out));
+    assert_eq!(f.local("landed-history.jsonl"), SEED_LANDED);
+    assert_eq!(f.published("landed-history.jsonl"), SEED_LANDED.trim_end());
+}
