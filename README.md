@@ -1901,11 +1901,11 @@ replays all of it.
 install dir's snapshot from the tick before, diffed **before** the fresh one
 overwrites it) and publishes the file alongside the snapshot.
 `backfill-landed-history.sh` seeded it from the snapshot's full history on the
-`dashboard-data` branch and is also the HEALER: `--existing`
-skips every `(kind, repo, number)` already recorded, so a rerun re-asks only the
-gaps a live tick's API failure left. The one blindness neither can heal: an item
-that enters and leaves entirely between two snapshots is never observed —
-absence, not a zero.
+`dashboard-data` branch and is also the HEALER: `--existing` skips every
+`(kind, repo, number)` already recorded, so a rerun re-asks only the gaps a live
+tick's API failure left. The one blindness neither can heal: an item that enters
+and leaves entirely between two snapshots is never observed — absence, not a
+zero.
 
 This feed and [`work-tokens`](#tokens-to-land-work--work-tokens) answer the same
 question at different scopes: `work-tokens` joins one run's spend to the typed
@@ -3262,9 +3262,9 @@ broken config must never render as pacing.
 ### How the file reaches the dashboard
 
 The runners append rows and never push. The hourly `refresh-human-queue` cron
-publishes `metrics/runs.jsonl` with the snapshot to the `dashboard-data`
-branch — never to `main`, which is ruleset-protected — whenever any data file
-differs from the branch. That cron carries it because it is data-only and never
+publishes `metrics/runs.jsonl` with the snapshot to the `dashboard-data` branch
+— never to `main`, which is ruleset-protected — whenever any data file differs
+from the branch. That cron carries it because it is data-only and never
 usage-gated — the one publisher still awake during a pause, which is exactly
 when skip rows are written and nothing else runs. A skip row is therefore
 visible to the dashboard within about an hour of its gated tick.
@@ -3272,10 +3272,10 @@ visible to the dashboard within about an hour of its gated tick.
 Each publish is one commit on the branch's tip: that tip's tree with every data
 file the install dir holds (`human-queue.json`, `human-queue-history.jsonl`,
 `landed-history.jsonl`, `metrics/runs.jsonl`, `fsm-touches.jsonl`) replaced by
-the install's copy, built in a private index and pushed as a plain
-fast-forward. The install dir is the source of truth and the branch its
-published copy, so a push lost to a moved tip is rebuilt onto the new tip,
-never forced. The files are gitignored on `main`.
+the install's copy, built in a private index and pushed as a plain fast-forward.
+The install dir is the source of truth and the branch its published copy, so a
+push lost to a moved tip is rebuilt onto the new tip, never forced. The files
+are gitignored on `main`.
 
 ### Which FSM items were touched — `fsm-touches.jsonl` and `touched`
 
