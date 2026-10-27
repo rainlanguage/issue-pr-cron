@@ -24,6 +24,7 @@
 //! So these return early where flock is absent too — but *only* there: on Linux a missing flock is
 //! a broken environment rather than a reason to skip, so it is asserted instead of tolerated.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -252,8 +253,12 @@ impl Fixture {
             "#!/usr/bin/env bash\n\
              set -uo pipefail\n\
              case \"${{1:-}}\" in\n\
-             \x20 human-queue) cat {snap} ;;\n\
-             \x20 queue-history-line) printf '{{\"ts\":\"stub\",\"counts\":{{}}}}\\n' ;;\n\
+             \x20 human-queue) cat {snap}; exit \"$(cat {gen_rc} 2>/dev/null || echo 0)\" ;;\n\
+             \x20 queue-history-line)\n\
+             \x20   # Stdin form (the backfill): echo the snapshot it was fed, stamped with its --ts.\n\
+             \x20   if [ \"${{2:-}}\" = --ts ]; then printf '{{\"ts\":\"%s\",\"snap\":%s}}\\n' \"$3\" \"$(cat)\"; exit 0; fi\n\
+             \x20   rc=\"$(cat {hist_rc} 2>/dev/null || echo 0)\"; [ \"$rc\" -eq 0 ] || exit \"$rc\"\n\
+             \x20   printf '{{\"ts\":\"stub\",\"counts\":{{}}}}\\n' ;;\n\
              \x20 landed-history-lines)\n\
              \x20   # The dedup flag is what makes a replayed tick append-safe; a call without it\n\
              \x20   # is a script regression this stub refuses so the append tests catch it.\n\
@@ -266,7 +271,9 @@ impl Fixture {
              \x20 *) echo \"stub: unexpected subcommand ${{1:-}}\" >&2; exit 2 ;;\n\
              esac\n",
             snap = self.root.join("snapshot.json").display(),
-            prev = self.root.join("landed-prev-operand").display(),
+            gen_rc = self.root.join("generator-rc").display(),
+            hist_rc = self.root.join("history-rc").display(),
+            prev =self.root.join("landed-prev-operand").display(),
             lines = self.root.join("landed-lines").display(),
             rc = self.root.join("landed-rc").display()
         );
@@ -320,6 +327,107 @@ impl Fixture {
         write_exec(&self.install.join(".git/hooks/pre-push"), &hook);
     }
 
+    /// At push time, another publisher lands exactly the install's data (plus a file of its own)
+    /// on `dashboard-data`, so the rejected push finds its data already published. Fires once.
+    fn race_with_our_own_data(&self) {
+        let copies: String = [
+            "human-queue.json",
+            "human-queue-history.jsonl",
+            "landed-history.jsonl",
+            "metrics/runs.jsonl",
+        ]
+        .iter()
+        .map(|rel| {
+            format!(
+                "cp {} {}/{rel}\n",
+                self.install.join(rel).display(),
+                self.other.display()
+            )
+        })
+        .collect();
+        let hook = format!(
+            "#!/usr/bin/env bash\n\
+             set -uo pipefail\n\
+             unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX\n\
+             [ -e {marker} ] && exit 0\n\
+             touch {marker}\n\
+             git -C {other} fetch --quiet origin {branch} >/dev/null 2>&1\n\
+             git -C {other} switch --quiet -C {branch} FETCH_HEAD >/dev/null 2>&1\n\
+             mkdir -p {other}/metrics\n\
+             {copies}\
+             printf 'raced\\n' > {other}/racer.txt\n\
+             git -C {other} add -A >/dev/null 2>&1\n\
+             git -C {other} commit --quiet -m 'raced' >/dev/null 2>&1\n\
+             git -C {other} push --quiet origin {branch} >/dev/null 2>&1\n\
+             git -C {other} switch --quiet main >/dev/null 2>&1\n\
+             exit 0\n",
+            marker = self.root.join(".raced").display(),
+            other = self.other.display(),
+            branch = DATA_BRANCH,
+        );
+        write_exec(&self.install.join(".git/hooks/pre-push"), &hook);
+    }
+
+    /// At push time, `dashboard-data` is replaced by an unrelated history — a force-push the tick
+    /// did not see. Fires once.
+    fn rewrite_the_data_branch_at_push(&self) {
+        let hook = format!(
+            "#!/usr/bin/env bash\n\
+             set -euo pipefail\n\
+             unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX\n\
+             [ -e {marker} ] && exit 0\n\
+             touch {marker}\n\
+             blob=\"$(printf 'rewritten\\n' | git -C {origin} hash-object -w --stdin)\"\n\
+             tree=\"$(printf '100644 blob %s\\trewritten.txt\\n' \"$blob\" | git -C {origin} mktree)\"\n\
+             c=\"$(git -C {origin} commit-tree \"$tree\" -m rewritten)\"\n\
+             git -C {origin} update-ref refs/heads/{branch} \"$c\"\n\
+             exit 0\n",
+            marker = self.root.join(".rewritten").display(),
+            origin = self.origin.display(),
+            branch = DATA_BRANCH,
+        );
+        write_exec(&self.install.join(".git/hooks/pre-push"), &hook);
+    }
+
+    /// From its `from`-th invocation on, `git <subcommand>` run by the script fails as a broken
+    /// network or repository would. The fixture's own git calls do not go through this.
+    fn fail_git(&self, subcommand: &str, from: u32) {
+        let real = Command::new("sh")
+            .args(["-c", "command -v git"])
+            .output()
+            .expect("locate git");
+        let real = String::from_utf8_lossy(&real.stdout).trim().to_string();
+        assert!(!real.is_empty(), "git is not on PATH");
+        let wrapper = format!(
+            "#!/usr/bin/env bash\n\
+             for a in \"$@\"; do\n\
+             \x20 if [ \"$a\" = {subcommand} ]; then\n\
+             \x20   n=$(( $(cat {count} 2>/dev/null || echo 0) + 1 )); echo \"$n\" > {count}\n\
+             \x20   if [ \"$n\" -ge {from} ]; then echo 'injected: git {subcommand} fails' >&2; exit 128; fi\n\
+             \x20   break\n\
+             \x20 fi\n\
+             done\n\
+             exec {real} \"$@\"\n",
+            count = self.root.join(format!("git-calls-{subcommand}")).display(),
+        );
+        write_exec(&self.root.join("bin/git"), &wrapper);
+    }
+
+    /// `main` gains a remote commit AND an unpushed local one: a divergence only a human resolves.
+    fn diverge_main(&self) {
+        self.advance_main();
+        git(
+            &self.install,
+            &[
+                "commit",
+                "--quiet",
+                "--allow-empty",
+                "-m",
+                "unpushed local work",
+            ],
+        );
+    }
+
     /// Every push from the install fails while this is in place — a remote that refuses.
     fn refuse_pushes(&self) {
         write_exec(
@@ -335,14 +443,38 @@ impl Fixture {
     /// Run one cron tick. `bash -euo pipefail` is the prelude `writeShellApplication` puts above
     /// the script text, so the shell options match the packaged runner exactly.
     fn tick(&self) -> Output {
+        self.run(&[], &self.script)
+    }
+
+    /// One tick while another process holds the tick lock.
+    fn tick_while_locked(&self) -> Output {
+        let lock = self.install.join(".refresh-human-queue.lock");
+        self.run(&[OsStr::new("flock"), lock.as_os_str()], &self.script)
+    }
+
+    /// A repo-root script run the way its flake runner would: the stub first on PATH, the install
+    /// dir as CRON_DIR.
+    fn run_repo_script(&self, name: &str) -> Output {
+        self.run(&[], &repo_root().join(name))
+    }
+
+    fn run(&self, prefix: &[&OsStr], script: &Path) -> Output {
         let path = format!(
             "{}:{}",
             self.root.join("bin").display(),
             std::env::var("PATH").unwrap_or_default()
         );
-        Command::new("bash")
-            .args(["-euo", "pipefail"])
-            .arg(&self.script)
+        let (program, rest) = match prefix.split_first() {
+            Some((p, rest)) => (*p, rest),
+            None => (OsStr::new("bash"), &[][..]),
+        };
+        let mut cmd = Command::new(program);
+        cmd.args(rest);
+        if !prefix.is_empty() {
+            cmd.arg("bash");
+        }
+        cmd.args(["-euo", "pipefail"])
+            .arg(script)
             .env("PATH", path)
             .env("HOME", &self.root)
             .env("CRON_DIR", &self.install)
@@ -439,6 +571,17 @@ fn a_changed_snapshot_is_published_to_the_data_branch_and_never_to_main() {
         git(&f.origin, &["log", "-1", "--format=%s", DATA_BRANCH]),
         "chore(dashboard): refresh human-queue.json snapshot"
     );
+    for rel in [
+        "human-queue.json",
+        "human-queue-history.jsonl",
+        "landed-history.jsonl",
+        "metrics/runs.jsonl",
+    ] {
+        assert!(
+            git(&f.origin, &["ls-tree", DATA_BRANCH, "--", rel]).starts_with("100644 blob "),
+            "{rel} is published as a plain, non-executable file"
+        );
+    }
 }
 
 /// The install's own index and working tree are never touched: the data files stay ignored and
@@ -662,6 +805,15 @@ fn a_refused_publish_is_carried_by_the_next_tick_without_a_duplicate_history_lin
         tip_before,
         "setup: nothing published"
     );
+    assert_eq!(
+        stderr(&refused)
+            .lines()
+            .filter(|l| l.contains(": git push ") && l.contains(" failed (rc="))
+            .count(),
+        3,
+        "a refused publish is attempted exactly three times: {}",
+        stderr(&refused)
+    );
     assert_eq!(f.local("human-queue-history.jsonl").lines().count(), 2);
 
     f.accept_pushes();
@@ -871,4 +1023,556 @@ fn the_stamp_matches_campaign_log_and_review_log() {
             "{file} must stamp its log lines with `date -u +%FT%TZ`, like the other cron logs"
         );
     }
+}
+
+/// Nothing a tick did is visible on the remote or in the install's data: the branch tip is where
+/// it was and the install still holds the seed snapshot and history.
+fn assert_untouched(f: &Fixture, tip_before: &Option<String>, out: &Output) {
+    assert_eq!(
+        &f.data_tip(),
+        tip_before,
+        "nothing may be published: {}",
+        stderr(out)
+    );
+    assert_eq!(
+        f.local("human-queue.json"),
+        SEED_SNAPSHOT,
+        "the snapshot must not be replaced"
+    );
+    assert_eq!(
+        f.local("human-queue-history.jsonl"),
+        SEED_HISTORY,
+        "no history line may be appended"
+    );
+}
+
+/// Overlapping ticks never stack: a tick that finds the lock held is a quiet, successful skip
+/// that neither regenerates nor publishes.
+#[test]
+fn a_tick_that_finds_the_lock_held_skips() {
+    let Some(f) = Fixture::new("locked") else {
+        return;
+    };
+    let tip_before = f.data_tip();
+    f.set_next_snapshot("{\"counts\":{\"a\":2}}\n");
+
+    let out = f.tick_while_locked();
+    assert!(
+        out.status.success(),
+        "a skipped tick is not a failure: {}",
+        stderr(&out)
+    );
+    assert!(
+        stderr(&out).contains("skipped: a previous tick still holds the lock"),
+        "the skip must be on the record: {}",
+        stderr(&out)
+    );
+    assert_untouched(&f, &tip_before, &out);
+}
+
+/// An install on a branch with no upstream has no remote to publish to: it says so and stops.
+#[test]
+fn an_install_without_an_upstream_stops_before_generating() {
+    let Some(f) = Fixture::new("no-upstream") else {
+        return;
+    };
+    let tip_before = f.data_tip();
+    git(&f.install, &["switch", "--quiet", "-c", "local-only"]);
+    f.set_next_snapshot("{\"counts\":{\"a\":2}}\n");
+
+    let out = f.tick();
+    assert!(!out.status.success(), "no upstream must fail the tick");
+    assert!(
+        stderr(&out).contains("ERROR: branch 'local-only' has no upstream"),
+        "the log has to name it: {}",
+        stderr(&out)
+    );
+    assert_untouched(&f, &tip_before, &out);
+}
+
+/// A remote that cannot be fetched stops the tick before a snapshot is generated.
+#[test]
+fn an_unfetchable_remote_stops_before_generating() {
+    let Some(f) = Fixture::new("unfetchable") else {
+        return;
+    };
+    let tip_before = f.data_tip();
+    let missing = f.root.join("missing.git");
+    git(
+        &f.install,
+        &["remote", "set-url", "origin", missing.to_str().unwrap()],
+    );
+    f.set_next_snapshot("{\"counts\":{\"a\":2}}\n");
+
+    let out = f.tick();
+    assert!(
+        !out.status.success(),
+        "an unfetchable remote must fail the tick"
+    );
+    assert!(
+        stderr(&out).contains("ERROR: fetch failed; not generating a snapshot this tick"),
+        "the log has to name it: {}",
+        stderr(&out)
+    );
+    assert_untouched(&f, &tip_before, &out);
+}
+
+/// `main` vanishing from the remote leaves nothing to compare HEAD with: the code sync fails the
+/// tick, but only after the data is published.
+#[test]
+fn an_uncomparable_main_fails_the_tick_after_publishing() {
+    let Some(f) = Fixture::new("uncomparable") else {
+        return;
+    };
+    git(&f.install, &["config", "fetch.prune", "true"]);
+    git(&f.origin, &["update-ref", "-d", "refs/heads/main"]);
+    f.set_next_snapshot("{\"counts\":{\"a\":2}}\n");
+
+    let out = f.tick();
+    assert!(
+        !out.status.success(),
+        "an uncomparable main must fail the tick"
+    );
+    assert!(
+        stderr(&out).contains("ERROR: cannot compare HEAD with origin/main"),
+        "the log has to name it: {}",
+        stderr(&out)
+    );
+    assert_eq!(f.published("human-queue.json"), "{\"counts\":{\"a\":2}}");
+}
+
+/// A fast-forward git refuses (local edits in the way) fails the tick, after publishing, and
+/// leaves the local edits and HEAD exactly as they were.
+#[test]
+fn a_refused_fast_forward_fails_the_tick_after_publishing() {
+    let Some(f) = Fixture::new("ff-refused") else {
+        return;
+    };
+    f.advance_main();
+    let head_before = f.install_head();
+    std::fs::write(f.install.join("unrelated.txt"), "a local edit\n").unwrap();
+    f.set_next_snapshot("{\"counts\":{\"a\":2}}\n");
+
+    let out = f.tick();
+    assert!(
+        !out.status.success(),
+        "a failed fast-forward must fail the tick"
+    );
+    assert!(
+        stderr(&out).contains("ERROR: fast-forward to origin/main failed"),
+        "the log has to name it: {}",
+        stderr(&out)
+    );
+    assert_eq!(f.install_head(), head_before, "HEAD must not move");
+    assert_eq!(
+        f.local("unrelated.txt"),
+        "a local edit\n",
+        "local edits are kept"
+    );
+    assert_eq!(f.published("human-queue.json"), "{\"counts\":{\"a\":2}}");
+}
+
+/// A force-push to `dashboard-data` between the tick's read and its push is still a branch tip
+/// to build on: the tick re-reads it and publishes on top of the rewritten history.
+#[test]
+fn a_data_branch_rewritten_mid_tick_is_published_onto() {
+    let Some(f) = Fixture::new("rewritten") else {
+        return;
+    };
+    f.set_next_snapshot("{\"counts\":{\"a\":2}}\n");
+    f.rewrite_the_data_branch_at_push();
+
+    let out = f.tick();
+    assert!(out.status.success(), "tick failed: {}", stderr(&out));
+    let tip = f.data_tip().unwrap();
+    assert_eq!(
+        git(&f.origin, &["log", "-1", "--format=%s", &format!("{tip}^")]),
+        "rewritten",
+        "the publish must sit on the rewritten tip"
+    );
+    assert_eq!(f.published("rewritten.txt"), "rewritten");
+    assert_eq!(f.published("human-queue.json"), "{\"counts\":{\"a\":2}}");
+}
+
+/// A remote whose `dashboard-data` cannot be read is not mistaken for one without the branch:
+/// the tick stops before generating, and nothing is built or pushed.
+#[test]
+fn an_unreadable_data_branch_stops_the_tick() {
+    let Some(f) = Fixture::new("unreadable") else {
+        return;
+    };
+    let tip_before = f.data_tip();
+    f.set_next_snapshot("{\"counts\":{\"a\":2}}\n");
+    f.fail_git("ls-remote", 1);
+
+    let out = f.tick();
+    assert!(
+        !out.status.success(),
+        "an unreadable branch must fail the tick"
+    );
+    let err = stderr(&out);
+    assert!(
+        err.contains("ERROR: cannot read dashboard-data from origin"),
+        "{err}"
+    );
+    assert!(!err.contains(" git push "), "nothing may be pushed: {err}");
+    assert_untouched(&f, &tip_before, &out);
+}
+
+/// A rejected push whose follow-up read of the branch fails stops retrying at once.
+#[test]
+fn a_failed_re_read_after_a_rejected_push_stops_retrying() {
+    let Some(f) = Fixture::new("re-read") else {
+        return;
+    };
+    let tip_before = f.data_tip();
+    f.set_next_snapshot("{\"counts\":{\"a\":2}}\n");
+    f.refuse_pushes();
+    f.fail_git("ls-remote", 2);
+
+    let out = f.tick();
+    assert!(!out.status.success(), "the tick must fail");
+    let err = stderr(&out);
+    assert!(
+        err.contains("ERROR: re-reading dashboard-data after a rejected push failed"),
+        "{err}"
+    );
+    assert!(
+        !err.contains("attempt 1:"),
+        "no rebuild may follow a failed re-read: {err}"
+    );
+    assert_eq!(f.data_tip(), tip_before);
+}
+
+/// A generator that exits non-zero is a failed generation even when it printed something.
+#[test]
+fn a_failing_generator_keeps_the_previous_snapshot() {
+    let Some(f) = Fixture::new("gen-fails") else {
+        return;
+    };
+    let tip_before = f.data_tip();
+    f.set_next_snapshot("{\"counts\":{\"a\":2}}\n");
+    std::fs::write(f.root.join("generator-rc"), "1\n").unwrap();
+
+    let out = f.tick();
+    assert!(
+        !out.status.success(),
+        "a failed generation must fail the tick"
+    );
+    assert!(
+        stderr(&out).contains("generation failed (rc=1)"),
+        "{}",
+        stderr(&out)
+    );
+    assert_untouched(&f, &tip_before, &out);
+}
+
+/// An empty snapshot is never published, even from a generator that exited 0.
+#[test]
+fn an_empty_snapshot_is_never_published() {
+    let Some(f) = Fixture::new("gen-empty") else {
+        return;
+    };
+    let tip_before = f.data_tip();
+    f.set_next_snapshot("");
+
+    let out = f.tick();
+    assert!(
+        !out.status.success(),
+        "an empty snapshot must fail the tick"
+    );
+    assert!(
+        stderr(&out).contains("generation failed (rc=0)"),
+        "{}",
+        stderr(&out)
+    );
+    assert_untouched(&f, &tip_before, &out);
+}
+
+/// A history line that cannot be produced costs one plot point, not the snapshot: the snapshot
+/// still publishes and the append-only history gains nothing, not even an empty line.
+#[test]
+fn a_failed_history_line_publishes_the_snapshot_without_one() {
+    let Some(f) = Fixture::new("hist-fails") else {
+        return;
+    };
+    f.set_next_snapshot("{\"counts\":{\"a\":2}}\n");
+    std::fs::write(f.root.join("history-rc"), "1\n").unwrap();
+
+    let out = f.tick();
+    assert!(out.status.success(), "tick failed: {}", stderr(&out));
+    assert!(
+        stderr(&out).contains("history line failed (rc=1)"),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(f.published("human-queue.json"), "{\"counts\":{\"a\":2}}");
+    assert_eq!(f.local("human-queue-history.jsonl"), SEED_HISTORY);
+}
+
+/// With no branch yet, every present data path is unpublished — whatever the install's own index
+/// holds for those paths.
+#[test]
+fn the_first_publish_ignores_the_installs_index() {
+    let Some(f) = Fixture::bare("first-indexed") else {
+        return;
+    };
+    git(
+        &f.install,
+        &[
+            "add",
+            "-f",
+            "human-queue.json",
+            "human-queue-history.jsonl",
+            "landed-history.jsonl",
+            "metrics/runs.jsonl",
+        ],
+    );
+
+    let out = f.tick();
+    assert!(out.status.success(), "tick failed: {}", stderr(&out));
+    assert!(f.data_tip().is_some(), "the branch must be created");
+    assert_eq!(f.published("human-queue.json"), SEED_SNAPSHOT.trim_end());
+}
+
+/// A data file git cannot hash fails the tick before anything is built.
+#[test]
+fn an_unhashable_data_file_fails_the_tick() {
+    let Some(f) = Fixture::new("unhashable") else {
+        return;
+    };
+    let tip_before = f.data_tip();
+    f.set_next_snapshot("{\"counts\":{\"a\":2}}\n");
+    f.fail_git("hash-object", 1);
+
+    let out = f.tick();
+    assert!(!out.status.success(), "the tick must fail");
+    assert!(
+        stderr(&out).contains("ERROR: cannot hash the data files"),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(f.data_tip(), tip_before);
+}
+
+/// A commit that cannot be built is never pushed: an empty source in the push refspec would
+/// DELETE the branch.
+#[test]
+fn a_failed_commit_build_never_pushes() {
+    let Some(f) = Fixture::new("build-fails") else {
+        return;
+    };
+    let tip_before = f.data_tip();
+    f.set_next_snapshot("{\"counts\":{\"a\":2}}\n");
+    f.fail_git("commit-tree", 1);
+
+    let out = f.tick();
+    assert!(!out.status.success(), "the tick must fail");
+    assert!(
+        stderr(&out).contains("building the dashboard-data commit failed"),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(
+        f.data_tip(),
+        tip_before,
+        "the branch must still be there, unmoved"
+    );
+}
+
+/// Nothing to publish does not hide a diverged main: the tick still fails.
+#[test]
+fn an_unchanged_tick_on_a_diverged_main_still_fails() {
+    let Some(f) = Fixture::new("unchanged-diverged") else {
+        return;
+    };
+    f.diverge_main();
+
+    let out = f.tick();
+    assert!(!out.status.success(), "a diverged main must fail the tick");
+    assert!(
+        stderr(&out).contains("nothing to publish"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+/// A tick that moves both the snapshot and the run metrics names both.
+#[test]
+fn a_snapshot_and_metrics_move_get_the_combined_subject() {
+    let Some(f) = Fixture::new("both") else {
+        return;
+    };
+    f.set_next_snapshot("{\"counts\":{\"a\":2}}\n");
+    f.append_local(
+        "metrics/runs.jsonl",
+        "{\"runId\":\"20260801T000000Z\",\"role\":\"vetter\",\"outcome\":\"ok\"}\n",
+    );
+
+    let out = f.tick();
+    assert!(out.status.success(), "tick failed: {}", stderr(&out));
+    assert_eq!(
+        git(&f.origin, &["log", "-1", "--format=%s", DATA_BRANCH]),
+        "chore(dashboard): refresh human-queue.json snapshot + run metrics"
+    );
+}
+
+/// A tick where only a ledger without a subject of its own moved gets the generic subject.
+#[test]
+fn a_landed_only_move_gets_the_generic_subject() {
+    let Some(f) = Fixture::new("landed-only") else {
+        return;
+    };
+    f.append_local(
+        "landed-history.jsonl",
+        "{\"ts\":\"2026-08-01T00:00:00Z\",\"observedAt\":\"2026-08-01T00:00:00Z\",\
+         \"kind\":\"pr\",\"repo\":\"o/healed\",\"number\":2}\n",
+    );
+
+    let out = f.tick();
+    assert!(out.status.success(), "tick failed: {}", stderr(&out));
+    assert!(f.published("landed-history.jsonl").contains("o/healed"));
+    assert_eq!(
+        git(&f.origin, &["log", "-1", "--format=%s", DATA_BRANCH]),
+        "chore(dashboard): publish accrued dashboard data"
+    );
+}
+
+/// The install's own commit-signing config cannot break the publish: the data commit is unsigned.
+#[test]
+fn an_install_that_signs_commits_still_publishes() {
+    let Some(f) = Fixture::new("signing") else {
+        return;
+    };
+    git(&f.install, &["config", "commit.gpgsign", "true"]);
+    git(&f.install, &["config", "gpg.program", "false"]);
+    f.set_next_snapshot("{\"counts\":{\"a\":2}}\n");
+
+    let out = f.tick();
+    assert!(out.status.success(), "tick failed: {}", stderr(&out));
+    assert_eq!(f.published("human-queue.json"), "{\"counts\":{\"a\":2}}");
+}
+
+/// A push rejected because another publisher already landed this exact data is success, and
+/// adds no commit of its own.
+#[test]
+fn a_rejected_push_whose_data_is_already_published_is_success() {
+    let Some(f) = Fixture::new("already") else {
+        return;
+    };
+    f.set_next_snapshot("{\"counts\":{\"a\":2}}\n");
+    f.race_with_our_own_data();
+
+    let out = f.tick();
+    assert!(out.status.success(), "tick failed: {}", stderr(&out));
+    assert!(
+        stderr(&out).contains("already carries this data"),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(
+        git(&f.origin, &["log", "-1", "--format=%s", DATA_BRANCH]),
+        "raced",
+        "no commit may be added on top of the racer's"
+    );
+}
+
+/// The already-published path still reports a diverged main.
+#[test]
+fn an_already_published_tick_on_a_diverged_main_still_fails() {
+    let Some(f) = Fixture::new("already-diverged") else {
+        return;
+    };
+    f.diverge_main();
+    f.set_next_snapshot("{\"counts\":{\"a\":2}}\n");
+    f.race_with_our_own_data();
+
+    let out = f.tick();
+    assert!(!out.status.success(), "a diverged main must fail the tick");
+    assert!(
+        stderr(&out).contains("already carries this data"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+/// Three snapshots on `dashboard-data`, published as a history the install has never fetched
+/// and that replaced the one it has: the backfills must read the remote branch as it is now.
+fn publish_snapshot_history(f: &Fixture) -> [&'static str; 3] {
+    git(&f.install, &["fetch", "--quiet", "origin"]);
+    let snaps = [
+        "{\"counts\":{\"s\":1}}",
+        "{\"counts\":{\"s\":2}}",
+        "{\"counts\":{\"s\":3}}",
+    ];
+    git(&f.other, &["switch", "--quiet", "--orphan", "rewritten"]);
+    for s in snaps {
+        std::fs::write(f.other.join("human-queue.json"), format!("{s}\n")).unwrap();
+        git(&f.other, &["add", "human-queue.json"]);
+        git(&f.other, &["commit", "--quiet", "-m", s]);
+    }
+    git(
+        &f.other,
+        &[
+            "push",
+            "--quiet",
+            "--force",
+            "origin",
+            &format!("rewritten:{DATA_BRANCH}"),
+        ],
+    );
+    git(&f.install, &["switch", "--quiet", "--detach"]);
+    snaps
+}
+
+/// The history backfill walks `dashboard-data` on the remote, oldest first — from a detached
+/// install too, where the remote falls back to origin.
+#[test]
+fn the_history_backfill_walks_the_published_branch() {
+    let Some(f) = Fixture::new("backfill-history") else {
+        return;
+    };
+    let snaps = publish_snapshot_history(&f);
+
+    let out = f.run_repo_script("backfill-human-queue-history.sh");
+    assert!(out.status.success(), "backfill failed: {}", stderr(&out));
+    let lines: Vec<String> = f
+        .local("human-queue-history.jsonl")
+        .lines()
+        .map(|l| {
+            l.split_once(",\"snap\":")
+                .map(|(_, s)| s.strip_suffix('}').unwrap_or(s).to_string())
+                .unwrap_or_default()
+        })
+        .collect();
+    let expected: Vec<String> = snaps.iter().map(|s| s.to_string()).collect();
+    assert_eq!(
+        lines, expected,
+        "one line per published snapshot, oldest first"
+    );
+}
+
+/// The landed backfill diffs each consecutive pair of `dashboard-data` snapshots on the remote.
+#[test]
+fn the_landed_backfill_walks_the_published_branch() {
+    let Some(f) = Fixture::new("backfill-landed") else {
+        return;
+    };
+    let snaps = publish_snapshot_history(&f);
+    let row = "{\"ts\":\"2026-08-11T10:00:00Z\",\"observedAt\":\"stub\",\
+               \"kind\":\"pr\",\"repo\":\"o/r\",\"number\":7}";
+    std::fs::write(f.root.join("landed-lines"), format!("{row}\n")).unwrap();
+
+    let out = f.run_repo_script("backfill-landed-history.sh");
+    assert!(out.status.success(), "backfill failed: {}", stderr(&out));
+    assert_eq!(
+        f.local("landed-history.jsonl").lines().count(),
+        3,
+        "the seed row plus one per consecutive pair (two pairs from three snapshots)"
+    );
+    assert_eq!(
+        std::fs::read_to_string(f.root.join("landed-prev-operand")).unwrap(),
+        format!("{}\n", snaps[1]),
+        "the last pair's previous snapshot is the second one"
+    );
 }
