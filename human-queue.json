@@ -727,25 +727,13 @@
         ]
       },
       "un-vetted": {
-        "count": 76,
+        "count": 72,
         "prs": [
-          {
-            "repo": "rainlanguage/rainlang.deploy",
-            "number": 23,
-            "url": "https://github.com/rainlanguage/rainlang.deploy/pull/23",
-            "title": "Bump rain-tofu-erc20-decimals-deploy to 0.1.4"
-          },
           {
             "repo": "rainlanguage/raindex.deploy",
             "number": 2943,
             "url": "https://github.com/rainlanguage/raindex.deploy/pull/2943",
             "title": "Derive subgraph networks from deploy networks and the live candidate"
-          },
-          {
-            "repo": "rainlanguage/raindex.deploy",
-            "number": 2939,
-            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2939",
-            "title": "Drop rainlang-interface; move to rainlang 0.2.30"
           },
           {
             "repo": "rainlanguage/raindex.governance",
@@ -794,18 +782,6 @@
             "number": 518,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/518",
             "title": "git-clean: use rainix-copy-artifacts reusable"
-          },
-          {
-            "repo": "rainlanguage/rainix",
-            "number": 427,
-            "url": "https://github.com/rainlanguage/rainix/pull/427",
-            "title": "Static check: .env must be gitignored and never tracked"
-          },
-          {
-            "repo": "rainlanguage/raindex.deploy",
-            "number": 2937,
-            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2937",
-            "title": "Test order-clearer and order context words for both orders in clear3"
           },
           {
             "repo": "rainlanguage/rain.dia",
@@ -1959,9 +1935,9 @@
   "uncoveredIssues": [
     {
       "repo": "rainlanguage/raindex.deploy",
-      "number": 2941,
-      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2941",
-      "title": "Soldeer package name: release workflow pushes `raindex`, foundry.toml declares `raindex-deploy`"
+      "number": 2945,
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2945",
+      "title": "Remove the RaindexV6 released fallback once LibRaindexV7Released has an entry"
     },
     {
       "repo": "rainlanguage/raindex.deploy",
@@ -6126,7 +6102,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 76,
+    "unvetted": 72,
     "blockedOn": 9,
     "ready": 1,
     "needsWork": 89,
@@ -6137,18 +6113,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 181,
+    "totalProducerPrs": 177,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 690,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 858
+    "openIssues": 856
   },
   "ages": {
     "openIssues": {
-      "meanDays": 309.7,
-      "medianDays": 132.5,
-      "oldestDays": 1737.1
+      "meanDays": 310.4,
+      "medianDays": 132.6,
+      "oldestDays": 1737.2
     }
   }
 }
