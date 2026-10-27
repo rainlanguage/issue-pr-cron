@@ -581,7 +581,7 @@
         "repo": "rainlanguage/raindex.deploy",
         "number": 2719,
         "url": "https://github.com/rainlanguage/raindex.deploy/pull/2719",
-        "title": "Strip RPC URLs from generated dotrain to prevent API token leak (#2165)"
+        "title": "Strip endpoint URLs (rpcs, subgraphs, metaboards) from generated dotrain (#2165)"
       },
       {
         "repo": "rainlanguage/raindex.deploy",
@@ -727,8 +727,32 @@
         ]
       },
       "un-vetted": {
-        "count": 72,
+        "count": 76,
         "prs": [
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 522,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/522",
+            "title": "Bump rain-tofu-erc20-decimals-deploy 0.1.4, rain-vats 0.2.12"
+          },
+          {
+            "repo": "rainlanguage/raindex.deploy",
+            "number": 2953,
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2953",
+            "title": "fix(npm): package repository fields point at raindex.deploy"
+          },
+          {
+            "repo": "rainlanguage/rain.tofu.erc20-decimals.deploy",
+            "number": 17,
+            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals.deploy/pull/17",
+            "title": "Drop networks input from manual sol verify"
+          },
+          {
+            "repo": "rainlanguage/rainlang.deploy",
+            "number": 25,
+            "url": "https://github.com/rainlanguage/rainlang.deploy/pull/25",
+            "title": "Drop networks input from manual sol verify"
+          },
           {
             "repo": "rainlanguage/raindex.deploy",
             "number": 2943,
@@ -739,7 +763,7 @@
             "repo": "rainlanguage/raindex.governance",
             "number": 14,
             "url": "https://github.com/rainlanguage/raindex.governance/pull/14",
-            "title": "Bump rain-math-float to 0.3.11, raindex-interface to 0.1.12"
+            "title": "Bump rain-math-float to 0.3.11, raindex-interface to 0.1.13, rainlang to 0.2.30"
           },
           {
             "repo": "rainlanguage/rainix",
@@ -1699,7 +1723,7 @@
             "repo": "rainlanguage/raindex.deploy",
             "number": 2719,
             "url": "https://github.com/rainlanguage/raindex.deploy/pull/2719",
-            "title": "Strip RPC URLs from generated dotrain to prevent API token leak (#2165)"
+            "title": "Strip endpoint URLs (rpcs, subgraphs, metaboards) from generated dotrain (#2165)"
           },
           {
             "repo": "rainlanguage/raindex.deploy",
@@ -1933,6 +1957,18 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/raindex.deploy",
+      "number": 2954,
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2954",
+      "title": "Reject by-value wasm struct parameters on exported functions"
+    },
+    {
+      "repo": "rainlanguage/raindex.deploy",
+      "number": 2951,
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2951",
+      "title": "SDK: read vaultless (vault ID 0) balance live via vaultBalance2"
+    },
     {
       "repo": "rainlanguage/raindex.deploy",
       "number": 2945,
@@ -4863,12 +4899,6 @@
     },
     {
       "repo": "rainlanguage/raindex.deploy",
-      "number": 2011,
-      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2011",
-      "title": "Passing structs back to WASM without losing its reference"
-    },
-    {
-      "repo": "rainlanguage/raindex.deploy",
       "number": 1998,
       "url": "https://github.com/rainlanguage/raindex.deploy/issues/1998",
       "title": "Ability to reference price ratios in field names/descriptions and for default field values in `DotrainOrderGui` yaml"
@@ -6102,7 +6132,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 72,
+    "unvetted": 76,
     "blockedOn": 9,
     "ready": 1,
     "needsWork": 89,
@@ -6113,18 +6143,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 177,
+    "totalProducerPrs": 181,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 690,
+    "uncoveredIssues": 691,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 856
+    "openIssues": 858
   },
   "ages": {
     "openIssues": {
-      "meanDays": 310.7,
-      "medianDays": 132.8,
-      "oldestDays": 1737.4
+      "meanDays": 309.5,
+      "medianDays": 132.9,
+      "oldestDays": 1737.5
     }
   }
 }
