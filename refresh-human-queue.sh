@@ -59,6 +59,7 @@ export PR_ASSIGNEE
 # flock so overlapping ticks never stack. Everything below — the sync included — runs under it,
 # so two ticks can never drive the same working tree's git state at once.
 exec 9>"$DIR/.refresh-human-queue.lock"
+flock -n 9 || { log "skipped: a previous tick still holds the lock"; exit 0; }
 
 # The branch the dashboard reads, and every file published to it. A path the install dir does
 # not hold yet (fsm-touches.jsonl is born with the first transition) is neither published nor
