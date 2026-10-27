@@ -5,6 +5,8 @@
 # ...but keep the cron config + its docs:
 !/.gitignore
 !/README.md
+# deno fmt config: keeps the formatter off the org-wide PR template, which it reflows.
+!/deno.json
 !/CLAUDE.md
 # The reference material CLAUDE.md does NOT carry: CLAUDE.md auto-loads into every vetter
 # turn and is capped, so it keeps only the rulings, and these two hold what a role reaches
