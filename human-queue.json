@@ -1928,6 +1928,12 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rainix",
+      "number": 437,
+      "url": "https://github.com/rainlanguage/rainix/issues/437",
+      "title": "manual-sol-verify: pass --compilation-profile for non-default-profile contracts"
+    },
+    {
       "repo": "rainlanguage/raindex.deploy",
       "number": 2954,
       "url": "https://github.com/rainlanguage/raindex.deploy/issues/2954",
@@ -6127,16 +6133,16 @@
     "leaks": 0,
     "totalProducerPrs": 177,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 693,
+    "uncoveredIssues": 694,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 856
+    "openIssues": 857
   },
   "ages": {
     "openIssues": {
-      "meanDays": 309.8,
+      "meanDays": 309.4,
       "medianDays": 132.9,
-      "oldestDays": 1737.5
+      "oldestDays": 1737.6
     }
   }
 }
