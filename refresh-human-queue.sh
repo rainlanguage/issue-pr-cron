@@ -247,9 +247,27 @@ build_commit() {
   return "$rc"
 }
 
+# The feeds are append-only, so a publish may only lengthen them: each present feed must hold the
+# copy at $1 as a byte-prefix (or $1 lacks it). Otherwise the publish would shorten or rewrite the
+# branch's history, so it names the feed and fails. The snapshot is overwrite and is not checked.
+APPEND_ONLY=(human-queue-history.jsonl landed-history.jsonl metrics/runs.jsonl fsm-touches.jsonl)
+feeds_extend() {
+  local p blob size
+  for p in "${APPEND_ONLY[@]}"; do
+    [ -e "$DIR/$p" ] || continue
+    blob="$(git -C "$DIR" rev-parse --verify --quiet "$1:$p" 2>/dev/null)" || continue
+    if ! size="$(git -C "$DIR" cat-file -s "$blob" 2>/dev/null)" \
+      || ! git -C "$DIR" cat-file blob "$blob" 2>/dev/null | cmp -s -n "$size" - "$DIR/$p"; then
+      log "ERROR: $p does not extend its copy on $DATA_BRANCH ${1:0:7}; not publishing over its history — a human must reconcile"
+      return 1
+    fi
+  done
+}
+
 # The branch can move between the fetch and the push. The install dir is the source of truth, so
 # a rejected push is answered by rebuilding the same files onto the new tip — never by forcing.
 for attempt in 1 2 3; do
+  feeds_extend "$tip" || exit 1
   commit="$(build_commit "$tip")" || exit 1
   if git_q push --quiet "$REMOTE" "$commit:refs/heads/$DATA_BRANCH"; then
     log "published ${commit:0:7} to $DATA_BRANCH ($(printf '%s' "$moved" | tr '\n' ' '))"

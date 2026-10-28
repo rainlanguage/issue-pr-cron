@@ -1837,3 +1837,163 @@ fn a_restore_without_a_temp_file_fails_on_a_stamped_line() {
     }
     assert_eq!(f.data_tip(), tip_before, "nothing may be published");
 }
+
+const FEEDS: [&str; 4] = [
+    "human-queue-history.jsonl",
+    "landed-history.jsonl",
+    "metrics/runs.jsonl",
+    "fsm-touches.jsonl",
+];
+
+/// A refused feed fails the tick with exit 1 on exactly one stamped ERROR line, which names it.
+fn assert_refused(out: &Output, rel: &str) {
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(out));
+    let errors: Vec<String> = stderr(out)
+        .lines()
+        .filter(|l| l.contains("ERROR"))
+        .map(str::to_string)
+        .collect();
+    assert_eq!(errors.len(), 1, "one ERROR line: {}", stderr(out));
+    assert!(is_stamped(&errors[0]), "unstamped: {:?}", errors[0]);
+    assert!(
+        errors[0].contains(&format!(
+            "ERROR: {rel} does not extend its copy on dashboard-data"
+        )),
+        "the ERROR must name {rel}: {:?}",
+        errors[0]
+    );
+}
+
+/// At push time, another publisher appends `line` to `rel` on `dashboard-data`. Fires once.
+fn race_a_feed_line(f: &Fixture, rel: &str, line: &str) {
+    let hook = format!(
+        "#!/usr/bin/env bash\n\
+         set -uo pipefail\n\
+         unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX\n\
+         [ -e {marker} ] && exit 0\n\
+         touch {marker}\n\
+         git -C {other} fetch --quiet origin {branch} >/dev/null 2>&1\n\
+         git -C {other} switch --quiet -C {branch} FETCH_HEAD >/dev/null 2>&1\n\
+         printf '%s\\n' '{line}' >> {other}/{rel}\n\
+         git -C {other} commit --quiet -am 'raced' >/dev/null 2>&1\n\
+         git -C {other} push --quiet origin {branch} >/dev/null 2>&1\n\
+         git -C {other} switch --quiet main >/dev/null 2>&1\n\
+         exit 0\n",
+        marker = f.root.join(".raced").display(),
+        other = f.other.display(),
+        branch = DATA_BRANCH,
+    );
+    write_exec(&f.install.join(".git/hooks/pre-push"), &hook);
+}
+
+/// THE regression test for a feed born on a new box. A runner appends to `metrics/runs.jsonl`
+/// before the first refresh tick, so the restore finds it non-empty and keeps it. Publishing it
+/// would replace the branch's run history with one line, so the tick refuses and publishes
+/// nothing at all, not even the changed snapshot.
+#[test]
+fn a_new_boxs_own_run_feed_never_replaces_the_published_history() {
+    let Some(f) = Fixture::new("new-box-runs") else {
+        return;
+    };
+    let tip_before = f.data_tip();
+    wipe_local_data(&f);
+    std::fs::create_dir_all(f.install.join("metrics")).unwrap();
+    let own = "{\"runId\":\"20261028T000000Z\",\"role\":\"vetter\",\"outcome\":\"ok\"}\n";
+    std::fs::write(f.install.join("metrics/runs.jsonl"), own).unwrap();
+    f.set_next_snapshot("{\"counts\":{\"a\":2}}\n");
+
+    let out = f.tick();
+    assert_refused(&out, "metrics/runs.jsonl");
+    assert_eq!(f.data_tip(), tip_before, "nothing may be published");
+    assert_eq!(f.published("metrics/runs.jsonl"), SEED_RUNS.trim_end());
+    assert_eq!(f.published("human-queue.json"), SEED_SNAPSHOT.trim_end());
+    assert_eq!(f.local("metrics/runs.jsonl"), own, "the local feed is kept");
+}
+
+/// Every append-only feed is held to the rule: a local copy that rewrites the published one is
+/// refused, whichever feed it is.
+#[test]
+fn every_feed_that_rewrites_the_published_one_is_refused() {
+    for (i, rel) in FEEDS.iter().enumerate() {
+        let Some(f) = Fixture::new(&format!("rewritten-feed-{i}")) else {
+            return;
+        };
+        if *rel == "fsm-touches.jsonl" {
+            publish_from_other(&f, rel, "{\"item\":\"o/r#1\"}\n");
+        }
+        let tip_before = f.data_tip();
+        std::fs::write(f.install.join(rel), "{\"rewritten\":true}\n").unwrap();
+
+        let out = f.tick();
+        assert_refused(&out, rel);
+        assert_eq!(f.data_tip(), tip_before, "{rel}: nothing may be published");
+    }
+}
+
+/// A local feed SHORTER than the published one is a prefix of it, not an extension: publishing
+/// it would drop the published tail.
+#[test]
+fn a_feed_shorter_than_the_published_one_is_refused() {
+    let Some(f) = Fixture::new("shortened-feed") else {
+        return;
+    };
+    let row = "{\"ts\":\"2026-08-11T10:00:00Z\",\"kind\":\"pr\",\"repo\":\"o/r\",\"number\":7}\n";
+    publish_from_other(&f, "landed-history.jsonl", &format!("{SEED_LANDED}{row}"));
+    let tip_before = f.data_tip();
+
+    let out = f.tick();
+    assert_refused(&out, "landed-history.jsonl");
+    assert_eq!(f.data_tip(), tip_before, "nothing may be published");
+    assert_eq!(f.local("landed-history.jsonl"), SEED_LANDED);
+}
+
+/// The rule is a byte prefix, nothing stricter: every feed that only appends to its published
+/// copy publishes, including onto a published copy that is empty or lacks its final newline.
+#[test]
+fn every_feed_that_extends_the_published_one_publishes() {
+    for (i, rel) in FEEDS.iter().enumerate() {
+        for (j, published) in ["", "{\"partial\":"].iter().enumerate() {
+            let Some(f) = Fixture::new(&format!("extended-feed-{i}-{j}")) else {
+                return;
+            };
+            publish_from_other(&f, rel, published);
+            let local = format!("{published}1}}\n{{\"next\":2}}\n");
+            std::fs::write(f.install.join(rel), &local).unwrap();
+
+            let out = f.tick();
+            assert!(out.status.success(), "{rel}: {}", stderr(&out));
+            assert_eq!(f.published(rel), local.trim_end(), "{rel} published as-is");
+        }
+    }
+}
+
+/// The rule is re-checked against the tip each push is rebuilt onto: a publisher that appends to
+/// a feed mid-tick leaves the install's copy no longer an extension, so the rebuild is refused
+/// rather than published over the racer's line.
+#[test]
+fn a_feed_appended_on_the_branch_mid_tick_is_refused_on_the_rebuild() {
+    let Some(f) = Fixture::new("raced-feed") else {
+        return;
+    };
+    f.set_next_snapshot("{\"counts\":{\"a\":2}}\n");
+    race_a_feed_line(&f, "human-queue-history.jsonl", "{\"ts\":\"raced\"}");
+
+    let out = f.tick();
+    assert_refused(&out, "human-queue-history.jsonl");
+    let tip = f.data_tip().unwrap();
+    assert_eq!(
+        git(&f.origin, &["log", "-1", "--format=%s", &tip]),
+        "raced",
+        "the racer's commit stays the tip: {}",
+        stderr(&out)
+    );
+    assert_eq!(
+        f.published("human-queue-history.jsonl"),
+        format!("{}{}", SEED_HISTORY, "{\"ts\":\"raced\"}")
+    );
+    assert!(
+        stderr(&out).contains("attempt 1: dashboard-data moved"),
+        "{}",
+        stderr(&out)
+    );
+}
