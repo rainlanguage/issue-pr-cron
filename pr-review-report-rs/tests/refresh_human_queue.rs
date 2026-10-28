@@ -1875,7 +1875,8 @@ fn race_a_feed_line(f: &Fixture, rel: &str, line: &str) {
          git -C {other} fetch --quiet origin {branch} >/dev/null 2>&1\n\
          git -C {other} switch --quiet -C {branch} FETCH_HEAD >/dev/null 2>&1\n\
          printf '%s\\n' '{line}' >> {other}/{rel}\n\
-         git -C {other} commit --quiet -am 'raced' >/dev/null 2>&1\n\
+         git -C {other} add -A >/dev/null 2>&1\n\
+         git -C {other} commit --quiet -m 'raced' >/dev/null 2>&1\n\
          git -C {other} push --quiet origin {branch} >/dev/null 2>&1\n\
          git -C {other} switch --quiet main >/dev/null 2>&1\n\
          exit 0\n",
@@ -1996,4 +1997,29 @@ fn a_feed_appended_on_the_branch_mid_tick_is_refused_on_the_rebuild() {
         "{}",
         stderr(&out)
     );
+}
+
+/// A feed the install does not hold is not published, so the branch's copy cannot be shortened by
+/// it: a feed another publisher adds to the branch mid-tick, while the install lacks it, is no
+/// reason to refuse the rebuild, and the branch keeps it.
+#[test]
+fn a_feed_born_on_the_branch_mid_tick_is_carried_forward_by_the_rebuild() {
+    let Some(f) = Fixture::new("raced-born-feed") else {
+        return;
+    };
+    f.set_next_snapshot("{\"counts\":{\"a\":2}}\n");
+    let touches = "{\"actor\":\"producer\",\"item\":\"o/r#1\"}";
+    race_a_feed_line(&f, "fsm-touches.jsonl", touches);
+
+    let out = f.tick();
+    assert!(out.status.success(), "tick failed: {}", stderr(&out));
+    let tip = f.data_tip().unwrap();
+    let raced = git(&f.origin, &["rev-parse", &format!("{tip}^")]);
+    assert_eq!(
+        git(&f.origin, &["log", "-1", "--format=%s", &raced]),
+        "raced"
+    );
+    assert_eq!(f.published("fsm-touches.jsonl"), touches);
+    assert_eq!(f.published("human-queue.json"), "{\"counts\":{\"a\":2}}");
+    assert!(!f.install.join("fsm-touches.jsonl").exists());
 }
