@@ -115,6 +115,27 @@ data_tip() {
 }
 tip="$(data_tip)" || exit 1
 
+# A fresh install (a new box, or a checkout that lacks the files) would otherwise publish its
+# empty or brand-new feeds over the branch's whole history. So every data path the install dir
+# lacks (absent or empty) that the tip carries is restored from the tip first: before the snapshot
+# is compared, before anything is appended. A path the install already holds is never touched.
+restore_from_tip() {
+  local p blob tmpf
+  for p in "${DATA_PATHS[@]}"; do
+    [ -s "$DIR/$p" ] && continue
+    blob="$(git -C "$DIR" rev-parse --verify --quiet "$tip:$p" 2>/dev/null)" || continue
+    tmpf="$(mktemp)" || return 1
+    if ! git -C "$DIR" cat-file blob "$blob" >"$tmpf" 2>/dev/null \
+      || ! mkdir -p "$(dirname "$DIR/$p")" || ! mv "$tmpf" "$DIR/$p"; then
+      rm -f "$tmpf"
+      log "ERROR: cannot restore $p from $DATA_BRANCH ${tip:0:7}; not publishing over its history"
+      return 1
+    fi
+    log "restored $p from $DATA_BRANCH ${tip:0:7}: the install dir lacked it"
+  done
+}
+[ -z "$tip" ] || restore_from_tip || exit 1
+
 # Regenerate into a temp file; only replace on a non-empty success (never publish a truncated
 # snapshot). The generator's stderr is replayed as one stamped line rather than discarded.
 tmp="$(mktemp)"; tmperr="$(mktemp)"
