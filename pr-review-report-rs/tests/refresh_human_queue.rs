@@ -170,7 +170,7 @@ impl Fixture {
             .join("refresh-human-queue-tests")
             .join(format!("{}-{}", std::process::id(), name));
         let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).expect("create fixture root");
+        std::fs::create_dir_all(root.join("tmp")).expect("create fixture root and its TMPDIR");
         std::fs::write(
             root.join("gitconfig"),
             "[user]\n\tname = fixture\n\temail = fixture@example.invalid\n\
@@ -477,6 +477,8 @@ impl Fixture {
             .arg(script)
             .env("PATH", path)
             .env("HOME", &self.root)
+            // The script's temp files land here, so a test can see one left behind.
+            .env("TMPDIR", self.root.join("tmp"))
             .env("CRON_DIR", &self.install)
             .env("GIT_CONFIG_GLOBAL", self.root.join("gitconfig"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -1637,4 +1639,175 @@ fn an_empty_landed_diff_appends_nothing() {
     assert!(out.status.success(), "tick failed: {}", stderr(&out));
     assert_eq!(f.local("landed-history.jsonl"), SEED_LANDED);
     assert_eq!(f.published("landed-history.jsonl"), SEED_LANDED.trim_end());
+}
+
+/// The install dir as a fresh box (or a checkout that never held the data) sees it: none of the
+/// data files, and no `metrics/` directory either.
+fn wipe_local_data(f: &Fixture) {
+    for rel in [
+        "human-queue.json",
+        "human-queue-history.jsonl",
+        "landed-history.jsonl",
+    ] {
+        std::fs::remove_file(f.install.join(rel)).unwrap();
+    }
+    std::fs::remove_dir_all(f.install.join("metrics")).unwrap();
+}
+
+/// Add a file to the published branch from the other clone, as an earlier publisher would have.
+fn publish_from_other(f: &Fixture, rel: &str, text: &str) {
+    git(&f.other, &["fetch", "--quiet", "origin", DATA_BRANCH]);
+    git(
+        &f.other,
+        &["switch", "--quiet", "-C", DATA_BRANCH, "FETCH_HEAD"],
+    );
+    std::fs::write(f.other.join(rel), text).unwrap();
+    git(&f.other, &["add", "-A"]);
+    git(&f.other, &["commit", "--quiet", "-m", "earlier publish"]);
+    git(&f.other, &["push", "--quiet", "origin", DATA_BRANCH]);
+    git(&f.other, &["switch", "--quiet", "main"]);
+}
+
+/// THE regression test for a fresh install. The data files left `main`, so a new box has none of
+/// them. Its first tick restores every feed the branch carries before it appends to any of them:
+/// the published history keeps its earlier lines and gains the new one, rather than being
+/// replaced by it. The restored snapshot is the previous one, so the landed diff is taken against
+/// it.
+#[test]
+fn a_fresh_install_restores_the_published_feeds_before_appending() {
+    let Some(f) = Fixture::new("fresh-install") else {
+        return;
+    };
+    let touches = "{\"actor\":\"producer\",\"item\":\"o/r#1\"}\n";
+    publish_from_other(&f, "fsm-touches.jsonl", touches);
+    wipe_local_data(&f);
+    let row = "{\"ts\":\"2026-08-11T10:00:00Z\",\"observedAt\":\"stub\",\
+               \"kind\":\"pr\",\"repo\":\"o/r\",\"number\":7}";
+    std::fs::write(f.root.join("landed-lines"), format!("{row}\n")).unwrap();
+    f.set_next_snapshot("{\"counts\":{\"a\":2}}\n");
+
+    let out = f.tick();
+    assert!(out.status.success(), "tick failed: {}", stderr(&out));
+    assert_eq!(
+        std::fs::read_to_string(f.root.join("landed-prev-operand")).unwrap(),
+        SEED_SNAPSHOT,
+        "the landed diff must be taken against the published snapshot"
+    );
+    let history = f.published("human-queue-history.jsonl");
+    assert_eq!(
+        history.lines().collect::<Vec<_>>(),
+        [SEED_HISTORY.trim_end(), "{\"ts\":\"stub\",\"counts\":{}}"],
+        "the history keeps its published lines and gains this tick's"
+    );
+    assert_eq!(
+        f.published("landed-history.jsonl")
+            .lines()
+            .collect::<Vec<_>>(),
+        [SEED_LANDED.trim_end(), row],
+        "the landed ledger keeps its published rows and gains this tick's"
+    );
+    assert_eq!(f.published("metrics/runs.jsonl"), SEED_RUNS.trim_end());
+    assert_eq!(f.published("fsm-touches.jsonl"), touches.trim_end());
+    assert_eq!(f.published("human-queue.json"), "{\"counts\":{\"a\":2}}");
+    assert_eq!(f.local("metrics/runs.jsonl"), SEED_RUNS);
+    assert_eq!(f.local("fsm-touches.jsonl"), touches);
+    for rel in [
+        "human-queue.json",
+        "human-queue-history.jsonl",
+        "landed-history.jsonl",
+        "metrics/runs.jsonl",
+        "fsm-touches.jsonl",
+    ] {
+        assert!(
+            stderr(&out).contains(&format!("restored {rel} from dashboard-data")),
+            "the restore of {rel} must be on the record: {}",
+            stderr(&out)
+        );
+    }
+    for line in stderr(&out).lines().filter(|l| !l.trim().is_empty()) {
+        assert!(is_stamped(line), "unstamped line: {line:?}");
+    }
+    assert_eq!(
+        git(&f.install, &["status", "--porcelain"]),
+        "",
+        "restored files are data, ignored on main"
+    );
+}
+
+/// A fresh install whose generator reproduces the published snapshot has nothing to publish: the
+/// restored snapshot is the previous one, so it has not moved and no history line is appended.
+#[test]
+fn a_fresh_install_with_an_unchanged_snapshot_is_a_no_op() {
+    let Some(f) = Fixture::new("fresh-unchanged") else {
+        return;
+    };
+    let tip_before = f.data_tip();
+    wipe_local_data(&f);
+
+    let out = f.tick();
+    assert!(out.status.success(), "tick failed: {}", stderr(&out));
+    assert_eq!(f.data_tip(), tip_before, "nothing moved: {}", stderr(&out));
+    assert_eq!(f.local("human-queue-history.jsonl"), SEED_HISTORY);
+    assert_eq!(f.local("landed-history.jsonl"), SEED_LANDED);
+    assert!(
+        !f.install.join("fsm-touches.jsonl").exists(),
+        "a ledger the branch never carried must not be invented"
+    );
+}
+
+/// An empty feed is as good as absent: it is restored, not published over the history.
+#[test]
+fn an_empty_local_feed_is_restored_from_the_branch() {
+    let Some(f) = Fixture::new("empty-feed") else {
+        return;
+    };
+    std::fs::write(f.install.join("human-queue-history.jsonl"), "").unwrap();
+    std::fs::write(f.install.join("metrics/runs.jsonl"), "").unwrap();
+    f.set_next_snapshot("{\"counts\":{\"a\":2}}\n");
+
+    let out = f.tick();
+    assert!(out.status.success(), "tick failed: {}", stderr(&out));
+    assert_eq!(
+        f.published("human-queue-history.jsonl").lines().next(),
+        Some(SEED_HISTORY.trim_end()),
+        "the published history must keep its first line"
+    );
+    assert_eq!(f.published("human-queue-history.jsonl").lines().count(), 2);
+    assert_eq!(f.published("metrics/runs.jsonl"), SEED_RUNS.trim_end());
+}
+
+/// A feed that cannot be restored is never published over: the tick fails before it generates.
+#[test]
+fn a_failed_restore_stops_the_tick() {
+    let Some(f) = Fixture::new("restore-fails") else {
+        return;
+    };
+    let tip_before = f.data_tip();
+    std::fs::remove_file(f.install.join("human-queue-history.jsonl")).unwrap();
+    f.set_next_snapshot("{\"counts\":{\"a\":2}}\n");
+    f.fail_git("cat-file", 1);
+
+    let out = f.tick();
+    assert!(!out.status.success(), "the tick must fail");
+    assert!(
+        stderr(&out)
+            .contains("ERROR: cannot restore human-queue-history.jsonl from dashboard-data"),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(f.data_tip(), tip_before, "nothing may be published");
+    assert_eq!(
+        f.local("human-queue.json"),
+        SEED_SNAPSHOT,
+        "nothing may be generated"
+    );
+    assert!(
+        !f.install.join("human-queue-history.jsonl").exists(),
+        "a partial restore must not land"
+    );
+    assert_eq!(
+        std::fs::read_dir(f.root.join("tmp")).unwrap().count(),
+        0,
+        "the failed restore's temp file must be removed"
+    );
 }
