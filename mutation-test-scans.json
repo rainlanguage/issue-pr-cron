@@ -44,5 +44,14 @@
   "scope": "pr:343 (scanned on the branch), the fresh-install restore: restore_from_tip in refresh-human-queue.sh",
   "tool": "mutation-probe (github:rainlanguage/adversarial-mutation-test), adversarial-mutation-test skill 0.35.0",
   "summary": "16 mutants. Before (pre-existing 40 tests at commit, 14 mutants; X15/X16 target code added later): 2/14 killed, 12 survived. After (45 tests at testsAfterCommit): 16/16 killed. Adversarial finding fixed in-PR (f90e350): a restore whose mktemp failed returned silently, leaving only mktemp's unstamped message. No issues filed (in the unmerged PR itself)."
+ },
+ {
+  "timestamp": "2026-10-28T08:40:00Z",
+  "commit": "274b10f3621a4f36c4a87d8a14c6bb958b4e4e06",
+  "testsAfterCommit": "2c805e587d45d76c622b1612f98189a97e75283c",
+  "publishedTag": null,
+  "scope": "pr:343 (scanned on the branch), the append-only feed guard: feeds_extend in refresh-human-queue.sh and its call in the push retry loop",
+  "tool": "mutation-probe (github:rainlanguage/adversarial-mutation-test), adversarial-mutation-test skill 0.35.0",
+  "summary": "20 mutants. Before (the script at commit with the pre-existing 45-test file from 797ca035b9b77e6685cc326b33dd3340ac6fda42): 6/20 killed, 14 survived. After (51 tests at testsAfterCommit): 20/20 killed, no equivalents. F10 (an absent local feed not skipped) survived the first 50-test pass and was killed by a_feed_born_on_the_branch_mid_tick_is_carried_forward_by_the_rebuild. No adversarial findings; no issues filed (in the unmerged PR itself)."
  }
 ]
