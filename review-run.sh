@@ -199,7 +199,7 @@ if [ "$_ugrc" -eq 10 ]; then
     # A paused tick still writes its metrics/runs.jsonl row (#160) — same shape and same reasoning
     # as campaign-run.sh: an empty trace so the record's shape still comes from `run-metrics`, the
     # GATE's exit 10 on the row, the gate's own line verbatim, and exit 0 because a pause is not a
-    # failure. The hourly refresh-human-queue cron is what carries the row to origin/main during a
+    # failure. The hourly refresh-human-queue cron is what publishes the row to dashboard-data during a
     # pause. A REFUSAL (exit 2, below) writes no row and aborts loudly.
     TS="$(date -u +%Y%m%dT%H%M%SZ)"
     RUNLOG="$RUNDIR/$TS.jsonl"

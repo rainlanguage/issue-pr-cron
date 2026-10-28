@@ -5,6 +5,8 @@
 # ...but keep the cron config + its docs:
 !/.gitignore
 !/README.md
+# deno fmt config: keeps the formatter off the org-wide PR template, which it reflows.
+!/deno.json
 !/CLAUDE.md
 # The reference material CLAUDE.md does NOT carry: CLAUDE.md auto-loads into every vetter
 # turn and is capped, so it keeps only the rulings, and these two hold what a role reaches
@@ -92,27 +94,17 @@
 # prompt — `the_journal_is_never_shipped_to_a_runners_context` is what keeps it that way. The
 # prompt carries rules at per-turn cost; this carries the incidents at zero.
 !/mistake-journal.jsonl
-# Per-run pipeline metrics (accumulates across trace rotation; committed periodically):
-!/metrics/
-!/metrics/runs.jsonl
-# The FSM touch ledger: every mutating transition appends which item it acted on, whoever
-# invoked it (runs stamp FSM_TOUCH_ACTOR/FSM_TOUCH_RUN_ID; interactive sessions append bare).
-# Written in place here and committed by the refresh tick, like metrics/runs.jsonl:
-!/fsm-touches.jsonl
-# FSM-conformance snapshot (`pr-review-report human-queue --json`, overwritten each refresh);
-# the rain-org-health dashboard fetches it at runtime from the raw URL — no site redeploy:
-!/human-queue.json
+# The dashboard's data — human-queue.json, human-queue-history.jsonl, landed-history.jsonl,
+# metrics/runs.jsonl, fsm-touches.jsonl — is written in place here and published by
+# refresh-human-queue.sh to the `dashboard-data` branch, never committed to main (main is
+# ruleset-protected). Left ignored by `/*` above, so the install's tree stays clean.
 !/refresh-human-queue.sh
 # The design lane's FSM doctor (#241): daily pass routing every noQuestion ai:design PR back
 # to ai:needs-work; a flake runner like the refresher, on its own cron line:
 !/design-doctor.sh
-# Append-only per-state inventory history ({ts, counts} per changed refresh) + its one-time
-# backfill; the dashboard fetches the jsonl at runtime for the Theory-of-Constraints panel:
-!/human-queue-history.jsonl
+# The two backfills: rebuild the history feed / seed+heal the landed feed from the
+# dashboard-data branch's history of the snapshot:
 !/backfill-human-queue-history.sh
-# Append-only landed-work feed (one row per verified landing) + its seed/heal backfill; the
-# dashboard fetches the jsonl at runtime as the tokens-per-landed-item denominator:
-!/landed-history.jsonl
 !/backfill-landed-history.sh
 # Flake exposing pr-review-report as a package (bin on the cron PATH):
 !/flake.nix

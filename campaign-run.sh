@@ -217,8 +217,8 @@ if [ "$_ugrc" -eq 10 ]; then
     # still comes from `run-metrics` and no second place knows what a runs.jsonl line looks like.
     # The row records the GATE's exit 10 (as the preflight row records preflight's 12) plus the
     # gate's own line, verbatim; this script still exits 0 because a pause is not a failure. The row
-    # reaches origin/main via the hourly refresh-human-queue cron, which stages this file — the one
-    # committer still awake during a pause.
+    # reaches the dashboard-data branch via the hourly refresh-human-queue cron, which publishes this file — the one
+    # publisher still awake during a pause.
     TS="$(date -u +%Y%m%dT%H%M%SZ)"
     RUNLOG="$RUNDIR/$TS.jsonl"
     mkdir -p "$RUNDIR" "$DIR/metrics"
@@ -589,7 +589,7 @@ fi
 echo "$(date -u +%FT%TZ) campaign run END (exit=$rc, trace=$RUNLOG, err=$ERRLOG)" | _log
 
 # Persist per-run metrics BEFORE the next run's rotation deletes this trace.
-# Appends one enriched JSON line to metrics/runs.jsonl (committed+pushed to main by the hourly
+# Appends one enriched JSON line to metrics/runs.jsonl (published to dashboard-data by the hourly
 # refresh-human-queue cron, never from here — this cron does not push). Best-effort: never fail
 # the run on it.
 # `run-metrics` emits the whole enriched record itself now, including `outcome` — which it derives
