@@ -35,5 +35,14 @@
   "scope": "pr:343 (scanned on the branch) — refresh-human-queue.sh (sync, data_tip, generation, history/landed append, unpublished, subject choice, build_commit, push retry, lock) + backfill-human-queue-history.sh + backfill-landed-history.sh dashboard-data walks",
   "tool": "mutation-probe (github:rainlanguage/adversarial-mutation-test 7f734eb), adversarial-mutation-test skill 0.35.0",
   "summary": "66 mutants. Before (pre-existing 15 tests at commit): 27/60 killed, 33 survived. After (40 tests at testsAfterCommit): 64/66 killed; 2 equivalent (R36 grep -qx vs -q: has() only receives three fixed literals none a substring/regex match of another data path; R41 dropping -c commit.gpgsign=false: git commit-tree ignores commit.gpgsign since 2.9.1). Adversarial finding fixed in-PR (33e621b): the branch had dropped `flock -n 9`, so overlapping ticks were unlocked. No issues filed (regression was in the unmerged PR itself)."
+ },
+ {
+  "timestamp": "2026-10-28T07:38:20Z",
+  "commit": "295da026fcc3e5fb9028d3751c6dcfa0caa09bf2",
+  "testsAfterCommit": "f90e350aa64754b5e6e082d2d3081e3fab28c6e8",
+  "publishedTag": null,
+  "scope": "pr:343 (scanned on the branch), the fresh-install restore: restore_from_tip in refresh-human-queue.sh",
+  "tool": "mutation-probe (github:rainlanguage/adversarial-mutation-test), adversarial-mutation-test skill 0.35.0",
+  "summary": "16 mutants. Before (pre-existing 40 tests at commit, 14 mutants; X15/X16 target code added later): 2/14 killed, 12 survived. After (45 tests at testsAfterCommit): 16/16 killed. Adversarial finding fixed in-PR (f90e350): a restore whose mktemp failed returned silently, leaving only mktemp's unstamped message. No issues filed (in the unmerged PR itself)."
  }
 ]
