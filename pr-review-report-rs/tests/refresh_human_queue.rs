@@ -1811,3 +1811,29 @@ fn a_failed_restore_stops_the_tick() {
         "the failed restore's temp file must be removed"
     );
 }
+
+/// A restore that cannot even get a temp file fails the same way, on a stamped line: the log
+/// must still answer when and why the tick stopped.
+#[test]
+fn a_restore_without_a_temp_file_fails_on_a_stamped_line() {
+    let Some(f) = Fixture::new("restore-no-tmp") else {
+        return;
+    };
+    let tip_before = f.data_tip();
+    std::fs::remove_file(f.install.join("human-queue-history.jsonl")).unwrap();
+    std::fs::remove_dir(f.root.join("tmp")).unwrap();
+    f.set_next_snapshot("{\"counts\":{\"a\":2}}\n");
+
+    let out = f.tick();
+    assert!(!out.status.success(), "the tick must fail");
+    assert!(
+        stderr(&out)
+            .contains("ERROR: cannot restore human-queue-history.jsonl from dashboard-data"),
+        "{}",
+        stderr(&out)
+    );
+    for line in stderr(&out).lines().filter(|l| !l.trim().is_empty()) {
+        assert!(is_stamped(line), "unstamped line: {line:?}");
+    }
+    assert_eq!(f.data_tip(), tip_before, "nothing may be published");
+}

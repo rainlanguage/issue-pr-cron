@@ -124,8 +124,7 @@ restore_from_tip() {
   for p in "${DATA_PATHS[@]}"; do
     [ -s "$DIR/$p" ] && continue
     blob="$(git -C "$DIR" rev-parse --verify --quiet "$tip:$p" 2>/dev/null)" || continue
-    tmpf="$(mktemp)" || return 1
-    if ! git -C "$DIR" cat-file blob "$blob" >"$tmpf" 2>/dev/null \
+    if ! tmpf="$(mktemp 2>/dev/null)" || ! git -C "$DIR" cat-file blob "$blob" >"$tmpf" 2>/dev/null \
       || ! mkdir -p "$(dirname "$DIR/$p")" || ! mv "$tmpf" "$DIR/$p"; then
       rm -f "$tmpf"
       log "ERROR: cannot restore $p from $DATA_BRANCH ${tip:0:7}; not publishing over its history"
