@@ -59,7 +59,7 @@ enum Merge {
 // `X-RateLimit-Remaining` header fields, GitHub's documented GraphQL `errors[].type` enum, and the
 // REST body's own `status`. It reads no message anywhere. Where an invocation offers nothing typed
 // the answer is [`GhFailure::Unknown`], not the nearest plausible class: the same posture as
-// [`Merge::Unknown`] and `CodeRabbitCoverage::Unreadable`, and the reason `gh pr view`'s failure is
+// [`Merge::Unknown`], and the reason `gh pr view`'s failure is
 // re-asked through [`gh_api_result`] rather than assumed (see [`pr_fetch_failure`]).
 // ---------------------------------------------------------------------------------------------
 
@@ -1369,7 +1369,7 @@ fn total_unresolved(
     Err(GhFailure::Unknown)
 }
 
-/// Total unresolved review threads on a PR (CodeRabbit or human), paginated so a long review
+/// Total unresolved review threads on a PR, whoever opened them, paginated so a long review
 /// history is never silently truncated, with a TYPED failure.
 ///
 /// The one hot-path fetch that already spoke GraphQL, so the structure #129 needs was always on the
@@ -1407,7 +1407,7 @@ fn unresolved_threads(owner: &str, repo: &str, num: u64) -> Result<u64, GhFailur
 /// Where an otherwise-presentable PR goes once its unresolved-thread count is known. THE THREE
 /// OUTCOMES ARE DISTINCT ON PURPOSE: "verified clean", "verified dirty" and "could not tell" are
 /// three different facts, and collapsing the third into either of the others is the bug this whole
-/// gate exists to prevent (a green CodeRabbit status check while four threads sat unresolved on
+/// gate exists to prevent (a green review status check while four threads sat unresolved on
 /// rain-org-health#128 is the same class of mistake, made by trusting a proxy signal).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum ThreadRoute {
@@ -2301,7 +2301,6 @@ struct PresentablePr {
     row: QueueRow,
     slug: String,
     num: u64,
-    head: String,
     /// A VERIFIED zero (see [`thread_route`]) — nothing else reaches this list.
     unresolved_threads: u64,
     detail: Value,
@@ -2382,7 +2381,7 @@ fn candidate_outcome(
                 return CandidateOutcome::Unvetted;
             }
             // Open-threads gate: an otherwise-presentable PR with unresolved review threads
-            // (CodeRabbit or human) is the producer's thread-resolution work, not
+            // (from any reviewer) is the producer's thread-resolution work, not
             // human-presentable. Only a VERIFIED zero passes (fail-closed): an unknown thread
             // state counts as a fetch error, never a maybe-dirty row.
             // A slug with no `/` came out of this binary's own URL parse, not out of GitHub, so
@@ -2398,7 +2397,6 @@ fn candidate_outcome(
                         row: (cost, repo_disp, num, url.to_string(), basis),
                         slug: slug.to_string(),
                         num,
-                        head,
                         unresolved_threads: 0,
                         detail: j,
                     }))
@@ -4041,7 +4039,6 @@ mod parallel_queue_tests {
             ),
             slug: format!("{owner}/{repo}"),
             num,
-            head: "a".repeat(40),
             unresolved_threads: 0,
             detail: json!({}),
         }
@@ -4365,7 +4362,7 @@ mod parallel_queue_tests {
         assert_eq!(rows[0].row.0, 40);
         assert_eq!(rows[0].row.1, "foo");
         assert_eq!(rows[0].row.4, "a basis");
-        assert_eq!(rows[0].head, "b".repeat(40));
+        assert_eq!(rows[0].detail["headRefOid"], "b".repeat(40));
         assert_eq!(rows[0].unresolved_threads, 0);
     }
 
@@ -14229,7 +14226,7 @@ enum VetProtocol {
     Stamped(u32),
     /// No readable stamp: written before verdicts carried one, or carrying a line that does not
     /// parse as a version. FAIL-SAFE — never current, for the same reason [`Merge::Unknown`] is
-    /// never mergeable and [`CodeRabbitCoverage::Unreadable`] is never coverage. The rules such a
+    /// never mergeable and [`ThreadRoute::Failed`] is never a clean thread count. The rules such a
     /// verdict was written under cannot be identified, and "cannot be identified" is not "the ones
     /// in force".
     Unknown,
@@ -14378,7 +14375,7 @@ fn last_vetter_comment(pr: &Value) -> Option<String> {
 ///
 /// An UNSTAMPED comment is [`VetProtocol::Unknown`] and therefore not vetted: it was written under
 /// rules that cannot be identified, and the pipeline does not launder unidentified state into "fine"
-/// (`Merge::Unknown`, `CodeRabbitCoverage::Unreadable`).
+/// (`Merge::Unknown`, `ThreadRoute::Failed`).
 fn vetted_at_head(pr_json: &Value, head: &str) -> bool {
     if head.is_empty() {
         return false;
@@ -14431,7 +14428,7 @@ struct ChangedFile {
 /// Two states rather than three: a document with no `files` array and a document whose array is a
 /// page are the same fact to every consumer — the list is not known to be whole — and `total` plus
 /// `why` carry the diagnosis without a third variant nobody branches on differently. This is the
-/// fail-safe convention [`Merge::Unknown`] and [`CodeRabbitCoverage::Unreadable`] already set.
+/// fail-safe convention [`Merge::Unknown`] and [`ThreadRoute::Failed`] already set.
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum ChangedFileSet {
     /// Every file the PR changes.
@@ -27782,155 +27779,17 @@ const _: () = assert!(DEFAULT_MAX_DIFF_BYTES <= MCP_MAX_RESULT_BYTES);
 //
 // Ruling on an `ai:ready` PR took six reads assembled by hand, in an order the
 // reader had to remember: the vetter's own verdict note, the head sha, the base
-// branch, the CI rollup, whether CodeRabbit actually reviewed, and whether the
-// PR is deploy-gated. Being wrong about any one of them changes the decision,
+// branch, the CI rollup, the unresolved review threads, and whether the PR is
+// deploy-gated. Being wrong about any one of them changes the decision,
 // and a decision assembled by hand from `gh` is a decision nobody can audit.
+// The thread count is 0 on every row (the queue admits only a verified zero),
+// so it only shows the open-thread gate passed; the review behind the row is
+// the vetter's `verdict.note`.
 //
 // This is the READ that precedes the human's writes. WHICH PR is not a second
 // question: `presentable_queue` already ranks the set cheapest-first and this
 // takes the head of it, so the queue and the tool cannot name different PRs.
 // ─────────────────────────────────────────────────────────────────────────────
-
-/// The commit-status DESCRIPTION that means CodeRabbit actually reviewed this head. It is the ONLY
-/// one that is coverage, and the discriminator is EXACT EQUALITY against it — every other
-/// description, known or not, is treated as no coverage.
-///
-/// That asymmetry is the point. `Review rate limited` and `Review queued` are `success` states
-/// carrying a green check with nothing behind them, and while the org's plan quota is exhausted
-/// most PRs are in one of them. A tool that reported the check's CONCLUSION would say "CodeRabbit
-/// passed" on a PR CodeRabbit never looked at — and then "0 unresolved threads" reads as clean when
-/// it is merely vacuous. Fail-closed on the coverage side means a description CodeRabbit invents
-/// tomorrow is under-claimed rather than over-claimed, and the raw string is returned beside the
-/// verdict so a human can see exactly what was said.
-const CODERABBIT_REVIEWED_DESCRIPTION: &str = "Review completed";
-
-/// The commit-status CONTEXT CodeRabbit posts under. Matched case-insensitively: the context is
-/// CodeRabbit's to spell, and the description is where the meaning lives.
-const CODERABBIT_CONTEXT: &str = "coderabbit";
-
-/// Whether CodeRabbit actually reviewed a PR's current head — a typed verdict, because the raw
-/// check state cannot answer it and a caller left to interpret a description will interpret it
-/// differently each time.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum CodeRabbitCoverage {
-    /// `Review completed` — the ONE state that is coverage.
-    Reviewed,
-    /// The org's plan quota is exhausted. A green check, no review.
-    RateLimited,
-    /// Accepted, not yet done. A green check, no review YET.
-    Queued,
-    /// A CodeRabbit status whose description is none of the above. Not claimed as coverage.
-    OtherDescription,
-    /// No CodeRabbit status on this commit at all — the app is not installed here, or never ran.
-    NoStatus,
-    /// The status could not be read. FAIL-CLOSED: an unreadable status is never coverage, for the
-    /// same reason [`ThreadRoute::FetchError`] is never a verified-clean thread count.
-    Unreadable,
-}
-
-impl CodeRabbitCoverage {
-    fn as_str(self) -> &'static str {
-        match self {
-            CodeRabbitCoverage::Reviewed => "reviewed",
-            CodeRabbitCoverage::RateLimited => "rate-limited",
-            CodeRabbitCoverage::Queued => "queued",
-            CodeRabbitCoverage::OtherDescription => "other-description",
-            CodeRabbitCoverage::NoStatus => "no-status",
-            CodeRabbitCoverage::Unreadable => "unreadable",
-        }
-    }
-    /// Is there a review BEHIND the check? Exactly one variant says yes.
-    fn is_coverage(self) -> bool {
-        matches!(self, CodeRabbitCoverage::Reviewed)
-    }
-}
-
-/// PURE: the CodeRabbit verdict, its raw check state and its raw description, read out of a
-/// combined-status response (`GET /repos/{o}/{r}/commits/{sha}/status`).
-///
-/// That endpoint rather than `statusCheckRollup`, because the rollup does not carry `description`
-/// at all — the field the whole discriminator turns on. It reports the LATEST status per context,
-/// and it is queried at the PR's head sha, so the verdict describes the code being ruled on.
-///
-/// `None` means the fetch failed; that is [`CodeRabbitCoverage::Unreadable`], never a clean answer.
-fn coderabbit_coverage(
-    combined: Option<&Value>,
-) -> (CodeRabbitCoverage, Option<String>, Option<String>) {
-    let Some(combined) = combined else {
-        return (CodeRabbitCoverage::Unreadable, None, None);
-    };
-    let Some(statuses) = combined.get("statuses").and_then(|s| s.as_array()) else {
-        // A response without a `statuses` array is malformed, not empty. Malformed is unreadable.
-        return (CodeRabbitCoverage::Unreadable, None, None);
-    };
-    let Some(st) = statuses.iter().find(|s| {
-        s.get("context")
-            .and_then(|c| c.as_str())
-            .is_some_and(|c| c.trim().eq_ignore_ascii_case(CODERABBIT_CONTEXT))
-    }) else {
-        return (CodeRabbitCoverage::NoStatus, None, None);
-    };
-    let state = st
-        .get("state")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let desc = st
-        .get("description")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let verdict = match desc.as_deref().map(str::trim) {
-        // EXACT, and only here. Everything below is a lenient match on a NON-coverage state, which
-        // is safe in a way a lenient coverage match is not.
-        Some(d) if d == CODERABBIT_REVIEWED_DESCRIPTION => CodeRabbitCoverage::Reviewed,
-        Some(d) if d.to_ascii_lowercase().contains("rate limit") => CodeRabbitCoverage::RateLimited,
-        Some(d) if d.to_ascii_lowercase().contains("queued") => CodeRabbitCoverage::Queued,
-        _ => CodeRabbitCoverage::OtherDescription,
-    };
-    (verdict, state, desc)
-}
-
-/// Live CodeRabbit coverage for one head sha.
-fn coderabbit_fetch(
-    slug: &str,
-    head: &str,
-) -> (CodeRabbitCoverage, Option<String>, Option<String>) {
-    let path = format!("repos/{slug}/commits/{head}/status");
-    coderabbit_coverage(gh_json(&["api", &path]).as_ref())
-}
-
-/// What an unresolved-thread count MEANS, which depends on whether anything reviewed the PR.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum ThreadMeaning {
-    /// Zero unresolved AND a real review behind it.
-    Clean,
-    /// Zero unresolved, but nothing reviewed this head. The zero is VACUOUS: it says no thread was
-    /// opened, which is what you would expect when no review ran. Reading it as "CodeRabbit found
-    /// nothing" is the misreading this whole field exists to prevent.
-    Vacuous,
-    /// At least one thread is still open.
-    Unresolved,
-}
-
-impl ThreadMeaning {
-    fn as_str(self) -> &'static str {
-        match self {
-            ThreadMeaning::Clean => "clean",
-            ThreadMeaning::Vacuous => "vacuous-no-review-behind-it",
-            ThreadMeaning::Unresolved => "unresolved",
-        }
-    }
-}
-
-/// PURE: qualify a thread count by the coverage behind it.
-fn thread_meaning(unresolved: u64, cr: CodeRabbitCoverage) -> ThreadMeaning {
-    if unresolved > 0 {
-        ThreadMeaning::Unresolved
-    } else if cr.is_coverage() {
-        ThreadMeaning::Clean
-    } else {
-        ThreadMeaning::Vacuous
-    }
-}
 
 /// PURE: the sha a `🤖 ai:vetter` note pinned its verdict to — the `<sha>` of `Reviewed <sha>:`.
 /// Returned beside the head sha so the sha-binding is VISIBLE in the result rather than asserted by
@@ -27989,12 +27848,10 @@ const NR_PR_BYTES: usize = 160;
 const NR_BRANCH_BYTES: usize = 160;
 const NR_SHA_BYTES: usize = 64;
 const NR_BASIS_BYTES: usize = 200;
-const NR_CR_TEXT_BYTES: usize = 200;
 const NR_CHECK_NAME_BYTES: usize = 120;
 const NR_MAX_FAILING_CHECKS: usize = 8;
 
-/// Every capped field in one row, summed. Two shas (head + verdict) and two CodeRabbit strings
-/// (state + description) are counted at their own caps.
+/// Every capped field in one row, summed. Two shas (head + verdict) are counted at their own cap.
 const NR_ROW_FIELD_BYTES: usize = NR_NOTE_BYTES
     + NR_TITLE_BYTES
     + NR_URL_BYTES
@@ -28002,7 +27859,6 @@ const NR_ROW_FIELD_BYTES: usize = NR_NOTE_BYTES
     + NR_BRANCH_BYTES
     + 2 * NR_SHA_BYTES
     + NR_BASIS_BYTES
-    + 2 * NR_CR_TEXT_BYTES
     + NR_MAX_FAILING_CHECKS * NR_CHECK_NAME_BYTES;
 
 /// The row's FIXED cost: its keys, its punctuation, its typed enum strings, and its numbers. Held
@@ -28048,9 +27904,6 @@ struct NextReadyFacts<'a> {
     basis: &'a str,
     /// A VERIFIED count (see [`thread_route`]) — never a "could not tell" laundered into a zero.
     unresolved_threads: u64,
-    coverage: CodeRabbitCoverage,
-    coverage_state: Option<String>,
-    coverage_description: Option<String>,
 }
 
 /// PURE: the merge decision for ONE PR. Every string is clipped, so the row's size is bounded by
@@ -28073,7 +27926,6 @@ fn next_ready_row(f: &NextReadyFacts) -> Value {
     let note_full = last_vetter_comment(f.detail).unwrap_or_default();
     let note = clip_field(&note_full, NR_NOTE_BYTES);
     let legacy_signal = legacy_deploy_signal(f.detail, ci, &failing_all);
-    let meaning = thread_meaning(f.unresolved_threads, f.coverage);
     serde_json::json!({
         "pr": clip_field(&format!("{}#{}", f.slug, f.num), NR_PR_BYTES),
         "url": clip_field(f.detail.get("url").and_then(|v| v.as_str()).unwrap_or(""), NR_URL_BYTES),
@@ -28104,16 +27956,8 @@ fn next_ready_row(f: &NextReadyFacts) -> Value {
             "checkCount": check_count,
         },
         "mergeable": merge_str(parse_merge(f.detail.get("mergeable").and_then(|v| v.as_str()))),
-        "codeRabbit": {
-            "coverage": f.coverage.as_str(),
-            "reviewed": f.coverage.is_coverage(),
-            // The raw pair, so the misleading green is VISIBLE next to the truth about it.
-            "checkState": f.coverage_state.as_deref().map(|s| clip_field(s, NR_CR_TEXT_BYTES)),
-            "description": f.coverage_description.as_deref().map(|s| clip_field(s, NR_CR_TEXT_BYTES)),
-        },
         "reviewThreads": {
             "unresolved": f.unresolved_threads,
-            "meaning": meaning.as_str(),
         },
         // #162: never a merge gate — `repo-not-migrated` says the repo still has the legacy
         // premerge deploy shape and is owed a lifecycle migration; the merge does not wait on it.
@@ -28170,16 +28014,14 @@ fn next_ready_page(ordered: &[PresentablePr], limit: usize) -> Vec<&PresentableP
     ordered.iter().take(limit).collect()
 }
 
-/// Live `next_ready`: rank the whole `ai:ready` set once, then pay for the CodeRabbit read only on
-/// the rows actually returned.
+/// Live `next_ready`: rank the whole `ai:ready` set once, then build only the rows actually
+/// returned.
 fn next_ready_fetch(limit: usize) -> Result<Value, String> {
     let (prs, counts) = presentable_queue()?;
     let presentable = prs.len();
     let rows: Vec<Value> = next_ready_page(&prs, limit)
         .into_iter()
         .map(|p| {
-            let (coverage, coverage_state, coverage_description) =
-                coderabbit_fetch(&p.slug, &p.head);
             next_ready_row(&NextReadyFacts {
                 slug: &p.slug,
                 num: p.num,
@@ -28187,9 +28029,6 @@ fn next_ready_fetch(limit: usize) -> Result<Value, String> {
                 cost: p.row.0,
                 basis: &p.row.4,
                 unresolved_threads: p.unresolved_threads,
-                coverage,
-                coverage_state,
-                coverage_description,
             })
         })
         .collect();
@@ -28213,137 +28052,6 @@ mod next_ready_tests {
             "author": {"login": TRUSTED_AUTHOR},
             "body": verdict_comment(sha, "ready", tail, Some(40), "a basis", None),
         })
-    }
-
-    fn combined(context: &str, state: &str, description: &str) -> Value {
-        json!({"statuses": [
-            {"context": "ci/other", "state": "success", "description": "fine"},
-            {"context": context, "state": state, "description": description},
-        ]})
-    }
-
-    // ── the CodeRabbit discriminator ──────────────────────────────────────────────────────────
-    //
-    // The DESCRIPTION is the field that separates them. While the org's plan quota is exhausted
-    // most PRs carry a CodeRabbit status whose STATE is `success` and behind which nothing was
-    // reviewed. A tool that reported the state would say "CodeRabbit passed" on a PR CodeRabbit
-    // never opened — and then the 0-unresolved-threads beside it reads as a clean review instead
-    // of an empty one.
-    #[test]
-    fn rate_limited_and_queued_are_green_checks_with_no_review_behind_them() {
-        // The ONE state that is coverage — and note the STATE is identical in all three cases.
-        let (v, state, desc) =
-            coderabbit_coverage(Some(&combined("CodeRabbit", "success", "Review completed")));
-        assert_eq!(v, CodeRabbitCoverage::Reviewed);
-        assert!(v.is_coverage());
-        assert_eq!(state.as_deref(), Some("success"));
-        assert_eq!(desc.as_deref(), Some("Review completed"));
-
-        for (description, want) in [
-            ("Review rate limited", CodeRabbitCoverage::RateLimited),
-            ("Review queued", CodeRabbitCoverage::Queued),
-        ] {
-            let (v, state, desc) =
-                coderabbit_coverage(Some(&combined("CodeRabbit", "success", description)));
-            assert_eq!(v, want, "{description}");
-            assert!(
-                !v.is_coverage(),
-                "{description} is a GREEN check with no review behind it — reporting it as \
-                 coverage is the misread this discriminator exists to prevent"
-            );
-            // The green is still reported, beside the truth about it: a reader must be able to see
-            // that the check passed AND that nothing reviewed the code.
-            assert_eq!(state.as_deref(), Some("success"));
-            assert_eq!(desc.as_deref(), Some(description));
-        }
-    }
-
-    // FAIL-CLOSED on the coverage side. `Review completed` is matched by EQUALITY; every other
-    // description — including ones CodeRabbit has not invented yet — is under-claimed rather than
-    // over-claimed, because the cost of a false "reviewed" is a merge nobody reviewed.
-    #[test]
-    fn only_an_exact_review_completed_is_claimed_as_coverage() {
-        for description in [
-            "Review completed successfully",
-            "Review completed with 3 comments",
-            "review completed",
-            "Completed",
-            "Review skipped",
-            "",
-        ] {
-            let (v, _, _) =
-                coderabbit_coverage(Some(&combined("CodeRabbit", "success", description)));
-            assert!(
-                !v.is_coverage(),
-                "{description:?} was claimed as coverage; only an exact \
-                 {CODERABBIT_REVIEWED_DESCRIPTION:?} is"
-            );
-        }
-        // Whitespace around the exact string is CodeRabbit's formatting, not a different meaning.
-        let (v, _, _) = coderabbit_coverage(Some(&combined(
-            "  coderabbit  ",
-            "success",
-            "  Review completed  ",
-        )));
-        assert_eq!(v, CodeRabbitCoverage::Reviewed);
-    }
-
-    // The two ways there is no CodeRabbit answer at all are DISTINCT, and neither is coverage —
-    // the same three-way distinction `thread_route` makes, for the same reason.
-    #[test]
-    fn a_missing_or_unreadable_coderabbit_status_is_never_coverage() {
-        let none = json!({"statuses": [{"context": "ci/other", "state": "success", "description": "fine"}]});
-        assert_eq!(
-            coderabbit_coverage(Some(&none)).0,
-            CodeRabbitCoverage::NoStatus
-        );
-        // A failed fetch. Fail-closed: an unknown answer is never laundered into a clean one.
-        assert_eq!(coderabbit_coverage(None).0, CodeRabbitCoverage::Unreadable);
-        // …and neither is a malformed response.
-        assert_eq!(
-            coderabbit_coverage(Some(&json!({"message": "Ref not found"}))).0,
-            CodeRabbitCoverage::Unreadable
-        );
-        for v in [
-            CodeRabbitCoverage::NoStatus,
-            CodeRabbitCoverage::Unreadable,
-            CodeRabbitCoverage::OtherDescription,
-        ] {
-            assert!(!v.is_coverage(), "{v:?}");
-        }
-    }
-
-    // "0 unresolved threads" is two different facts depending on what ran. Under a rate-limited
-    // review it means no thread was OPENED, which is what an absent review looks like — not a
-    // review that found nothing.
-    #[test]
-    fn a_vacuous_zero_is_not_a_clean_one() {
-        assert_eq!(
-            thread_meaning(0, CodeRabbitCoverage::Reviewed),
-            ThreadMeaning::Clean
-        );
-        for empty in [
-            CodeRabbitCoverage::RateLimited,
-            CodeRabbitCoverage::Queued,
-            CodeRabbitCoverage::NoStatus,
-            CodeRabbitCoverage::OtherDescription,
-            CodeRabbitCoverage::Unreadable,
-        ] {
-            assert_eq!(
-                thread_meaning(0, empty),
-                ThreadMeaning::Vacuous,
-                "a zero under {empty:?} is vacuous, not clean"
-            );
-        }
-        // An open thread is an open thread whatever reviewed it.
-        assert_eq!(
-            thread_meaning(1, CodeRabbitCoverage::Reviewed),
-            ThreadMeaning::Unresolved
-        );
-        assert_eq!(
-            thread_meaning(1, CodeRabbitCoverage::RateLimited),
-            ThreadMeaning::Unresolved
-        );
     }
 
     // ── the legacy deploy signal (#162 — never a merge gate) ──────────────────────────────────
@@ -28477,7 +28185,6 @@ mod next_ready_tests {
             ),
             slug: format!("o/{repo}"),
             num,
-            head: "d".repeat(40),
             unresolved_threads: 0,
             detail: json!({}),
         }
@@ -28567,9 +28274,6 @@ mod next_ready_tests {
                     cost: i64::MIN,
                     basis: &hostile,
                     unresolved_threads: u64::MAX,
-                    coverage: CodeRabbitCoverage::OtherDescription,
-                    coverage_state: Some(hostile.clone()),
-                    coverage_description: Some(hostile.clone()),
                 })
             })
             .collect();
@@ -28616,11 +28320,6 @@ mod next_ready_tests {
             cost: 0,
             basis: "",
             unresolved_threads: 0,
-            // `other-description` is the longest coverage spelling, and a zero under it is
-            // `vacuous-no-review-behind-it`, the longest thread meaning.
-            coverage: CodeRabbitCoverage::OtherDescription,
-            coverage_state: Some(String::new()),
-            coverage_description: Some(String::new()),
         });
         // Four numeric fields per row: cost, noteBytes, checkCount, unresolved.
         let row_len = row.to_string().len() + 4 * NR_MAX_DIGITS;
@@ -28702,9 +28401,6 @@ mod next_ready_tests {
             cost: 40,
             basis: "one-line pin",
             unresolved_threads: 0,
-            coverage: CodeRabbitCoverage::RateLimited,
-            coverage_state: Some("success".into()),
-            coverage_description: Some("Review rate limited".into()),
         });
         assert_eq!(row["pr"], json!("rainlanguage/rain-org-health#128"));
         assert_eq!(row["baseRefName"], json!("master"));
@@ -28725,15 +28421,7 @@ mod next_ready_tests {
             .unwrap()
             .contains("the reasoning a human is actually reviewing"));
         assert_eq!(row["verdict"]["noteTruncated"], json!(false));
-        // The green check AND the fact that nothing is behind it, side by side.
-        assert_eq!(row["codeRabbit"]["checkState"], json!("success"));
-        assert_eq!(row["codeRabbit"]["coverage"], json!("rate-limited"));
-        assert_eq!(row["codeRabbit"]["reviewed"], json!(false));
         assert_eq!(row["reviewThreads"]["unresolved"], json!(0));
-        assert_eq!(
-            row["reviewThreads"]["meaning"],
-            json!("vacuous-no-review-behind-it")
-        );
     }
 
     // Failing checks are NAMED, not counted — "1 failing" does not tell a human whether it is the
@@ -28750,9 +28438,6 @@ mod next_ready_tests {
             cost: 1,
             basis: "",
             unresolved_threads: 0,
-            coverage: CodeRabbitCoverage::Reviewed,
-            coverage_state: None,
-            coverage_description: None,
         });
         assert_eq!(row["ci"]["rollup"], json!("red"));
         let named = row["ci"]["failingChecks"].as_array().unwrap();
@@ -28777,9 +28462,6 @@ mod next_ready_tests {
             cost: 1,
             basis: "",
             unresolved_threads: 0,
-            coverage: CodeRabbitCoverage::Reviewed,
-            coverage_state: None,
-            coverage_description: None,
         });
         assert_eq!(
             row["verdict"]["note"].as_str().unwrap().len(),
@@ -28806,9 +28488,6 @@ mod next_ready_tests {
             cost: 1,
             basis: "",
             unresolved_threads: 0,
-            coverage: CodeRabbitCoverage::Reviewed,
-            coverage_state: None,
-            coverage_description: None,
         });
         assert_eq!(row["verdict"]["note"], json!(""));
         assert_eq!(row["verdict"]["sha"], Value::Null);
@@ -29191,8 +28870,8 @@ fn coverage_blocks_close(coverage: PrCoverage, grounds: FlagGrounds) -> bool {
     }
 }
 
-/// PURE: what the pair MEANS for the ruling, in the shape [`ThreadMeaning`] uses — two raw states
-/// are no use to a reader who has to remember which way round the hazard runs.
+/// PURE: what the pair MEANS for the ruling, as one typed sentence — two raw states are no use to
+/// a reader who has to remember which way round the hazard runs.
 fn coverage_meaning(coverage: PrCoverage, grounds: FlagGrounds) -> &'static str {
     match (coverage, grounds) {
         // Ahead of the grounds arms: on a PR subject neither grounds reading changes what the
@@ -29213,8 +28892,7 @@ fn coverage_meaning(coverage: PrCoverage, grounds: FlagGrounds) -> &'static str 
 /// or a closed one that never landed, is not coverage.
 ///
 /// Per-issue rather than the org-wide PR search `uncovered-issues` runs, because this tool returns
-/// at most [`NEXT_CC_MAX_ROWS`] rows: the cost is paid on the rows actually returned, exactly as
-/// [`next_ready_fetch`] pays for its CodeRabbit read.
+/// at most [`NEXT_CC_MAX_ROWS`] rows: the cost is paid only on the rows actually returned.
 const COVERING_PRS_QUERY: &str = "query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){closedByPullRequestsReferences(first:10,includeClosedPrs:false){nodes{number state repository{nameWithOwner}}}}}}";
 
 /// PURE: the open PRs claiming to close an issue, out of a [`COVERING_PRS_QUERY`] response.
@@ -31802,7 +31480,7 @@ fn next_leak_limit(args: &Value) -> Result<usize, String> {
 /// a fully-read population is the machine WORKING, and the tool says so in as many words so an
 /// empty result cannot read as an error. Zero leaks over a population with unread members is NOT
 /// that: [`leak_scan`] could not establish those PRs' status, so the zero is unproven — fail-safe,
-/// exactly as an unreadable CodeRabbit status is never coverage.
+/// exactly as an unknown thread state is never a clean thread count.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum LeakQueueHealth {
     /// Zero leaks, every unlabeled PR's comments read. The box that should read zero, reading zero.
@@ -36064,7 +35742,7 @@ fn mcp_all_tools() -> Value {
         {
             "name": "next_ready",
             "narrows": "limit",
-            "description": "The next ai:ready PR to rule on, cheapest-first off the same queue: the vetter's sha-bound verdict note, headRefOid, baseRefName, CI rollup with failing checks named, whether CodeRabbit actually reviewed (only `reviewed` is coverage — rate-limited/queued are green checks with no review, making 0 unresolved threads vacuous), unresolved threads, and the legacy deploy signal (`repo-not-migrated` = the repo still has the pre-split premerge deploy shape; never a merge gate — #162).",
+            "description": "The next ai:ready PR to rule on, cheapest-first off the same queue: the vetter's sha-bound verdict note, headRefOid, baseRefName, CI rollup with failing checks named, unresolved review threads (count), and the legacy deploy signal (`repo-not-migrated` = the repo still has the pre-split premerge deploy shape; never a merge gate — #162).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -49576,7 +49254,7 @@ enum NextAction {
     // migrated to the split release lifecycle (#162) -> flag blocked-on its migration (3b iv)
     FlagMigration,
     Conflict3d,   // DIRTY/BEHIND -> resolve conflicts (3d)
-    Coderabbit3e, // clean CI but unresolved review threads (3e)
+    Threads3e,    // clean CI but unresolved review threads (3e)
     Screenshot3c, // UI PR missing its screenshot (3c)
     Needs3b,      // red, fixable, not parked (3b)
     // `ai:needs-work` plus a TRUSTED instruction for the rework it asks for ([`NeedsWorkState::WorkOrder`]):
@@ -49606,7 +49284,7 @@ impl NextAction {
         NextAction::ReworkNeedsWork,
         NextAction::Needs3b,
         NextAction::Conflict3d,
-        NextAction::Coderabbit3e,
+        NextAction::Threads3e,
         NextAction::Screenshot3c,
         NextAction::GreenReady,
         NextAction::Wait,
@@ -49618,7 +49296,7 @@ impl NextAction {
             NextAction::GreenReady => "green-ready",
             NextAction::FlagMigration => "flag-migration",
             NextAction::Conflict3d => "conflict-3d",
-            NextAction::Coderabbit3e => "coderabbit-3e",
+            NextAction::Threads3e => "threads-3e",
             NextAction::Screenshot3c => "screenshot-3c",
             NextAction::Needs3b => "needs-3b",
             NextAction::ReworkNeedsWork => "rework-needs-work",
@@ -49649,7 +49327,7 @@ impl NextAction {
             NextAction::ReworkNeedsWork => 1,
             NextAction::Needs3b => 2,
             NextAction::Conflict3d => 3,
-            NextAction::Coderabbit3e => 4,
+            NextAction::Threads3e => 4,
             NextAction::Screenshot3c => 5,
             NextAction::GreenReady => 6,
             NextAction::Wait => 7,
@@ -49671,7 +49349,7 @@ impl NextAction {
             NextAction::ReworkNeedsWork => true,
             NextAction::Needs3b => true,
             NextAction::Conflict3d => true,
-            NextAction::Coderabbit3e => true,
+            NextAction::Threads3e => true,
             NextAction::Screenshot3c => true,
             NextAction::GreenReady => false,
             NextAction::Wait => false,
@@ -49711,6 +49389,12 @@ fn worker_dispatch_type(action: NextAction) -> String {
     format!("{WORKER_TYPE_PREFIX}-{}", action.as_str())
 }
 
+/// Old spellings of routes that were RENAMED, not retired, and the route each names now. Stored
+/// traces still carry the old worker types, so their dispatches keep their kind instead of falling
+/// into `other`. Only [`item_kind_for_dispatch`] reads this: [`NextAction::from_str`] stays strict,
+/// so no new row is ever routed under an old name.
+const RENAMED_ROUTES: [(&str, NextAction); 1] = [("coderabbit-3e", NextAction::Threads3e)];
+
 /// PURE: the item kind a dispatch's `subagent_type` names.
 ///
 /// The vocabulary is [`NextAction`]'s, taken from the enum rather than restated — the producer
@@ -49722,7 +49406,13 @@ fn item_kind_for_dispatch(subagent_type: &str) -> &'static str {
     subagent_type
         .strip_prefix(WORKER_TYPE_PREFIX)
         .and_then(|rest| rest.strip_prefix('-'))
-        .and_then(NextAction::from_str)
+        .and_then(|name| {
+            RENAMED_ROUTES
+                .iter()
+                .find(|(old, _)| *old == name)
+                .map(|&(_, a)| a)
+                .or_else(|| NextAction::from_str(name))
+        })
         .filter(|a| a.names_work())
         .map_or(ITEM_KIND_OTHER, NextAction::as_str)
 }
@@ -49900,7 +49590,7 @@ fn next_action(s: &PrSignals) -> NextAction {
             if m == "DIRTY" || m == "BEHIND" {
                 NextAction::Conflict3d
             } else if s.unresolved_threads > 0 {
-                NextAction::Coderabbit3e
+                NextAction::Threads3e
             } else if s.ui_missing_screenshot {
                 NextAction::Screenshot3c
             } else {
@@ -59888,6 +59578,26 @@ mod settings_tests {
         }
     }
 
+    /// Step 3e acts only on review-bot threads. One sentence carries that, and a trim to fit the
+    /// prompt cap could drop it with every other test green, so it is pinned here.
+    #[test]
+    fn the_thread_step_touches_only_review_bot_threads() {
+        let Some(prompt) = repo_root_text("campaign-prompt.txt") else {
+            return; // not checked out (nix build sandbox) — enforced by the rs-test gate
+        };
+        let step3e = producer_step(&prompt, "3e");
+        for needle in [
+            "`author { __typename }`",
+            "`__typename` is `Bot`",
+            "NEVER reply to or resolve any other (human) thread",
+        ] {
+            assert!(
+                step3e.contains(needle),
+                "step 3e must keep its bot-only rule ({needle}): {step3e}"
+            );
+        }
+    }
+
     // The rework is the producer's most common output and its record: a `git push` in Bash moves
     // a PR head and leaves nothing any reader can join to a PR, so the prompt has to name the tool
     // at every place it tells the producer to push to one of its own PR branches.
@@ -60491,7 +60201,7 @@ mod settings_tests {
             "an unrenderable-stack ASSERTION is true whether or not anyone tried — the gate must \
              say so as a rule: {gate}"
         );
-        // The specific wording CodeRabbit caught: it may appear ONLY as the banned shape, i.e.
+        // The specific wording a review caught: it may appear ONLY as the banned shape, i.e.
         // AFTER the rule that bans it — never back in the list of valid reasons.
         let banned_at = gate
             .find("**A STATEMENT ABOUT THE WORLD IS NOT AN ATTEMPT:**")
@@ -67586,7 +67296,7 @@ mod worklist_tests {
         );
         let mut s = sig(Ci::Green, "CLEAN");
         s.unresolved_threads = 2;
-        assert_eq!(next_action(&s), NextAction::Coderabbit3e);
+        assert_eq!(next_action(&s), NextAction::Threads3e);
         let mut s = sig(Ci::Green, "CLEAN");
         s.ui_missing_screenshot = true;
         assert_eq!(next_action(&s), NextAction::Screenshot3c);
@@ -67636,11 +67346,11 @@ mod worklist_tests {
     }
 
     #[test]
-    fn a_single_unresolved_thread_routes_to_coderabbit() {
-        // The threshold is > 0, not > 1: ONE open thread already routes to coderabbit-3e.
+    fn a_single_unresolved_thread_routes_to_threads_3e() {
+        // The threshold is > 0, not > 1: ONE open thread already routes to threads-3e.
         let mut s = sig(Ci::Green, "CLEAN");
         s.unresolved_threads = 1;
-        assert_eq!(next_action(&s), NextAction::Coderabbit3e);
+        assert_eq!(next_action(&s), NextAction::Threads3e);
     }
 
     #[test]
@@ -67654,7 +67364,7 @@ mod worklist_tests {
         let mut s = sig(Ci::Green, "CLEAN");
         s.unresolved_threads = 2;
         s.ui_missing_screenshot = true;
-        assert_eq!(next_action(&s), NextAction::Coderabbit3e);
+        assert_eq!(next_action(&s), NextAction::Threads3e);
         // screenshot is last
         let mut s = sig(Ci::Green, "CLEAN");
         s.ui_missing_screenshot = true;
@@ -67911,6 +67621,12 @@ mod worklist_tests {
                 "{not_a_kind:?} names no route and must record `other`, never a guess"
             );
         }
+        // A RENAMED route keeps its kind in old traces, and only there: the old name routes nothing.
+        assert_eq!(
+            item_kind_for_dispatch("pr-worker-coderabbit-3e"),
+            NextAction::Threads3e.as_str()
+        );
+        assert!(NextAction::from_str("coderabbit-3e").is_none());
         // The two non-route values are distinct: the main loop is not an unroutable ITEM, and
         // folding it into `other` would put the run's largest row inside the bucket a caller
         // reads as "items we could not classify".
@@ -69178,7 +68894,7 @@ mod state_load_row_tests {
                 "  rework-needs-work 0",
                 "  needs-3b       1",
                 "  conflict-3d    0",
-                "  coderabbit-3e  0",
+                "  threads-3e     0",
                 "  screenshot-3c  0",
                 "  green-ready    1",
                 "  wait           0",
