@@ -321,15 +321,11 @@ changes the ruling:
 - **the CI rollup with failing checks named**, rather than counted. A
   `"rollup": "nochecks"` is not "all checks passed", and the empty
   `failingChecks` beside it is the assertion, not an omission.
-- **whether CodeRabbit actually reviewed.** `codeRabbit.reviewed` is true for
-  exactly one coverage value, `reviewed`. `rate-limited`, `queued`,
-  `other-description`, `no-status`, and `unreadable` are all **not** coverage —
-  a green check with no review behind it — and under any of them "0 unresolved
-  threads" is **vacuous** rather than clean. The raw `checkState` and
-  `description` are carried alongside so the misleading green is visible next to
-  the truth about it.
-- **unresolved threads**, whose `meaning` is already qualified by the field
-  above.
+- **unresolved review threads** (`reviewThreads.unresolved`). Always 0: the
+  queue only presents a PR whose thread count it verified as zero, so it shows
+  only that the open-thread gate passed, not that anyone reviewed the PR. The
+  review behind the row is the vetter's `verdict.note`, current only when
+  `verdict.atHead` is true.
 - **the legacy deploy signal** (`legacyDeploySignal`), taken from the body and
   trusted producer comments — never the title, where the marker appears in 1 of
   the 6 PRs that carry it. It is **never a merge gate** (#162):
