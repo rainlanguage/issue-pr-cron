@@ -23,6 +23,36 @@ jobs:
           persist-credentials: false
       - uses: DeterminateSystems/nix-installer-action@a7ad9c4f0c65208097f4d34f3cfa1913b80cce5c # main
       - run: nix build .#pr-review-report --print-build-logs
+  # The pipeline's data is published to the `dashboard-data` branch, never to main, so the two
+  # tests that corroborate against real data read a checkout of that branch named by
+  # DASHBOARD_DATA_DIR. Everywhere else that variable is unset and they skip, so this job is
+  # their gate — and it asserts both RAN, because a filter matching nothing also passes.
+  dashboard-data-corroboration:
+    name: dashboard-data corroboration
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: dashboard-data
+          path: .dashboard-data
+          persist-credentials: false
+      - uses: DeterminateSystems/nix-installer-action@a7ad9c4f0c65208097f4d34f3cfa1913b80cce5c # main
+      - name: the data-reading tests run against the published data
+        run: |
+          set -euo pipefail
+          out="$(DASHBOARD_DATA_DIR="$PWD/.dashboard-data" nix develop .#rust -c \
+            cargo test -p pr-review-report --bin pr-review-report -- \
+            the_needs_work_series_draws_every_spelling_the_state_has_had \
+            the_seeded_journal_answers_both_questions 2>&1)" || { printf '%s\n' "$out"; exit 1; }
+          printf '%s\n' "$out"
+          grep -q "test result: ok. 2 passed" <<<"$out" || {
+            echo "::error::expected exactly the two dashboard-data tests to run and pass"
+            exit 1
+          }
   # The crons do NOT resolve `.#pr-review-report` — campaign-run.sh and
   # review-run.sh both resolve `path:$DIR#pr-review-report`. A `path:` ref copies
   # the working directory verbatim, gitignored files INCLUDED, so any build churn
@@ -204,7 +234,7 @@ jobs:
           check review-run review-run \
             date uname getent id flock timeout find sort cut tail rm mkdir tee sed grep gh jq pr-review-report
           check refresh-human-queue refresh-human-queue \
-            date getent id flock mktemp mv rm git pr-review-report
+            date getent id cut flock mktemp mv cp rm cmp tr grep git pr-review-report
           check design-doctor design-doctor \
             date getent id cut flock timeout gh pr-review-report
           check backfill-human-queue-history backfill-human-queue-history git wc pr-review-report

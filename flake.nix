@@ -165,8 +165,8 @@
           ];
         };
 
-        # Data-only refresher on its own cron. Needs git (it commits the snapshot) and
-        # util-linux for flock; no jq any more.
+        # Data-only refresher on its own cron. Needs git (it publishes the data to the
+        # dashboard-data branch), diffutils for cmp, grep, and util-linux for flock; no jq.
         refresh-human-queue = runner {
           name = "refresh-human-queue";
           file = ./refresh-human-queue.sh;
@@ -175,6 +175,8 @@
             pkgs.gh
             pkgs.git
             pkgs.coreutils
+            pkgs.diffutils # cmp
+            pkgs.gnugrep
             pkgs.util-linux # flock
             pkgs.getent # resolves HOME when cron starts without it
           ];

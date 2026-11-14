@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Backfill (and HEAL) landed-history.jsonl from the git history of human-queue.json, so the
+# Backfill (and HEAL) landed-history.jsonl from the dashboard-data history of human-queue.json, so the
 # rain-org-health tokens-per-landed-item band has a real denominator series from day one rather
 # than an empty feed.
 #
@@ -24,6 +24,12 @@ set -euo pipefail
 
 # $0 is a read-only nix store path now; the repo comes from $CRON_DIR, defaulting to $PWD.
 DIR="${CRON_DIR:-$PWD}"
+
+# The snapshot's history lives on the dashboard-data branch, where refresh-human-queue.sh
+# publishes it; `main` stopped carrying it, so its log would end at the move.
+REMOTE="$(git -C "$DIR" config --get "branch.$(git -C "$DIR" rev-parse --abbrev-ref HEAD).remote" || echo origin)"
+DATA_REF="refs/remotes/$REMOTE/dashboard-data"
+git -C "$DIR" fetch --quiet "$REMOTE" "+refs/heads/dashboard-data:$DATA_REF"
 out="$DIR/landed-history.jsonl"
 touch "$out"
 
@@ -60,6 +66,6 @@ while read -r sha; do
   mv "$cur" "$prev"
   cur="$(mktemp)"
   have_prev=1
-done < <(git -C "$DIR" log --reverse --format='%H' -- human-queue.json)
+done < <(git -C "$DIR" log --reverse --format='%H' "$DATA_REF" -- human-queue.json)
 
 echo "landed-history.jsonl now holds $(wc -l <"$out") rows ($misses pair(s) had unresolved items; rerun to heal)"

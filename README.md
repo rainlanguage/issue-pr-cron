@@ -1898,13 +1898,14 @@ snapshot's key set has changed five times in its git history and the backfill
 replays all of it.
 
 `refresh-human-queue.sh` appends on every changed-snapshot tick (previous = the
-snapshot at HEAD, diffed **before** the tick's own commit moves it) and
-publishes the file alongside the snapshot. `backfill-landed-history.sh` seeded
-it from the snapshot's full git history and is also the HEALER: `--existing`
-skips every `(kind, repo, number)` already recorded, so a rerun re-asks only the
-gaps a live tick's API failure left. The one blindness neither can heal: an item
-that enters and leaves entirely between two snapshots is never observed —
-absence, not a zero.
+install dir's snapshot from the tick before, diffed **before** the fresh one
+overwrites it) and publishes the file alongside the snapshot.
+`backfill-landed-history.sh` seeded it from the snapshot's full history on the
+`dashboard-data` branch and is also the HEALER: `--existing` skips every
+`(kind, repo, number)` already recorded, so a rerun re-asks only the gaps a live
+tick's API failure left. The one blindness neither can heal: an item that enters
+and leaves entirely between two snapshots is never observed — absence, not a
+zero.
 
 This feed and [`work-tokens`](#tokens-to-land-work--work-tokens) answer the same
 question at different scopes: `work-tokens` joins one run's spend to the typed
@@ -3258,14 +3259,23 @@ dashboard drew nine consecutive gated ticks as a dead cron. A config REFUSAL
 (usage-gate exit 2) is NOT a skip: the tick aborts loudly and writes no row —
 broken config must never render as pacing.
 
-### How the file reaches main
+### How the file reaches the dashboard
 
 The runners append rows and never push. The hourly `refresh-human-queue` cron
-stages `metrics/runs.jsonl` beside the snapshot it already commits straight to
-main, publishing when EITHER file moved. That cron carries it because it is
-data-only and never usage-gated — the one committer still awake during a pause,
-which is exactly when skip rows are written and nothing else runs. A skip row is
-therefore visible to the dashboard within about an hour of its gated tick.
+publishes `metrics/runs.jsonl` with the snapshot to the `dashboard-data` branch
+— never to `main`, which is ruleset-protected — whenever any data file differs
+from the branch. That cron carries it because it is data-only and never
+usage-gated — the one publisher still awake during a pause, which is exactly
+when skip rows are written and nothing else runs. A skip row is therefore
+visible to the dashboard within about an hour of its gated tick.
+
+Each publish is one commit on the branch's tip: that tip's tree with every data
+file the install dir holds (`human-queue.json`, `human-queue-history.jsonl`,
+`landed-history.jsonl`, `metrics/runs.jsonl`, `fsm-touches.jsonl`) replaced by
+the install's copy, built in a private index and pushed as a plain fast-forward.
+The install dir is the source of truth and the branch its published copy, so a
+push lost to a moved tip is rebuilt onto the new tip, never forced. The files
+are gitignored on `main`.
 
 ### Which FSM items were touched — `fsm-touches.jsonl` and `touched`
 
@@ -3273,7 +3283,7 @@ Per-item token attribution needs every actor's transitions to say which item
 they acted on, at the moment they act. That record is the **touch ledger**:
 `fsm-touches.jsonl` in the install dir, one JSON line per successful mutating
 transition, appended by the transition itself inside `pr-review-report` —
-whoever invoked it. The refresh tick commits it beside `metrics/runs.jsonl`.
+whoever invoked it. The refresh tick publishes it beside `metrics/runs.jsonl`.
 
 ```jsonl
 {"ts":"2026-08-12T15:04:05Z","actor":"vetter-run","runId":"20260812T150004Z","repo":"org/name","number":123,"kind":"pr","action":"record-verdict","verb":"needs-work"}
