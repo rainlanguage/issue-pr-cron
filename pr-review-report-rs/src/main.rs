@@ -22289,7 +22289,10 @@ fn open_issues(
 ///
 /// Every claimed issue precedes every unclaimed one regardless of age: landing a PR that already
 /// exists is the cheapest close there is, and age only ranks within that.
-fn issue_worklist(open: &[OpenIssue], now_ms: i64) -> Vec<Value> {
+///
+/// A row carries its creation time (`createdAtMs`), not an age: the snapshot is committed hourly,
+/// and an age would rewrite every row on every commit while the creation time never changes.
+fn issue_worklist(open: &[OpenIssue]) -> Vec<Value> {
     let mut ranked: Vec<&OpenIssue> = open.iter().collect();
     ranked.sort_by_key(|i| {
         (
@@ -22305,8 +22308,7 @@ fn issue_worklist(open: &[OpenIssue], now_ms: i64) -> Vec<Value> {
         .map(|i| {
             let mut extra = vec![("prs", Value::from(i.prs.clone()))];
             if let Some(c) = i.created_ms {
-                let days = ((now_ms - c) as f64 / 86_400_000.0).max(0.0);
-                extra.push(("ageDays", Value::from((days * 10.0).round() / 10.0)));
+                extra.push(("createdAtMs", Value::from(c)));
             }
             i.subject.to_json_with(&extra)
         })
@@ -22593,7 +22595,7 @@ fn human_queue_doc(
             .expect("human_queue_doc is an object")
             .insert(
                 "issueWorklist".into(),
-                Value::Array(issue_worklist(open, now_ms)),
+                Value::Array(issue_worklist(open)),
             );
     }
     doc
@@ -71065,7 +71067,7 @@ mod subject_ref_tests {
                         k.contains(&"prs".to_string()),
                         "issueWorklist item lost `prs`: {it}"
                     );
-                    k.retain(|x| x != "prs" && x != "ageDays");
+                    k.retain(|x| x != "prs" && x != "createdAtMs");
                 }
                 if *ptr == "/leaks" {
                     for extra in ["reason", "createdAt"] {
@@ -71340,7 +71342,7 @@ mod subject_ref_tests {
             claimed(5, None, &[]),
             claimed(6, Some(now - 100 * DAY_MS), &[]),
         ];
-        let rows = issue_worklist(&open, now);
+        let rows = issue_worklist(&open);
         assert_eq!(issue_worklist_numbers(&rows), vec![4, 2, 3, 1, 6, 5]);
     }
 
@@ -71353,7 +71355,7 @@ mod subject_ref_tests {
             created_ms: Some(now - DAY_MS),
             prs: Vec::new(),
         };
-        let rows = issue_worklist(&[at("o/b", 1), at("o/a", 9), at("o/a", 2)], now);
+        let rows = issue_worklist(&[at("o/b", 1), at("o/a", 9), at("o/a", 2)]);
         let order: Vec<(String, u64)> = rows
             .iter()
             .map(|r| {
@@ -71369,10 +71371,10 @@ mod subject_ref_tests {
         );
     }
 
-    // A row carries its claiming PRs and its age to a tenth of a day; an ageless row omits
-    // `ageDays` rather than claiming an age of zero.
+    // A row carries its claiming PRs and its creation time; an ageless row omits `createdAtMs`
+    // rather than claiming a time.
     #[test]
-    fn issue_worklist_rows_carry_prs_and_age_and_omit_an_unknown_age() {
+    fn issue_worklist_rows_carry_prs_and_created_at_and_omit_an_unknown_one() {
         let now = DOC_NOW_MS;
         let rows = issue_worklist(
             &[
@@ -71383,12 +71385,11 @@ mod subject_ref_tests {
                 ),
                 claimed(2, None, &[]),
             ],
-            now,
         );
         assert_eq!(rows[0]["prs"], json!(["https://github.com/o/r/pull/7"]));
-        assert_eq!(rows[0]["ageDays"], json!(1.5));
+        assert_eq!(rows[0]["createdAtMs"], json!(now - 36 * 3_600_000));
         assert_eq!(rows[1]["prs"], json!([]));
-        assert!(rows[1].get("ageDays").is_none(), "{}", rows[1]);
+        assert!(rows[1].get("createdAtMs").is_none(), "{}", rows[1]);
     }
 
     // Claims are keyed by the ISSUE's repo, carry every claiming PR sorted and once, and their keys
@@ -71462,11 +71463,12 @@ mod subject_ref_tests {
         assert_eq!(org.archived_repo, 3);
     }
 
+    // The row is stable across snapshots: it carries nothing derived from the snapshot time.
     #[test]
-    fn issue_worklist_clamps_a_future_created_at_to_age_zero() {
-        let now = DOC_NOW_MS;
-        let rows = issue_worklist(&[claimed(1, Some(now + 2 * DAY_MS), &[])], now);
-        assert_eq!(rows[0]["ageDays"], json!(0.0));
+    fn issue_worklist_rows_do_not_depend_on_the_snapshot_time() {
+        let open = [claimed(1, Some(DOC_NOW_MS - 5 * DAY_MS), &[])];
+        assert_eq!(issue_worklist(&open), issue_worklist(&open));
+        assert!(issue_worklist(&open)[0].get("ageDays").is_none());
     }
 
     // MEAN AND MEDIAN ARE BOTH EMITTED AND THEY ARE DIFFERENT NUMBERS. This population is chosen
