@@ -50092,22 +50092,17 @@ fn failing_check_names(rollup: &Value) -> Vec<String> {
         .collect()
 }
 
-/// PURE: the covered set from GraphQL PR-search nodes — one (repo, issue#) per native
-/// `closingIssuesReferences` entry, keyed by the ISSUE's repository (a cross-repo reference
-/// covers the referenced repo, not the PR's). PR title/body text is deliberately NOT parsed:
-/// GitHub's resolved references are the coverage signal, so the URL form
-/// (`Closes https://github.com/o/r/issues/5`) and `o/r#5` cover exactly what GitHub will
-/// auto-close at merge, and a title-only keyword (which GitHub never links) counts nothing.
-fn covered_from_search_prs(nodes: &[Value]) -> std::collections::HashSet<(String, u64)> {
-    claims_from_search_prs(nodes).into_keys().collect()
-}
-
 /// Each covered issue's claiming PR urls, sorted and deduplicated.
 type ClaimMap = std::collections::HashMap<(String, u64), Vec<String>>;
 
-/// PURE: [`covered_from_search_prs`]'s set with each issue's claiming PR urls. Its keys ARE the
-/// covered set, so coverage and claims cannot disagree; a node without a `url` still covers its
-/// references and contributes no url.
+/// PURE: the covered set from GraphQL PR-search nodes, with each issue's claiming PR urls — one
+/// key (repo, issue#) per native `closingIssuesReferences` entry, keyed by the ISSUE's repository
+/// (a cross-repo reference covers the referenced repo, not the PR's). PR title/body text is
+/// deliberately NOT parsed: GitHub's resolved references are the coverage signal, so the URL form
+/// (`Closes https://github.com/o/r/issues/5`) and `o/r#5` cover exactly what GitHub will
+/// auto-close at merge, and a title-only keyword (which GitHub never links) counts nothing. Its
+/// keys ARE the covered set, so coverage and claims cannot disagree; a node without a `url` still
+/// covers its references and contributes no url.
 fn claims_from_search_prs(nodes: &[Value]) -> ClaimMap {
     let mut claims = ClaimMap::new();
     for pr in nodes {
@@ -50216,7 +50211,7 @@ fn search_open_prs_closing_refs() -> Option<Vec<Value>> {
 }
 
 /// Open issues NOT covered by any open PR. PURE: `covered` is the (repo, issue#) set an open PR's
-/// native closing references link (see `covered_from_search_prs`).
+/// native closing references link (see `claims_from_search_prs`).
 fn uncovered(
     issues: &[(String, u64)],
     covered: &std::collections::HashSet<(String, u64)>,
@@ -68313,10 +68308,10 @@ mod worklist_tests {
                 ]}
             }),
         ];
-        let covered = covered_from_search_prs(&nodes);
-        assert!(covered.contains(&("cyclofinance/cyclo.site".to_string(), 318)));
-        assert!(covered.contains(&("rainlanguage/other".to_string(), 7)));
-        assert!(covered.contains(&("rainlanguage/second-pr".to_string(), 12)));
+        let covered = claims_from_search_prs(&nodes);
+        assert!(covered.contains_key(&("cyclofinance/cyclo.site".to_string(), 318)));
+        assert!(covered.contains_key(&("rainlanguage/other".to_string(), 7)));
+        assert!(covered.contains_key(&("rainlanguage/second-pr".to_string(), 12)));
         assert_eq!(covered.len(), 3);
     }
 
@@ -68330,9 +68325,9 @@ mod worklist_tests {
                 {"number": 9, "repository": {"nameWithOwner": "o/issue-repo"}}
             ]}
         })];
-        let covered = covered_from_search_prs(&nodes);
-        assert!(covered.contains(&("o/issue-repo".to_string(), 9)));
-        assert!(!covered.contains(&("o/pr-repo".to_string(), 9)));
+        let covered = claims_from_search_prs(&nodes);
+        assert!(covered.contains_key(&("o/issue-repo".to_string(), 9)));
+        assert!(!covered.contains_key(&("o/pr-repo".to_string(), 9)));
     }
 
     #[test]
@@ -68351,7 +68346,7 @@ mod worklist_tests {
                 {}
             ]}}),
         ];
-        assert!(covered_from_search_prs(&nodes).is_empty());
+        assert!(claims_from_search_prs(&nodes).is_empty());
     }
 
     /// One `search` page: `n` nodes tagged with `tag` so the fold's ORDER and COMPLETENESS are
@@ -71410,7 +71405,6 @@ mod subject_ref_tests {
         );
         assert!(claims[&("o/i".to_string(), 6)].is_empty());
         let keys: std::collections::HashSet<(String, u64)> = claims.keys().cloned().collect();
-        assert_eq!(keys, covered_from_search_prs(&nodes));
         assert_eq!(keys.len(), 2);
     }
 
