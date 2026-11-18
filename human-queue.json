@@ -697,8 +697,14 @@
         ]
       },
       "un-vetted": {
-        "count": 92,
+        "count": 93,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 175,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/175",
+            "title": "Drop stale opcode count from testOpcodeValues docstring"
+          },
           {
             "repo": "rainlanguage/rain.extrospection",
             "number": 173,
@@ -2021,7 +2027,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 92,
+    "unvetted": 93,
     "blockedOn": 9,
     "ready": 1,
     "needsWork": 84,
@@ -2032,7 +2038,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 192,
+    "totalProducerPrs": 193,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 0,
     "designPresentable": 5,
