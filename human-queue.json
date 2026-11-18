@@ -1977,6 +1977,12 @@
   "uncoveredIssues": [
     {
       "repo": "S01-Issuer/tsalt.api",
+      "number": 45,
+      "url": "https://github.com/S01-Issuer/tsalt.api/issues/45",
+      "title": "Staging roll never runs: tsalt-api-deployer lacks access to s01-tsalt-staging service"
+    },
+    {
+      "repo": "S01-Issuer/tsalt.api",
       "number": 43,
       "url": "https://github.com/S01-Issuer/tsalt.api/issues/43",
       "title": "ops void: two doc nits from PR #41 (notesMoved example and field doc)"
@@ -6331,15 +6337,15 @@
     "leaks": 0,
     "totalProducerPrs": 189,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 719,
+    "uncoveredIssues": 720,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 866
+    "openIssues": 867
   },
   "ages": {
     "openIssues": {
-      "meanDays": 326.3,
-      "medianDays": 154.9,
+      "meanDays": 325.9,
+      "medianDays": 154.7,
       "oldestDays": 1759.8
     }
   }
