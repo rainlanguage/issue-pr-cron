@@ -697,7 +697,7 @@
         ]
       },
       "un-vetted": {
-        "count": 103,
+        "count": 95,
         "prs": [
           {
             "repo": "rainlanguage/rain.tofu.erc20-decimals.deploy",
@@ -718,30 +718,6 @@
             "title": "Release 0.1.11"
           },
           {
-            "repo": "rainlanguage/rain-org-health",
-            "number": 249,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/249",
-            "title": "fix(scan): exact drift LOC from tree diff when compare hits the 300-file cap"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 186,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/186",
-            "title": "test: pin beacon implementation() and owner() wire selectors to published values"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 185,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/185",
-            "title": "Rename EVM_OP_DIFFICULTY to EVM_OP_PREVRANDAO (EIP-4399)"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 184,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/184",
-            "title": "IExtrospectV2: declare beaconImplementation"
-          },
-          {
             "repo": "rainlanguage/rain.extrospection",
             "number": 183,
             "url": "https://github.com/rainlanguage/rain.extrospection/pull/183",
@@ -758,30 +734,6 @@
             "number": 181,
             "url": "https://github.com/rainlanguage/rain.extrospection/pull/181",
             "title": "docs: stop restating dependency versions in CLAUDE.md"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 179,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/179",
-            "title": "docs: replace removed rainix tasks in CLAUDE.md Build & Test"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 180,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/180",
-            "title": "Delete stale .gas-snapshot"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 178,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/178",
-            "title": "Drop permissive-fallback claim from beaconImplementation NatSpec"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 177,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/177",
-            "title": "Remove dead docs link from README"
           },
           {
             "repo": "rainlanguage/rain.extrospection",
@@ -6396,7 +6348,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 103,
+    "unvetted": 95,
     "blockedOn": 9,
     "ready": 1,
     "needsWork": 84,
@@ -6407,17 +6359,17 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 203,
+    "totalProducerPrs": 195,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 718,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 878
+    "openIssues": 872
   },
   "ages": {
     "openIssues": {
-      "meanDays": 322.6,
-      "medianDays": 154.1,
+      "meanDays": 324.4,
+      "medianDays": 154.2,
       "oldestDays": 1759.7
     }
   }
