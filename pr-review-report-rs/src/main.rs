@@ -22245,6 +22245,8 @@ fn producer_backlog(
 struct OpenIssue {
     subject: SubjectRef,
     created_ms: Option<i64>,
+    /// Urls of the open PRs whose native `closingIssuesReferences` name this issue, sorted.
+    prs: Vec<String>,
 }
 
 /// PURE: EVERY open issue in the configured org scope, paired with its creation time — the
@@ -22256,6 +22258,7 @@ struct OpenIssue {
 fn open_issues(
     all: &[(String, u64)],
     meta: &std::collections::HashMap<(String, u64), Value>,
+    claims: &ClaimMap,
 ) -> Vec<OpenIssue> {
     all.iter()
         .map(|(slug, num)| {
@@ -22271,7 +22274,41 @@ fn open_issues(
                     .and_then(|m| m.get("createdAt"))
                     .and_then(|v| v.as_str())
                     .and_then(iso_to_epoch_ms),
+                prs: claims
+                    .get(&(slug.clone(), *num))
+                    .cloned()
+                    .unwrap_or_default(),
             }
+        })
+        .collect()
+}
+
+/// PURE: the open issues in the order working them moves the issue KPIs — every issue an open PR
+/// claims, then every other; oldest first within each, an issue with no readable `createdAt` after
+/// every aged one in its group, then by repo and number so equal ages order deterministically.
+///
+/// Every claimed issue precedes every unclaimed one regardless of age: landing a PR that already
+/// exists is the cheapest close there is, and age only ranks within that.
+fn issue_worklist(open: &[OpenIssue], now_ms: i64) -> Vec<Value> {
+    let mut ranked: Vec<&OpenIssue> = open.iter().collect();
+    ranked.sort_by_key(|i| {
+        (
+            i.prs.is_empty(),
+            i.created_ms.is_none(),
+            i.created_ms,
+            i.subject.repo.clone(),
+            i.subject.number,
+        )
+    });
+    ranked
+        .into_iter()
+        .map(|i| {
+            let mut extra = vec![("prs", Value::from(i.prs.clone()))];
+            if let Some(c) = i.created_ms {
+                let days = ((now_ms - c) as f64 / 86_400_000.0).max(0.0);
+                extra.push(("ageDays", Value::from((days * 10.0).round() / 10.0)));
+            }
+            i.subject.to_json_with(&extra)
         })
         .collect()
 }
@@ -22552,6 +22589,12 @@ fn human_queue_doc(
                     serde_json::json!({ "openIssues": ages.to_json() }),
                 );
         }
+        doc.as_object_mut()
+            .expect("human_queue_doc is an object")
+            .insert(
+                "issueWorklist".into(),
+                Value::Array(issue_worklist(open, now_ms)),
+            );
     }
     doc
 }
@@ -50056,7 +50099,17 @@ fn failing_check_names(rollup: &Value) -> Vec<String> {
 /// (`Closes https://github.com/o/r/issues/5`) and `o/r#5` cover exactly what GitHub will
 /// auto-close at merge, and a title-only keyword (which GitHub never links) counts nothing.
 fn covered_from_search_prs(nodes: &[Value]) -> std::collections::HashSet<(String, u64)> {
-    let mut covered = std::collections::HashSet::new();
+    claims_from_search_prs(nodes).into_keys().collect()
+}
+
+/// Each covered issue's claiming PR urls, sorted and deduplicated.
+type ClaimMap = std::collections::HashMap<(String, u64), Vec<String>>;
+
+/// PURE: [`covered_from_search_prs`]'s set with each issue's claiming PR urls. Its keys ARE the
+/// covered set, so coverage and claims cannot disagree; a node without a `url` still covers its
+/// references and contributes no url.
+fn claims_from_search_prs(nodes: &[Value]) -> ClaimMap {
+    let mut claims = ClaimMap::new();
     for pr in nodes {
         let Some(refs) = pr
             .pointer("/closingIssuesReferences/nodes")
@@ -50064,6 +50117,7 @@ fn covered_from_search_prs(nodes: &[Value]) -> std::collections::HashSet<(String
         else {
             continue;
         };
+        let url = pr.get("url").and_then(|u| u.as_str());
         for r in refs {
             let (Some(repo), Some(num)) = (
                 r.pointer("/repository/nameWithOwner")
@@ -50072,10 +50126,17 @@ fn covered_from_search_prs(nodes: &[Value]) -> std::collections::HashSet<(String
             ) else {
                 continue;
             };
-            covered.insert((repo.to_string(), num));
+            let entry = claims.entry((repo.to_string(), num)).or_default();
+            if let Some(u) = url {
+                entry.push(u.to_string());
+            }
         }
     }
-    covered
+    for urls in claims.values_mut() {
+        urls.sort();
+        urls.dedup();
+    }
+    claims
 }
 
 /// The GraphQL `search` connection serves at most 1000 results, so the page size asked for in
@@ -50083,7 +50144,7 @@ fn covered_from_search_prs(nodes: &[Value]) -> std::collections::HashSet<(String
 /// A smaller product silently under-reports coverage; a larger one just walks into GitHub's own cap.
 const SEARCH_PAGE_SIZE: usize = 100;
 const SEARCH_MAX_PAGES: usize = 10;
-const CLOSING_REFS_QUERY: &str = "query($q:String!,$c:String){search(query:$q,type:ISSUE,first:100,after:$c){pageInfo{hasNextPage endCursor}nodes{... on PullRequest{closingIssuesReferences(first:50){nodes{number repository{nameWithOwner}}}}}}}";
+const CLOSING_REFS_QUERY: &str = "query($q:String!,$c:String){search(query:$q,type:ISSUE,first:100,after:$c){pageInfo{hasNextPage endCursor}nodes{... on PullRequest{url closingIssuesReferences(first:50){nodes{number repository{nameWithOwner}}}}}}}";
 
 /// PURE given `fetch`: walk a cursor-paged GraphQL `search` to the end, concatenating every page's
 /// `nodes`. `fetch(cursor)` performs one page (`None` on the first page, then the previous page's
@@ -51458,6 +51519,8 @@ struct OrgIssues {
     /// its issues are not backlog and their age is not a fact about the org's responsiveness; the
     /// count says they exist without offering them.
     archived_repo: usize,
+    /// The open PRs claiming each member of `all` that some PR covers.
+    claims: ClaimMap,
 }
 
 impl OrgIssues {
@@ -51472,7 +51535,7 @@ impl OrgIssues {
     fn populations(&self) -> (Vec<SubjectRef>, Vec<OpenIssue>) {
         (
             producer_backlog(&self.uncovered, &self.meta),
-            open_issues(&self.all, &self.meta),
+            open_issues(&self.all, &self.meta, &self.claims),
         )
     }
 }
@@ -51532,7 +51595,8 @@ fn coverage_uncovered() -> Option<OrgIssues> {
         );
         return None;
     };
-    let covered = covered_from_search_prs(&pr_nodes);
+    let claims = claims_from_search_prs(&pr_nodes);
+    let covered: std::collections::HashSet<(String, u64)> = claims.keys().cloned().collect();
 
     let mut issues: Vec<(String, u64)> = Vec::new();
     let mut meta: std::collections::HashMap<(String, u64), Value> =
@@ -51559,6 +51623,7 @@ fn coverage_uncovered() -> Option<OrgIssues> {
         uncovered: no_open_pr,
         meta,
         archived_repo: n_archived,
+        claims,
     })
 }
 
@@ -70888,6 +70953,7 @@ mod subject_ref_tests {
                 OpenIssue {
                     subject: sref("rainlanguage/rain.math.float", 42, "issues", "backlog"),
                     created_ms: Some(DOC_NOW_MS - 10 * 86_400_000),
+                    prs: Vec::new(),
                 },
                 OpenIssue {
                     subject: sref(
@@ -70897,10 +70963,12 @@ mod subject_ref_tests {
                         "covered by an open PR",
                     ),
                     created_ms: Some(DOC_NOW_MS - 40 * 86_400_000),
+                    prs: Vec::new(),
                 },
                 OpenIssue {
                     subject: sref("rainlanguage/raindex", 700, "issues", "flagged"),
                     created_ms: Some(DOC_NOW_MS - 2 * 86_400_000),
+                    prs: Vec::new(),
                 },
             ]),
             &[Leak {
@@ -70928,6 +70996,7 @@ mod subject_ref_tests {
         "/uncoveredIssues",
         "/archivedRepoPrs",
         "/leaks",
+        "/issueWorklist",
     ];
 
     // The ask: every top-level subject array carries `url`, and it is the RESOLVED one.
@@ -70990,6 +71059,10 @@ mod subject_ref_tests {
                 // `leaks` is the one array with extra keys — the evidencing note, and the
                 // `createdAt` its OLDEST-FIRST order is computed from. Both must be ADDITIONS,
                 // never swaps: a consumer written against the shared shape still reads these rows.
+                if *ptr == "/issueWorklist" {
+                    assert!(k.contains(&"prs".to_string()), "issueWorklist item lost `prs`: {it}");
+                    k.retain(|x| x != "prs" && x != "ageDays");
+                }
                 if *ptr == "/leaks" {
                     for extra in ["reason", "createdAt"] {
                         assert!(
@@ -71127,7 +71200,7 @@ mod subject_ref_tests {
     #[test]
     fn open_issues_are_every_open_issue_with_created_at_from_the_same_row() {
         let (open, meta) = coverage_fixture();
-        let all = open_issues(&open, &meta);
+        let all = open_issues(&open, &meta, &ClaimMap::new());
         assert_eq!(
             all.len(),
             3,
@@ -71192,6 +71265,7 @@ mod subject_ref_tests {
             // "how many issues" and "how many were withheld" can never come from two reads that
             // disagree — the same argument that put `all` and `uncovered` in one struct.
             archived_repo: 4,
+            claims: ClaimMap::new(),
         };
         assert_eq!(org.archived_repo, 4);
         let (backlog, open) = org.populations();
@@ -71216,9 +71290,120 @@ mod subject_ref_tests {
         OpenIssue {
             subject: sref("o/r", 1, "issues", "t"),
             created_ms: Some(now_ms - days_ago_ms),
+            prs: Vec::new(),
         }
     }
     const DAY_MS: i64 = 86_400_000;
+
+    fn claimed(n: u64, created_ms: Option<i64>, prs: &[&str]) -> OpenIssue {
+        OpenIssue {
+            subject: sref("o/r", n, "issues", "t"),
+            created_ms,
+            prs: prs.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    fn issue_worklist_numbers(rows: &[Value]) -> Vec<u64> {
+        rows.iter().map(|r| r["number"].as_u64().unwrap()).collect()
+    }
+
+    // Every claimed issue precedes every unclaimed one even when the unclaimed one is older; within
+    // each group the oldest leads and an ageless issue trails every aged one.
+    #[test]
+    fn issue_worklist_ranks_claimed_before_unclaimed_then_oldest_first() {
+        let now = DOC_NOW_MS;
+        let open = vec![
+            claimed(1, Some(now - 900 * DAY_MS), &[]),
+            claimed(2, Some(now - 5 * DAY_MS), &["https://github.com/o/r/pull/20"]),
+            claimed(3, None, &["https://github.com/o/r/pull/30"]),
+            claimed(4, Some(now - 50 * DAY_MS), &["https://github.com/o/r/pull/40"]),
+            claimed(5, None, &[]),
+            claimed(6, Some(now - 100 * DAY_MS), &[]),
+        ];
+        let rows = issue_worklist(&open, now);
+        assert_eq!(issue_worklist_numbers(&rows), vec![4, 2, 3, 1, 6, 5]);
+    }
+
+    // Equal ages order by repo then number, so the ranking is a function of the data alone.
+    #[test]
+    fn issue_worklist_breaks_age_ties_by_repo_then_number() {
+        let now = DOC_NOW_MS;
+        let at = |repo: &str, n: u64| OpenIssue {
+            subject: sref(repo, n, "issues", "t"),
+            created_ms: Some(now - DAY_MS),
+            prs: Vec::new(),
+        };
+        let rows = issue_worklist(&[at("o/b", 1), at("o/a", 9), at("o/a", 2)], now);
+        let order: Vec<(String, u64)> = rows
+            .iter()
+            .map(|r| (r["repo"].as_str().unwrap().to_string(), r["number"].as_u64().unwrap()))
+            .collect();
+        assert_eq!(
+            order,
+            vec![("o/a".into(), 2), ("o/a".into(), 9), ("o/b".into(), 1)]
+        );
+    }
+
+    // A row carries its claiming PRs and its age to a tenth of a day; an ageless row omits
+    // `ageDays` rather than claiming an age of zero.
+    #[test]
+    fn issue_worklist_rows_carry_prs_and_age_and_omit_an_unknown_age() {
+        let now = DOC_NOW_MS;
+        let rows = issue_worklist(
+            &[
+                claimed(1, Some(now - 36 * 3_600_000), &["https://github.com/o/r/pull/7"]),
+                claimed(2, None, &[]),
+            ],
+            now,
+        );
+        assert_eq!(rows[0]["prs"], json!(["https://github.com/o/r/pull/7"]));
+        assert_eq!(rows[0]["ageDays"], json!(1.5));
+        assert_eq!(rows[1]["prs"], json!([]));
+        assert!(rows[1].get("ageDays").is_none(), "{}", rows[1]);
+    }
+
+    // Claims are keyed by the ISSUE's repo, carry every claiming PR sorted and once, and their keys
+    // are exactly the covered set; a url-less node still covers its references.
+    #[test]
+    fn claims_key_by_issue_and_agree_with_coverage() {
+        let nodes = vec![
+            json!({"url": "https://github.com/o/p/pull/9",
+                   "closingIssuesReferences": {"nodes": [
+                       {"number": 5, "repository": {"nameWithOwner": "o/i"}},
+                       {"number": 5, "repository": {"nameWithOwner": "o/i"}}
+                   ]}}),
+            json!({"url": "https://github.com/o/p/pull/3",
+                   "closingIssuesReferences": {"nodes": [
+                       {"number": 5, "repository": {"nameWithOwner": "o/i"}}
+                   ]}}),
+            json!({"closingIssuesReferences": {"nodes": [
+                       {"number": 6, "repository": {"nameWithOwner": "o/i"}}
+                   ]}}),
+        ];
+        let claims = claims_from_search_prs(&nodes);
+        assert_eq!(
+            claims[&("o/i".to_string(), 5)],
+            vec![
+                "https://github.com/o/p/pull/3".to_string(),
+                "https://github.com/o/p/pull/9".to_string()
+            ]
+        );
+        assert!(claims[&("o/i".to_string(), 6)].is_empty());
+        let keys: std::collections::HashSet<(String, u64)> = claims.keys().cloned().collect();
+        assert_eq!(keys, covered_from_search_prs(&nodes));
+        assert_eq!(keys.len(), 2);
+    }
+
+    // `open_issues` attaches each issue's claims from the map, and an unclaimed issue gets none.
+    #[test]
+    fn open_issues_attach_claims_by_issue_key() {
+        let all = vec![("o/r".to_string(), 1), ("o/r".to_string(), 2)];
+        let mut claims = ClaimMap::new();
+        claims.insert(("o/r".to_string(), 2), vec!["https://github.com/o/r/pull/8".into()]);
+        let open = open_issues(&all, &std::collections::HashMap::new(), &claims);
+        assert!(open[0].prs.is_empty());
+        assert_eq!(open[1].prs, vec!["https://github.com/o/r/pull/8".to_string()]);
+    }
 
     // MEAN AND MEDIAN ARE BOTH EMITTED AND THEY ARE DIFFERENT NUMBERS. This population is chosen
     // so no two of the three statistics coincide: mean 30, median 10, oldest 100. A mutant that
@@ -71345,6 +71530,7 @@ mod subject_ref_tests {
         let ageless = || OpenIssue {
             subject: sref("o/r", 2, "issues", "no meta"),
             created_ms: None,
+            prs: Vec::new(),
         };
         assert!(issue_age_stats(&[ageless()], now).is_none());
         // The aged member alone decides all three stats — the mean is over ONE member, not two,
@@ -71362,6 +71548,7 @@ mod subject_ref_tests {
         let future = OpenIssue {
             subject: sref("o/r", 3, "issues", "from the future"),
             created_ms: Some(now + DAY_MS),
+            prs: Vec::new(),
         };
         let a = issue_age_stats(&[future], now).unwrap();
         assert_eq!((a.mean, a.median, a.oldest), (0.0, 0.0, 0.0));
@@ -71369,6 +71556,7 @@ mod subject_ref_tests {
         let future = OpenIssue {
             subject: sref("o/r", 3, "issues", "from the future"),
             created_ms: Some(now + DAY_MS),
+            prs: Vec::new(),
         };
         let a = issue_age_stats(&[future, aged(10 * DAY_MS, now)], now).unwrap();
         assert_eq!(a.mean, 5.0);
@@ -71383,14 +71571,17 @@ mod subject_ref_tests {
             OpenIssue {
                 subject: sref("o/r", 1, "issues", "recent"),
                 created_ms: Some(now - 5 * DAY_MS),
+                prs: Vec::new(),
             },
             OpenIssue {
                 subject: sref("o/r", 981, "issues", "the 2024 straggler"),
                 created_ms: Some(now - 800 * DAY_MS),
+                prs: Vec::new(),
             },
             OpenIssue {
                 subject: sref("o/r", 2, "issues", "middling"),
                 created_ms: Some(now - 50 * DAY_MS),
+                prs: Vec::new(),
             },
         ];
         let a = issue_age_stats(&b, now).unwrap();
@@ -71418,6 +71609,7 @@ mod subject_ref_tests {
         let ageless = vec![OpenIssue {
             subject: sref("o/r", 9, "issues", "no createdAt"),
             created_ms: None,
+            prs: Vec::new(),
         }];
         let rendered = review_open_issue_ages(&ageless, DOC_NOW_MS);
         assert!(
@@ -71481,6 +71673,7 @@ mod subject_ref_tests {
         let ageless = vec![OpenIssue {
             subject: sref("o/r", 9, "issues", "no createdAt"),
             created_ms: None,
+            prs: Vec::new(),
         }];
         for (open, want_count) in [(&empty, 0u64), (&ageless, 1u64)] {
             let d = doc_with_open(Some(open));
