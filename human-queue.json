@@ -697,62 +697,8 @@
         ]
       },
       "un-vetted": {
-        "count": 95,
+        "count": 86,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.tofu.erc20-decimals.deploy",
-            "number": 30,
-            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals.deploy/pull/30",
-            "title": "Release 0.1.7"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata.deploy",
-            "number": 34,
-            "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/34",
-            "title": "Release 0.1.6"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float.deploy",
-            "number": 63,
-            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/63",
-            "title": "Release 0.1.11"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 183,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/183",
-            "title": "Ship ERC1967 slots helper from src/lib; exclude /test from soldeer package"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 182,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/182",
-            "title": "docs: qualify README beacon-slot claim to match library header"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 181,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/181",
-            "title": "docs: stop restating dependency versions in CLAUDE.md"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 176,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/176",
-            "title": "Describe the CBOR mask words as adjacent, not overlapping"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 175,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/175",
-            "title": "Drop stale opcode count from testOpcodeValues docstring"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection",
-            "number": 173,
-            "url": "https://github.com/rainlanguage/rain.extrospection/pull/173",
-            "title": "Add LibExtrospectRegistryBeaconProxy.codehash"
-          },
           {
             "repo": "rainlanguage/rain.deploy",
             "number": 397,
@@ -2012,6 +1958,24 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "S01-Issuer/tsalt.api",
+      "number": 43,
+      "url": "https://github.com/S01-Issuer/tsalt.api/issues/43",
+      "title": "ops void: two doc nits from PR #41 (notesMoved example and field doc)"
+    },
+    {
+      "repo": "rainlanguage/raindex.deploy",
+      "number": 2968,
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2968",
+      "title": "Subgraph: every known raindex address per network, indexing the tokens each has held"
+    },
+    {
+      "repo": "rainlanguage/raindex.deploy",
+      "number": 2967,
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2967",
+      "title": "One complete, verified, machine-readable record of every raindex deployment"
+    },
+    {
       "repo": "rainlanguage/rain-org-health",
       "number": 248,
       "url": "https://github.com/rainlanguage/rain-org-health/issues/248",
@@ -2652,18 +2616,6 @@
       "number": 395,
       "url": "https://github.com/rainlanguage/rainix/issues/395",
       "title": "`.soldeerignore` completeness is enforced by nobody: a missed root file silently ships in the published package and moves the autopublish content hash"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 149,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/149",
-      "title": "[A04] [LOW] Four forge-lint warnings in src/ are neither fixed nor annotated, so the library has no clean-lint baseline"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 148,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/148",
-      "title": "[A03] [LOW] All 31 forge-lint assembly-usage annotations name a lint id that does not exist, emitting 31 warnings and suppressing nothing"
     },
     {
       "repo": "rainlanguage/rainix",
@@ -6348,7 +6300,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 95,
+    "unvetted": 86,
     "blockedOn": 9,
     "ready": 1,
     "needsWork": 84,
@@ -6359,18 +6311,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 195,
+    "totalProducerPrs": 186,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 718,
+    "uncoveredIssues": 719,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 872
+    "openIssues": 866
   },
   "ages": {
     "openIssues": {
-      "meanDays": 324.4,
-      "medianDays": 154.2,
-      "oldestDays": 1759.7
+      "meanDays": 326.2,
+      "medianDays": 154.9,
+      "oldestDays": 1759.8
     }
   }
 }
