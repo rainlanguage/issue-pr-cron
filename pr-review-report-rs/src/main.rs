@@ -51590,13 +51590,19 @@ fn coverage_uncovered() -> Option<OrgIssues> {
         );
         return None;
     };
-    let claims = claims_from_search_prs(&pr_nodes);
+    Some(org_issues_from(&ival, &pr_nodes, n_archived))
+}
+
+/// PURE: [`coverage_uncovered`] after its reads — the issue hits (archived repos already
+/// withheld) and the open-PR search nodes, joined into one [`OrgIssues`].
+fn org_issues_from(ival: &[Value], pr_nodes: &[Value], archived_repo: usize) -> OrgIssues {
+    let claims = claims_from_search_prs(pr_nodes);
     let covered: std::collections::HashSet<(String, u64)> = claims.keys().cloned().collect();
 
     let mut issues: Vec<(String, u64)> = Vec::new();
     let mut meta: std::collections::HashMap<(String, u64), Value> =
         std::collections::HashMap::new();
-    for it in &ival {
+    for it in ival {
         let Some(repo) = it
             .get("repository")
             .and_then(|r| r.get("nameWithOwner"))
@@ -51613,13 +51619,13 @@ fn coverage_uncovered() -> Option<OrgIssues> {
     }
 
     let no_open_pr = uncovered(&issues, &covered);
-    Some(OrgIssues {
+    OrgIssues {
         all: issues,
         uncovered: no_open_pr,
         meta,
-        archived_repo: n_archived,
+        archived_repo,
         claims,
-    })
+    }
 }
 
 /// True when an uncovered issue belongs to the PRODUCER's untouched backlog: NOT already flagged
@@ -71263,10 +71269,18 @@ mod subject_ref_tests {
             // "how many issues" and "how many were withheld" can never come from two reads that
             // disagree — the same argument that put `all` and `uncovered` in one struct.
             archived_repo: 4,
-            claims: ClaimMap::new(),
+            claims: ClaimMap::from([(
+                ("rainlanguage/raindex".to_string(), 512),
+                vec!["https://github.com/rainlanguage/raindex/pull/9".to_string()],
+            )]),
         };
         assert_eq!(org.archived_repo, 4);
         let (backlog, open) = org.populations();
+        assert_eq!(
+            open[0].prs,
+            vec!["https://github.com/rainlanguage/raindex/pull/9".to_string()],
+            "the open population carries the claims, so the worklist can rank by them"
+        );
         assert_eq!(
             open.iter().map(|i| i.subject.number).collect::<Vec<_>>(),
             vec![512, 700, 3],
@@ -71423,6 +71437,36 @@ mod subject_ref_tests {
             open[1].prs,
             vec!["https://github.com/o/r/pull/8".to_string()]
         );
+    }
+
+    #[test]
+    fn org_issues_from_joins_claims_into_coverage() {
+        let ival = vec![
+            json!({"number": 1, "repository": {"nameWithOwner": "o/r"}}),
+            json!({"number": 2, "repository": {"nameWithOwner": "o/r"}}),
+        ];
+        let nodes = vec![json!({"url": "https://github.com/o/r/pull/8",
+        "closingIssuesReferences": {"nodes": [
+            {"number": 2, "repository": {"nameWithOwner": "o/r"}}
+        ]}})];
+        let org = org_issues_from(&ival, &nodes, 3);
+        assert_eq!(
+            org.all,
+            vec![("o/r".to_string(), 1), ("o/r".to_string(), 2)]
+        );
+        assert_eq!(org.uncovered, vec![("o/r".to_string(), 1)]);
+        assert_eq!(
+            org.claims[&("o/r".to_string(), 2)],
+            vec!["https://github.com/o/r/pull/8".to_string()]
+        );
+        assert_eq!(org.archived_repo, 3);
+    }
+
+    #[test]
+    fn issue_worklist_clamps_a_future_created_at_to_age_zero() {
+        let now = DOC_NOW_MS;
+        let rows = issue_worklist(&[claimed(1, Some(now + 2 * DAY_MS), &[])], now);
+        assert_eq!(rows[0]["ageDays"], json!(0.0));
     }
 
     // MEAN AND MEDIAN ARE BOTH EMITTED AND THEY ARE DIFFERENT NUMBERS. This population is chosen
