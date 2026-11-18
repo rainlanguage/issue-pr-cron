@@ -71060,7 +71060,10 @@ mod subject_ref_tests {
                 // `createdAt` its OLDEST-FIRST order is computed from. Both must be ADDITIONS,
                 // never swaps: a consumer written against the shared shape still reads these rows.
                 if *ptr == "/issueWorklist" {
-                    assert!(k.contains(&"prs".to_string()), "issueWorklist item lost `prs`: {it}");
+                    assert!(
+                        k.contains(&"prs".to_string()),
+                        "issueWorklist item lost `prs`: {it}"
+                    );
                     k.retain(|x| x != "prs" && x != "ageDays");
                 }
                 if *ptr == "/leaks" {
@@ -71314,9 +71317,17 @@ mod subject_ref_tests {
         let now = DOC_NOW_MS;
         let open = vec![
             claimed(1, Some(now - 900 * DAY_MS), &[]),
-            claimed(2, Some(now - 5 * DAY_MS), &["https://github.com/o/r/pull/20"]),
+            claimed(
+                2,
+                Some(now - 5 * DAY_MS),
+                &["https://github.com/o/r/pull/20"],
+            ),
             claimed(3, None, &["https://github.com/o/r/pull/30"]),
-            claimed(4, Some(now - 50 * DAY_MS), &["https://github.com/o/r/pull/40"]),
+            claimed(
+                4,
+                Some(now - 50 * DAY_MS),
+                &["https://github.com/o/r/pull/40"],
+            ),
             claimed(5, None, &[]),
             claimed(6, Some(now - 100 * DAY_MS), &[]),
         ];
@@ -71336,7 +71347,12 @@ mod subject_ref_tests {
         let rows = issue_worklist(&[at("o/b", 1), at("o/a", 9), at("o/a", 2)], now);
         let order: Vec<(String, u64)> = rows
             .iter()
-            .map(|r| (r["repo"].as_str().unwrap().to_string(), r["number"].as_u64().unwrap()))
+            .map(|r| {
+                (
+                    r["repo"].as_str().unwrap().to_string(),
+                    r["number"].as_u64().unwrap(),
+                )
+            })
             .collect();
         assert_eq!(
             order,
@@ -71351,7 +71367,11 @@ mod subject_ref_tests {
         let now = DOC_NOW_MS;
         let rows = issue_worklist(
             &[
-                claimed(1, Some(now - 36 * 3_600_000), &["https://github.com/o/r/pull/7"]),
+                claimed(
+                    1,
+                    Some(now - 36 * 3_600_000),
+                    &["https://github.com/o/r/pull/7"],
+                ),
                 claimed(2, None, &[]),
             ],
             now,
@@ -71368,17 +71388,17 @@ mod subject_ref_tests {
     fn claims_key_by_issue_and_agree_with_coverage() {
         let nodes = vec![
             json!({"url": "https://github.com/o/p/pull/9",
-                   "closingIssuesReferences": {"nodes": [
-                       {"number": 5, "repository": {"nameWithOwner": "o/i"}},
-                       {"number": 5, "repository": {"nameWithOwner": "o/i"}}
-                   ]}}),
+            "closingIssuesReferences": {"nodes": [
+                {"number": 5, "repository": {"nameWithOwner": "o/i"}},
+                {"number": 5, "repository": {"nameWithOwner": "o/i"}}
+            ]}}),
             json!({"url": "https://github.com/o/p/pull/3",
-                   "closingIssuesReferences": {"nodes": [
-                       {"number": 5, "repository": {"nameWithOwner": "o/i"}}
-                   ]}}),
+            "closingIssuesReferences": {"nodes": [
+                {"number": 5, "repository": {"nameWithOwner": "o/i"}}
+            ]}}),
             json!({"closingIssuesReferences": {"nodes": [
-                       {"number": 6, "repository": {"nameWithOwner": "o/i"}}
-                   ]}}),
+                {"number": 6, "repository": {"nameWithOwner": "o/i"}}
+            ]}}),
         ];
         let claims = claims_from_search_prs(&nodes);
         assert_eq!(
@@ -71399,10 +71419,16 @@ mod subject_ref_tests {
     fn open_issues_attach_claims_by_issue_key() {
         let all = vec![("o/r".to_string(), 1), ("o/r".to_string(), 2)];
         let mut claims = ClaimMap::new();
-        claims.insert(("o/r".to_string(), 2), vec!["https://github.com/o/r/pull/8".into()]);
+        claims.insert(
+            ("o/r".to_string(), 2),
+            vec!["https://github.com/o/r/pull/8".into()],
+        );
         let open = open_issues(&all, &std::collections::HashMap::new(), &claims);
         assert!(open[0].prs.is_empty());
-        assert_eq!(open[1].prs, vec!["https://github.com/o/r/pull/8".to_string()]);
+        assert_eq!(
+            open[1].prs,
+            vec!["https://github.com/o/r/pull/8".to_string()]
+        );
     }
 
     // MEAN AND MEDIAN ARE BOTH EMITTED AND THEY ARE DIFFERENT NUMBERS. This population is chosen
