@@ -1240,3 +1240,9 @@
 {"ts":"2026-11-18T18:40:41Z","observedAt":"2026-11-18T19:32:17Z","kind":"pr","repo":"rainlanguage/rain.factory","number":300}
 {"ts":"2026-11-18T18:56:17Z","observedAt":"2026-11-18T19:32:17Z","kind":"pr","repo":"rainlanguage/rain.intorastring","number":36}
 {"ts":"2026-11-18T18:40:29Z","observedAt":"2026-11-18T19:32:17Z","kind":"pr","repo":"rainlanguage/rainlang","number":641}
+{"ts":"2026-11-18T19:32:21Z","observedAt":"2026-11-18T20:31:02Z","kind":"pr","repo":"rainlanguage/rain.erc4626.words","number":284}
+{"ts":"2026-11-18T19:31:52Z","observedAt":"2026-11-18T20:31:02Z","kind":"pr","repo":"rainlanguage/rain.factory.deploy","number":89}
+{"ts":"2026-11-18T19:32:04Z","observedAt":"2026-11-18T20:31:02Z","kind":"pr","repo":"rainlanguage/rain.merkle.deploy","number":46}
+{"ts":"2026-11-18T19:32:46Z","observedAt":"2026-11-18T20:31:02Z","kind":"pr","repo":"rainlanguage/rain.verify","number":50}
+{"ts":"2026-11-18T19:31:07Z","observedAt":"2026-11-18T20:31:02Z","kind":"pr","repo":"rainlanguage/raindex.interface","number":89}
+{"ts":"2026-11-18T19:31:39Z","observedAt":"2026-11-18T20:31:02Z","kind":"pr","repo":"rainlanguage/rainlang.deploy","number":35}
