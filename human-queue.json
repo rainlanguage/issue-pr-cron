@@ -697,32 +697,8 @@
         ]
       },
       "un-vetted": {
-        "count": 95,
+        "count": 87,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.math.float.deploy",
-            "number": 64,
-            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/64",
-            "title": "Bump rain-deploy to 0.1.36"
-          },
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 301,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/301",
-            "title": "Bump rain-extrospection 0.1.31, rain-deploy 0.1.36"
-          },
-          {
-            "repo": "rainlanguage/rain.tofu.erc20-decimals.deploy",
-            "number": 31,
-            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals.deploy/pull/31",
-            "title": "Bump rain-deploy to 0.1.36 and rain-extrospection to 0.1.31"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata.deploy",
-            "number": 35,
-            "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/35",
-            "title": "Move rain-deploy to 0.1.36"
-          },
           {
             "repo": "rainlanguage/rain-org-health",
             "number": 252,
@@ -734,12 +710,6 @@
             "number": 2971,
             "url": "https://github.com/rainlanguage/raindex.deploy/pull/2971",
             "title": "tokens-subgraph: (raindex, token) discovery across every recorded raindex"
-          },
-          {
-            "repo": "rainlanguage/rainix",
-            "number": 453,
-            "url": "https://github.com/rainlanguage/rainix/pull/453",
-            "title": "subgraph test/deploy: SUBGRAPH_DIR and a manifests/<network>.yaml shape"
           },
           {
             "repo": "rainlanguage/raindex.deploy",
@@ -757,13 +727,7 @@
             "repo": "rainlanguage/rain-org-health",
             "number": 250,
             "url": "https://github.com/rainlanguage/rain-org-health/pull/250",
-            "title": "pipeline: top 20 open issues to close next (issueWorklist)"
-          },
-          {
-            "repo": "rainlanguage/issue-pr-cron",
-            "number": 348,
-            "url": "https://github.com/rainlanguage/issue-pr-cron/pull/348",
-            "title": "human-queue: issueWorklist, open issues ranked claimed-first then oldest"
+            "title": "pipeline: issue KPIs, then the top 20 to close next; remove the FSM panels"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -845,12 +809,6 @@
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
-            "number": 588,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/588",
-            "title": "Hand Safe-owned Base vaults to the timelock"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
             "number": 575,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/575",
             "title": "Bind orchestrator beacon and initial admin on the root line"
@@ -884,12 +842,6 @@
             "number": 2961,
             "url": "https://github.com/rainlanguage/raindex.deploy/pull/2961",
             "title": "Pass regenerate-command to rainix-copy-artifacts"
-          },
-          {
-            "repo": "rainlanguage/rain.factory.deploy",
-            "number": 76,
-            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/76",
-            "title": "Drop script/build.sh: rainix installs staged config"
           },
           {
             "repo": "rainlanguage/rain.metadata",
@@ -2012,6 +1964,12 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 616,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/616",
+      "title": "Storage-location distinctness test: derive the namespaces from @custom:storage-location NatSpec, not a hand list"
+    },
+    {
       "repo": "S01-Issuer/tsalt.api",
       "number": 45,
       "url": "https://github.com/S01-Issuer/tsalt.api/issues/45",
@@ -2682,12 +2640,6 @@
       "number": 330,
       "url": "https://github.com/rainlanguage/rain.deploy/issues/330",
       "title": "The record half of the candidate anchor can still be spelled type(X).creationCode"
-    },
-    {
-      "repo": "rainlanguage/rain.factory.deploy",
-      "number": 35,
-      "url": "https://github.com/rainlanguage/rain.factory.deploy/issues/35",
-      "title": "Currency check cannot detect a generator that has stopped emitting a file"
     },
     {
       "repo": "rainlanguage/adversarial-mutation-test",
@@ -6354,7 +6306,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 95,
+    "unvetted": 87,
     "blockedOn": 9,
     "ready": 1,
     "needsWork": 84,
@@ -6365,7 +6317,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 195,
+    "totalProducerPrs": 187,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 719,
     "designPresentable": 5,
@@ -6376,7 +6328,7 @@
     "openIssues": {
       "meanDays": 326.1,
       "medianDays": 154.9,
-      "oldestDays": 1760.0
+      "oldestDays": 1760.1
     }
   }
 }

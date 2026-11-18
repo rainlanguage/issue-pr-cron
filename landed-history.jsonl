@@ -1252,3 +1252,11 @@
 {"ts":"2026-11-18T20:52:28Z","observedAt":"2026-11-18T21:32:14Z","kind":"pr","repo":"rainlanguage/rain.vats","number":368}
 {"ts":"2026-11-18T21:04:48Z","observedAt":"2026-11-18T21:32:14Z","kind":"pr","repo":"rainlanguage/rainlang","number":642}
 {"ts":"2026-11-18T21:03:47Z","observedAt":"2026-11-18T21:32:14Z","kind":"pr","repo":"rainlanguage/rainlang.deploy","number":36}
+{"ts":"2026-11-18T21:43:47Z","observedAt":"2026-11-18T22:33:00Z","kind":"pr","repo":"S01-Issuer/st0x.deploy","number":588}
+{"ts":"2026-11-18T22:10:56Z","observedAt":"2026-11-18T22:33:00Z","kind":"pr","repo":"rainlanguage/issue-pr-cron","number":348}
+{"ts":"2026-11-18T21:33:58Z","observedAt":"2026-11-18T22:33:00Z","kind":"pr","repo":"rainlanguage/rain.factory","number":301}
+{"ts":"2026-11-18T22:15:40Z","observedAt":"2026-11-18T22:33:00Z","kind":"pr","repo":"rainlanguage/rain.factory.deploy","number":76}
+{"ts":"2026-11-18T21:35:22Z","observedAt":"2026-11-18T22:33:00Z","kind":"pr","repo":"rainlanguage/rain.math.float.deploy","number":64}
+{"ts":"2026-11-18T21:37:03Z","observedAt":"2026-11-18T22:33:00Z","kind":"pr","repo":"rainlanguage/rain.metadata.deploy","number":35}
+{"ts":"2026-11-18T21:31:11Z","observedAt":"2026-11-18T22:33:00Z","kind":"pr","repo":"rainlanguage/rain.tofu.erc20-decimals.deploy","number":31}
+{"ts":"2026-11-18T21:39:21Z","observedAt":"2026-11-18T22:33:00Z","kind":"pr","repo":"rainlanguage/rainix","number":453}
