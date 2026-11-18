@@ -1215,3 +1215,8 @@
 {"ts":"2026-11-02T19:28:07Z","observedAt":"2026-11-18T12:31:53Z","kind":"pr","repo":"rainlanguage/rainix","number":429}
 {"ts":"2026-11-02T17:01:43Z","observedAt":"2026-11-18T12:31:53Z","kind":"pr","repo":"rainlanguage/rainix","number":432}
 {"ts":"2026-11-02T18:30:58Z","observedAt":"2026-11-18T12:31:53Z","kind":"pr","repo":"rainlanguage/rainix","number":433}
+{"ts":"2026-11-18T12:40:14Z","observedAt":"2026-11-18T13:31:52Z","kind":"pr","repo":"rainlanguage/rain.factory","number":299}
+{"ts":"2026-11-18T12:41:38Z","observedAt":"2026-11-18T13:31:52Z","kind":"pr","repo":"rainlanguage/rain.lib.leakybucket","number":134}
+{"ts":"2026-11-18T12:40:50Z","observedAt":"2026-11-18T13:31:52Z","kind":"pr","repo":"rainlanguage/rain.math.float.deploy","number":62}
+{"ts":"2026-11-18T12:40:57Z","observedAt":"2026-11-18T13:31:52Z","kind":"pr","repo":"rainlanguage/rain.metadata.deploy","number":33}
+{"ts":"2026-11-18T12:41:19Z","observedAt":"2026-11-18T13:31:52Z","kind":"pr","repo":"rainlanguage/rain.tofu.erc20-decimals.deploy","number":29}

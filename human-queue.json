@@ -697,8 +697,44 @@
         ]
       },
       "un-vetted": {
-        "count": 102,
+        "count": 103,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.tofu.erc20-decimals.deploy",
+            "number": 30,
+            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals.deploy/pull/30",
+            "title": "Release 0.1.7"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata.deploy",
+            "number": 34,
+            "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/34",
+            "title": "Release 0.1.6"
+          },
+          {
+            "repo": "rainlanguage/rain.math.float.deploy",
+            "number": 63,
+            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/63",
+            "title": "Release 0.1.11"
+          },
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 249,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/249",
+            "title": "fix(scan): exact drift LOC from tree diff when compare hits the 300-file cap"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 186,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/186",
+            "title": "test: pin beacon implementation() and owner() wire selectors to published values"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 185,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/185",
+            "title": "Rename EVM_OP_DIFFICULTY to EVM_OP_PREVRANDAO (EIP-4399)"
+          },
           {
             "repo": "rainlanguage/rain.extrospection",
             "number": 184,
@@ -766,40 +802,10 @@
             "title": "Add LibExtrospectRegistryBeaconProxy.codehash"
           },
           {
-            "repo": "rainlanguage/rain.factory",
-            "number": 299,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/299",
-            "title": "Bump rain-deploy 0.1.34, rain-string 0.3.11"
-          },
-          {
-            "repo": "rainlanguage/rain.metadata.deploy",
-            "number": 33,
-            "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/33",
-            "title": "Bump rain-deploy 0.1.34, rain-string 0.3.11"
-          },
-          {
-            "repo": "rainlanguage/rain.tofu.erc20-decimals.deploy",
-            "number": 29,
-            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals.deploy/pull/29",
-            "title": "Bump rain-deploy 0.1.34 and rain-string 0.3.11"
-          },
-          {
-            "repo": "rainlanguage/rain.math.float.deploy",
-            "number": 62,
-            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/62",
-            "title": "Bump rain-deploy 0.1.34, rain-math-float 0.3.13, rain-string 0.3.11"
-          },
-          {
             "repo": "rainlanguage/rain.deploy",
             "number": 397,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/397",
             "title": "Etch the transitive dependency closure"
-          },
-          {
-            "repo": "rainlanguage/rain.lib.leakybucket",
-            "number": 134,
-            "url": "https://github.com/rainlanguage/rain.lib.leakybucket/pull/134",
-            "title": "Bump rain-math-float to 0.3.13 (rain-string 0.3.11 cascade)"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -2694,12 +2700,6 @@
       "number": 395,
       "url": "https://github.com/rainlanguage/rainix/issues/395",
       "title": "`.soldeerignore` completeness is enforced by nobody: a missed root file silently ships in the published package and moves the autopublish content hash"
-    },
-    {
-      "repo": "rainlanguage/rain.extrospection",
-      "number": 153,
-      "url": "https://github.com/rainlanguage/rain.extrospection/issues/153",
-      "title": "[A08] [LOW] The implementation() and owner() wire selectors are never pinned against their published values"
     },
     {
       "repo": "rainlanguage/rain.extrospection",
@@ -6396,7 +6396,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 102,
+    "unvetted": 103,
     "blockedOn": 9,
     "ready": 1,
     "needsWork": 84,
@@ -6407,9 +6407,9 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 202,
+    "totalProducerPrs": 203,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 719,
+    "uncoveredIssues": 718,
     "designPresentable": 5,
     "designNoQuestion": 0,
     "openIssues": 878
@@ -6418,7 +6418,7 @@
     "openIssues": {
       "meanDays": 322.6,
       "medianDays": 154.1,
-      "oldestDays": 1759.6
+      "oldestDays": 1759.7
     }
   }
 }
