@@ -23039,6 +23039,18 @@ where
 /// are the full-machine view. Runtime is O(ai:ready + ai:design producer PRs) extra `gh` calls (the
 /// verdict-currency check that returns an ai:ready PR to un-vetted, and — `--json` only — the
 /// design cell's split, #240), plus [`leak_scan`]'s batched read over the unlabeled ones.
+/// PURE: why a `human-queue --json` snapshot must not be emitted, or `None` when it may be.
+///
+/// The snapshot is published over the previous one, and the refresh keeps the previous one only on
+/// a non-zero exit. Without the open-issue read, a snapshot would carry no issue count or ages (the
+/// KPIs the dashboard exists for) and a backlog of zero that is false, and it would replace a true
+/// one. A transient GitHub failure on 2026-11-18 did exactly that for an hour.
+fn snapshot_refusal(open: Option<&[OpenIssue]>) -> Option<&'static str> {
+    open.is_none().then_some(
+        "the open-issue read failed, so this snapshot would have no issue count or ages and a false-zero backlog; not emitting it (the previous snapshot stays)",
+    )
+}
+
 fn human_queue_mode(json_out: bool) -> i32 {
     let ProducerPrInventory {
         buckets,
@@ -23187,6 +23199,10 @@ fn human_queue_mode(json_out: bool) -> i32 {
     };
 
     if json_out {
+        if let Some(why) = snapshot_refusal(open.as_deref()) {
+            eprintln!("error: {why}");
+            return 1;
+        }
         // The design cell's split (#240): one `gh pr view` per design-lane member — the same
         // read `next_design` pays — routed through its classifier so the snapshot's partition
         // and `/ndd`'s cannot drift. JSON only: the daily review prints the cell whole, and the
@@ -71247,6 +71263,16 @@ mod subject_ref_tests {
     // built from `all` and the backlog from `uncovered`. One word apart, both compile, and taking
     // `uncovered` for the ages is exactly the narrowing this rescope undoes — so the field choice
     // is asserted here rather than left at a call site no test reaches.
+    // A failed open-issue read refuses the snapshot, so the refresh keeps the last true one; a read
+    // that found zero open issues is a true snapshot and is emitted.
+    #[test]
+    fn a_snapshot_without_the_open_issue_read_is_refused() {
+        assert!(snapshot_refusal(None)
+            .unwrap()
+            .contains("open-issue read failed"));
+        assert_eq!(snapshot_refusal(Some(&[])), None);
+    }
+
     #[test]
     fn populations_take_the_ages_from_all_and_the_backlog_from_uncovered() {
         let (_, meta) = coverage_fixture();
