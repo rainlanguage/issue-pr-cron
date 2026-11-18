@@ -697,19 +697,61 @@
         ]
       },
       "un-vetted": {
-        "count": 89,
+        "count": 95,
         "prs": [
           {
-            "repo": "rainlanguage/rainlang",
-            "number": 641,
-            "url": "https://github.com/rainlanguage/rainlang/pull/641",
-            "title": "Bump rain-string 0.3.11 cascade set (wave 3)"
+            "repo": "rainlanguage/rain.extrospection",
+            "number": 187,
+            "url": "https://github.com/rainlanguage/rain.extrospection/pull/187",
+            "title": "Ship LibTestEtch from src/lib for consumers"
           },
           {
-            "repo": "rainlanguage/rain.factory",
-            "number": 300,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/300",
-            "title": "Bump rain-deploy to 0.1.35 and rain-extrospection to 0.1.30"
+            "repo": "rainlanguage/raindex.interface",
+            "number": 89,
+            "url": "https://github.com/rainlanguage/raindex.interface/pull/89",
+            "title": "Cascade wave 4: rainlang 0.2.37, rain-math-float 0.3.13"
+          },
+          {
+            "repo": "rainlanguage/rain.merkle.deploy",
+            "number": 46,
+            "url": "https://github.com/rainlanguage/rain.merkle.deploy/pull/46",
+            "title": "Move dependencies to the cascade set (wave 4)"
+          },
+          {
+            "repo": "rainlanguage/rainlang.deploy",
+            "number": 35,
+            "url": "https://github.com/rainlanguage/rainlang.deploy/pull/35",
+            "title": "Cascade wave 4: bump deps to current coherent set"
+          },
+          {
+            "repo": "rainlanguage/rain.verify",
+            "number": 50,
+            "url": "https://github.com/rainlanguage/rain.verify/pull/50",
+            "title": "Bump deps to cascade set (wave 4)"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection.deploy",
+            "number": 32,
+            "url": "https://github.com/rainlanguage/rain.extrospection.deploy/pull/32",
+            "title": "Extrospect implements the complete IExtrospectV2"
+          },
+          {
+            "repo": "rainlanguage/rain.factory.deploy",
+            "number": 89,
+            "url": "https://github.com/rainlanguage/rain.factory.deploy/pull/89",
+            "title": "Cascade wave 4: move set dependencies to the coherent set"
+          },
+          {
+            "repo": "rainlanguage/rain.erc4626.words",
+            "number": 284,
+            "url": "https://github.com/rainlanguage/rain.erc4626.words/pull/284",
+            "title": "Cascade wave 4: bump deps to coherent set"
+          },
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 250,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/250",
+            "title": "pipeline: top 20 open issues to close next (issueWorklist)"
           },
           {
             "repo": "rainlanguage/issue-pr-cron",
@@ -758,12 +800,6 @@
             "number": 606,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/606",
             "title": "Underlying shape checks in LibUnderlying, with ISIN (1/3 of #594)"
-          },
-          {
-            "repo": "rainlanguage/rain.intorastring",
-            "number": 36,
-            "url": "https://github.com/rainlanguage/rain.intorastring/pull/36",
-            "title": "LibIntOrAString: V3 count, starts/ends-with, strip-prefix/suffix"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -6324,7 +6360,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 89,
+    "unvetted": 95,
     "blockedOn": 9,
     "ready": 1,
     "needsWork": 84,
@@ -6335,7 +6371,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 189,
+    "totalProducerPrs": 195,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 720,
     "designPresentable": 5,
@@ -6345,7 +6381,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 326.0,
-      "medianDays": 154.7,
+      "medianDays": 154.8,
       "oldestDays": 1759.9
     }
   }
