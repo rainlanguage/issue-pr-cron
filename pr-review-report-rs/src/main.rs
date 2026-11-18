@@ -22593,10 +22593,7 @@ fn human_queue_doc(
         }
         doc.as_object_mut()
             .expect("human_queue_doc is an object")
-            .insert(
-                "issueWorklist".into(),
-                Value::Array(issue_worklist(open)),
-            );
+            .insert("issueWorklist".into(), Value::Array(issue_worklist(open)));
     }
     doc
 }
@@ -71376,16 +71373,14 @@ mod subject_ref_tests {
     #[test]
     fn issue_worklist_rows_carry_prs_and_created_at_and_omit_an_unknown_one() {
         let now = DOC_NOW_MS;
-        let rows = issue_worklist(
-            &[
-                claimed(
-                    1,
-                    Some(now - 36 * 3_600_000),
-                    &["https://github.com/o/r/pull/7"],
-                ),
-                claimed(2, None, &[]),
-            ],
-        );
+        let rows = issue_worklist(&[
+            claimed(
+                1,
+                Some(now - 36 * 3_600_000),
+                &["https://github.com/o/r/pull/7"],
+            ),
+            claimed(2, None, &[]),
+        ]);
         assert_eq!(rows[0]["prs"], json!(["https://github.com/o/r/pull/7"]));
         assert_eq!(rows[0]["createdAtMs"], json!(now - 36 * 3_600_000));
         assert_eq!(rows[1]["prs"], json!([]));
