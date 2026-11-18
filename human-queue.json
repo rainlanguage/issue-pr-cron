@@ -697,14 +697,8 @@
         ]
       },
       "un-vetted": {
-        "count": 90,
+        "count": 87,
         "prs": [
-          {
-            "repo": "rainlanguage/rainlang.deploy",
-            "number": 39,
-            "url": "https://github.com/rainlanguage/rainlang.deploy/pull/39",
-            "title": "Rename DISPaiR to RainlangAddresses (rainlang_addresses crate)"
-          },
           {
             "repo": "rainlanguage/rainlang.deploy",
             "number": 38,
@@ -712,22 +706,10 @@
             "title": "Release 0.1.14"
           },
           {
-            "repo": "rainlanguage/rain.extrospection.deploy",
-            "number": 33,
-            "url": "https://github.com/rainlanguage/rain.extrospection.deploy/pull/33",
-            "title": "Release 0.1.5"
-          },
-          {
             "repo": "rainlanguage/rain-org-health",
             "number": 256,
             "url": "https://github.com/rainlanguage/rain-org-health/pull/256",
             "title": "roh-scan: listing-fact inconsistencies against st0x.registry, Nasdaq and GLEIF"
-          },
-          {
-            "repo": "rainlanguage/rain.dia",
-            "number": 89,
-            "url": "https://github.com/rainlanguage/rain.dia/pull/89",
-            "title": "Cascade round D dependency bumps"
           },
           {
             "repo": "rainlanguage/rain.pyth",
@@ -6312,7 +6294,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 90,
+    "unvetted": 87,
     "blockedOn": 9,
     "ready": 1,
     "needsWork": 84,
@@ -6323,31 +6305,21 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 190,
+    "totalProducerPrs": 187,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 717,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 866
+    "openIssues": 864
   },
   "ages": {
     "openIssues": {
-      "meanDays": 326.4,
-      "medianDays": 155.2,
-      "oldestDays": 1760.1
+      "meanDays": 324.9,
+      "medianDays": 154.8,
+      "oldestDays": 1299.4
     }
   },
   "issueWorklist": [
-    {
-      "repo": "rainlanguage/rain-statusfi",
-      "number": 1,
-      "url": "https://github.com/rainlanguage/rain-statusfi/issues/1",
-      "title": "Notes for mvp",
-      "prs": [
-        "https://github.com/rainlanguage/rain-statusfi/pull/2"
-      ],
-      "createdAtMs": 1642972465000
-    },
     {
       "repo": "rainlanguage/rain-svelte-components",
       "number": 60,
@@ -6508,16 +6480,6 @@
         "https://github.com/rainlanguage/raindex.deploy/pull/2484"
       ],
       "createdAtMs": 1772039316000
-    },
-    {
-      "repo": "rainlanguage/rainlang.deploy",
-      "number": 17,
-      "url": "https://github.com/rainlanguage/rainlang.deploy/issues/17",
-      "title": "Rename DISPaiR struct and crate to Rainlang",
-      "prs": [
-        "https://github.com/rainlanguage/rainlang.deploy/pull/39"
-      ],
-      "createdAtMs": 1775561807000
     },
     {
       "repo": "cyclofinance/cyclo.site",

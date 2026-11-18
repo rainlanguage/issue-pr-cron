@@ -1262,3 +1262,6 @@
 {"ts":"2026-11-18T21:39:21Z","observedAt":"2026-11-18T22:33:00Z","kind":"pr","repo":"rainlanguage/rainix","number":453}
 {"ts":"2026-11-18T22:37:26Z","observedAt":"2026-11-18T23:05:24Z","kind":"pr","repo":"rainlanguage/rain-org-health","number":250}
 {"ts":"2026-11-18T22:43:46Z","observedAt":"2026-11-18T23:05:24Z","kind":"pr","repo":"rainlanguage/rain.extrospection.deploy","number":32}
+{"ts":"2026-11-18T23:17:51Z","observedAt":"2026-11-18T23:31:45Z","kind":"pr","repo":"rainlanguage/rain.dia","number":89}
+{"ts":"2026-11-18T23:17:36Z","observedAt":"2026-11-18T23:31:45Z","kind":"pr","repo":"rainlanguage/rain.extrospection.deploy","number":33}
+{"ts":"2026-11-18T23:20:19Z","observedAt":"2026-11-18T23:31:45Z","kind":"pr","repo":"rainlanguage/rainlang.deploy","number":39}
