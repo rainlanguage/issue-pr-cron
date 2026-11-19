@@ -45,12 +45,6 @@
       },
       {
         "repo": "rainlanguage/raindex.deploy",
-        "number": 2724,
-        "url": "https://github.com/rainlanguage/raindex.deploy/pull/2724",
-        "title": "Pin all third-party GitHub Actions to commit SHAs"
-      },
-      {
-        "repo": "rainlanguage/raindex.deploy",
         "number": 2722,
         "url": "https://github.com/rainlanguage/raindex.deploy/pull/2722",
         "title": "Add \"remove and withdraw all\" option to order removal (#2024)"
@@ -632,7 +626,7 @@
   "lanes": {
     "vet-lifecycle": {
       "ai:blocked-on": {
-        "count": 9,
+        "count": 8,
         "prs": [
           {
             "repo": "cyclofinance/cyclo.sol",
@@ -678,12 +672,6 @@
           },
           {
             "repo": "rainlanguage/raindex.deploy",
-            "number": 2724,
-            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2724",
-            "title": "Pin all third-party GitHub Actions to commit SHAs"
-          },
-          {
-            "repo": "rainlanguage/raindex.deploy",
             "number": 2722,
             "url": "https://github.com/rainlanguage/raindex.deploy/pull/2722",
             "title": "Add \"remove and withdraw all\" option to order removal (#2024)"
@@ -691,18 +679,18 @@
         ]
       },
       "un-vetted": {
-        "count": 86,
+        "count": 85,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 402,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/402",
+            "title": "Take each sibling's embedded deployments from its mechanism per network"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 617,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/617",
-            "title": "Bump dependencies to cascade round E set"
-          },
-          {
-            "repo": "rainlanguage/raindex.deploy",
-            "number": 2972,
-            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2972",
             "title": "Bump dependencies to cascade round E set"
           },
           {
@@ -806,12 +794,6 @@
             "number": 593,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/593",
             "title": "feat: live name, ticker and ISIN from snapshot plus per-token overrides"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 575,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/575",
-            "title": "Bind orchestrator beacon and initial admin on the root line"
           },
           {
             "repo": "rainlanguage/rainlang",
@@ -1945,6 +1927,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 618,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/618",
+      "title": "Convert the candidate orchestrator and beacon to a release"
+    },
     {
       "repo": "rainlanguage/raindex.deploy",
       "number": 2973,
@@ -4104,12 +4092,6 @@
       "number": 12,
       "url": "https://github.com/rainlanguage/issue-pr-cron/issues/12",
       "title": "Formalize the comment-protocol as Rust subcommands so standard forms are enforced"
-    },
-    {
-      "repo": "rainlanguage/issue-pr-cron",
-      "number": 11,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/11",
-      "title": "Convert prompt-inline command recipes to Rust bin subcommands"
     },
     {
       "repo": "rainlanguage/issue-pr-cron",
@@ -6282,8 +6264,8 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 86,
-    "blockedOn": 9,
+    "unvetted": 85,
+    "blockedOn": 8,
     "ready": 1,
     "needsWork": 83,
     "relink": 0,
@@ -6293,31 +6275,21 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 185,
+    "totalProducerPrs": 183,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 718,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 860
+    "openIssues": 859
   },
   "ages": {
     "openIssues": {
-      "meanDays": 318.0,
+      "meanDays": 317.2,
       "medianDays": 154.6,
       "oldestDays": 1038.3
     }
   },
   "issueWorklist": [
-    {
-      "repo": "rainlanguage/raindex.deploy",
-      "number": 620,
-      "url": "https://github.com/rainlanguage/raindex.deploy/issues/620",
-      "title": "pin all deps",
-      "prs": [
-        "https://github.com/rainlanguage/raindex.deploy/pull/2724"
-      ],
-      "createdAtMs": 1714920314000
-    },
     {
       "repo": "rainlanguage/raindex.deploy",
       "number": 2024,
@@ -10555,14 +10527,6 @@
     },
     {
       "repo": "rainlanguage/issue-pr-cron",
-      "number": 11,
-      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/11",
-      "title": "Convert prompt-inline command recipes to Rust bin subcommands",
-      "prs": [],
-      "createdAtMs": 1783189734000
-    },
-    {
-      "repo": "rainlanguage/issue-pr-cron",
       "number": 12,
       "url": "https://github.com/rainlanguage/issue-pr-cron/issues/12",
       "title": "Formalize the comment-protocol as Rust subcommands so standard forms are enforced",
@@ -13440,6 +13404,14 @@
       "title": "CI: product workflows call rainix reusables/composites instead of hand-rolling setup",
       "prs": [],
       "createdAtMs": 1795047669000
+    },
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 618,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/618",
+      "title": "Convert the candidate orchestrator and beacon to a release",
+      "prs": [],
+      "createdAtMs": 1795048261000
     }
   ]
 }
