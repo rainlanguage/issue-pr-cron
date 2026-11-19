@@ -679,7 +679,7 @@
         ]
       },
       "un-vetted": {
-        "count": 85,
+        "count": 84,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -692,12 +692,6 @@
             "number": 617,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/617",
             "title": "Bump dependencies to cascade round E set"
-          },
-          {
-            "repo": "rainlanguage/rain-org-health",
-            "number": 258,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/258",
-            "title": "Move the default branch to main"
           },
           {
             "repo": "rainlanguage/rain-org-health",
@@ -6270,7 +6264,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 85,
+    "unvetted": 84,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 83,
@@ -6281,7 +6275,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 183,
+    "totalProducerPrs": 182,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 719,
     "designPresentable": 5,
