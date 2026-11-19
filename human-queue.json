@@ -679,14 +679,8 @@
         ]
       },
       "un-vetted": {
-        "count": 84,
+        "count": 83,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 402,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/402",
-            "title": "Take each sibling's embedded deployments from its mechanism per network"
-          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 617,
@@ -6264,7 +6258,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 84,
+    "unvetted": 83,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 83,
@@ -6275,7 +6269,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 182,
+    "totalProducerPrs": 181,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 719,
     "designPresentable": 5,
