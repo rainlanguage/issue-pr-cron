@@ -667,7 +667,7 @@
         ]
       },
       "un-vetted": {
-        "count": 83,
+        "count": 82,
         "prs": [
           {
             "repo": "rainlanguage/rain.time",
@@ -740,12 +740,6 @@
             "number": 607,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/607",
             "title": "Token table: listing ISIN, ticker and name per row (2/3 of #594)"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 606,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/606",
-            "title": "LibSecurity: security shape checks with ISIN (1/3 of #594)"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -6246,7 +6240,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 83,
+    "unvetted": 82,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 83,
@@ -6257,7 +6251,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 181,
+    "totalProducerPrs": 180,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 719,
     "designPresentable": 5,
@@ -6266,9 +6260,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 317.9,
-      "medianDays": 155.3,
-      "oldestDays": 1039.0
+      "meanDays": 318.0,
+      "medianDays": 155.4,
+      "oldestDays": 1039.1
     }
   },
   "issueWorklist": [
