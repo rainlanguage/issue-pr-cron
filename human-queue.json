@@ -1928,6 +1928,12 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "S01-Issuer/s01.ops",
+      "number": 704,
+      "url": "https://github.com/S01-Issuer/s01.ops/issues/704",
+      "title": "Data room: a BD room for the team's sales material (team-bd)"
+    },
+    {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 618,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/618",
@@ -6277,16 +6283,16 @@
     "leaks": 0,
     "totalProducerPrs": 183,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 718,
+    "uncoveredIssues": 719,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 859
+    "openIssues": 860
   },
   "ages": {
     "openIssues": {
-      "meanDays": 317.4,
-      "medianDays": 154.8,
-      "oldestDays": 1038.5
+      "meanDays": 317.1,
+      "medianDays": 154.9,
+      "oldestDays": 1038.6
     }
   },
   "issueWorklist": [
@@ -13412,6 +13418,14 @@
       "title": "Convert the candidate orchestrator and beacon to a release",
       "prs": [],
       "createdAtMs": 1795048261000
+    },
+    {
+      "repo": "S01-Issuer/s01.ops",
+      "number": 704,
+      "url": "https://github.com/S01-Issuer/s01.ops/issues/704",
+      "title": "Data room: a BD room for the team's sales material (team-bd)",
+      "prs": [],
+      "createdAtMs": 1795071456000
     }
   ]
 }
