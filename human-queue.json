@@ -679,31 +679,25 @@
         ]
       },
       "un-vetted": {
-        "count": 87,
+        "count": 86,
         "prs": [
           {
-            "repo": "rainlanguage/rain.math.float.deploy",
-            "number": 67,
-            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/67",
-            "title": "Release 0.1.13"
+            "repo": "rainlanguage/rain.merkle.deploy",
+            "number": 50,
+            "url": "https://github.com/rainlanguage/rain.merkle.deploy/pull/50",
+            "title": "Bump rainlang 0.2.40, rain-deploy 0.1.37, rain-math-float-deploy 0.1.13"
           },
           {
-            "repo": "rainlanguage/rain.tofu.erc20-decimals.deploy",
-            "number": 34,
-            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals.deploy/pull/34",
-            "title": "Release 0.1.9"
+            "repo": "rainlanguage/rainlang.deploy",
+            "number": 40,
+            "url": "https://github.com/rainlanguage/rainlang.deploy/pull/40",
+            "title": "Bump rainlang 0.2.40, rain-deploy 0.1.37, rain-math-float-deploy 0.1.13, rain-tofu-erc20-decimals-deploy 0.1.9"
           },
           {
-            "repo": "rainlanguage/rain.metadata.deploy",
-            "number": 38,
-            "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/38",
-            "title": "Release 0.1.8"
-          },
-          {
-            "repo": "rainlanguage/rain.extrospection.deploy",
-            "number": 36,
-            "url": "https://github.com/rainlanguage/rain.extrospection.deploy/pull/36",
-            "title": "Release 0.1.6"
+            "repo": "rainlanguage/raindex.interface",
+            "number": 91,
+            "url": "https://github.com/rainlanguage/raindex.interface/pull/91",
+            "title": "Bump rainlang to 0.2.40"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -1939,6 +1933,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 303,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/303",
+      "title": "Add the new Protofire audit report to audit/protofire"
+    },
     {
       "repo": "S01-Issuer/s01.ops",
       "number": 704,
@@ -6282,7 +6282,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 87,
+    "unvetted": 86,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 83,
@@ -6293,18 +6293,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 185,
+    "totalProducerPrs": 184,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 719,
+    "uncoveredIssues": 720,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 860
+    "openIssues": 861
   },
   "ages": {
     "openIssues": {
-      "meanDays": 317.4,
-      "medianDays": 155.2,
-      "oldestDays": 1038.9
+      "meanDays": 317.1,
+      "medianDays": 155.3,
+      "oldestDays": 1039.0
     }
   },
   "issueWorklist": [
@@ -13438,6 +13438,14 @@
       "title": "Data room: a BD room for the team's sales material (team-bd)",
       "prs": [],
       "createdAtMs": 1795071456000
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 303,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/303",
+      "title": "Add the new Protofire audit report to audit/protofire",
+      "prs": [],
+      "createdAtMs": 1795104819000
     }
   ]
 }

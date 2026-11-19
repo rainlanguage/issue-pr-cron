@@ -1275,3 +1275,7 @@
 {"ts":"2026-11-19T01:00:34Z","observedAt":"2026-11-19T01:31:24Z","kind":"pr","repo":"rainlanguage/raindex.deploy","number":2972}
 {"ts":"2026-11-19T08:21:45Z","observedAt":"2026-11-19T08:33:44Z","kind":"pr","repo":"rainlanguage/rain-org-health","number":258}
 {"ts":"2026-11-19T13:20:25Z","observedAt":"2026-11-19T13:34:31Z","kind":"pr","repo":"rainlanguage/rain.deploy","number":402}
+{"ts":"2026-11-19T15:44:26Z","observedAt":"2026-11-19T16:32:52Z","kind":"pr","repo":"rainlanguage/rain.extrospection.deploy","number":36}
+{"ts":"2026-11-19T15:36:54Z","observedAt":"2026-11-19T16:32:52Z","kind":"pr","repo":"rainlanguage/rain.math.float.deploy","number":67}
+{"ts":"2026-11-19T15:44:46Z","observedAt":"2026-11-19T16:32:52Z","kind":"pr","repo":"rainlanguage/rain.metadata.deploy","number":38}
+{"ts":"2026-11-19T15:41:01Z","observedAt":"2026-11-19T16:32:52Z","kind":"pr","repo":"rainlanguage/rain.tofu.erc20-decimals.deploy","number":34}
