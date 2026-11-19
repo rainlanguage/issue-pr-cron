@@ -679,8 +679,32 @@
         ]
       },
       "un-vetted": {
-        "count": 83,
+        "count": 87,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.math.float.deploy",
+            "number": 67,
+            "url": "https://github.com/rainlanguage/rain.math.float.deploy/pull/67",
+            "title": "Release 0.1.13"
+          },
+          {
+            "repo": "rainlanguage/rain.tofu.erc20-decimals.deploy",
+            "number": 34,
+            "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals.deploy/pull/34",
+            "title": "Release 0.1.9"
+          },
+          {
+            "repo": "rainlanguage/rain.metadata.deploy",
+            "number": 38,
+            "url": "https://github.com/rainlanguage/rain.metadata.deploy/pull/38",
+            "title": "Release 0.1.8"
+          },
+          {
+            "repo": "rainlanguage/rain.extrospection.deploy",
+            "number": 36,
+            "url": "https://github.com/rainlanguage/rain.extrospection.deploy/pull/36",
+            "title": "Release 0.1.6"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 617,
@@ -6258,7 +6282,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 83,
+    "unvetted": 87,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 83,
@@ -6269,7 +6293,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 181,
+    "totalProducerPrs": 185,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 719,
     "designPresentable": 5,
@@ -6278,9 +6302,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 317.3,
-      "medianDays": 155.1,
-      "oldestDays": 1038.8
+      "meanDays": 317.4,
+      "medianDays": 155.2,
+      "oldestDays": 1038.9
     }
   },
   "issueWorklist": [
