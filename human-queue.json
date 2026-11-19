@@ -679,25 +679,13 @@
         ]
       },
       "un-vetted": {
-        "count": 86,
+        "count": 84,
         "prs": [
           {
-            "repo": "rainlanguage/rain.merkle.deploy",
-            "number": 50,
-            "url": "https://github.com/rainlanguage/rain.merkle.deploy/pull/50",
-            "title": "Bump rainlang 0.2.40, rain-deploy 0.1.37, rain-math-float-deploy 0.1.13"
-          },
-          {
-            "repo": "rainlanguage/rainlang.deploy",
-            "number": 40,
-            "url": "https://github.com/rainlanguage/rainlang.deploy/pull/40",
-            "title": "Bump rainlang 0.2.40, rain-deploy 0.1.37, rain-math-float-deploy 0.1.13, rain-tofu-erc20-decimals-deploy 0.1.9"
-          },
-          {
-            "repo": "rainlanguage/raindex.interface",
-            "number": 91,
-            "url": "https://github.com/rainlanguage/raindex.interface/pull/91",
-            "title": "Bump rainlang to 0.2.40"
+            "repo": "rainlanguage/raindex.deploy",
+            "number": 2975,
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2975",
+            "title": "Release 0.1.18"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -6282,7 +6270,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 86,
+    "unvetted": 84,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 83,
@@ -6293,7 +6281,7 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 184,
+    "totalProducerPrs": 182,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 720,
     "designPresentable": 5,
