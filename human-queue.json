@@ -338,12 +338,6 @@
         "title": "feat(ci): enforce pragma convention ^ lib/abstract, = concrete (closes #250)"
       },
       {
-        "repo": "rainlanguage/dotrain",
-        "number": 143,
-        "url": "https://github.com/rainlanguage/dotrain/pull/143",
-        "title": "fix(parser): comment before next binding bleeds into previous content_position"
-      },
-      {
         "repo": "rainlanguage/rain.flare",
         "number": 188,
         "url": "https://github.com/rainlanguage/rain.flare/pull/188",
@@ -697,31 +691,25 @@
         ]
       },
       "un-vetted": {
-        "count": 87,
+        "count": 86,
         "prs": [
           {
-            "repo": "rainlanguage/rainlang.deploy",
-            "number": 38,
-            "url": "https://github.com/rainlanguage/rainlang.deploy/pull/38",
-            "title": "Release 0.1.14"
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 617,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/617",
+            "title": "Bump dependencies to cascade round E set"
+          },
+          {
+            "repo": "rainlanguage/raindex.deploy",
+            "number": 2972,
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2972",
+            "title": "Bump dependencies to cascade round E set"
           },
           {
             "repo": "rainlanguage/rain-org-health",
-            "number": 256,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/256",
-            "title": "roh-scan: listing-fact inconsistencies against st0x.registry, Nasdaq and GLEIF"
-          },
-          {
-            "repo": "rainlanguage/rain.pyth",
-            "number": 57,
-            "url": "https://github.com/rainlanguage/rain.pyth/pull/57",
-            "title": "Cascade round D: bump rain deps"
-          },
-          {
-            "repo": "rainlanguage/rain-org-health",
-            "number": 255,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/255",
-            "title": "Label migration writers with their privileged-addresses.json key"
+            "number": 258,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/258",
+            "title": "Move the default branch to main"
           },
           {
             "repo": "rainlanguage/rain-org-health",
@@ -1273,7 +1261,7 @@
         }
       },
       "ai:needs-work": {
-        "count": 84,
+        "count": 83,
         "prs": [
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -1514,12 +1502,6 @@
             "number": 251,
             "url": "https://github.com/rainlanguage/rainix/pull/251",
             "title": "feat(ci): enforce pragma convention ^ lib/abstract, = concrete (closes #250)"
-          },
-          {
-            "repo": "rainlanguage/dotrain",
-            "number": 143,
-            "url": "https://github.com/rainlanguage/dotrain/pull/143",
-            "title": "fix(parser): comment before next binding bleeds into previous content_position"
           },
           {
             "repo": "rainlanguage/rain.flare",
@@ -1963,6 +1945,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/raindex.deploy",
+      "number": 2973,
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2973",
+      "title": "CI: product workflows call rainix reusables/composites instead of hand-rolling setup"
+    },
     {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 616,
@@ -4125,6 +4113,12 @@
     },
     {
       "repo": "rainlanguage/issue-pr-cron",
+      "number": 11,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/11",
+      "title": "Convert prompt-inline command recipes to Rust bin subcommands"
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
       "number": 10,
       "url": "https://github.com/rainlanguage/issue-pr-cron/issues/10",
       "title": "Convert the PreToolUse hook scripts to Rust"
@@ -6258,12 +6252,6 @@
       "number": 61,
       "url": "https://github.com/rainlanguage/dotrain/issues/61",
       "title": "fuzzing all the regexes against expectations"
-    },
-    {
-      "repo": "rainlanguage/rain-svelte-components",
-      "number": 63,
-      "url": "https://github.com/rainlanguage/rain-svelte-components/issues/63",
-      "title": "Bump Rainlang and the extension for the parser"
     }
   ],
   "archivedRepoPrs": [
@@ -6294,10 +6282,10 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 87,
+    "unvetted": 86,
     "blockedOn": 9,
     "ready": 1,
-    "needsWork": 84,
+    "needsWork": 83,
     "relink": 0,
     "design": 5,
     "blockedInfra": 0,
@@ -6305,71 +6293,21 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 187,
+    "totalProducerPrs": 185,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 717,
+    "uncoveredIssues": 718,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 864
+    "openIssues": 860
   },
   "ages": {
     "openIssues": {
-      "meanDays": 324.9,
-      "medianDays": 154.8,
-      "oldestDays": 1299.4
+      "meanDays": 318.0,
+      "medianDays": 154.6,
+      "oldestDays": 1038.3
     }
   },
   "issueWorklist": [
-    {
-      "repo": "rainlanguage/rain-svelte-components",
-      "number": 60,
-      "url": "https://github.com/rainlanguage/rain-svelte-components/issues/60",
-      "title": "AutoAbiForm tests",
-      "prs": [
-        "https://github.com/rainlanguage/rain-svelte-components/pull/59"
-      ],
-      "createdAtMs": 1682779269000
-    },
-    {
-      "repo": "rainlanguage/rain-svelte-components",
-      "number": 71,
-      "url": "https://github.com/rainlanguage/rain-svelte-components/issues/71",
-      "title": "InputDropdown tests",
-      "prs": [
-        "https://github.com/rainlanguage/rain-svelte-components/pull/70"
-      ],
-      "createdAtMs": 1685972413000
-    },
-    {
-      "repo": "rainlanguage/rain-svelte-components",
-      "number": 72,
-      "url": "https://github.com/rainlanguage/rain-svelte-components/issues/72",
-      "title": "Button test",
-      "prs": [
-        "https://github.com/rainlanguage/rain-svelte-components/pull/73"
-      ],
-      "createdAtMs": 1686062533000
-    },
-    {
-      "repo": "rainlanguage/rain-svelte-components",
-      "number": 75,
-      "url": "https://github.com/rainlanguage/rain-svelte-components/issues/75",
-      "title": "Modal test",
-      "prs": [
-        "https://github.com/rainlanguage/rain-svelte-components/pull/74"
-      ],
-      "createdAtMs": 1686337872000
-    },
-    {
-      "repo": "rainlanguage/dotrain",
-      "number": 114,
-      "url": "https://github.com/rainlanguage/dotrain/issues/114",
-      "title": "fix comment parsings",
-      "prs": [
-        "https://github.com/rainlanguage/dotrain/pull/143"
-      ],
-      "createdAtMs": 1710525788000
-    },
     {
       "repo": "rainlanguage/raindex.deploy",
       "number": 620,
@@ -7598,14 +7536,6 @@
         "https://github.com/rainlanguage/rain-org-health/pull/252"
       ],
       "createdAtMs": 1794921327000
-    },
-    {
-      "repo": "rainlanguage/rain-svelte-components",
-      "number": 63,
-      "url": "https://github.com/rainlanguage/rain-svelte-components/issues/63",
-      "title": "Bump Rainlang and the extension for the parser",
-      "prs": [],
-      "createdAtMs": 1683536832000
     },
     {
       "repo": "rainlanguage/dotrain",
@@ -10625,6 +10555,14 @@
     },
     {
       "repo": "rainlanguage/issue-pr-cron",
+      "number": 11,
+      "url": "https://github.com/rainlanguage/issue-pr-cron/issues/11",
+      "title": "Convert prompt-inline command recipes to Rust bin subcommands",
+      "prs": [],
+      "createdAtMs": 1783189734000
+    },
+    {
+      "repo": "rainlanguage/issue-pr-cron",
       "number": 12,
       "url": "https://github.com/rainlanguage/issue-pr-cron/issues/12",
       "title": "Formalize the comment-protocol as Rust subcommands so standard forms are enforced",
@@ -13494,6 +13432,14 @@
       "title": "Storage-location distinctness test: derive the namespaces from @custom:storage-location NatSpec, not a hand list",
       "prs": [],
       "createdAtMs": 1795040190000
+    },
+    {
+      "repo": "rainlanguage/raindex.deploy",
+      "number": 2973,
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2973",
+      "title": "CI: product workflows call rainix reusables/composites instead of hand-rolling setup",
+      "prs": [],
+      "createdAtMs": 1795047669000
     }
   ]
 }
