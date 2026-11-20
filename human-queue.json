@@ -667,8 +667,20 @@
         ]
       },
       "un-vetted": {
-        "count": 79,
+        "count": 81,
         "prs": [
+          {
+            "repo": "rainlanguage/raindex.deploy",
+            "number": 2977,
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2977",
+            "title": "Subgraph: versioned subgraph/v6 + subgraph/v7; V6 indexes 0g on Goldsky"
+          },
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 459,
+            "url": "https://github.com/rainlanguage/rainix/pull/459",
+            "title": "subgraph-targets: nested SUBGRAPH_DIR (e.g. subgraph/v6)"
+          },
           {
             "repo": "rainlanguage/rain-org-health",
             "number": 252,
@@ -1879,6 +1891,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "S01-Issuer/st0x-token-programme",
+      "number": 310,
+      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/310",
+      "title": "Signature attention 2026-11-20"
+    },
     {
       "repo": "S01-Issuer/st0x-token-programme",
       "number": 309,
@@ -6246,7 +6264,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 79,
+    "unvetted": 81,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 83,
@@ -6257,16 +6275,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 177,
+    "totalProducerPrs": 179,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 723,
+    "uncoveredIssues": 724,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 862
+    "openIssues": 863
   },
   "ages": {
     "openIssues": {
-      "meanDays": 317.3,
+      "meanDays": 317.0,
       "medianDays": 156.2,
       "oldestDays": 1039.9
     }
@@ -13413,6 +13431,14 @@
       "title": "Signature attention 2026-11-20",
       "prs": [],
       "createdAtMs": 1795184408000
+    },
+    {
+      "repo": "S01-Issuer/st0x-token-programme",
+      "number": 310,
+      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/310",
+      "title": "Signature attention 2026-11-20",
+      "prs": [],
+      "createdAtMs": 1795187995000
     }
   ]
 }
