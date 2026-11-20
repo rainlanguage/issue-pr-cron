@@ -667,19 +667,13 @@
         ]
       },
       "un-vetted": {
-        "count": 81,
+        "count": 80,
         "prs": [
           {
             "repo": "rainlanguage/raindex.deploy",
             "number": 2977,
             "url": "https://github.com/rainlanguage/raindex.deploy/pull/2977",
             "title": "Subgraph: versioned subgraph/v6 + subgraph/v7; V6 indexes 0g on Goldsky"
-          },
-          {
-            "repo": "rainlanguage/rainix",
-            "number": 459,
-            "url": "https://github.com/rainlanguage/rainix/pull/459",
-            "title": "subgraph-targets: nested SUBGRAPH_DIR (e.g. subgraph/v6)"
           },
           {
             "repo": "rainlanguage/rain-org-health",
@@ -1893,32 +1887,8 @@
   "uncoveredIssues": [
     {
       "repo": "S01-Issuer/st0x-token-programme",
-      "number": 310,
-      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/310",
-      "title": "Signature attention 2026-11-20"
-    },
-    {
-      "repo": "S01-Issuer/st0x-token-programme",
-      "number": 309,
-      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/309",
-      "title": "Signature attention 2026-11-20"
-    },
-    {
-      "repo": "S01-Issuer/st0x-token-programme",
-      "number": 308,
-      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/308",
-      "title": "Signature attention 2026-11-20"
-    },
-    {
-      "repo": "S01-Issuer/st0x-token-programme",
-      "number": 307,
-      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/307",
-      "title": "Signature attention 2026-11-20"
-    },
-    {
-      "repo": "S01-Issuer/st0x-token-programme",
-      "number": 306,
-      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/306",
+      "number": 312,
+      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/312",
       "title": "Signature attention 2026-11-20"
     },
     {
@@ -6264,7 +6234,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 81,
+    "unvetted": 80,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 83,
@@ -6275,18 +6245,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 179,
+    "totalProducerPrs": 178,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 724,
+    "uncoveredIssues": 720,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 863
+    "openIssues": 859
   },
   "ages": {
     "openIssues": {
-      "meanDays": 317.0,
-      "medianDays": 156.2,
-      "oldestDays": 1039.9
+      "meanDays": 318.5,
+      "medianDays": 156.3,
+      "oldestDays": 1040.0
     }
   },
   "issueWorklist": [
@@ -13402,43 +13372,11 @@
     },
     {
       "repo": "S01-Issuer/st0x-token-programme",
-      "number": 306,
-      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/306",
+      "number": 312,
+      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/312",
       "title": "Signature attention 2026-11-20",
       "prs": [],
-      "createdAtMs": 1795173543000
-    },
-    {
-      "repo": "S01-Issuer/st0x-token-programme",
-      "number": 307,
-      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/307",
-      "title": "Signature attention 2026-11-20",
-      "prs": [],
-      "createdAtMs": 1795177502000
-    },
-    {
-      "repo": "S01-Issuer/st0x-token-programme",
-      "number": 308,
-      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/308",
-      "title": "Signature attention 2026-11-20",
-      "prs": [],
-      "createdAtMs": 1795180788000
-    },
-    {
-      "repo": "S01-Issuer/st0x-token-programme",
-      "number": 309,
-      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/309",
-      "title": "Signature attention 2026-11-20",
-      "prs": [],
-      "createdAtMs": 1795184408000
-    },
-    {
-      "repo": "S01-Issuer/st0x-token-programme",
-      "number": 310,
-      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/310",
-      "title": "Signature attention 2026-11-20",
-      "prs": [],
-      "createdAtMs": 1795187995000
+      "createdAtMs": 1795191556000
     }
   ]
 }
