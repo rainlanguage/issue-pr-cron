@@ -1880,30 +1880,6 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
-      "repo": "S01-Issuer/st0x-token-programme",
-      "number": 315,
-      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/315",
-      "title": "Signature attention 2026-11-20"
-    },
-    {
-      "repo": "S01-Issuer/st0x-token-programme",
-      "number": 314,
-      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/314",
-      "title": "Signature attention 2026-11-20"
-    },
-    {
-      "repo": "S01-Issuer/st0x-token-programme",
-      "number": 313,
-      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/313",
-      "title": "Signature attention 2026-11-20"
-    },
-    {
-      "repo": "S01-Issuer/st0x-token-programme",
-      "number": 312,
-      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/312",
-      "title": "Signature attention 2026-11-20"
-    },
-    {
       "repo": "S01-Issuer/s01.ops",
       "number": 704,
       "url": "https://github.com/S01-Issuer/s01.ops/issues/704",
@@ -6259,16 +6235,16 @@
     "leaks": 0,
     "totalProducerPrs": 177,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 723,
+    "uncoveredIssues": 719,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 862
+    "openIssues": 858
   },
   "ages": {
     "openIssues": {
-      "meanDays": 317.5,
-      "medianDays": 156.4,
-      "oldestDays": 1040.1
+      "meanDays": 319.1,
+      "medianDays": 156.5,
+      "oldestDays": 1040.2
     }
   },
   "issueWorklist": [
@@ -13381,38 +13357,6 @@
       "title": "Data room: a BD room for the team's sales material (team-bd)",
       "prs": [],
       "createdAtMs": 1795071456000
-    },
-    {
-      "repo": "S01-Issuer/st0x-token-programme",
-      "number": 312,
-      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/312",
-      "title": "Signature attention 2026-11-20",
-      "prs": [],
-      "createdAtMs": 1795191556000
-    },
-    {
-      "repo": "S01-Issuer/st0x-token-programme",
-      "number": 313,
-      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/313",
-      "title": "Signature attention 2026-11-20",
-      "prs": [],
-      "createdAtMs": 1795195155000
-    },
-    {
-      "repo": "S01-Issuer/st0x-token-programme",
-      "number": 314,
-      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/314",
-      "title": "Signature attention 2026-11-20",
-      "prs": [],
-      "createdAtMs": 1795198943000
-    },
-    {
-      "repo": "S01-Issuer/st0x-token-programme",
-      "number": 315,
-      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/315",
-      "title": "Signature attention 2026-11-20",
-      "prs": [],
-      "createdAtMs": 1795202385000
     }
   ]
 }
