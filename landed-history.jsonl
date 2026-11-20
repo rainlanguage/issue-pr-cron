@@ -1296,3 +1296,4 @@
 {"ts":"2026-11-20T15:42:31Z","observedAt":"2026-11-20T16:32:43Z","kind":"issue","repo":"S01-Issuer/st0x-token-programme","number":308}
 {"ts":"2026-11-20T15:42:34Z","observedAt":"2026-11-20T16:32:43Z","kind":"issue","repo":"S01-Issuer/st0x-token-programme","number":309}
 {"ts":"2026-11-20T15:42:37Z","observedAt":"2026-11-20T16:32:43Z","kind":"issue","repo":"S01-Issuer/st0x-token-programme","number":310}
+{"ts":"2026-11-20T17:20:32Z","observedAt":"2026-11-20T17:31:51Z","kind":"pr","repo":"rainlanguage/raindex.deploy","number":2977}

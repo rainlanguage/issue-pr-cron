@@ -667,14 +667,8 @@
         ]
       },
       "un-vetted": {
-        "count": 80,
+        "count": 79,
         "prs": [
-          {
-            "repo": "rainlanguage/raindex.deploy",
-            "number": 2977,
-            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2977",
-            "title": "Subgraph: versioned subgraph/v6 + subgraph/v7; V6 indexes 0g on Goldsky"
-          },
           {
             "repo": "rainlanguage/rain-org-health",
             "number": 252,
@@ -1885,6 +1879,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "S01-Issuer/st0x-token-programme",
+      "number": 313,
+      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/313",
+      "title": "Signature attention 2026-11-20"
+    },
     {
       "repo": "S01-Issuer/st0x-token-programme",
       "number": 312,
@@ -6234,7 +6234,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 80,
+    "unvetted": 79,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 83,
@@ -6245,16 +6245,16 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 178,
+    "totalProducerPrs": 177,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 720,
+    "uncoveredIssues": 721,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 859
+    "openIssues": 860
   },
   "ages": {
     "openIssues": {
-      "meanDays": 318.5,
+      "meanDays": 318.1,
       "medianDays": 156.3,
       "oldestDays": 1040.0
     }
@@ -13377,6 +13377,14 @@
       "title": "Signature attention 2026-11-20",
       "prs": [],
       "createdAtMs": 1795191556000
+    },
+    {
+      "repo": "S01-Issuer/st0x-token-programme",
+      "number": 313,
+      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/313",
+      "title": "Signature attention 2026-11-20",
+      "prs": [],
+      "createdAtMs": 1795195155000
     }
   ]
 }
