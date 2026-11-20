@@ -1898,6 +1898,12 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "S01-Issuer/st0x-token-programme",
+      "number": 306,
+      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/306",
+      "title": "Signature attention 2026-11-20"
+    },
+    {
       "repo": "S01-Issuer/s01.ops",
       "number": 704,
       "url": "https://github.com/S01-Issuer/s01.ops/issues/704",
@@ -6253,15 +6259,15 @@
     "leaks": 0,
     "totalProducerPrs": 180,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 719,
+    "uncoveredIssues": 720,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 858
+    "openIssues": 859
   },
   "ages": {
     "openIssues": {
-      "meanDays": 318.6,
-      "medianDays": 156.0,
+      "meanDays": 318.3,
+      "medianDays": 156.1,
       "oldestDays": 1039.7
     }
   },
@@ -13375,6 +13381,14 @@
       "title": "Data room: a BD room for the team's sales material (team-bd)",
       "prs": [],
       "createdAtMs": 1795071456000
+    },
+    {
+      "repo": "S01-Issuer/st0x-token-programme",
+      "number": 306,
+      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/306",
+      "title": "Signature attention 2026-11-20",
+      "prs": [],
+      "createdAtMs": 1795173543000
     }
   ]
 }
