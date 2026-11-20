@@ -607,7 +607,7 @@
         "repo": "rainlanguage/rain.flare",
         "number": 125,
         "url": "https://github.com/rainlanguage/rain.flare/pull/125",
-        "title": "Fix staleness overflow: use subtraction instead of addition in stale check"
+        "title": "Staleness via rain-time LibTime.isStale: no overflow, fail-closed edge"
       }
     ]
   },
@@ -667,26 +667,8 @@
         ]
       },
       "un-vetted": {
-        "count": 82,
+        "count": 79,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.time",
-            "number": 1,
-            "url": "https://github.com/rainlanguage/rain.time/pull/1",
-            "title": "LibTime: overflow-safe timestamp age with FutureTimestamp revert"
-          },
-          {
-            "repo": "rainlanguage/raindex.deploy",
-            "number": 2976,
-            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2976",
-            "title": "deploy-subgraph: call rainix's reusable subgraph deploy"
-          },
-          {
-            "repo": "rainlanguage/rainix",
-            "number": 456,
-            "url": "https://github.com/rainlanguage/rainix/pull/456",
-            "title": "subgraph-deploy: Goldsky for networks Ormi does not index (0g)"
-          },
           {
             "repo": "rainlanguage/rain-org-health",
             "number": 252,
@@ -1159,7 +1141,7 @@
             "repo": "rainlanguage/rain.flare",
             "number": 125,
             "url": "https://github.com/rainlanguage/rain.flare/pull/125",
-            "title": "Fix staleness overflow: use subtraction instead of addition in stale check"
+            "title": "Staleness via rain-time LibTime.isStale: no overflow, fail-closed edge"
           }
         ]
       }
@@ -1897,6 +1879,18 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "S01-Issuer/st0x-token-programme",
+      "number": 309,
+      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/309",
+      "title": "Signature attention 2026-11-20"
+    },
+    {
+      "repo": "S01-Issuer/st0x-token-programme",
+      "number": 308,
+      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/308",
+      "title": "Signature attention 2026-11-20"
+    },
     {
       "repo": "S01-Issuer/st0x-token-programme",
       "number": 307,
@@ -6252,7 +6246,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 82,
+    "unvetted": 79,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 83,
@@ -6263,18 +6257,18 @@
     "closeCandidateUnvetted": 4,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 180,
+    "totalProducerPrs": 177,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 721,
+    "uncoveredIssues": 723,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 860
+    "openIssues": 862
   },
   "ages": {
     "openIssues": {
-      "meanDays": 317.9,
-      "medianDays": 156.1,
-      "oldestDays": 1039.8
+      "meanDays": 317.3,
+      "medianDays": 156.2,
+      "oldestDays": 1039.9
     }
   },
   "issueWorklist": [
@@ -13403,6 +13397,22 @@
       "title": "Signature attention 2026-11-20",
       "prs": [],
       "createdAtMs": 1795177502000
+    },
+    {
+      "repo": "S01-Issuer/st0x-token-programme",
+      "number": 308,
+      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/308",
+      "title": "Signature attention 2026-11-20",
+      "prs": [],
+      "createdAtMs": 1795180788000
+    },
+    {
+      "repo": "S01-Issuer/st0x-token-programme",
+      "number": 309,
+      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/309",
+      "title": "Signature attention 2026-11-20",
+      "prs": [],
+      "createdAtMs": 1795184408000
     }
   ]
 }
