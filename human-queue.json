@@ -1881,6 +1881,12 @@
   "uncoveredIssues": [
     {
       "repo": "S01-Issuer/st0x-token-programme",
+      "number": 314,
+      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/314",
+      "title": "Signature attention 2026-11-20"
+    },
+    {
+      "repo": "S01-Issuer/st0x-token-programme",
       "number": 313,
       "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/313",
       "title": "Signature attention 2026-11-20"
@@ -6247,14 +6253,14 @@
     "leaks": 0,
     "totalProducerPrs": 177,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 721,
+    "uncoveredIssues": 722,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 860
+    "openIssues": 861
   },
   "ages": {
     "openIssues": {
-      "meanDays": 318.1,
+      "meanDays": 317.8,
       "medianDays": 156.3,
       "oldestDays": 1040.0
     }
@@ -13385,6 +13391,14 @@
       "title": "Signature attention 2026-11-20",
       "prs": [],
       "createdAtMs": 1795195155000
+    },
+    {
+      "repo": "S01-Issuer/st0x-token-programme",
+      "number": 314,
+      "url": "https://github.com/S01-Issuer/st0x-token-programme/issues/314",
+      "title": "Signature attention 2026-11-20",
+      "prs": [],
+      "createdAtMs": 1795198943000
     }
   ]
 }
