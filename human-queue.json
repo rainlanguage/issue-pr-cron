@@ -637,8 +637,14 @@
         ]
       },
       "un-vetted": {
-        "count": 79,
+        "count": 80,
         "prs": [
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 629,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/629",
+            "title": "Add the six Ethereum-only tokens to the Ethereum, HyperEVM, Robinhood and BSC token tables"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 627,
@@ -1812,6 +1818,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 628,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/628",
+      "title": "0G's US authoriser grants the orchestrator DEPOSIT and WITHDRAW, as on every other chain"
+    },
     {
       "repo": "rainlanguage/rain.will-overflow",
       "number": 7,
@@ -6287,7 +6299,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 79,
+    "unvetted": 80,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 80,
@@ -6298,18 +6310,18 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 173,
+    "totalProducerPrs": 174,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 741,
+    "uncoveredIssues": 742,
     "designPresentable": 4,
     "designNoQuestion": 0,
-    "openIssues": 878
+    "openIssues": 879
   },
   "ages": {
     "openIssues": {
-      "meanDays": 312.1,
+      "meanDays": 311.8,
       "medianDays": 147.8,
-      "oldestDays": 1041.0
+      "oldestDays": 1041.1
     }
   },
   "issueWorklist": [
@@ -13579,6 +13591,14 @@
       "title": "Move off-chain tooling into a .tooling repo, out of audit scope",
       "prs": [],
       "createdAtMs": 1795275850000
+    },
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 628,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/628",
+      "title": "0G's US authoriser grants the orchestrator DEPOSIT and WITHDRAW, as on every other chain",
+      "prs": [],
+      "createdAtMs": 1795287418000
     }
   ]
 }
