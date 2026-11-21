@@ -583,9 +583,11 @@ Ruling on an `ai:ready` PR used to take six `gh` reads assembled by hand, in an
 order the reader had to remember, and being wrong about any one of them changes
 the decision. `next_ready` returns them together: the vetter's own sha-bound
 verdict **note** (the reasoning, not the label), `headRefOid` and `baseRefName`,
-the CI rollup with failing checks **named**, whether CodeRabbit actually
-reviewed, the unresolved-thread count **qualified by that**, and the legacy
-deploy signal (`legacyDeploySignal` — never a merge gate, see below).
+the CI rollup with failing checks **named**, the unresolved review-thread count,
+and the legacy deploy signal (`legacyDeploySignal` — never a merge gate, see
+below). The thread count is 0 on every row, because the queue admits only a
+verified zero: it shows only that the open-thread gate passed, and the review
+behind the row is the vetter's `verdict.note`.
 
 **Which** PR is not a second question. `--queue` already ranks the presentable
 set cheapest-first; `next_ready` answers a prefix of that same ranked list, from
@@ -639,21 +641,8 @@ of this shape). The guard is unchanged, including its refusal: an unreadable
 archived flag is `Malformed` and aborts, rather than collapsing to "not
 archived" and putting a frozen row back at the head of the queue.
 
-Three fields are worth their own note:
+One field is worth its own note:
 
-- **CodeRabbit coverage is a typed verdict, not a check state.** Only a commit
-  status whose _description_ is exactly `Review completed` is coverage.
-  `Review rate limited` and `Review queued` are `success` states carrying a
-  green check with nothing behind them, and while the org's plan quota is
-  exhausted that is most PRs. Matching is exact on the coverage side and lenient
-  on the others, so a description CodeRabbit invents tomorrow is under-claimed
-  rather than over-claimed. The raw state and description are returned beside
-  the verdict, so the misleading green stays visible next to the truth about it.
-  The description comes from `GET /commits/{sha}/status` because
-  `statusCheckRollup` does not carry the field the whole distinction turns on.
-- **`reviewThreads.meaning` qualifies the count.** Zero unresolved threads under
-  a rate-limited review means no thread was _opened_, which is what an absent
-  review looks like — `vacuous-no-review-behind-it`, not `clean`.
 - **The legacy deploy signal is never a merge gate (#162), and it is read from
   the body and the trusted comments, never the title.** Under the split release
   lifecycle no merge waits on a deploy, so `repo-not-migrated` does not say
@@ -876,8 +865,8 @@ to interpret, so `health` is typed: `healthy-…` only when zero leaks were foun
 over a **fully read** population; `…-not-proven-health` when comment reads
 failed, with `counts.leakUnknown` and the PRs named in `fetchErrors`;
 `leaking-…` otherwise. A run where every fetch failed therefore cannot report a
-clean conformance bill — the same fail-closed reasoning as `CodeRabbitCoverage`,
-where unreadable is never coverage.
+clean conformance bill — the same fail-closed reasoning as
+`ThreadRoute::Failed`, where an unreadable thread state is never a clean count.
 
 Each row carries the leak's own evidence — the trusted note (truncation
 flagged), the state label the classifier looked for and did not find, the labels
@@ -1047,9 +1036,9 @@ carries both facts, and counts as current only when both hold:
 
 An **unstamped** comment is `VetProtocol::Unknown` and is never current. It was
 written under rules that cannot be identified, and unidentified is not "fine" —
-the same posture as `Merge::Unknown` and `CodeRabbitCoverage::Unreadable`. Every
-verdict predating the stamp is in exactly that position, which is what makes the
-stamp's introduction its own first invalidation.
+the same posture as `Merge::Unknown` and `ThreadRoute::Failed`. Every verdict
+predating the stamp is in exactly that position, which is what makes the stamp's
+introduction its own first invalidation.
 
 The author filter sits **upstream** of all of this: a stamped, head-matching
 verdict from any account other than the trusted one is not a verdict at all
@@ -1081,9 +1070,9 @@ the type is the mechanism, and it makes the truncated case unignorable at the
 call site. `changed_files_from_view` is the pure read of a `gh pr view`
 document; `pr_changed_files` resolves a `Partial` whose total is known by
 re-fetching the paginating REST endpoint. **Either field absent leaves the set
-`Partial`** — the same posture as `Merge::Unknown` and
-`CodeRabbitCoverage::Unreadable`, because a field requested on the call that
-produced the document is _unknown_ when absent, never _nothing_.
+`Partial`** — the same posture as `Merge::Unknown` and `ThreadRoute::Failed`,
+because a field requested on the call that produced the document is _unknown_
+when absent, never _nothing_.
 
 Pagination is attempted **only when the total is known**, and that restraint is
 #129. `gh_json` collapses every failure into `None`, so a re-fetch that failed
@@ -3144,11 +3133,11 @@ set.
 ### The open-threads gate
 
 A PR does not reach **either** the vetter or the human while it carries
-**unresolved review threads** (CodeRabbit's or a human's). Both gates read the
-same typed GraphQL state — `reviewThreads { isResolved }`, paginated — and never
-the prose of a review body: on 2026-07-27 CodeRabbit reported check `SUCCESS` on
-rain-org-health#128 with four threads open, so neither the status check nor an
-`Actionable comments posted: N` line is evidence of clean.
+**unresolved review threads**, whoever opened them. Both gates read the same
+typed GraphQL state — `reviewThreads { isResolved }`, paginated — and never the
+prose of a review body: on 2026-07-27 a review bot reported check `SUCCESS` on
+rain-org-health#128 with four threads open, so neither a status check nor a
+review body's comment count is evidence of clean.
 
 - `unvetted` (the vetter's state-load) withholds a thread-dirty PR: it is
   counted as `skipOpenThreads`, listed in `openThreads` with its thread count,
@@ -3164,7 +3153,7 @@ Both fail **closed**: a thread state that cannot be read is not presented. In
 rather than silently read as clean (which would present a dirty PR) or as dirty
 (which would blank the queue). Resolving the threads is the **producer's**
 step-3e duty, and `worklist` routes the PR there as `nextAction:
-coderabbit-3e`.
+threads-3e`.
 
 **A rate limit is not a fetch error, and the queue now says which it had.**
 `gh_json` used to collapse every failure into one `None`, so a candidate GitHub
