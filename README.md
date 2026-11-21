@@ -2597,9 +2597,10 @@ version of the fleet state the producer is forbidden to paste.
 - **The vetter has no write grant, and neither does an auditor.**
   `review-settings.json` denies `Bash`/`Write`/`Edit`/`NotebookEdit` and a CI
   job asserts it; the same harness answers a sub-agent's Bash attempt with "Bash
-  is disabled for this session, **in subagents as well as here**". The only
-  permission that changed is `Task`, which moved from `deny` to `allow` — the
-  dispatch tool itself, and nothing a role is defined not to have.
+  is disabled for this session, **in subagents as well as here**". The
+  permissions that changed are `Task` (the dispatch tool itself, moved from
+  `deny` to `allow` with #257) and `ListAgents`/`SendMessage` (the resume pair —
+  see the recovery paragraph below) — nothing a role is defined not to have.
 - **Trust boundaries do not move.** `pr_context` and `trusted-comments` stay in
   the main loop, so who authored a comment is never an auditor's judgement call.
   The auditor has no GitHub read of any kind.
@@ -2609,6 +2610,20 @@ verdict is checked against must not be disposable by the agent reading it, and a
 released tree is a verdict refused. Dependency checkouts an auditor makes to
 follow a callee are reclaimed by the nightly `vet-*` age sweep, which
 [is the only thing that reclaims one](#work-clone-lifecycle) anyway.
+
+**An auditor that dies mid-run is resumed, not replaced.** A stopped auditor's
+context — the verified tree, every source read, the findings in progress — is
+intact and already paid for, so the orchestrator's first recovery act is
+`ListAgents` + `SendMessage` to that auditor, telling it to continue; a fresh
+redispatch is the fallback when the resume itself fails, and it pays the whole
+lens again from zero. The narration and run summary must name which path was
+taken — a redispatch described as a resume is falsifiable only by the trace,
+which is how run `20260810T230003Z` hid a full re-audit (fourth skill injection,
+zero inherited context, ~$2.70 of a $15.46 run discarded) behind the words
+"resuming it so it continues from where it left off" (#275). `SendMessage` is on
+the vetter's surface for this one move only: continuing an auditor the run
+dispatched. It writes nothing to GitHub or disk, and the prompt confines it —
+messaging anything but the run's own stopped auditor is outside the machine.
 
 **The harness fact the whole thing rests on:** a dispatched sub-agent's tool
 calls are written into the run's own stream-json trace, tagged with
