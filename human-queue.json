@@ -637,8 +637,20 @@
         ]
       },
       "un-vetted": {
-        "count": 77,
+        "count": 79,
         "prs": [
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 627,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/627",
+            "title": "fix(0g): create 0G tokens in Ethereum's creation order"
+          },
+          {
+            "repo": "rainlanguage/raindex.deploy",
+            "number": 2981,
+            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2981",
+            "title": "Record polygon RaindexV3 0x34200E02"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 626,
@@ -6275,7 +6287,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 77,
+    "unvetted": 79,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 80,
@@ -6286,7 +6298,7 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 171,
+    "totalProducerPrs": 173,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 741,
     "designPresentable": 4,
@@ -6295,7 +6307,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 312.0,
+      "meanDays": 312.1,
       "medianDays": 147.7,
       "oldestDays": 1041.0
     }
