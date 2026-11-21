@@ -6243,8 +6243,8 @@
   "ages": {
     "openIssues": {
       "meanDays": 319.3,
-      "medianDays": 156.7,
-      "oldestDays": 1040.4
+      "medianDays": 156.8,
+      "oldestDays": 1040.5
     }
   },
   "issueWorklist": [
