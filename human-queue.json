@@ -82,12 +82,6 @@
         "number": 276,
         "url": "https://github.com/rainlanguage/issue-pr-cron/pull/276",
         "title": "rework(vetter): resume a dead auditor before redispatching, and name the path taken"
-      },
-      {
-        "repo": "rainlanguage/rain.flare",
-        "number": 161,
-        "url": "https://github.com/rainlanguage/rain.flare/pull/161",
-        "title": "fix: remove ankr public RPC fallback from LibFork — fail loud on unset env"
       }
     ],
     "ai:needs-work": [
@@ -602,12 +596,6 @@
         "number": 2793,
         "url": "https://github.com/rainlanguage/raindex.deploy/pull/2793",
         "title": "perf: eliminate redundant read_dispair calls in try_into_call"
-      },
-      {
-        "repo": "rainlanguage/rain.flare",
-        "number": 125,
-        "url": "https://github.com/rainlanguage/rain.flare/pull/125",
-        "title": "Staleness via rain-time LibTime.isStale: no overflow, fail-closed edge"
       }
     ]
   },
@@ -667,7 +655,7 @@
         ]
       },
       "un-vetted": {
-        "count": 79,
+        "count": 76,
         "prs": [
           {
             "repo": "rainlanguage/rain-org-health",
@@ -680,12 +668,6 @@
             "number": 2971,
             "url": "https://github.com/rainlanguage/raindex.deploy/pull/2971",
             "title": "tokens-subgraph: (raindex, token) discovery across every recorded raindex"
-          },
-          {
-            "repo": "rainlanguage/raindex.deploy",
-            "number": 2970,
-            "url": "https://github.com/rainlanguage/raindex.deploy/pull/2970",
-            "title": "LibRaindexDeployments: every raindex deployment, versioned, as deployments/raindex.json"
           },
           {
             "repo": "rainlanguage/rain.deploy",
@@ -716,12 +698,6 @@
             "number": 608,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/608",
             "title": "Every production row deploys keyless and named at deploy (fork proof)"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 607,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/607",
-            "title": "Token table: listing ISIN, ticker and name per row (2/3 of #594)"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -1136,19 +1112,13 @@
             "number": 2793,
             "url": "https://github.com/rainlanguage/raindex.deploy/pull/2793",
             "title": "perf: eliminate redundant read_dispair calls in try_into_call"
-          },
-          {
-            "repo": "rainlanguage/rain.flare",
-            "number": 125,
-            "url": "https://github.com/rainlanguage/rain.flare/pull/125",
-            "title": "Staleness via rain-time LibTime.isStale: no overflow, fail-closed edge"
           }
         ]
       }
     },
     "vetter-verdicts": {
       "ai:design": {
-        "count": 5,
+        "count": 4,
         "prs": [
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -1177,20 +1147,13 @@
             "url": "https://github.com/rainlanguage/issue-pr-cron/pull/276",
             "title": "rework(vetter): resume a dead auditor before redispatching, and name the path taken",
             "bucket": "presentable"
-          },
-          {
-            "repo": "rainlanguage/rain.flare",
-            "number": 161,
-            "url": "https://github.com/rainlanguage/rain.flare/pull/161",
-            "title": "fix: remove ankr public RPC fallback from LibFork — fail loud on unset env",
-            "bucket": "presentable"
           }
         ],
         "breakdown": {
           "draft": 0,
           "fetchErrors": 0,
           "noQuestion": 0,
-          "presentable": 5,
+          "presentable": 4,
           "unaddressable": 0
         }
       },
@@ -1843,12 +1806,6 @@
       "number": 9,
       "url": "https://github.com/rainlanguage/rain.dia/issues/9",
       "title": "[AUDIT-M04] [medium] maxAge exact boundary elapsed==staleAfter untested"
-    },
-    {
-      "repo": "rainlanguage/rain.flare",
-      "number": 67,
-      "url": "https://github.com/rainlanguage/rain.flare/issues/67",
-      "title": "[F20] [MEDIUM] Public ankr RPC default in LibFork makes the entire fork test suite depend on an unowned, mutable endpoint that no test or CI step pins"
     }
   ],
   "closeCandidateUnvetted": [
@@ -1865,12 +1822,6 @@
       "title": "[AUDIT-M04] [medium] maxAge exact boundary elapsed==staleAfter untested"
     },
     {
-      "repo": "rainlanguage/rain.flare",
-      "number": 67,
-      "url": "https://github.com/rainlanguage/rain.flare/issues/67",
-      "title": "[F20] [MEDIUM] Public ankr RPC default in LibFork makes the entire fork test suite depend on an unowned, mutable endpoint that no test or CI step pins"
-    },
-    {
       "repo": "rainlanguage/rain.dia",
       "number": 61,
       "url": "https://github.com/rainlanguage/rain.dia/pull/61",
@@ -1879,6 +1830,30 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 306,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/306",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope"
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 405,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/405",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope"
+    },
+    {
+      "repo": "rainlanguage/raindex.deploy",
+      "number": 2980,
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2980",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope"
+    },
+    {
+      "repo": "rainlanguage/raindex.deploy",
+      "number": 2979,
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2979",
+      "title": "Move #2970's deployments record into raindex.tooling, and set the .tooling convention for off-chain code"
+    },
     {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 625,
@@ -6228,27 +6203,27 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 79,
+    "unvetted": 76,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 83,
     "relink": 0,
-    "design": 5,
+    "design": 4,
     "blockedInfra": 0,
-    "closeCandidateIssues": 3,
-    "closeCandidateUnvetted": 4,
+    "closeCandidateIssues": 2,
+    "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 177,
+    "totalProducerPrs": 173,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 720,
-    "designPresentable": 5,
+    "uncoveredIssues": 724,
+    "designPresentable": 4,
     "designNoQuestion": 0,
-    "openIssues": 859
+    "openIssues": 860
   },
   "ages": {
     "openIssues": {
-      "meanDays": 319.4,
+      "meanDays": 318.5,
       "medianDays": 157.2,
       "oldestDays": 1040.9
     }
@@ -6908,27 +6883,6 @@
         "https://github.com/rainlanguage/rain.flare/pull/186"
       ],
       "createdAtMs": 1781611525000
-    },
-    {
-      "repo": "rainlanguage/rain.flare",
-      "number": 102,
-      "url": "https://github.com/rainlanguage/rain.flare/issues/102",
-      "title": "[F51] [LOW] Staleness check can panic-revert (overflow) instead of a clean error for large timeout",
-      "prs": [
-        "https://github.com/rainlanguage/rain.flare/pull/125",
-        "https://github.com/rainlanguage/rain.flare/pull/171"
-      ],
-      "createdAtMs": 1781611538000
-    },
-    {
-      "repo": "rainlanguage/rain.flare",
-      "number": 105,
-      "url": "https://github.com/rainlanguage/rain.flare/issues/105",
-      "title": "[F54] [LOW] Stale-price boundary not exercised at uint256 overflow of priceTimestamp + timeout",
-      "prs": [
-        "https://github.com/rainlanguage/rain.flare/pull/125"
-      ],
-      "createdAtMs": 1781611558000
     },
     {
       "repo": "rainlanguage/rain.flare",
@@ -10278,14 +10232,6 @@
     },
     {
       "repo": "rainlanguage/rain.flare",
-      "number": 67,
-      "url": "https://github.com/rainlanguage/rain.flare/issues/67",
-      "title": "[F20] [MEDIUM] Public ankr RPC default in LibFork makes the entire fork test suite depend on an unowned, mutable endpoint that no test or CI step pins",
-      "prs": [],
-      "createdAtMs": 1781611326000
-    },
-    {
-      "repo": "rainlanguage/rain.flare",
       "number": 75,
       "url": "https://github.com/rainlanguage/rain.flare/issues/75",
       "title": "[C-flreth-registry] [LOW] 3 mutation-coverage gap(s) in src/lib/flreth/LibDineroFlrEth.sol, src/lib/registry/LibFlareContractRegistry.sol — tests on amt/flreth-registry",
@@ -13371,6 +13317,38 @@
       "title": "Token table is keyed by ticker, which is only unique within our table",
       "prs": [],
       "createdAtMs": 1795271387000
+    },
+    {
+      "repo": "rainlanguage/raindex.deploy",
+      "number": 2979,
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2979",
+      "title": "Move #2970's deployments record into raindex.tooling, and set the .tooling convention for off-chain code",
+      "prs": [],
+      "createdAtMs": 1795274745000
+    },
+    {
+      "repo": "rainlanguage/raindex.deploy",
+      "number": 2980,
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2980",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope",
+      "prs": [],
+      "createdAtMs": 1795274751000
+    },
+    {
+      "repo": "rainlanguage/rain.deploy",
+      "number": 405,
+      "url": "https://github.com/rainlanguage/rain.deploy/issues/405",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope",
+      "prs": [],
+      "createdAtMs": 1795274755000
+    },
+    {
+      "repo": "rainlanguage/rain.factory",
+      "number": 306,
+      "url": "https://github.com/rainlanguage/rain.factory/issues/306",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope",
+      "prs": [],
+      "createdAtMs": 1795274760000
     }
   ]
 }
