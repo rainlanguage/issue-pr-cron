@@ -1880,6 +1880,12 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 625,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/625",
+      "title": "Token table is keyed by ticker, which is only unique within our table"
+    },
+    {
       "repo": "S01-Issuer/s01.ops",
       "number": 704,
       "url": "https://github.com/S01-Issuer/s01.ops/issues/704",
@@ -6235,16 +6241,16 @@
     "leaks": 0,
     "totalProducerPrs": 177,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 719,
+    "uncoveredIssues": 720,
     "designPresentable": 5,
     "designNoQuestion": 0,
-    "openIssues": 858
+    "openIssues": 859
   },
   "ages": {
     "openIssues": {
-      "meanDays": 319.7,
-      "medianDays": 157.1,
-      "oldestDays": 1040.8
+      "meanDays": 319.4,
+      "medianDays": 157.2,
+      "oldestDays": 1040.9
     }
   },
   "issueWorklist": [
@@ -13357,6 +13363,14 @@
       "title": "Data room: a BD room for the team's sales material (team-bd)",
       "prs": [],
       "createdAtMs": 1795071456000
+    },
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 625,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/625",
+      "title": "Token table is keyed by ticker, which is only unique within our table",
+      "prs": [],
+      "createdAtMs": 1795271387000
     }
   ]
 }
