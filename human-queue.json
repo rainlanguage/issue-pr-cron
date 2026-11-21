@@ -564,24 +564,6 @@
         "number": 294,
         "url": "https://github.com/cyclofinance/cyclo.site/pull/294",
         "title": "feat: show re-up opportunity per receipt on unlock page"
-      },
-      {
-        "repo": "rainlanguage/rain.strategies",
-        "number": 60,
-        "url": "https://github.com/rainlanguage/rain.strategies/pull/60",
-        "title": "v5 for dynamic spread"
-      },
-      {
-        "repo": "rainlanguage/rain.strategies",
-        "number": 20,
-        "url": "https://github.com/rainlanguage/rain.strategies/pull/20",
-        "title": "2025 03 05 ds"
-      },
-      {
-        "repo": "rainlanguage/rain.subgraph.docker",
-        "number": 3,
-        "url": "https://github.com/rainlanguage/rain.subgraph.docker/pull/3",
-        "title": "2023 12 23 anvil"
       }
     ],
     "ai:ready": [
@@ -655,8 +637,14 @@
         ]
       },
       "un-vetted": {
-        "count": 76,
+        "count": 77,
         "prs": [
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 626,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/626",
+            "title": "docs: TIMELOCK.md describes only how the timelock works"
+          },
           {
             "repo": "rainlanguage/rain-org-health",
             "number": 252,
@@ -1158,7 +1146,7 @@
         }
       },
       "ai:needs-work": {
-        "count": 83,
+        "count": 80,
         "prs": [
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -1639,24 +1627,6 @@
             "number": 294,
             "url": "https://github.com/cyclofinance/cyclo.site/pull/294",
             "title": "feat: show re-up opportunity per receipt on unlock page"
-          },
-          {
-            "repo": "rainlanguage/rain.strategies",
-            "number": 60,
-            "url": "https://github.com/rainlanguage/rain.strategies/pull/60",
-            "title": "v5 for dynamic spread"
-          },
-          {
-            "repo": "rainlanguage/rain.strategies",
-            "number": 20,
-            "url": "https://github.com/rainlanguage/rain.strategies/pull/20",
-            "title": "2025 03 05 ds"
-          },
-          {
-            "repo": "rainlanguage/rain.subgraph.docker",
-            "number": 3,
-            "url": "https://github.com/rainlanguage/rain.subgraph.docker/pull/3",
-            "title": "2023 12 23 anvil"
           }
         ]
       },
@@ -1831,6 +1801,114 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain.will-overflow",
+      "number": 7,
+      "url": "https://github.com/rainlanguage/rain.will-overflow/issues/7",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope"
+    },
+    {
+      "repo": "rainlanguage/raindex.governance",
+      "number": 45,
+      "url": "https://github.com/rainlanguage/raindex.governance/issues/45",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope"
+    },
+    {
+      "repo": "rainlanguage/rain.pyth",
+      "number": 58,
+      "url": "https://github.com/rainlanguage/rain.pyth/issues/58",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 337,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/337",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 743,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/743",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope"
+    },
+    {
+      "repo": "rainlanguage/rain.flare",
+      "number": 232,
+      "url": "https://github.com/rainlanguage/rain.flare/issues/232",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope"
+    },
+    {
+      "repo": "rainlanguage/rain.erc4626.words",
+      "number": 286,
+      "url": "https://github.com/rainlanguage/rain.erc4626.words/issues/286",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope"
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 157,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/157",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 195,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/195",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope"
+    },
+    {
+      "repo": "rainlanguage/rain.dia",
+      "number": 90,
+      "url": "https://github.com/rainlanguage/rain.dia/issues/90",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope"
+    },
+    {
+      "repo": "rainlanguage/rain.verify",
+      "number": 52,
+      "url": "https://github.com/rainlanguage/rain.verify/issues/52",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope"
+    },
+    {
+      "repo": "rainlanguage/rain.merkle.deploy",
+      "number": 52,
+      "url": "https://github.com/rainlanguage/rain.merkle.deploy/issues/52",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope"
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection.deploy",
+      "number": 37,
+      "url": "https://github.com/rainlanguage/rain.extrospection.deploy/issues/37",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope"
+    },
+    {
+      "repo": "rainlanguage/rain.metadata.deploy",
+      "number": 39,
+      "url": "https://github.com/rainlanguage/rain.metadata.deploy/issues/39",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope"
+    },
+    {
+      "repo": "rainlanguage/rain.tofu.erc20-decimals.deploy",
+      "number": 36,
+      "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals.deploy/issues/36",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope"
+    },
+    {
+      "repo": "rainlanguage/rain.factory.deploy",
+      "number": 96,
+      "url": "https://github.com/rainlanguage/rain.factory.deploy/issues/96",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope"
+    },
+    {
+      "repo": "rainlanguage/rain.math.float.deploy",
+      "number": 68,
+      "url": "https://github.com/rainlanguage/rain.math.float.deploy/issues/68",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope"
+    },
+    {
+      "repo": "rainlanguage/rainlang.deploy",
+      "number": 42,
+      "url": "https://github.com/rainlanguage/rainlang.deploy/issues/42",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope"
+    },
+    {
       "repo": "rainlanguage/rain.factory",
       "number": 306,
       "url": "https://github.com/rainlanguage/rain.factory/issues/306",
@@ -1895,12 +1973,6 @@
       "number": 43,
       "url": "https://github.com/S01-Issuer/tsalt.api/issues/43",
       "title": "ops void: two doc nits from PR #41 (notesMoved example and field doc)"
-    },
-    {
-      "repo": "rainlanguage/raindex.deploy",
-      "number": 2968,
-      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2968",
-      "title": "Subgraph: every known raindex address per network, indexing the tokens each has held"
     },
     {
       "repo": "rainlanguage/raindex.deploy",
@@ -6203,10 +6275,10 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 76,
+    "unvetted": 77,
     "blockedOn": 8,
     "ready": 1,
-    "needsWork": 83,
+    "needsWork": 80,
     "relink": 0,
     "design": 4,
     "blockedInfra": 0,
@@ -6214,18 +6286,18 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 173,
+    "totalProducerPrs": 171,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 724,
+    "uncoveredIssues": 741,
     "designPresentable": 4,
     "designNoQuestion": 0,
-    "openIssues": 860
+    "openIssues": 878
   },
   "ages": {
     "openIssues": {
-      "meanDays": 318.5,
-      "medianDays": 157.2,
-      "oldestDays": 1040.9
+      "meanDays": 312.0,
+      "medianDays": 147.7,
+      "oldestDays": 1041.0
     }
   },
   "issueWorklist": [
@@ -7405,6 +7477,16 @@
         "https://github.com/rainlanguage/rain-org-health/pull/252"
       ],
       "createdAtMs": 1794921327000
+    },
+    {
+      "repo": "rainlanguage/raindex.deploy",
+      "number": 2968,
+      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2968",
+      "title": "Subgraph: every known raindex address per network, indexing the tokens each has held",
+      "prs": [
+        "https://github.com/rainlanguage/raindex.deploy/pull/2971"
+      ],
+      "createdAtMs": 1795014477000
     },
     {
       "repo": "rainlanguage/dotrain",
@@ -13255,14 +13337,6 @@
       "createdAtMs": 1795014473000
     },
     {
-      "repo": "rainlanguage/raindex.deploy",
-      "number": 2968,
-      "url": "https://github.com/rainlanguage/raindex.deploy/issues/2968",
-      "title": "Subgraph: every known raindex address per network, indexing the tokens each has held",
-      "prs": [],
-      "createdAtMs": 1795014477000
-    },
-    {
       "repo": "S01-Issuer/tsalt.api",
       "number": 43,
       "url": "https://github.com/S01-Issuer/tsalt.api/issues/43",
@@ -13349,6 +13423,150 @@
       "title": "Move off-chain tooling into a .tooling repo, out of audit scope",
       "prs": [],
       "createdAtMs": 1795274760000
+    },
+    {
+      "repo": "rainlanguage/rainlang.deploy",
+      "number": 42,
+      "url": "https://github.com/rainlanguage/rainlang.deploy/issues/42",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope",
+      "prs": [],
+      "createdAtMs": 1795275785000
+    },
+    {
+      "repo": "rainlanguage/rain.math.float.deploy",
+      "number": 68,
+      "url": "https://github.com/rainlanguage/rain.math.float.deploy/issues/68",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope",
+      "prs": [],
+      "createdAtMs": 1795275788000
+    },
+    {
+      "repo": "rainlanguage/rain.factory.deploy",
+      "number": 96,
+      "url": "https://github.com/rainlanguage/rain.factory.deploy/issues/96",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope",
+      "prs": [],
+      "createdAtMs": 1795275792000
+    },
+    {
+      "repo": "rainlanguage/rain.tofu.erc20-decimals.deploy",
+      "number": 36,
+      "url": "https://github.com/rainlanguage/rain.tofu.erc20-decimals.deploy/issues/36",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope",
+      "prs": [],
+      "createdAtMs": 1795275796000
+    },
+    {
+      "repo": "rainlanguage/rain.metadata.deploy",
+      "number": 39,
+      "url": "https://github.com/rainlanguage/rain.metadata.deploy/issues/39",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope",
+      "prs": [],
+      "createdAtMs": 1795275799000
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection.deploy",
+      "number": 37,
+      "url": "https://github.com/rainlanguage/rain.extrospection.deploy/issues/37",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope",
+      "prs": [],
+      "createdAtMs": 1795275803000
+    },
+    {
+      "repo": "rainlanguage/rain.merkle.deploy",
+      "number": 52,
+      "url": "https://github.com/rainlanguage/rain.merkle.deploy/issues/52",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope",
+      "prs": [],
+      "createdAtMs": 1795275806000
+    },
+    {
+      "repo": "rainlanguage/rain.verify",
+      "number": 52,
+      "url": "https://github.com/rainlanguage/rain.verify/issues/52",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope",
+      "prs": [],
+      "createdAtMs": 1795275809000
+    },
+    {
+      "repo": "rainlanguage/rain.dia",
+      "number": 90,
+      "url": "https://github.com/rainlanguage/rain.dia/issues/90",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope",
+      "prs": [],
+      "createdAtMs": 1795275815000
+    },
+    {
+      "repo": "rainlanguage/rain.extrospection",
+      "number": 195,
+      "url": "https://github.com/rainlanguage/rain.extrospection/issues/195",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope",
+      "prs": [],
+      "createdAtMs": 1795275818000
+    },
+    {
+      "repo": "rainlanguage/rain.sol.codegen",
+      "number": 157,
+      "url": "https://github.com/rainlanguage/rain.sol.codegen/issues/157",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope",
+      "prs": [],
+      "createdAtMs": 1795275826000
+    },
+    {
+      "repo": "rainlanguage/rain.erc4626.words",
+      "number": 286,
+      "url": "https://github.com/rainlanguage/rain.erc4626.words/issues/286",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope",
+      "prs": [],
+      "createdAtMs": 1795275829000
+    },
+    {
+      "repo": "rainlanguage/rain.flare",
+      "number": 232,
+      "url": "https://github.com/rainlanguage/rain.flare/issues/232",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope",
+      "prs": [],
+      "createdAtMs": 1795275833000
+    },
+    {
+      "repo": "rainlanguage/rain.math.float",
+      "number": 743,
+      "url": "https://github.com/rainlanguage/rain.math.float/issues/743",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope",
+      "prs": [],
+      "createdAtMs": 1795275836000
+    },
+    {
+      "repo": "rainlanguage/rain.metadata",
+      "number": 337,
+      "url": "https://github.com/rainlanguage/rain.metadata/issues/337",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope",
+      "prs": [],
+      "createdAtMs": 1795275840000
+    },
+    {
+      "repo": "rainlanguage/rain.pyth",
+      "number": 58,
+      "url": "https://github.com/rainlanguage/rain.pyth/issues/58",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope",
+      "prs": [],
+      "createdAtMs": 1795275843000
+    },
+    {
+      "repo": "rainlanguage/raindex.governance",
+      "number": 45,
+      "url": "https://github.com/rainlanguage/raindex.governance/issues/45",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope",
+      "prs": [],
+      "createdAtMs": 1795275847000
+    },
+    {
+      "repo": "rainlanguage/rain.will-overflow",
+      "number": 7,
+      "url": "https://github.com/rainlanguage/rain.will-overflow/issues/7",
+      "title": "Move off-chain tooling into a .tooling repo, out of audit scope",
+      "prs": [],
+      "createdAtMs": 1795275850000
     }
   ]
 }
