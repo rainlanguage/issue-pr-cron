@@ -637,8 +637,20 @@
         ]
       },
       "un-vetted": {
-        "count": 80,
+        "count": 82,
         "prs": [
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 462,
+            "url": "https://github.com/rainlanguage/rainix/pull/462",
+            "title": "Reusable workflows for dispatching migration scripts (run-script, manual-broadcast)"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 631,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/631",
+            "title": "docs: timelock resolution excepts STOX_GOVERNANCE_TIMELOCK surfaces"
+          },
           {
             "repo": "rainlanguage/rain-org-health",
             "number": 259,
@@ -1818,6 +1830,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 461,
+      "url": "https://github.com/rainlanguage/rainix/issues/461",
+      "title": "Reusable workflows for dispatching migration scripts (run-script, manual-broadcast)"
+    },
     {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 628,
@@ -6299,7 +6317,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 80,
+    "unvetted": 82,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 80,
@@ -6310,18 +6328,18 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 174,
+    "totalProducerPrs": 176,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 742,
+    "uncoveredIssues": 743,
     "designPresentable": 4,
     "designNoQuestion": 0,
-    "openIssues": 879
+    "openIssues": 880
   },
   "ages": {
     "openIssues": {
-      "meanDays": 313.6,
-      "medianDays": 149.6,
-      "oldestDays": 1042.9
+      "meanDays": 313.4,
+      "medianDays": 149.3,
+      "oldestDays": 1043.0
     }
   },
   "issueWorklist": [
@@ -13599,6 +13617,14 @@
       "title": "0G's US authoriser grants the orchestrator DEPOSIT and WITHDRAW, as on every other chain",
       "prs": [],
       "createdAtMs": 1795287418000
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 461,
+      "url": "https://github.com/rainlanguage/rainix/issues/461",
+      "title": "Reusable workflows for dispatching migration scripts (run-script, manual-broadcast)",
+      "prs": [],
+      "createdAtMs": 1795452629000
     }
   ]
 }
