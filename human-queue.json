@@ -637,8 +637,20 @@
         ]
       },
       "un-vetted": {
-        "count": 78,
+        "count": 80,
         "prs": [
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 259,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/259",
+            "title": "Deployments: expected registry delegations, checked live"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 630,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/630",
+            "title": "Expected state lists the root's registry delegations"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 629,
@@ -6287,7 +6299,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 78,
+    "unvetted": 80,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 80,
@@ -6298,7 +6310,7 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 172,
+    "totalProducerPrs": 174,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 742,
     "designPresentable": 4,
