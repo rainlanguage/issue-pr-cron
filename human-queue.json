@@ -637,13 +637,13 @@
         ]
       },
       "un-vetted": {
-        "count": 79,
+        "count": 78,
         "prs": [
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 629,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/629",
-            "title": "Add the six Ethereum-only tokens to the Ethereum, HyperEVM, Robinhood and BSC token tables"
+            "title": "Add the six off-Base tokens to the Ethereum, HyperEVM, Robinhood and BSC token tables"
           },
           {
             "repo": "rainlanguage/raindex.deploy",
@@ -734,12 +734,6 @@
             "number": 593,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/593",
             "title": "feat: live name, ticker and ISIN from snapshot plus per-token overrides"
-          },
-          {
-            "repo": "rainlanguage/rainlang",
-            "number": 635,
-            "url": "https://github.com/rainlanguage/rainlang/pull/635",
-            "title": "String words: string-count, string-starts-with, string-strip-prefix"
           },
           {
             "repo": "rainlanguage/rainlang",
@@ -6293,7 +6287,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 79,
+    "unvetted": 78,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 80,
@@ -6304,7 +6298,7 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 173,
+    "totalProducerPrs": 172,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 742,
     "designPresentable": 4,
@@ -6315,7 +6309,7 @@
     "openIssues": {
       "meanDays": 313.5,
       "medianDays": 149.5,
-      "oldestDays": 1042.7
+      "oldestDays": 1042.8
     }
   },
   "issueWorklist": [
