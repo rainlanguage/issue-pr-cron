@@ -637,8 +637,14 @@
         ]
       },
       "un-vetted": {
-        "count": 88,
+        "count": 89,
         "prs": [
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 644,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/644",
+            "title": "test: underlying and ERC-20 metadata survive a vault beacon upgrade to a moved facet"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 643,
@@ -6353,7 +6359,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 88,
+    "unvetted": 89,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 80,
@@ -6364,7 +6370,7 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 182,
+    "totalProducerPrs": 183,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 743,
     "designPresentable": 4,
@@ -6373,7 +6379,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 314.2,
+      "meanDays": 314.3,
       "medianDays": 150.1,
       "oldestDays": 1043.9
     }
