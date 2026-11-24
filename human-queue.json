@@ -637,8 +637,44 @@
         ]
       },
       "un-vetted": {
-        "count": 82,
+        "count": 88,
         "prs": [
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 643,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/643",
+            "title": "Derive the sourced ISINs from their CUSIPs"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 642,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/642",
+            "title": "Cite SEC filings for the sourced ISINs"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 641,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/641",
+            "title": "Executor waits for the beacon batch before the rename (split 2/4 of #567)"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 639,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/639",
+            "title": "approved: use LibRegistryDelegates.approved for the root line"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 638,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/638",
+            "title": "Deploy the 0G subgraph to Goldsky as network 0g"
+          },
+          {
+            "repo": "rainlanguage/rain-org-health",
+            "number": 260,
+            "url": "https://github.com/rainlanguage/rain-org-health/pull/260",
+            "title": "Read 0G on the st0x deployment sections"
+          },
           {
             "repo": "rainlanguage/rainix",
             "number": 462,
@@ -6317,7 +6353,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 82,
+    "unvetted": 88,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 80,
@@ -6328,7 +6364,7 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 176,
+    "totalProducerPrs": 182,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 743,
     "designPresentable": 4,
@@ -6337,9 +6373,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 314.1,
-      "medianDays": 150.0,
-      "oldestDays": 1043.8
+      "meanDays": 314.2,
+      "medianDays": 150.1,
+      "oldestDays": 1043.9
     }
   },
   "issueWorklist": [
