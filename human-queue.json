@@ -637,8 +637,20 @@
         ]
       },
       "un-vetted": {
-        "count": 80,
+        "count": 82,
         "prs": [
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 648,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/648",
+            "title": "Token and wrapper pre-flight hold the receipt and wrapper beacons to their pins"
+          },
+          {
+            "repo": "rainlanguage/rainix",
+            "number": 464,
+            "url": "https://github.com/rainlanguage/rainix/pull/464",
+            "title": "denofmt: require_serial so parallel batches never share deno's fmt cache"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 641,
@@ -697,7 +709,7 @@
             "repo": "S01-Issuer/st0x.deploy",
             "number": 611,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/611",
-            "title": "Deploy pre-check refuses a missing or mismatched vault beacon"
+            "title": "Deploy pre-check holds the vault beacon to its pinned owner, implementation and code"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -6305,7 +6317,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 80,
+    "unvetted": 82,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 80,
@@ -6316,7 +6328,7 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 174,
+    "totalProducerPrs": 176,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 743,
     "designPresentable": 4,
@@ -6326,8 +6338,8 @@
   "ages": {
     "openIssues": {
       "meanDays": 315.4,
-      "medianDays": 151.2,
-      "oldestDays": 1045.0
+      "medianDays": 151.3,
+      "oldestDays": 1045.1
     }
   },
   "issueWorklist": [
