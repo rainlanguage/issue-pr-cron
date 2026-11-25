@@ -637,20 +637,8 @@
         ]
       },
       "un-vetted": {
-        "count": 91,
+        "count": 86,
         "prs": [
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 647,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/647",
-            "title": "expected-state: 0G's renameMigration is the naming migration, not zero"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 645,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/645",
-            "title": "run-script: author bundles on top of the Safe queue"
-          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 644,
@@ -677,12 +665,6 @@
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
-            "number": 639,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/639",
-            "title": "approved: use LibRegistryDelegates.approved for the root line"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
             "number": 638,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/638",
             "title": "Deploy the 0G subgraph to Goldsky as network 0g"
@@ -692,12 +674,6 @@
             "number": 260,
             "url": "https://github.com/rainlanguage/rain-org-health/pull/260",
             "title": "Read 0G on the st0x deployment sections"
-          },
-          {
-            "repo": "rainlanguage/rainix",
-            "number": 462,
-            "url": "https://github.com/rainlanguage/rainix/pull/462",
-            "title": "Reusable workflows for dispatching migration scripts (run-script, manual-broadcast)"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -728,12 +704,6 @@
             "number": 2981,
             "url": "https://github.com/rainlanguage/raindex.deploy/pull/2981",
             "title": "Record polygon RaindexV3 0x34200E02"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 626,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/626",
-            "title": "docs: TIMELOCK.md describes only how the timelock works"
           },
           {
             "repo": "rainlanguage/rain-org-health",
@@ -1884,12 +1854,6 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
-    {
-      "repo": "rainlanguage/rainix",
-      "number": 461,
-      "url": "https://github.com/rainlanguage/rainix/issues/461",
-      "title": "Reusable workflows for dispatching migration scripts (run-script, manual-broadcast)"
-    },
     {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 628,
@@ -6371,7 +6335,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 91,
+    "unvetted": 86,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 80,
@@ -6382,18 +6346,18 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 185,
+    "totalProducerPrs": 180,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 743,
+    "uncoveredIssues": 742,
     "designPresentable": 4,
     "designNoQuestion": 0,
-    "openIssues": 880
+    "openIssues": 879
   },
   "ages": {
     "openIssues": {
-      "meanDays": 315.0,
-      "medianDays": 150.8,
-      "oldestDays": 1044.6
+      "meanDays": 315.5,
+      "medianDays": 151.5,
+      "oldestDays": 1044.7
     }
   },
   "issueWorklist": [
@@ -13671,14 +13635,6 @@
       "title": "0G's US authoriser grants the orchestrator DEPOSIT and WITHDRAW, as on every other chain",
       "prs": [],
       "createdAtMs": 1795287418000
-    },
-    {
-      "repo": "rainlanguage/rainix",
-      "number": 461,
-      "url": "https://github.com/rainlanguage/rainix/issues/461",
-      "title": "Reusable workflows for dispatching migration scripts (run-script, manual-broadcast)",
-      "prs": [],
-      "createdAtMs": 1795452629000
     }
   ]
 }
