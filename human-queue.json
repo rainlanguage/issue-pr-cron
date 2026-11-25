@@ -637,8 +637,14 @@
         ]
       },
       "un-vetted": {
-        "count": 82,
+        "count": 83,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 406,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/406",
+            "title": "Execute and hash a one-transaction Safe bundle as a direct call"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 648,
@@ -1143,7 +1149,7 @@
             "number": 22,
             "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/22",
             "title": "fail-pattern: abort when it matches the baseline, and ship known-good patterns per harness",
-            "bucket": "fetchErrors"
+            "bucket": "presentable"
           },
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -1169,9 +1175,9 @@
         ],
         "breakdown": {
           "draft": 0,
-          "fetchErrors": 1,
+          "fetchErrors": 0,
           "noQuestion": 0,
-          "presentable": 3,
+          "presentable": 4,
           "unaddressable": 0
         }
       },
@@ -6317,7 +6323,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 82,
+    "unvetted": 83,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 80,
@@ -6328,18 +6334,18 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 176,
+    "totalProducerPrs": 177,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 743,
-    "designPresentable": 3,
+    "designPresentable": 4,
     "designNoQuestion": 0,
     "openIssues": 880
   },
   "ages": {
     "openIssues": {
       "meanDays": 315.5,
-      "medianDays": 151.3,
-      "oldestDays": 1045.1
+      "medianDays": 151.4,
+      "oldestDays": 1045.2
     }
   },
   "issueWorklist": [
