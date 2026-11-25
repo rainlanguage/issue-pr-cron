@@ -1819,6 +1819,12 @@
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
     {
+      "repo": "rainlanguage/rain-org-health",
+      "number": 263,
+      "url": "https://github.com/rainlanguage/rain-org-health/issues/263",
+      "title": "roh-scan: key beacon renamedImplementation on upgradeMigration, not renameMigration"
+    },
+    {
       "repo": "S01-Issuer/st0x.deploy",
       "number": 628,
       "url": "https://github.com/S01-Issuer/st0x.deploy/issues/628",
@@ -6312,15 +6318,15 @@
     "leaks": 0,
     "totalProducerPrs": 174,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 742,
+    "uncoveredIssues": 743,
     "designPresentable": 4,
     "designNoQuestion": 0,
-    "openIssues": 879
+    "openIssues": 880
   },
   "ages": {
     "openIssues": {
-      "meanDays": 315.7,
-      "medianDays": 151.7,
+      "meanDays": 315.4,
+      "medianDays": 151.2,
       "oldestDays": 1045.0
     }
   },
@@ -13599,6 +13605,14 @@
       "title": "0G's US authoriser grants the orchestrator DEPOSIT and WITHDRAW, as on every other chain",
       "prs": [],
       "createdAtMs": 1795287418000
+    },
+    {
+      "repo": "rainlanguage/rain-org-health",
+      "number": 263,
+      "url": "https://github.com/rainlanguage/rain-org-health/issues/263",
+      "title": "roh-scan: key beacon renamedImplementation on upgradeMigration, not renameMigration",
+      "prs": [],
+      "createdAtMs": 1795627147000
     }
   ]
 }
