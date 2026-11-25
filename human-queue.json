@@ -1143,7 +1143,7 @@
             "number": 22,
             "url": "https://github.com/rainlanguage/adversarial-mutation-test/pull/22",
             "title": "fail-pattern: abort when it matches the baseline, and ship known-good patterns per harness",
-            "bucket": "presentable"
+            "bucket": "fetchErrors"
           },
           {
             "repo": "rainlanguage/adversarial-mutation-test",
@@ -1169,9 +1169,9 @@
         ],
         "breakdown": {
           "draft": 0,
-          "fetchErrors": 0,
+          "fetchErrors": 1,
           "noQuestion": 0,
-          "presentable": 4,
+          "presentable": 3,
           "unaddressable": 0
         }
       },
@@ -6331,13 +6331,13 @@
     "totalProducerPrs": 176,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 743,
-    "designPresentable": 4,
+    "designPresentable": 3,
     "designNoQuestion": 0,
     "openIssues": 880
   },
   "ages": {
     "openIssues": {
-      "meanDays": 315.4,
+      "meanDays": 315.5,
       "medianDays": 151.3,
       "oldestDays": 1045.1
     }
