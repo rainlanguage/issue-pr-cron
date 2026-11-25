@@ -637,25 +637,13 @@
         ]
       },
       "un-vetted": {
-        "count": 85,
+        "count": 82,
         "prs": [
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 644,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/644",
-            "title": "test: underlying and ERC-20 metadata survive a vault beacon upgrade to a moved facet"
-          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 643,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/643",
             "title": "Derive the sourced ISINs from their CUSIPs"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 642,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/642",
-            "title": "Cite SEC filings for the sourced ISINs"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -668,12 +656,6 @@
             "number": 260,
             "url": "https://github.com/rainlanguage/rain-org-health/pull/260",
             "title": "Read 0G on the st0x deployment sections"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 631,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/631",
-            "title": "docs: timelock resolution excepts STOX_GOVERNANCE_TIMELOCK surfaces"
           },
           {
             "repo": "rainlanguage/rain-org-health",
@@ -6329,7 +6311,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 85,
+    "unvetted": 82,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 80,
@@ -6340,7 +6322,7 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 179,
+    "totalProducerPrs": 176,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 742,
     "designPresentable": 4,
@@ -6349,9 +6331,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 315.5,
-      "medianDays": 151.5,
-      "oldestDays": 1044.8
+      "meanDays": 315.6,
+      "medianDays": 151.6,
+      "oldestDays": 1044.9
     }
   },
   "issueWorklist": [
