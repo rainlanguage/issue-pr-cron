@@ -637,25 +637,13 @@
         ]
       },
       "un-vetted": {
-        "count": 93,
+        "count": 91,
         "prs": [
-          {
-            "repo": "rainlanguage/rain-org-health",
-            "number": 262,
-            "url": "https://github.com/rainlanguage/rain-org-health/pull/262",
-            "title": "deployments: explorer verification status per contract"
-          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 647,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/647",
             "title": "expected-state: 0G's renameMigration is the naming migration, not zero"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 646,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/646",
-            "title": "manual-sol-verify: drop undeclared networks input, pass constructor-args"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -6383,7 +6371,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 93,
+    "unvetted": 91,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 80,
@@ -6394,17 +6382,17 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 187,
+    "totalProducerPrs": 185,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 743,
     "designPresentable": 4,
     "designNoQuestion": 0,
-    "openIssues": 881
+    "openIssues": 880
   },
   "ages": {
     "openIssues": {
-      "meanDays": 314.6,
-      "medianDays": 150.3,
+      "meanDays": 315.0,
+      "medianDays": 150.8,
       "oldestDays": 1044.6
     }
   },
@@ -7595,16 +7583,6 @@
         "https://github.com/rainlanguage/raindex.deploy/pull/2971"
       ],
       "createdAtMs": 1795014477000
-    },
-    {
-      "repo": "rainlanguage/rain-org-health",
-      "number": 261,
-      "url": "https://github.com/rainlanguage/rain-org-health/issues/261",
-      "title": "Deployments: show each contract's explorer verification status",
-      "prs": [
-        "https://github.com/rainlanguage/rain-org-health/pull/262"
-      ],
-      "createdAtMs": 1795542729000
     },
     {
       "repo": "rainlanguage/dotrain",
