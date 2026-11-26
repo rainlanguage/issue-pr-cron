@@ -637,7 +637,7 @@
         ]
       },
       "un-vetted": {
-        "count": 82,
+        "count": 81,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -656,12 +656,6 @@
             "number": 406,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/406",
             "title": "Execute and hash a one-transaction Safe bundle as a direct call"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 648,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/648",
-            "title": "Token and wrapper pre-flight hold the receipt and wrapper beacons to their pins"
           },
           {
             "repo": "rainlanguage/rain-org-health",
@@ -6317,7 +6311,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 82,
+    "unvetted": 81,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 80,
@@ -6328,7 +6322,7 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 176,
+    "totalProducerPrs": 175,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 743,
     "designPresentable": 4,
@@ -6337,7 +6331,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 315.9,
+      "meanDays": 316.0,
       "medianDays": 151.8,
       "oldestDays": 1045.6
     }
