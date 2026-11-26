@@ -637,7 +637,7 @@
         ]
       },
       "un-vetted": {
-        "count": 83,
+        "count": 82,
         "prs": [
           {
             "repo": "rainlanguage/rain.deploy",
@@ -650,12 +650,6 @@
             "number": 648,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/648",
             "title": "Token and wrapper pre-flight hold the receipt and wrapper beacons to their pins"
-          },
-          {
-            "repo": "rainlanguage/rainix",
-            "number": 464,
-            "url": "https://github.com/rainlanguage/rainix/pull/464",
-            "title": "denofmt: require_serial so parallel batches never share deno's fmt cache"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -6323,7 +6317,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 83,
+    "unvetted": 82,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 80,
@@ -6334,7 +6328,7 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 177,
+    "totalProducerPrs": 176,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 743,
     "designPresentable": 4,
@@ -6343,7 +6337,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 315.8,
+      "meanDays": 315.9,
       "medianDays": 151.7,
       "oldestDays": 1045.5
     }
