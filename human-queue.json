@@ -640,6 +640,12 @@
         "count": 82,
         "prs": [
           {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 408,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/408",
+            "title": "Typed recordedAddress hook: skip networks a suite records nothing on"
+          },
+          {
             "repo": "rainlanguage/rain.factory",
             "number": 307,
             "url": "https://github.com/rainlanguage/rain.factory/pull/307",
@@ -656,12 +662,6 @@
             "number": 648,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/648",
             "title": "Token and wrapper pre-flight hold the receipt and wrapper beacons to their pins"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 641,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/641",
-            "title": "Executor waits for the beacon batch before the rename (split 2/4 of #567)"
           },
           {
             "repo": "rainlanguage/rain-org-health",
@@ -6339,7 +6339,7 @@
     "openIssues": {
       "meanDays": 315.9,
       "medianDays": 151.8,
-      "oldestDays": 1045.5
+      "oldestDays": 1045.6
     }
   },
   "issueWorklist": [
