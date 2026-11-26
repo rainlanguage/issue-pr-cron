@@ -637,25 +637,25 @@
         ]
       },
       "un-vetted": {
-        "count": 76,
+        "count": 75,
         "prs": [
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 652,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/652",
+            "title": "StoxTokenConfigV1: asset id and kind as one AssetId struct"
+          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 649,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/649",
-            "title": "test: read the GLEIF ISIN sample from a committed fixture"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 408,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/408",
-            "title": "Typed recordedAddress hook: skip networks a suite records nothing on"
+            "title": "test: check isinWellFormed against every Wikidata ISIN value"
           },
           {
             "repo": "rainlanguage/rain.factory",
             "number": 307,
             "url": "https://github.com/rainlanguage/rain.factory/pull/307",
-            "title": "Bump rain-deploy to 0.1.40 and etch the clone's dependency closure"
+            "title": "Bump rain-deploy to 0.1.41: etch the clone's dependency closure and adapt to typed recordedAddress"
           },
           {
             "repo": "rainlanguage/rain-org-health",
@@ -686,12 +686,6 @@
             "number": 2971,
             "url": "https://github.com/rainlanguage/raindex.deploy/pull/2971",
             "title": "tokens-subgraph: (raindex, token) discovery across every recorded raindex"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 612,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/612",
-            "title": "Expose the listing asset id: assetId()"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -6287,7 +6281,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 76,
+    "unvetted": 75,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 80,
@@ -6298,7 +6292,7 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 170,
+    "totalProducerPrs": 169,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 744,
     "designPresentable": 4,
@@ -6307,9 +6301,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 316.3,
-      "medianDays": 152.1,
-      "oldestDays": 1045.9
+      "meanDays": 316.4,
+      "medianDays": 152.3,
+      "oldestDays": 1046.1
     }
   },
   "issueWorklist": [
