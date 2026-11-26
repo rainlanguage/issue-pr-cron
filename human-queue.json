@@ -637,14 +637,8 @@
         ]
       },
       "un-vetted": {
-        "count": 80,
+        "count": 79,
         "prs": [
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 651,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/651",
-            "title": "Pause tracing in the BuildExpectedState tests that parse the render"
-          },
           {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 649,
@@ -6311,7 +6305,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 80,
+    "unvetted": 79,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 80,
@@ -6322,7 +6316,7 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 174,
+    "totalProducerPrs": 173,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 744,
     "designPresentable": 4,
@@ -6333,7 +6327,7 @@
     "openIssues": {
       "meanDays": 316.1,
       "medianDays": 152.0,
-      "oldestDays": 1045.7
+      "oldestDays": 1045.8
     }
   },
   "issueWorklist": [
