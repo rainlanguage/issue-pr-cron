@@ -637,7 +637,7 @@
         ]
       },
       "un-vetted": {
-        "count": 79,
+        "count": 77,
         "prs": [
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -658,12 +658,6 @@
             "title": "Bump rain-deploy to 0.1.40 and etch the clone's dependency closure"
           },
           {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 406,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/406",
-            "title": "Execute and hash a one-transaction Safe bundle as a direct call"
-          },
-          {
             "repo": "rainlanguage/rain-org-health",
             "number": 260,
             "url": "https://github.com/rainlanguage/rain-org-health/pull/260",
@@ -674,12 +668,6 @@
             "number": 259,
             "url": "https://github.com/rainlanguage/rain-org-health/pull/259",
             "title": "Deployments: expected registry delegations, checked live"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 629,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/629",
-            "title": "Add the six off-Base tokens to the Ethereum, HyperEVM, Robinhood and BSC token tables"
           },
           {
             "repo": "rainlanguage/raindex.deploy",
@@ -6305,7 +6293,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 79,
+    "unvetted": 77,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 80,
@@ -6316,7 +6304,7 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 173,
+    "totalProducerPrs": 171,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 744,
     "designPresentable": 4,
@@ -6326,8 +6314,8 @@
   "ages": {
     "openIssues": {
       "meanDays": 316.2,
-      "medianDays": 152.0,
-      "oldestDays": 1045.8
+      "medianDays": 152.1,
+      "oldestDays": 1045.9
     }
   },
   "issueWorklist": [
