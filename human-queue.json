@@ -641,6 +641,12 @@
         "prs": [
           {
             "repo": "S01-Issuer/st0x.deploy",
+            "number": 651,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/651",
+            "title": "Pause tracing in the BuildExpectedState tests that parse the render"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
             "number": 649,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/649",
             "title": "test: read the GLEIF ISIN sample from a committed fixture"
@@ -710,12 +716,6 @@
             "number": 611,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/611",
             "title": "Deploy pre-check holds the vault beacon to its pinned owner, implementation and code"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 610,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/610",
-            "title": "Vault initialize refuses a missing corporate actions facet by name"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
