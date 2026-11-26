@@ -1322,3 +1322,4 @@
 {"ts":"2026-11-25T15:22:24Z","observedAt":"2026-11-25T15:32:10Z","kind":"pr","repo":"S01-Issuer/st0x.deploy","number":630}
 {"ts":"2026-11-25T14:52:36Z","observedAt":"2026-11-25T15:32:10Z","kind":"pr","repo":"S01-Issuer/st0x.deploy","number":643}
 {"ts":"2026-11-26T05:10:50Z","observedAt":"2026-11-26T05:32:14Z","kind":"pr","repo":"rainlanguage/rainix","number":464}
+{"ts":"2026-11-26T05:56:55Z","observedAt":"2026-11-26T06:33:11Z","kind":"pr","repo":"rainlanguage/rain.deploy","number":397}

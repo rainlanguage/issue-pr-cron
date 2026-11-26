@@ -640,6 +640,12 @@
         "count": 82,
         "prs": [
           {
+            "repo": "rainlanguage/rain.factory",
+            "number": 307,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/307",
+            "title": "Bump rain-deploy to 0.1.40 and etch the clone's dependency closure"
+          },
+          {
             "repo": "rainlanguage/rain.deploy",
             "number": 406,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/406",
@@ -692,12 +698,6 @@
             "number": 2971,
             "url": "https://github.com/rainlanguage/raindex.deploy/pull/2971",
             "title": "tokens-subgraph: (raindex, token) discovery across every recorded raindex"
-          },
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 397,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/397",
-            "title": "Etch the transitive dependency closure"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -6338,7 +6338,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 315.9,
-      "medianDays": 151.7,
+      "medianDays": 151.8,
       "oldestDays": 1045.5
     }
   },
