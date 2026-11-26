@@ -640,6 +640,12 @@
         "count": 81,
         "prs": [
           {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 649,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/649",
+            "title": "test: read the GLEIF ISIN sample from a committed fixture"
+          },
+          {
             "repo": "rainlanguage/rain.deploy",
             "number": 408,
             "url": "https://github.com/rainlanguage/rain.deploy/pull/408",
@@ -740,12 +746,6 @@
             "number": 601,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/601",
             "title": "Underlying snapshot data contracts (1/3 of #592)"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 595,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/595",
-            "title": "Token init data carries the essential listing facts"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -1824,6 +1824,12 @@
   ],
   "closeCandidateUpheld": [],
   "uncoveredIssues": [
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 650,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/650",
+      "title": "Deduplicate the naming executor's root-line record now the rename batch records itself"
+    },
     {
       "repo": "rainlanguage/rain-org-health",
       "number": 263,
@@ -6324,7 +6330,7 @@
     "leaks": 0,
     "totalProducerPrs": 175,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 743,
+    "uncoveredIssues": 744,
     "designPresentable": 4,
     "designNoQuestion": 0,
     "openIssues": 880
@@ -6332,8 +6338,8 @@
   "ages": {
     "openIssues": {
       "meanDays": 316.0,
-      "medianDays": 151.8,
-      "oldestDays": 1045.6
+      "medianDays": 151.9,
+      "oldestDays": 1045.7
     }
   },
   "issueWorklist": [
@@ -7493,16 +7499,6 @@
         "https://github.com/S01-Issuer/st0x.deploy/pull/593"
       ],
       "createdAtMs": 1794483068000
-    },
-    {
-      "repo": "S01-Issuer/st0x.deploy",
-      "number": 594,
-      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/594",
-      "title": "Token init data carries the essential listing facts, versioned, with a zero salt",
-      "prs": [
-        "https://github.com/S01-Issuer/st0x.deploy/pull/595"
-      ],
-      "createdAtMs": 1794520680000
     },
     {
       "repo": "rainlanguage/rain-org-health",
@@ -13619,6 +13615,14 @@
       "title": "roh-scan: key beacon renamedImplementation on upgradeMigration, not renameMigration",
       "prs": [],
       "createdAtMs": 1795627147000
+    },
+    {
+      "repo": "S01-Issuer/st0x.deploy",
+      "number": 650,
+      "url": "https://github.com/S01-Issuer/st0x.deploy/issues/650",
+      "title": "Deduplicate the naming executor's root-line record now the rename batch records itself",
+      "prs": [],
+      "createdAtMs": 1795684525000
     }
   ]
 }
