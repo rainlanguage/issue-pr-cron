@@ -637,7 +637,7 @@
         ]
       },
       "un-vetted": {
-        "count": 77,
+        "count": 76,
         "prs": [
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -692,12 +692,6 @@
             "number": 612,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/612",
             "title": "Expose the listing asset id: assetId()"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 611,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/611",
-            "title": "Deploy pre-check holds the vault beacon to its pinned owner, implementation and code"
           },
           {
             "repo": "S01-Issuer/st0x.deploy",
@@ -6293,7 +6287,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 77,
+    "unvetted": 76,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 80,
@@ -6304,7 +6298,7 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 171,
+    "totalProducerPrs": 170,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 744,
     "designPresentable": 4,
@@ -6313,7 +6307,7 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 316.2,
+      "meanDays": 316.3,
       "medianDays": 152.1,
       "oldestDays": 1045.9
     }
