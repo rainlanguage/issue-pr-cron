@@ -637,14 +637,8 @@
         ]
       },
       "un-vetted": {
-        "count": 74,
+        "count": 73,
         "prs": [
-          {
-            "repo": "rainlanguage/rain.deploy",
-            "number": 411,
-            "url": "https://github.com/rainlanguage/rain.deploy/pull/411",
-            "title": "dependencyClosure: read suites without copying candidate snapshots"
-          },
           {
             "repo": "rainlanguage/rainix",
             "number": 466,
@@ -6281,7 +6275,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 74,
+    "unvetted": 73,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 80,
@@ -6292,7 +6286,7 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 168,
+    "totalProducerPrs": 167,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 745,
     "designPresentable": 4,
@@ -6301,9 +6295,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 316.8,
-      "medianDays": 152.5,
-      "oldestDays": 1046.8
+      "meanDays": 316.9,
+      "medianDays": 152.6,
+      "oldestDays": 1046.9
     }
   },
   "issueWorklist": [
