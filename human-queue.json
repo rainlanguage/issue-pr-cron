@@ -637,8 +637,20 @@
         ]
       },
       "un-vetted": {
-        "count": 73,
+        "count": 75,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 413,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/413",
+            "title": "Thread DeploySuiteIndex through writeSuiteSnapshot hook"
+          },
+          {
+            "repo": "rainlanguage/rain.factory",
+            "number": 308,
+            "url": "https://github.com/rainlanguage/rain.factory/pull/308",
+            "title": "Bump rain-deploy to 0.1.42"
+          },
           {
             "repo": "rainlanguage/rainix",
             "number": 466,
@@ -6275,7 +6287,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 73,
+    "unvetted": 75,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 80,
@@ -6286,7 +6298,7 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 167,
+    "totalProducerPrs": 169,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 745,
     "designPresentable": 4,
