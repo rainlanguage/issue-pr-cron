@@ -640,6 +640,12 @@
         "count": 75,
         "prs": [
           {
+            "repo": "rainlanguage/rainix",
+            "number": 466,
+            "url": "https://github.com/rainlanguage/rainix/pull/466",
+            "title": "sol-static: fail when a script resolves to a candidate"
+          },
+          {
             "repo": "S01-Issuer/st0x.deploy",
             "number": 652,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/652",
@@ -650,12 +656,6 @@
             "number": 649,
             "url": "https://github.com/S01-Issuer/st0x.deploy/pull/649",
             "title": "test: check isinWellFormed against every Wikidata ISIN value"
-          },
-          {
-            "repo": "rainlanguage/rain.factory",
-            "number": 307,
-            "url": "https://github.com/rainlanguage/rain.factory/pull/307",
-            "title": "Bump rain-deploy to 0.1.41: etch the clone's dependency closure and adapt to typed recordedAddress"
           },
           {
             "repo": "rainlanguage/rain-org-health",
@@ -6297,13 +6297,13 @@
     "uncoveredIssues": 744,
     "designPresentable": 4,
     "designNoQuestion": 0,
-    "openIssues": 880
+    "openIssues": 881
   },
   "ages": {
     "openIssues": {
-      "meanDays": 316.9,
-      "medianDays": 152.8,
-      "oldestDays": 1046.5
+      "meanDays": 316.6,
+      "medianDays": 152.3,
+      "oldestDays": 1046.6
     }
   },
   "issueWorklist": [
@@ -7483,6 +7483,16 @@
         "https://github.com/rainlanguage/raindex.deploy/pull/2971"
       ],
       "createdAtMs": 1795014477000
+    },
+    {
+      "repo": "rainlanguage/rainix",
+      "number": 465,
+      "url": "https://github.com/rainlanguage/rainix/issues/465",
+      "title": "Static: fail any script that references a candidate",
+      "prs": [
+        "https://github.com/rainlanguage/rainix/pull/466"
+      ],
+      "createdAtMs": 1795763511000
     },
     {
       "repo": "rainlanguage/dotrain",
