@@ -637,25 +637,13 @@
         ]
       },
       "un-vetted": {
-        "count": 75,
+        "count": 73,
         "prs": [
           {
             "repo": "rainlanguage/rainix",
             "number": 466,
             "url": "https://github.com/rainlanguage/rainix/pull/466",
             "title": "sol-static: fail when a script resolves to a candidate"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 652,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/652",
-            "title": "StoxTokenConfigV1: asset id and kind as one AssetId struct"
-          },
-          {
-            "repo": "S01-Issuer/st0x.deploy",
-            "number": 649,
-            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/649",
-            "title": "test: check isinWellFormed against every Wikidata ISIN value"
           },
           {
             "repo": "rainlanguage/rain-org-health",
@@ -6281,7 +6269,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 75,
+    "unvetted": 73,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 80,
@@ -6292,7 +6280,7 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 169,
+    "totalProducerPrs": 167,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 744,
     "designPresentable": 4,
