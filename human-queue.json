@@ -637,8 +637,20 @@
         ]
       },
       "un-vetted": {
-        "count": 72,
+        "count": 74,
         "prs": [
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 655,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/655",
+            "title": "Add single-field underlying setters"
+          },
+          {
+            "repo": "S01-Issuer/st0x.deploy",
+            "number": 654,
+            "url": "https://github.com/S01-Issuer/st0x.deploy/pull/654",
+            "title": "Underlying snapshot: use OpenZeppelin Bytes.slice and rain.solmem pointers"
+          },
           {
             "repo": "rainlanguage/rainix",
             "number": 466,
@@ -6269,7 +6281,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 72,
+    "unvetted": 74,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 80,
@@ -6280,7 +6292,7 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 166,
+    "totalProducerPrs": 168,
     "archivedRepoPrs": 4,
     "uncoveredIssues": 745,
     "designPresentable": 4,
@@ -6289,9 +6301,9 @@
   },
   "ages": {
     "openIssues": {
-      "meanDays": 317.0,
+      "meanDays": 317.1,
       "medianDays": 152.8,
-      "oldestDays": 1047.0
+      "oldestDays": 1047.1
     }
   },
   "issueWorklist": [
