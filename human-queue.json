@@ -6302,8 +6302,8 @@
   "ages": {
     "openIssues": {
       "meanDays": 316.8,
-      "medianDays": 152.6,
-      "oldestDays": 1046.4
+      "medianDays": 152.7,
+      "oldestDays": 1046.5
     }
   },
   "issueWorklist": [
