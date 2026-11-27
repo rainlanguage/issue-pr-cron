@@ -637,8 +637,14 @@
         ]
       },
       "un-vetted": {
-        "count": 73,
+        "count": 74,
         "prs": [
+          {
+            "repo": "rainlanguage/rain.deploy",
+            "number": 411,
+            "url": "https://github.com/rainlanguage/rain.deploy/pull/411",
+            "title": "dependencyClosure: read suites without copying candidate snapshots"
+          },
           {
             "repo": "rainlanguage/rainix",
             "number": 466,
@@ -4598,6 +4604,12 @@
     },
     {
       "repo": "cyclofinance/cyclo.site",
+      "number": 324,
+      "url": "https://github.com/cyclofinance/cyclo.site/issues/324",
+      "title": "[A11-1] [LOW] Footer.svelte casts large bigints through Number, losing precision past 2^53"
+    },
+    {
+      "repo": "cyclofinance/cyclo.site",
       "number": 323,
       "url": "https://github.com/cyclofinance/cyclo.site/issues/323",
       "title": "[A13-1] Adopt framework-native href/link safety (SvelteKit CSP + single sanitized <SafeLink>)"
@@ -6269,7 +6281,7 @@
   ],
   "leaks": [],
   "counts": {
-    "unvetted": 73,
+    "unvetted": 74,
     "blockedOn": 8,
     "ready": 1,
     "needsWork": 80,
@@ -6280,9 +6292,9 @@
     "closeCandidateUnvetted": 3,
     "closeCandidateUpheld": 0,
     "leaks": 0,
-    "totalProducerPrs": 167,
+    "totalProducerPrs": 168,
     "archivedRepoPrs": 4,
-    "uncoveredIssues": 744,
+    "uncoveredIssues": 745,
     "designPresentable": 4,
     "designNoQuestion": 0,
     "openIssues": 881
@@ -6290,7 +6302,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 316.7,
-      "medianDays": 152.4,
+      "medianDays": 152.5,
       "oldestDays": 1046.7
     }
   },
@@ -6585,16 +6597,6 @@
         "https://github.com/cyclofinance/cyclo.site/pull/399"
       ],
       "createdAtMs": 1777372629000
-    },
-    {
-      "repo": "cyclofinance/cyclo.site",
-      "number": 324,
-      "url": "https://github.com/cyclofinance/cyclo.site/issues/324",
-      "title": "[A11-1] [LOW] Footer.svelte casts large bigints through Number, losing precision past 2^53",
-      "prs": [
-        "https://github.com/cyclofinance/cyclo.site/pull/362"
-      ],
-      "createdAtMs": 1777372632000
     },
     {
       "repo": "cyclofinance/cyclo.site",
@@ -9825,6 +9827,14 @@
       "title": "[A13-1] Adopt framework-native href/link safety (SvelteKit CSP + single sanitized <SafeLink>)",
       "prs": [],
       "createdAtMs": 1777372630000
+    },
+    {
+      "repo": "cyclofinance/cyclo.site",
+      "number": 324,
+      "url": "https://github.com/cyclofinance/cyclo.site/issues/324",
+      "title": "[A11-1] [LOW] Footer.svelte casts large bigints through Number, losing precision past 2^53",
+      "prs": [],
+      "createdAtMs": 1777372632000
     },
     {
       "repo": "cyclofinance/cyclo.site",
