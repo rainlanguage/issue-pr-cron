@@ -132,10 +132,10 @@ lens scope is a literal, that no field is assembled by hand — and `cargo test`
 holds the two to each other over both files.
 
 Same reason the tools exist at all. Six reads — verdict note, head sha, base
-branch, CI, CodeRabbit coverage, deploy gate — done by hand, in an order the
-reader has to remember, is a decision whose inputs are not auditable. A typed
-result is one artefact in the trace, with the same fields in the same order for
-every caller, whether that is a human, this agent, or the next one.
+branch, CI, review threads, deploy gate — done by hand, in an order the reader
+has to remember, is a decision whose inputs are not auditable. A typed result is
+one artefact in the trace, with the same fields in the same order for every
+caller, whether that is a human, this agent, or the next one.
 
 **Two reads, because one of them is a check on the other.** `next_ready` carries
 the vetter's verdict; `pr_context` carries the diff and the linked issue the
