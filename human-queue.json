@@ -6302,7 +6302,7 @@
   "ages": {
     "openIssues": {
       "meanDays": 317.7,
-      "medianDays": 153.4,
+      "medianDays": 153.5,
       "oldestDays": 1047.7
     }
   },
